@@ -10,67 +10,54 @@
  *   A5 HIGH      553 pesanan di antrean gudang, TIDAK SATU PUN siap dialokasikan
  *   A3 HIGH      83 SKU platform dipesan pembeli tetapi belum dikenal master
  *
- * Dua sebab yang diukur:
- *  1. 83 SKU itu berasal dari **8 produk nyata** yang benar-benar belum punya
- *     master (pencarian `Jennifer/Rachel/Victoria/ONA/BIEL/AISAR/RASHA` = 0).
- *  2. Mesin identitas lama **menabrakkan** 65 dari 83 SKU (489 pcs) menjadi
- *     identitas yang sama, karena `POLKA` dibuang dan `PAKAI/TANPA KARET`
- *     tidak dibaca sama sekali. Delapan SKU berbeda jatuh ke satu `hitam/XL`.
- *
  * Kenapa layar ini bekerja PER PRODUK, bukan per SKU: 83 baris satu per satu
  * adalah cara paling pasti membuat fitur sinkronisasi tidak dipakai. Per produk
  * = 8 keputusan.
  *
  * Aturan yang dijaga layar ini:
  *  · **Pratinjau dulu, selalu.** Tidak ada tombol yang menulis tanpa pemilik
- *    melihat lebih dulu daftar varian + SKU yang akan lahir. Kode model pun
- *    dipratinjau dengan MENGINTIP counter, bukan menaikkannya.
+ *    melihat lebih dulu daftar varian + SKU yang akan lahir.
  *  · **Nama model tidak diketik** (gate INV-F14). Ia diturunkan server dari
  *    judul platform dan hanya DITAMPILKAN; kalau produknya sudah ada di master,
  *    pemilik MENUNJUKNYA dari pemilih model.
  *  · Backend: `/api/variant-onboarding/*` (core/variant_identity.py). Layar ini
  *    tidak pernah menulis dokumen sendiri.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): daftar produk = tabel (dulu grid kartu besar per produk), unduh Excel + CSV,
+ * rencana onboarding & opsi varian = FormPopup, chip warna-warni → StatusBadge / kalimat ringkas, kotak abu
+ * penjelasan → satu kalimat. Isian, API, dan aturan tidak berubah.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Sparkles, Loader2, Eye, CheckCircle2, AlertTriangle, RefreshCw, Boxes,
-  Palette, Ruler, SlidersHorizontal, Info, Package, Plus, Pencil, Ban, Layers,
+  Sparkles, Eye, CheckCircle2, AlertTriangle, RefreshCw, Plus, Pencil, Ban,
 } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-} from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiDelete } from '@/lib/api';
-import { downloadCsv } from '@/lib/csv';
 import { CategorySelect, ModelSelect } from './masters/MasterSelects';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 const fmt = (v) => Number(v || 0).toLocaleString('id-ID');
 const rp = (v) => `Rp ${fmt(Math.round(Number(v || 0)))}`;
 
-/* ─── Chip kecil yang selalu punya LATAR (kontrak INV-F15) ─────────────────── */
-function Chip({ icon: Icon, children, tone = 'slate', testId }) {
-  const tones = {
-    slate: 'bg-foreground/[0.06] text-foreground border-foreground/15',
-    emerald: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.4)]',
-    blue: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.4)]',
-    amber: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.4)]',
-    rose: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.4)]',
-  };
+/** Baris alat sebuah bagian: penyaring/teks di kiri, alat di kanan (turun ke baris sendiri di HP). */
+function BarisAlat({ kiri, kanan }) {
   return (
-    <span data-testid={testId}
-          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium ${tones[tone]}`}>
-      {Icon ? <Icon className="w-3 h-3" /> : null}{children}
-    </span>
+    <div className="flex flex-wrap items-center gap-2">
+      {kiri}
+      <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{kanan}</div>
+    </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Dialog: RENCANA onboarding satu produk
+   Popup: RENCANA onboarding satu produk
    ═══════════════════════════════════════════════════════════════════════════ */
 function PlanDialog({ product, onClose, onDone }) {
   const [modelId, setModelId] = useState('');
@@ -112,204 +99,124 @@ function PlanDialog({ product, onClose, onDone }) {
   const newSizes = (plan?.sizes || []).filter((s) => !s.exists);
 
   return (
-    <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto" data-testid="onboarding-plan-dialog">
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-primary" />
-          Rencana onboarding — {plan?.model?.name || product.proposed_model_name}
-        </DialogTitle>
-        <DialogDescription>
-          Rantai yang dibangun: model → warna/ukuran/<b>opsi</b> → varian → master FG →
-          item katalog toko → pemetaan SKU → seluruh pesanan lama ikut tertaut.
-          {' '}<b>Belum ada yang ditulis sampai Anda menekan Terapkan.</b>
-        </DialogDescription>
-      </DialogHeader>
-
-      {/* Judul asli dari platform */}
-      <div className="rounded-lg border border-foreground/10 bg-foreground/[0.03] p-3 text-xs space-y-1">
-        <div className="text-muted-foreground">Judul dari platform</div>
-        <div className="font-medium">{product.product_name || '(tanpa nama)'}</div>
-        <div className="text-muted-foreground">
-          Toko <b>{product.account_name || '—'}</b> · {fmt(product.sku_count)} SKU ·{' '}
-          {fmt(product.pcs)} pcs · {rp(product.value)}
-        </div>
-      </div>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="onboarding-plan-dialog"
+      judul={`Rencana produk baru — ${plan?.model?.name || product.proposed_model_name}`}
+      keterangan="Rantai yang dibangun: model → warna/ukuran/opsi → varian → master FG → item katalog toko → pemetaan SKU → pesanan lama ikut tertaut. Belum ada yang ditulis sampai Anda menekan Terapkan."
+      onSimpan={apply} menyimpan={busy} bisaSimpan={!!plan} labelSimpan="Terapkan"
+      aksiKiri={(
+        <Button type="button" variant="outline" onClick={load} disabled={busy} data-testid="onb-refresh-plan">
+          <Eye />Susun ulang
+        </Button>
+      )}>
+      <p className="text-sm text-muted-foreground">
+        Judul dari platform: <span className="font-medium text-foreground">{product.product_name || '(tanpa nama)'}</span>
+        {' '}· toko {product.account_name || '—'} · {fmt(product.sku_count)} SKU · {fmt(product.pcs)} pcs · {rp(product.value)}
+      </p>
 
       {/* Pilihan pemilik — TANPA kolom ketik nama model (gate INV-F14) */}
-      <div className="grid md:grid-cols-2 gap-3">
-        <ModelSelect
-          value={modelId} onChange={setModelId}
-          label="Tautkan ke model master yang sudah ada (opsional)"
-          hint="Biarkan kosong untuk membuat model BARU — namanya diturunkan dari judul platform (lihat di bawah). Nama model sengaja tidak bisa diketik di sini supaya model kembar tidak lahir."
-          testId="onb-model-select" />
-        <CategorySelect
-          value={categoryCode} onChange={setCategoryCode}
-          hint="Kategori menentukan prefix kode model. Kosong = pakai usulan sistem."
-          testId="onb-category-select" />
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Tautkan ke model master yang sudah ada (opsional)"
+          petunjuk="Kosong = buat model BARU; namanya diturunkan dari judul platform. Nama model sengaja tidak bisa diketik supaya model kembar tidak lahir.">
+          <ModelSelect value={modelId} onChange={setModelId} label={null} testId="onb-model-select" />
+        </Isian>
+        <Isian label="Kategori produk" petunjuk="Kategori menentukan awalan kode model. Kosong = pakai usulan sistem.">
+          <CategorySelect value={categoryCode} onChange={setCategoryCode} label={null} testId="onb-category-select" />
+        </Isian>
       </div>
 
-      {busy && !plan ? (
-        <div className="p-10 text-center text-muted-foreground">
-          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Menyusun rencana…
-        </div>
-      ) : null}
+      {busy && !plan ? <p className="py-6 text-center text-sm text-muted-foreground">Menyusun rencana…</p> : null}
 
       {plan ? (
         <>
-          {/* Ringkasan rencana */}
-          <div className="rounded-lg border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary))]/[0.07] p-3 text-sm"
-               data-testid="onb-plan-summary">
-            <div className="flex items-center gap-1.5 font-semibold text-[hsl(var(--primary))] mb-1.5">
-              <Eye className="w-4 h-4" />Pratinjau
+          <section className="space-y-2" data-testid="onb-plan-summary">
+            <p className="text-sm font-medium">Pratinjau</p>
+            <p className="text-sm text-foreground">{plan.message}</p>
+            <div className="flex flex-wrap gap-1.5">
+              <span data-testid="onb-chip-model">
+                <StatusBadge tone={plan.model.exists ? 'success' : 'primary'}
+                  label={`Model ${plan.model.exists ? 'sudah ada' : 'baru'}: ${plan.model.name} (${plan.model.code})`} />
+              </span>
+              <StatusBadge tone="default" label={`Kategori: ${plan.model.category_name}`} />
+              <span data-testid="onb-chip-variants">
+                <StatusBadge tone="primary" label={`${fmt(t.variants_new)} varian baru · ${fmt(t.variants_existing)} sudah ada`} />
+              </span>
+              <StatusBadge tone={newColors.length ? 'warning' : 'default'} label={`${fmt(t.colors_new)} warna baru`} />
+              <StatusBadge tone={newSizes.length ? 'warning' : 'default'} label={`${fmt(t.sizes_new)} ukuran baru`} />
+              <StatusBadge tone="default" label={`${fmt((plan.options || []).length)} opsi dipakai`} />
+              <span data-testid="onb-chip-skus"><StatusBadge tone="success" label={`${fmt(t.skus_to_map)} SKU akan ditautkan`} /></span>
+              <StatusBadge tone="success" label={`± ${fmt(t.order_lines_to_link)} baris pesanan`} />
+              <span data-testid="onb-chip-collisions">
+                <StatusBadge tone={t.collisions ? 'danger' : 'success'}
+                  label={t.collisions ? `${fmt(t.collisions)} tabrakan identitas` : 'Tanpa tabrakan identitas'} />
+              </span>
             </div>
-            <div className="text-foreground">{plan.message}</div>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              <Chip icon={Package} tone={plan.model.exists ? 'emerald' : 'blue'} testId="onb-chip-model">
-                Model {plan.model.exists ? 'sudah ada' : 'baru'}: {plan.model.name} ({plan.model.code})
-              </Chip>
-              <Chip icon={Layers} tone="slate">Kategori: {plan.model.category_name}</Chip>
-              <Chip icon={Boxes} tone="blue" testId="onb-chip-variants">
-                {fmt(t.variants_new)} varian baru · {fmt(t.variants_existing)} sudah ada
-              </Chip>
-              <Chip icon={Palette} tone={newColors.length ? 'amber' : 'slate'}>
-                {fmt(t.colors_new)} warna baru
-              </Chip>
-              <Chip icon={Ruler} tone={newSizes.length ? 'amber' : 'slate'}>
-                {fmt(t.sizes_new)} ukuran baru
-              </Chip>
-              <Chip icon={SlidersHorizontal} tone="slate">
-                {fmt((plan.options || []).length)} opsi dipakai
-              </Chip>
-              <Chip icon={CheckCircle2} tone="emerald" testId="onb-chip-skus">
-                {fmt(t.skus_to_map)} SKU akan ditautkan
-              </Chip>
-              <Chip icon={CheckCircle2} tone="emerald">
-                ± {fmt(t.order_lines_to_link)} baris pesanan
-              </Chip>
-              <Chip icon={t.collisions ? AlertTriangle : CheckCircle2}
-                    tone={t.collisions ? 'rose' : 'emerald'} testId="onb-chip-collisions">
-                {t.collisions ? `${fmt(t.collisions)} TABRAKAN identitas` : 'tanpa tabrakan identitas'}
-              </Chip>
-            </div>
-          </div>
+          </section>
 
-          {/* Master baru yang akan lahir */}
           {(newColors.length || newSizes.length) ? (
-            <div className="rounded-lg border border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning))]/[0.07] p-3 text-xs"
-                 data-testid="onb-new-masters">
-              <div className="font-semibold text-[hsl(var(--warning))] mb-1.5">
-                Master baru yang akan dibuat (disalin apa adanya dari variasi platform — tidak ditebak)
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {newColors.map((c) => (
-                  <Chip key={c.code} icon={Palette} tone="amber">{c.name} → {c.code}</Chip>
-                ))}
-                {newSizes.map((s) => (
-                  <Chip key={s.code} icon={Ruler} tone="amber">{s.code}</Chip>
-                ))}
-              </div>
-            </div>
+            <Notice tone="warning" testId="onb-new-masters"
+              title="Master baru yang akan dibuat (disalin apa adanya dari variasi platform — tidak ditebak)">
+              {[...newColors.map((c) => `${c.name} → ${c.code}`), ...newSizes.map((s) => s.code)].join(' · ')}
+            </Notice>
           ) : null}
 
-          {/* Peringatan bagian variasi yang tidak terbaca */}
           {plan.warnings?.length ? (
-            <div className="rounded-lg border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive))]/[0.07] p-3 text-xs"
-                 data-testid="onb-warnings">
-              <div className="font-semibold text-[hsl(var(--destructive))] mb-1 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                {plan.warnings.length} variasi punya bagian yang tidak dikenali
-              </div>
+            <Notice tone="danger" icon={AlertTriangle} testId="onb-warnings"
+              title={`${plan.warnings.length} variasi punya bagian yang tidak dikenali`}>
               {plan.warnings.slice(0, 5).map((w) => (
-                <div key={w.platform_sku_id} className="text-muted-foreground">
-                  <span className="tabular-nums">{w.platform_sku_id}</span> — {w.variation} →{' '}
-                  <b>{(w.unreadable || []).join(', ')}</b>
-                </div>
+                <span key={w.platform_sku_id} className="block">
+                  <span className="tabular-nums">{w.platform_sku_id}</span> — {w.variation} → <b>{(w.unreadable || []).join(', ')}</b>
+                </span>
               ))}
-            </div>
+            </Notice>
           ) : null}
 
-          {/* Tabel varian yang akan lahir */}
-          <div className="rounded-lg border border-foreground/10 overflow-hidden"
-               data-testid="onb-variants-table">
-            <div className="max-h-[38vh] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-foreground/[0.06] sticky top-0">
-                  <tr className="text-left">
-                    <th className="px-3 py-2 font-semibold">SKU yang akan lahir</th>
-                    <th className="px-3 py-2 font-semibold">Warna</th>
-                    <th className="px-3 py-2 font-semibold">Ukuran</th>
-                    <th className="px-3 py-2 font-semibold">Opsi (dimensi ke-3)</th>
-                    <th className="px-3 py-2 font-semibold text-right">Pcs</th>
-                    <th className="px-3 py-2 font-semibold text-right">SKU platform</th>
-                    <th className="px-3 py-2 font-semibold">Variasi asli</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-foreground/5">
-                  {(plan.variants || []).map((v) => (
-                    <tr key={v.identity_key} className="hover:bg-foreground/[0.03]">
-                      <td className="px-3 py-2 tabular-nums text-xs font-medium">{v.sku}</td>
-                      <td className="px-3 py-2">{v.color_name}</td>
-                      <td className="px-3 py-2">{v.size_code}</td>
-                      <td className="px-3 py-2">
-                        <Chip tone={v.option_code === 'NA' ? 'slate' : 'blue'}>{v.option_name}</Chip>
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fmt(v.pcs)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{fmt(v.sku_count)}</td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground max-w-[18rem] truncate"
-                          title={(v.variations || []).join(' | ')}>
-                        {(v.variations || []).join(' | ')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="max-h-[38vh] overflow-auto" data-testid="onb-variants-table">
+            <Table className="min-w-[44rem]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>SKU yang akan lahir</TableHead><TableHead>Warna</TableHead><TableHead>Ukuran</TableHead>
+                  <TableHead>Opsi (dimensi ke-3)</TableHead><TableHead className="text-right">Pcs</TableHead>
+                  <TableHead className="text-right">SKU platform</TableHead><TableHead>Variasi asli</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(plan.variants || []).map((v) => (
+                  <TableRow key={v.identity_key}>
+                    <TableCell className="font-medium tabular-nums">{v.sku}</TableCell>
+                    <TableCell>{v.color_name}</TableCell>
+                    <TableCell>{v.size_code}</TableCell>
+                    <TableCell><StatusBadge tone={v.option_code === 'NA' ? 'default' : 'primary'} label={v.option_name} /></TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(v.pcs)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{fmt(v.sku_count)}</TableCell>
+                    <TableCell className="max-w-[18rem] truncate text-muted-foreground" title={(v.variations || []).join(' | ')}>
+                      {(v.variations || []).join(' | ')}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
 
           {applied ? (
-            <div className={`rounded-lg border p-3 text-sm ${applied.failures?.length
-              ? 'border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning))]/[0.07]'
-              : 'border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success))]/[0.07]'}`}
-                 data-testid="onb-apply-result">
-              <div className="font-semibold text-foreground mb-1 flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />Hasil penerapan
-              </div>
-              <div className="text-foreground">{applied.message}</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                Varian dibuat: <b>{fmt(applied.created?.variants)}</b> ·
-                {' '}warna baru: <b>{fmt(applied.created?.colors)}</b> ·
-                {' '}SKU ditautkan: <b>{fmt(applied.skus_mapped)}</b> ·
-                {' '}baris pesanan tertaut: <b>{fmt(applied.order_lines_linked)}</b>
-              </div>
+            <Notice tone={applied.failures?.length ? 'warning' : 'success'} icon={CheckCircle2} testId="onb-apply-result"
+              title={`Hasil penerapan: ${applied.message}`}>
+              Varian dibuat <b>{fmt(applied.created?.variants)}</b> · warna baru <b>{fmt(applied.created?.colors)}</b> ·
+              {' '}SKU ditautkan <b>{fmt(applied.skus_mapped)}</b> · baris pesanan tertaut <b>{fmt(applied.order_lines_linked)}</b>
               {applied.failures?.length ? (
-                <div className="text-xs text-[hsl(var(--warning))] mt-1">
-                  {applied.failures.length} gagal: {applied.failures.slice(0, 3)
-                    .map((f) => `${f.platform_sku_id} (${f.message})`).join('; ')}
-                </div>
+                <span className="mt-1 block">
+                  {applied.failures.length} gagal: {applied.failures.slice(0, 3).map((f) => `${f.platform_sku_id} (${f.message})`).join('; ')}
+                </span>
               ) : null}
-            </div>
+            </Notice>
           ) : null}
         </>
       ) : null}
-
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose} data-testid="onb-close">Tutup</Button>
-        <Button variant="outline" onClick={load} disabled={busy} className="border-foreground/10"
-                data-testid="onb-refresh-plan">
-          <Eye className="w-4 h-4 mr-1.5" />Susun ulang rencana
-        </Button>
-        <Button onClick={apply} disabled={busy || !plan} data-testid="onb-apply">
-          {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
-          Terapkan
-        </Button>
-      </DialogFooter>
-    </DialogContent>
+    </FormPopup>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   TAB: Onboarding per Produk
+   BAGIAN: produk platform yang belum dikenal gudang (per produk)
    ═══════════════════════════════════════════════════════════════════════════ */
 export function ProductOnboardingTab({ onDone }) {
   const [data, setData] = useState(null);
@@ -325,144 +232,89 @@ export function ProductOnboardingTab({ onDone }) {
   useEffect(() => { load(); }, [load]);
 
   const products = data?.products || [];
+  const kolom = [
+    { kunci: 'model', label: 'Usulan model', hp: 'judul', isi: (p) => (
+      <div className="min-w-0 md:max-w-[22rem]" data-testid={`onb-card-${p.product_key}`}>
+        <p className="truncate font-medium" title={p.proposed_model_name}>{p.proposed_model_name}</p>
+        <p className="hidden truncate text-xs text-muted-foreground md:block" title={p.product_name}>{p.product_name}</p>
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', hp: 'keterangan', isi: (p) => p.proposed_category_name || '—' },
+    { kunci: 'sku', label: 'SKU', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.sku_count)}</span> },
+    { kunci: 'pcs', label: 'Pcs dipesan', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.pcs)}</span> },
+    { kunci: 'varian', label: 'Varian', hp: false, rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmt(p.identity_count)}</span> },
+    { kunci: 'nilai', label: 'Nilai pesanan', hp: false, rata: 'kanan', isi: (p) => <span className="tabular-nums">{rp(p.value)}</span> },
+    { kunci: 'ket', label: 'Keterangan', hp: false, isi: (p) => (
+      <div className="flex flex-wrap gap-1">
+        <StatusBadge tone="default" label={`${(p.colors || []).length} warna · ${(p.sizes || []).join(' · ') || '—'}`} />
+        {(p.options || []).length > 1 ? <StatusBadge tone="primary" label={`${(p.options || []).length} opsi`} /> : null}
+        {p.model_exists ? <StatusBadge tone="success" label="Model sudah ada" /> : null}
+        {p.collisions ? <StatusBadge tone="danger" label={`${p.collisions} tabrakan`} /> : null}
+        {(p.unreadable || []).length ? <StatusBadge tone="warning" label={`${p.unreadable.length} tak terbaca`} /> : null}
+      </div>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (
+      <Button size="sm" onClick={() => setPicked(p)} data-testid={`onb-plan-${p.product_key}`}>
+        <Sparkles />Susun rencana
+      </Button>) },
+  ];
 
   return (
-    <div className="space-y-4" data-testid="onboarding-tab">
-      <div className="rounded-lg border border-foreground/10 bg-foreground/[0.03] p-4 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5 font-semibold text-foreground mb-1">
-          <Info className="w-3.5 h-3.5" />Kenapa per produk, bukan per SKU
-        </div>
-        Pada data Anda <b>{fmt(data?.total_skus)} SKU platform</b> hanya berasal dari{' '}
-        <b>{fmt(data?.total_products)} produk</b>. Satu keputusan per produk membuat seluruh
-        variannya (warna × ukuran × <b>opsi</b>) lahir sekaligus, lalu SKU dan seluruh baris
-        pesanan lamanya ikut tertaut. Setiap tombol menampilkan <b>rencana lebih dulu</b>.
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={load} className="border-foreground/10"
-                data-testid="onb-reload">
-          <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />Muat ulang
-        </Button>
-        <Button variant="outline" size="sm" className="border-foreground/10"
-                data-testid="onb-export"
-                onClick={() => {
-                  const n = downloadCsv('produk-belum-dikenal-gudang',
-                    ['Produk', 'Toko', 'Usulan Model', 'Kategori', 'SKU', 'Pcs', 'Nilai',
-                     'Identitas', 'Warna', 'Ukuran', 'Opsi', 'Tabrakan'],
-                    products.map((p) => [
-                      p.product_name, p.account_name, p.proposed_model_name,
-                      p.proposed_category_name, p.sku_count, p.pcs, p.value,
-                      p.identity_count, (p.colors || []).join(' / '),
-                      (p.sizes || []).join(' / '), (p.options || []).join(' / '),
-                      p.collisions]));
-                  toast.success(`${n} baris diunduh`);
-                }}>
-          Unduh CSV
-        </Button>
-        <div className="ml-auto flex flex-wrap gap-1.5">
-          <Chip icon={Package} tone="amber" testId="onb-stat-products">
-            {fmt(data?.total_products)} produk belum dikenal
-          </Chip>
-          <Chip icon={Boxes} tone="amber" testId="onb-stat-skus">{fmt(data?.total_skus)} SKU</Chip>
-          <Chip icon={Boxes} tone="slate">{fmt(data?.pcs_total)} pcs</Chip>
-          <Chip icon={data?.collisions_total ? AlertTriangle : CheckCircle2}
-                tone={data?.collisions_total ? 'rose' : 'emerald'} testId="onb-stat-collisions">
-            {data?.collisions_total ? `${fmt(data.collisions_total)} tabrakan` : '0 tabrakan identitas'}
-          </Chip>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="p-10 text-center text-muted-foreground">
-          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Memuat produk…
-        </div>
-      ) : products.length === 0 ? (
-        <div className="p-10 text-center" data-testid="onb-empty">
-          <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-[hsl(var(--success))] " />
-          <div className="font-semibold">Semua produk sudah dikenal gudang</div>
-          <p className="text-sm text-muted-foreground mt-1">
-            Tidak ada SKU platform yang belum tertaut master. Antrean gudang bisa bekerja.
+    <div className="space-y-3" data-testid="onboarding-tab">
+      <p className="text-sm text-muted-foreground">
+        Satu keputusan per produk membuat seluruh variannya (warna × ukuran × opsi) lahir sekaligus, lalu SKU dan baris
+        pesanan lamanya ikut tertaut. Setiap tombol menampilkan rencana lebih dulu.
+      </p>
+      <BarisAlat
+        kiri={(
+          <p className="text-sm" data-testid="onb-stats">
+            <span className="whitespace-nowrap" data-testid="onb-stat-products"><b className="tabular-nums">{fmt(data?.total_products)}</b> produk belum dikenal</span>
+            {' · '}<span className="whitespace-nowrap" data-testid="onb-stat-skus"><b className="tabular-nums">{fmt(data?.total_skus)}</b> SKU</span>
+            {' · '}<span className="whitespace-nowrap"><b className="tabular-nums">{fmt(data?.pcs_total)}</b> pcs</span>
+            {' · '}<span data-testid="onb-stat-collisions" className={`whitespace-nowrap ${data?.collisions_total ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>
+              {fmt(data?.collisions_total)} tabrakan identitas
+            </span>
           </p>
-        </div>
+        )}
+        kanan={(
+          <>
+            <TombolUnduh namaBerkas="produk-belum-dikenal-gudang" namaLembar="Produk" baris={products} testId="onb-export"
+              kolom={[
+                { label: 'Produk', nilai: (p) => p.product_name },
+                { label: 'Toko', nilai: (p) => p.account_name },
+                { label: 'Usulan model', nilai: (p) => p.proposed_model_name },
+                { label: 'Kategori', nilai: (p) => p.proposed_category_name },
+                { label: 'SKU', nilai: (p) => Number(p.sku_count || 0) },
+                { label: 'Pcs', nilai: (p) => Number(p.pcs || 0) },
+                { label: 'Nilai (Rp)', nilai: (p) => Number(p.value || 0) },
+                { label: 'Varian', nilai: (p) => Number(p.identity_count || 0) },
+                { label: 'Warna', nilai: (p) => (p.colors || []).join(' / ') },
+                { label: 'Ukuran', nilai: (p) => (p.sizes || []).join(' / ') },
+                { label: 'Opsi', nilai: (p) => (p.options || []).join(' / ') },
+                { label: 'Tabrakan', nilai: (p) => Number(p.collisions || 0) },
+              ]} />
+            <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+              data-testid="onb-reload">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+          </>
+        )} />
+
+      {loading && !data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat produk…</p>
       ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3" data-testid="onb-product-grid">
-          {products.map((p) => (
-            <GlassCard key={p.product_key} className="p-4 flex flex-col gap-2.5"
-                       data-testid={`onb-card-${p.product_key}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="font-semibold truncate" title={p.proposed_model_name}>
-                    {p.proposed_model_name}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground line-clamp-2"
-                       title={p.product_name}>
-                    {p.product_name}
-                  </div>
-                </div>
-                <Badge variant="outline" className="shrink-0 border-foreground/20">
-                  {p.proposed_category_name}
-                </Badge>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-md bg-foreground/[0.05] py-1.5">
-                  <div className="text-lg font-bold tabular-nums">{fmt(p.sku_count)}</div>
-                  <div className="text-[10px] text-muted-foreground">SKU</div>
-                </div>
-                <div className="rounded-md bg-foreground/[0.05] py-1.5">
-                  <div className="text-lg font-bold tabular-nums">{fmt(p.pcs)}</div>
-                  <div className="text-[10px] text-muted-foreground">pcs dipesan</div>
-                </div>
-                <div className="rounded-md bg-foreground/[0.05] py-1.5">
-                  <div className="text-lg font-bold tabular-nums">{fmt(p.identity_count)}</div>
-                  <div className="text-[10px] text-muted-foreground">varian</div>
-                </div>
-              </div>
-
-              <div className="text-[11px] text-muted-foreground">{rp(p.value)} nilai pesanan</div>
-
-              <div className="flex flex-wrap gap-1">
-                <Chip icon={Palette} tone="slate">{(p.colors || []).length} warna</Chip>
-                <Chip icon={Ruler} tone="slate">{(p.sizes || []).join(' · ')}</Chip>
-                {(p.options || []).length > 1 ? (
-                  <Chip icon={SlidersHorizontal} tone="blue">
-                    {(p.options || []).length} opsi
-                  </Chip>
-                ) : null}
-                {p.model_exists ? (
-                  <Chip icon={CheckCircle2} tone="emerald">model sudah ada</Chip>
-                ) : null}
-                {p.collisions ? (
-                  <Chip icon={AlertTriangle} tone="rose">{p.collisions} tabrakan</Chip>
-                ) : null}
-                {(p.unreadable || []).length ? (
-                  <Chip icon={AlertTriangle} tone="amber">
-                    {p.unreadable.length} tak terbaca
-                  </Chip>
-                ) : null}
-              </div>
-
-              <Button size="sm" className="mt-auto" onClick={() => setPicked(p)}
-                      data-testid={`onb-plan-${p.product_key}`}>
-                <Sparkles className="w-4 h-4 mr-1.5" />Susun Rencana
-              </Button>
-            </GlassCard>
-          ))}
-        </div>
+        <TabelData kolom={kolom} baris={products} kunci={(p) => p.product_key} testId="onb-product-grid"
+          kosong={<EmptyState icon={CheckCircle2} testId="onb-empty" title="Semua produk sudah dikenal gudang"
+            description="Tidak ada SKU platform yang belum tertaut master. Antrean gudang bisa bekerja." />} />
       )}
 
-      <Dialog open={Boolean(picked)} onOpenChange={(o) => !o && setPicked(null)}>
-        {picked ? (
-          <PlanDialog product={picked} onClose={() => setPicked(null)}
-                      onDone={() => { load(); onDone?.(); }} />
-        ) : null}
-      </Dialog>
+      {picked ? (
+        <PlanDialog product={picked} onClose={() => setPicked(null)} onDone={() => { load(); onDone?.(); }} />
+      ) : null}
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   TAB: master OPSI VARIAN (dimensi ke-3)
+   BAGIAN: master OPSI VARIAN (dimensi ke-3)
    ═══════════════════════════════════════════════════════════════════════════ */
 function OptionDialog({ option, onClose, onDone }) {
   const isNew = !option?.code;
@@ -491,54 +343,33 @@ function OptionDialog({ option, onClose, onDone }) {
   };
 
   return (
-    <DialogContent className="max-w-lg" data-testid="option-dialog">
-      <DialogHeader>
-        <DialogTitle>{isNew ? 'Tambah opsi varian' : `Ubah opsi ${option.code}`}</DialogTitle>
-        <DialogDescription>
-          Opsi adalah <b>dimensi ke-3</b> identitas barang (setelah warna &amp; ukuran).
-          Kodenya masuk ke akhir SKU — contoh <span className="tabular-nums">BLS-0001-PBL-XL-KRT</span>.
-          Kode <span className="tabular-nums">NA</span> berarti listing tidak menyebut opsi dan
-          sengaja <b>tidak</b> menambah akhiran SKU.
-        </DialogDescription>
-      </DialogHeader>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <Label className="text-xs">Kode (maks 8 huruf)</Label>
-          <Input value={form.code} disabled={!isNew} maxLength={8}
-                 onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
-                 placeholder="KRT" data-testid="opt-code" />
-        </div>
-        <div>
-          <Label className="text-xs">Urutan tampil</Label>
-          <Input type="number" value={form.order_seq}
-                 onChange={(e) => setForm({ ...form, order_seq: e.target.value })}
-                 data-testid="opt-order" />
-        </div>
-        <div className="col-span-2">
-          <Label className="text-xs">Nama opsi</Label>
-          <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                 placeholder="Pakai Karet" data-testid="opt-name" />
-        </div>
-        <div className="col-span-2">
-          <Label className="text-xs">Keterangan (opsional)</Label>
-          <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                 placeholder="Pinggang/lengan memakai karet." data-testid="opt-notes" />
-        </div>
-        <label className="col-span-2 flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={form.active}
-                 onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                 data-testid="opt-active" />
-          Aktif (bisa dipakai varian baru)
-        </label>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="option-dialog"
+      judul={isNew ? 'Tambah opsi varian' : `Ubah opsi ${option.code}`}
+      keterangan="Opsi = dimensi ke-3 identitas barang (setelah warna & ukuran); kodenya masuk ke akhir SKU, mis. BLS-0001-PBL-XL-KRT. Kode NA = judul produk tidak menyebut opsi, tidak menambah akhiran SKU."
+      onSimpan={submit} menyimpan={busy} labelSimpan="Simpan">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Kode (maks 8 huruf)" wajib htmlFor="opt-kode">
+          <Input id="opt-kode" value={form.code} disabled={!isNew} maxLength={8}
+            onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} placeholder="KRT" data-testid="opt-code" />
+        </Isian>
+        <Isian label="Urutan tampil" htmlFor="opt-urut">
+          <Input id="opt-urut" type="number" value={form.order_seq}
+            onChange={(e) => setForm({ ...form, order_seq: e.target.value })} data-testid="opt-order" />
+        </Isian>
       </div>
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={submit} disabled={busy} data-testid="opt-submit">
-          {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                : <CheckCircle2 className="w-4 h-4 mr-1.5" />}Simpan
-        </Button>
-      </DialogFooter>
-    </DialogContent>
+      <Isian label="Nama opsi" wajib htmlFor="opt-nama">
+        <Input id="opt-nama" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+          placeholder="Pakai Karet" data-testid="opt-name" />
+      </Isian>
+      <Isian label="Keterangan (opsional)" htmlFor="opt-ket">
+        <Input id="opt-ket" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          placeholder="Pinggang/lengan memakai karet." data-testid="opt-notes" />
+      </Isian>
+      <label className="flex items-center gap-3 text-sm" htmlFor="opt-aktif">
+        <Switch id="opt-aktif" checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} data-testid="opt-active" />
+        <span>Aktif (bisa dipakai varian baru)</span>
+      </label>
+    </FormPopup>
   );
 }
 
@@ -567,90 +398,70 @@ export function VariantOptionsTab() {
   const totalVariants = useMemo(
     () => rows.reduce((a, r) => a + Number(r.variant_count || 0), 0), [rows]);
 
-  return (
-    <div className="space-y-4" data-testid="variant-options-tab">
-      <div className="rounded-lg border border-foreground/10 bg-foreground/[0.03] p-4 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1.5 font-semibold text-foreground mb-1">
-          <SlidersHorizontal className="w-3.5 h-3.5" />Dimensi ke-3: Opsi varian
-        </div>
-        Sebelum dimensi ini ada, identitas barang hanya <b>warna × ukuran</b> — sehingga{' '}
-        <span className="tabular-nums">BLACK, XL, PAKAI KARET</span> dan{' '}
-        <span className="tabular-nums">BLACK, XL, TANPA KARET</span> tertimpa menjadi satu barang.
-        Pada data nyata <b>8 SKU berbeda</b> pernah jatuh ke satu identitas{' '}
-        <span className="tabular-nums">hitam/XL</span>. Sekarang keduanya punya SKU sendiri:{' '}
-        <span className="tabular-nums">…-XL-KRT</span> dan <span className="tabular-nums">…-XL-NOK</span>.
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={load} className="border-foreground/10"
-                data-testid="opt-reload">
-          <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />Muat ulang
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums" data-testid={`option-row-${r.code}`}>{r.code}</span> },
+    { kunci: 'nama', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
+    { kunci: 'ket', label: 'Keterangan', hp: false, isi: (r) => <span className="text-sm text-muted-foreground md:block md:max-w-[26rem]">{r.notes || '—'}</span> },
+    { kunci: 'dipakai', label: 'Dipakai varian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.variant_count)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => (
+      <span className="inline-flex flex-wrap gap-1">
+        <StatusBadge tone={r.active === false ? 'muted' : 'success'} label={r.active === false ? 'Nonaktif' : 'Aktif'} />
+        {r.is_default ? <StatusBadge tone="primary" label="Bawaan" /> : null}
+      </span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => setEdit(r)} aria-label={`Ubah opsi ${r.code}`} title="Ubah opsi"
+          data-testid={`option-edit-${r.code}`}>
+          <Pencil />
         </Button>
-        <Button size="sm" onClick={() => setEdit({})} data-testid="opt-add">
-          <Plus className="w-4 h-4 mr-1.5" />Tambah opsi
-        </Button>
-        <div className="ml-auto text-xs text-muted-foreground">
-          {rows.length} opsi · {fmt(totalVariants)} varian memakainya
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-foreground/10 overflow-hidden"
-           data-testid="options-table">
-        <table className="w-full text-sm">
-          <thead className="bg-foreground/[0.06]">
-            <tr className="text-left">
-              <th className="px-3 py-2 font-semibold">Kode</th>
-              <th className="px-3 py-2 font-semibold">Nama</th>
-              <th className="px-3 py-2 font-semibold">Keterangan</th>
-              <th className="px-3 py-2 font-semibold text-right">Dipakai varian</th>
-              <th className="px-3 py-2 font-semibold">Status</th>
-              <th className="px-3 py-2 font-semibold text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-foreground/5">
-            {loading ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
-                <Loader2 className="w-5 h-5 animate-spin mx-auto" /></td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
-                Belum ada opsi.</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.code} className="hover:bg-foreground/[0.03]"
-                  data-testid={`option-row-${r.code}`}>
-                <td className="px-3 py-2 tabular-nums text-xs font-semibold">{r.code}</td>
-                <td className="px-3 py-2">{r.name}</td>
-                <td className="px-3 py-2 text-xs text-muted-foreground max-w-[22rem]">{r.notes}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{fmt(r.variant_count)}</td>
-                <td className="px-3 py-2">
-                  {r.active === false
-                    ? <Chip tone="slate">nonaktif</Chip>
-                    : <Chip tone="emerald">aktif</Chip>}
-                  {r.is_default ? <Chip tone="blue">bawaan</Chip> : null}
-                </td>
-                <td className="px-3 py-2 text-right whitespace-nowrap">
-                  <Button variant="ghost" size="sm" onClick={() => setEdit(r)}
-                          data-testid={`option-edit-${r.code}`}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  {r.code !== 'NA' && r.active !== false ? (
-                    <Button variant="ghost" size="sm" onClick={() => deactivate(r.code)}
-                            data-testid={`option-off-${r.code}`}>
-                      <Ban className="w-3.5 h-3.5 text-[hsl(var(--destructive))] " />
-                    </Button>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <Dialog open={Boolean(edit)} onOpenChange={(o) => !o && setEdit(null)}>
-        {edit ? (
-          <OptionDialog option={edit} onClose={() => setEdit(null)}
-                        onDone={() => { setEdit(null); load(); }} />
+        {r.code !== 'NA' && r.active !== false ? (
+          <Button variant="ghost" size="icon-sm" onClick={() => deactivate(r.code)} aria-label={`Nonaktifkan opsi ${r.code}`}
+            title="Nonaktifkan opsi" data-testid={`option-off-${r.code}`}>
+            <Ban className="text-[hsl(var(--danger-text))]" />
+          </Button>
         ) : null}
-      </Dialog>
+      </div>) },
+  ];
+
+  return (
+    <div className="space-y-3" data-testid="variant-options-tab">
+      <p className="text-sm text-muted-foreground">
+        Opsi adalah dimensi ke-3 identitas barang setelah warna × ukuran, supaya mis. <span className="tabular-nums">BLACK, XL, PAKAI KARET</span> dan
+        {' '}<span className="tabular-nums">BLACK, XL, TANPA KARET</span> punya SKU sendiri (<span className="tabular-nums">…-XL-KRT</span> dan
+        {' '}<span className="tabular-nums">…-XL-NOK</span>).
+      </p>
+      <BarisAlat
+        kiri={<p className="text-sm text-muted-foreground">{rows.length} opsi · {fmt(totalVariants)} varian memakainya</p>}
+        kanan={(
+          <>
+            <TombolUnduh namaBerkas="opsi-varian" namaLembar="Opsi varian" baris={rows} testId="opt-unduh"
+              kolom={[
+                { label: 'Kode', nilai: (r) => r.code },
+                { label: 'Nama', nilai: (r) => r.name },
+                { label: 'Keterangan', nilai: (r) => r.notes || '' },
+                { label: 'Urutan', nilai: (r) => Number(r.order_seq || 0) },
+                { label: 'Dipakai varian', nilai: (r) => Number(r.variant_count || 0) },
+                { label: 'Status', nilai: (r) => (r.active === false ? 'Nonaktif' : 'Aktif') },
+                { label: 'Bawaan', nilai: (r) => (r.is_default ? 'Ya' : '') },
+              ]} />
+            <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+              data-testid="opt-reload">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+            <Button onClick={() => setEdit({})} data-testid="opt-add"><Plus />Tambah opsi</Button>
+          </>
+        )} />
+
+      {loading && rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat opsi…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={rows} kunci={(r) => r.code} testId="options-table"
+          kosong={<EmptyState title="Opsi varian masih kosong" description='Tambahkan opsi dengan tombol "Tambah opsi".' />} />
+      )}
+
+      {edit ? (
+        <OptionDialog option={edit} onClose={() => setEdit(null)} onDone={() => { setEdit(null); load(); }} />
+      ) : null}
     </div>
   );
 }

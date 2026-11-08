@@ -9,6 +9,10 @@
  * dan menyediakan dua aksi bernilai: koreksi HPP dan scrap (write-off).
  *
  * Sumber data: /api/acc/valuation (+ /valuation/set-cost, /api/acc/stock/scrap)
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (di dalam tab modul Aksesoris kepala tersembunyi), penyaring
+ * satu baris, tabel = TabelData + unduh Excel/CSV, form Set HPP / Scrap / rapor = FormPopup, panel otomasi
+ * dipindah ke popup (dulu dua panel besar mendorong tabel ke bawah), rekap per kategori = tabel.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -16,14 +20,21 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { monthOptions } from '../finance/PeriodPicker';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import {
-  Banknote, Coins, AlertTriangle, RefreshCw, Search, X, Trash2, Tag,
-  CheckCircle2, Loader2, Package, Info, FileSpreadsheet, FileText, Download,
+  AlertTriangle, RefreshCw, Search, X, Trash2, Tag, Package, Info, FileSpreadsheet, Settings2,
 } from 'lucide-react';
-import { EmptyState } from '../EmptyState';
-import { Skeleton } from '@/components/ui/skeleton';
-import AccessoryValuationLedger from './AccessoryValuationLedger';
 import { MoneyInput } from '@/components/ui/money-input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { thisMonthWIB } from '@/lib/waktu';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice } from '../moduleAtoms';
+import AccessoryValuationLedger from './AccessoryValuationLedger';
 // FASE 10: otomasi — ringkasan harian item belum dinilai + rapor bulanan via email
 import AccessoryValuationAutomation from './AccessoryValuationAutomation';
 
@@ -49,30 +60,13 @@ const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDi
 const fmtRp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}`;
 
 const METHOD_LABEL = { moving_average: 'Rata-rata bergerak', manual: 'Manual' };
-
-function Stat({ icon: Icon, label, value, hint, tone = 'violet' }) {
-  const tones = {
-    violet: 'text-violet-600 dark:text-violet-400 bg-violet-500/5 border-violet-500/20',
-    emerald: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 border-emerald-500/20',
-    amber: 'text-amber-700 dark:text-amber-400 bg-amber-500/5 border-amber-500/20',
-    sky: 'text-sky-600 dark:text-sky-400 bg-sky-500/5 border-sky-500/20',
-  };
-  return (
-    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className="w-4 h-4" />
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-      <div className="text-xl font-bold">{value}</div>
-      {hint && <div className="text-[11px] text-muted-foreground mt-0.5">{hint}</div>}
-    </div>
-  );
-}
+const SCRAP_REASONS = ['Rusak', 'Hilang', 'Kadaluarsa', 'Cacat produksi', 'Lain-lain'];
 
 export default function AccessoryValuationTab({ token, onRefreshDash }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+  const [formErr, setFormErr] = useState('');
   const [msg, setMsg] = useState('');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('');
@@ -80,6 +74,9 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [month, setMonth] = useState(thisMonthWIB);
   const [downloading, setDownloading] = useState('');
+  const [raporOpen, setRaporOpen] = useState(false);
+  const [raporFormat, setRaporFormat] = useState('xlsx');
+  const [otomasiOpen, setOtomasiOpen] = useState(false);
   const [costForm, setCostForm] = useState(null);   // {id, name, unit_cost, stock_qty}
   const [scrapForm, setScrapForm] = useState(null); // {id, name, unit, stock_qty, unit_cost}
 
@@ -96,18 +93,27 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
 
   const items = data?.items || [];
   const totals = data?.totals || {};
-  const filtered = items.filter((it) => {
-    if (filter === 'unvalued' && it.valued) return false;
-    if (filter === 'instock' && !(it.stock_qty > 0)) return false;
+  const cocokCari = (it) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (it.name || '').toLowerCase().includes(q) || (it.code || '').toLowerCase().includes(q);
+  };
+  const filtered = items.filter((it) => {
+    if (filter === 'unvalued' && it.valued) return false;
+    if (filter === 'instock' && !(it.stock_qty > 0)) return false;
+    return cocokCari(it);
   });
-  const pg = useClientPagination(filtered, 10);
+  const pg = useClientPagination(filtered, 25);
+  const dicari = items.filter(cocokCari);
+  const opsiSaring = [
+    { key: '', label: 'Semua item', count: dicari.length },
+    { key: 'instock', label: 'Berstok', count: dicari.filter((it) => it.stock_qty > 0).length },
+    { key: 'unvalued', label: 'Belum dinilai', count: dicari.filter((it) => !it.valued).length },
+  ];
 
   // Rapor valuasi untuk lampiran laporan keuangan (Excel utk diolah, PDF utk ditandatangani).
   const downloadReport = async (fmt) => {
-    setDownloading(fmt); setErr(''); setMsg('');
+    setDownloading(fmt); setFormErr(''); setMsg('');
     try {
       const qs = new URLSearchParams({ format: fmt });
       if (month) qs.set('month', month);
@@ -129,38 +135,39 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      setMsg(`Rapor ${fmt.toUpperCase()} periode ${month || 'semua'} berhasil diunduh.`);
-    } catch (e) { setErr(e.message); }
+      setMsg(`Rapor ${fmt === 'pdf' ? 'PDF' : 'Excel'} periode ${month || 'semua'} berhasil diunduh.`);
+      setRaporOpen(false);
+    } catch (e) { setFormErr(e.message); }
     finally { setDownloading(''); }
   };
 
   const saveCost = async () => {
     const val = parseFloat(costForm.unit_cost);
-    if (!(val >= 0)) { setErr('Harga satuan harus angka ≥ 0'); return; }
+    if (!(val >= 0)) { setFormErr('Harga satuan harus angka ≥ 0'); return; }
     // 2026-11-02 (K12): Set HPP = revaluasi bernilai audit → alasan wajib
-    if (!String(costForm.notes || '').trim()) { setErr('Alasan koreksi HPP wajib diisi (jejak audit revaluasi).'); return; }
-    setSaving(true); setErr(''); setMsg('');
+    if (!String(costForm.notes || '').trim()) { setFormErr('Alasan koreksi HPP wajib diisi (jejak audit revaluasi).'); return; }
+    setSaving(true); setFormErr(''); setMsg('');
     try {
       const res = await api('POST', '/api/acc/valuation/set-cost', token, {
         acc_id: costForm.id, unit_cost: val, notes: costForm.notes || '',
       });
       const rv = res.revaluation || {};
-      setMsg(`HPP ${costForm.name} diperbarui: ${fmtRp(res.old_unit_cost)} → ${fmtRp(res.new_unit_cost)} · nilai stok ${fmtRp(res.stock_value)}`
+      setMsg(`HPP ${costForm.name} disimpan: ${fmtRp(res.old_unit_cost)} → ${fmtRp(res.new_unit_cost)} · nilai stok ${fmtRp(res.stock_value)}`
         + (rv.reval_number ? ` · revaluasi ${rv.reval_number} ${rv.delta_value >= 0 ? '+' : '−'}${fmtRp(Math.abs(rv.delta_value || 0))}`
           + (rv.je_number ? ` (jurnal ${rv.je_number})` : ' (tanpa jurnal: selisih 0)') : ''));
       setCostForm(null);
       setRefreshKey((k) => k + 1);
       await load();
       onRefreshDash?.();
-    } catch (e) { setErr(e.message); }
+    } catch (e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };
 
   const doScrap = async () => {
     const qty = parseFloat(scrapForm.qty);
-    if (!qty || qty <= 0) { setErr('Qty scrap harus lebih dari 0'); return; }
-    if (!(scrapForm.reason || '').trim()) { setErr('Alasan scrap wajib diisi (untuk jejak audit & jurnal)'); return; }
-    setSaving(true); setErr(''); setMsg('');
+    if (!qty || qty <= 0) { setFormErr('Qty scrap harus lebih dari 0'); return; }
+    if (!(scrapForm.reason || '').trim()) { setFormErr('Alasan scrap wajib diisi (untuk jejak audit & jurnal)'); return; }
+    setSaving(true); setFormErr(''); setMsg('');
     try {
       const res = await api('POST', '/api/acc/stock/scrap', token, {
         acc_id: scrapForm.id, qty, reason: scrapForm.reason, notes: scrapForm.notes || '',
@@ -173,311 +180,270 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
       setRefreshKey((k) => k + 1);
       await load();
       onRefreshDash?.();
-    } catch (e) { setErr(e.message); }
+    } catch (e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };
+
+  const bukaSetHpp = (it) => {
+    setFormErr('');
+    setCostForm({ id: it.id, name: it.name, unit_cost: it.unit_cost || '', notes: '', old_cost: Number(it.unit_cost || 0), stock_qty: Number(it.stock_qty || 0), unit: it.unit });
+  };
+  const bukaScrap = (it) => {
+    setFormErr('');
+    setScrapForm({ id: it.id, name: it.name, unit: it.unit, stock_qty: it.stock_qty, unit_cost: it.unit_cost, qty: '', reason: '', notes: '' });
+  };
+
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'keterangan', isi: (it) => <span className="whitespace-nowrap tabular-nums">{it.code}</span> },
+    { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (it) => <span className="font-medium">{it.name}</span> },
+    { kunci: 'kategori', label: 'Kategori', isi: (it) => <span className="text-muted-foreground">{it.category || '—'}</span> },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (it) => (
+      <span className="tabular-nums">{fmtNum(it.stock_qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span>) },
+    // Metode penilaian ditulis kecil di bawah HPP (dulu kolom sendiri → tombol Scrap terpotong di kanan).
+    { kunci: 'hpp', label: 'HPP', rata: 'kanan', isi: (it) => (
+      <div>
+        {it.valued
+          ? <span className="tabular-nums">{fmtRp(it.unit_cost)}</span>
+          : <span className="text-[hsl(var(--warning-text))]" title="Belum dinilai — jurnal persediaan tidak akan terbentuk">belum diisi</span>}
+        {METHOD_LABEL[it.cost_method] && <p className="text-xs text-muted-foreground">{METHOD_LABEL[it.cost_method]}</p>}
+      </div>) },
+    { kunci: 'nilai', label: 'Nilai stok', rata: 'kanan', isi: (it) => (
+      <span className="font-medium tabular-nums">{it.stock_value > 0 ? fmtRp(it.stock_value) : '—'}</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => bukaSetHpp(it)} title="Set / koreksi harga satuan"
+          data-testid={`acc-set-cost-${it.id}`}>
+          <Tag /> Set HPP
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => bukaScrap(it)} disabled={!(it.stock_qty > 0)}
+          title={it.stock_qty > 0 ? 'Scrap / hapus buku stok' : 'Stok kosong'} data-testid={`acc-scrap-${it.id}`}>
+          <Trash2 className="text-[hsl(var(--danger-text))]" /> Scrap
+        </Button>
+      </div>) },
+  ];
 
   // Skeleton HANYA pada muat pertama (saat `data` masih kosong). Kalau tidak,
   // setiap refresh setelah aksi akan meng-UNMOUNT seluruh isi tab — termasuk
   // panel otomasi anak — sehingga pesan hasil aksi (mis. "SMTP belum diisi")
   // ikut hilang sebelum sempat terbaca user. Ini bug nyata yang ketemu saat uji UI.
   if (loading && !data) {
-    return (
-      <div className="space-y-4" data-testid="acc-valuation-loading">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
-        </div>
-        <Skeleton className="h-48 rounded-xl" />
-      </div>
-    );
+    return <p className="py-6 text-center text-sm text-muted-foreground" data-testid="acc-valuation-loading">Memuat valuasi…</p>;
   }
 
+  const adaStok = Number(totals.total_qty || 0) > 0;
+
   return (
-    <div className="space-y-5" data-testid="acc-valuation-tab">
-      {/* KPI */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Stat icon={Banknote} label="Nilai Persediaan" value={fmtRp(totals.total_value)}
-          hint={`${fmtNum(totals.total_qty)} unit · ${totals.total_items || 0} item`} tone="emerald" />
-        <Stat icon={CheckCircle2} label="Item Bernilai" value={fmtNum(totals.valued_items)}
-          hint="Punya harga satuan (HPP)" tone="sky" />
-        <Stat icon={AlertTriangle} label="Belum Dinilai" value={fmtNum(totals.unvalued_items)}
-          hint={totals.unvalued_items ? `${fmtNum(totals.unvalued_qty)} unit tanpa nilai` : 'Semua item sudah dinilai'}
-          tone={totals.unvalued_items ? 'amber' : 'emerald'} />
-        <Stat icon={Coins} label="HPP Rata-rata" value={fmtRp(totals.avg_unit_cost)}
-          hint={METHOD_LABEL[data?.cost_method] || data?.cost_method} />
-      </div>
-
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-lg px-4 py-2" data-testid="acc-val-error">{err}</div>}
-      {msg && <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2" data-testid="acc-val-msg">{msg}</div>}
-
-      {/* Peringatan item belum dinilai */}
-      {totals.unvalued_items > 0 && (
-        <div className="bg-amber-100 dark:bg-amber-500/5 border border-amber-300 dark:border-amber-500/20 rounded-xl p-4"
-          data-testid="acc-val-unvalued-banner">
-          <div className="flex items-center gap-2 mb-1">
-            <AlertTriangle className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-            <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
-              {totals.unvalued_items} item belum punya harga satuan
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Selama HPP masih 0, setiap penerimaan / pengeluaran / selisih opname item tersebut
-            TIDAK akan menghasilkan jurnal keuangan — nilai persediaan jadi tidak sinkron dengan buku besar.
-            Isi harga satuan lewat tombol “Set HPP” di tabel bawah.
+    <PageLayout testId="acc-valuation-tab" title="Valuasi HPP"
+      subtitle="Nilai persediaan aksesoris, item belum dinilai, koreksi HPP, dan scrap."
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => { setSearch(e.target.value); pg.setPage(1); }}
+            placeholder="Cari kode atau nama" className="pl-8 pr-8" data-testid="acc-val-search" />
+          {search && (
+            <Button type="button" variant="ghost" size="icon-sm" onClick={() => setSearch('')}
+              className="absolute right-0.5 top-1/2 -translate-y-1/2" title="Hapus pencarian" aria-label="Hapus pencarian">
+              <X />
+            </Button>
+          )}
+        </div>
+        <FilterChips options={opsiSaring} value={filter} onChange={(v) => { setFilter(v); pg.setPage(1); }}
+          hideWhenEmpty={false} testId="acc-val-filter" />
+      </>}
+      tools={<>
+        <Button variant="outline" onClick={() => { setFormErr(''); setRaporOpen(true); }} data-testid="acc-val-rapor-btn">
+          <FileSpreadsheet /> Rapor
+        </Button>
+        <Button variant="outline" onClick={() => setOtomasiOpen(true)} data-testid="acc-val-otomasi-btn">
+          <Settings2 /> Otomasi
+        </Button>
+        <TombolUnduh namaBerkas="valuasi-aksesoris" namaLembar="Valuasi" baris={filtered} testId="acc-val-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (it) => it.code },
+            { label: 'Nama', nilai: (it) => it.name },
+            { label: 'Kategori', nilai: (it) => it.category || '' },
+            { label: 'Stok', nilai: (it) => Number(it.stock_qty || 0) },
+            { label: 'Satuan', nilai: (it) => it.unit },
+            { label: 'HPP (Rp)', nilai: (it) => (it.valued ? Number(it.unit_cost || 0) : '') },
+            { label: 'Nilai stok (Rp)', nilai: (it) => Number(it.stock_value || 0) },
+            { label: 'Metode', nilai: (it) => METHOD_LABEL[it.cost_method] || '' },
+            { label: 'Status', nilai: (it) => (it.valued ? 'Bernilai' : 'Belum dinilai') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="acc-val-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<div className="space-y-1">
+        {/* Ringkasan valuasi = satu kalimat (dulu 4 kartu + kotak peringatan besar di bawah ringkasan modul →
+            tabel baru mulai di tengah layar). Angka sama: `/api/acc/valuation` totals. */}
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-val-summary">
+          <span>Item bernilai <b className="tabular-nums text-foreground">{fmtNum(totals.valued_items)}</b> dari {fmtNum(totals.total_items)}</span>
+          <span aria-hidden="true">·</span>
+          <span>Belum dinilai <b className={totals.unvalued_items ? 'tabular-nums text-[hsl(var(--warning-text))]' : 'tabular-nums text-foreground'}>{fmtNum(totals.unvalued_items)}</b>
+            {totals.unvalued_items ? ` (${fmtNum(totals.unvalued_qty)} unit stok tanpa nilai)` : ''}</span>
+          <span aria-hidden="true">·</span>
+          <span>Jumlah stok <b className="tabular-nums text-foreground">{fmtNum(totals.total_qty)}</b> bernilai {fmtRp(totals.total_value)}</span>
+          <span aria-hidden="true">·</span>
+          <span title="Nilai persediaan ÷ jumlah stok.">HPP rata-rata <b className="tabular-nums text-foreground">{adaStok ? fmtRp(totals.avg_unit_cost) : '—'}</b>
+            {' '}({adaStok ? (METHOD_LABEL[data?.cost_method] || data?.cost_method) : 'belum ada stok untuk dirata-rata'})</span>
+        </p>
+        {/* Peringatan item belum dinilai — satu baris, tombolnya menyaring tabel. */}
+        {totals.unvalued_items > 0 && (
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[hsl(var(--warning-text))]" data-testid="acc-val-unvalued-banner">
+            <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{totals.unvalued_items} item belum punya harga satuan: penerimaan, pengeluaran, dan selisih opname-nya tidak
+              berjurnal sampai HPP diisi lewat Set HPP.</span>
+            {filter !== 'unvalued' && (
+              <Button size="sm" variant="link" className="h-auto p-0" onClick={() => { setFilter('unvalued'); pg.setPage(1); }}
+                data-testid="acc-val-filter-unvalued">
+                Tampilkan item belum dinilai
+              </Button>
+            )}
           </p>
-          <button onClick={() => { setFilter('unvalued'); pg.setPage(1); }}
-            className="mt-2 text-xs px-3 py-1.5 rounded-lg border border-amber-400 dark:border-amber-500/30 hover:bg-amber-200/40 dark:hover:bg-amber-500/10"
-            data-testid="acc-val-filter-unvalued">
-            Tampilkan item belum dinilai
-          </button>
-        </div>
-      )}
+        )}
+      </div>}
+      footer={<PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total}
+        pageSize={pg.pageSize} onPageChange={pg.setPage} />}>
+      {err && <Notice tone="danger" testId="acc-val-error">{err}</Notice>}
+      {msg && <Notice tone="success" testId="acc-val-msg">{msg}</Notice>}
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] flex-1 min-w-48">
-          <Search className="w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => { setSearch(e.target.value); pg.setPage(1); }}
-            placeholder="Cari aksesoris..." className="flex-1 bg-transparent text-sm focus:outline-none"
-            data-testid="acc-val-search" />
-          {search && <button onClick={() => setSearch('')}><X className="w-4 h-4 text-muted-foreground" /></button>}
-        </div>
-        <SmartNativeSelect value={filter} onChange={(e) => { setFilter(e.target.value); pg.setPage(1); }}
-          className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm"
-          data-testid="acc-val-filter">
-          <option value="">Semua item</option>
-          <option value="instock">Hanya berstok</option>
-          <option value="unvalued">Belum dinilai</option>
-        </SmartNativeSelect>
-        <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5" data-testid="acc-val-refresh">
-          <RefreshCw className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Rapor bulanan — lampiran laporan keuangan */}
-      <div className="flex flex-wrap items-center gap-3 bg-[var(--card-surface)] border border-border rounded-xl px-4 py-3">
-        <div className="flex items-center gap-2 text-sm">
-          <Download className="w-4 h-4 text-muted-foreground" />
-          <span className="font-medium">Rapor valuasi</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-muted-foreground" htmlFor="acc-val-month">Periode mutasi</label>
-          <SmartNativeSelect id="acc-val-month" value={month} onChange={e => setMonth(e.target.value)}
-            className="w-40 border border-border rounded-lg px-3 py-1.5 text-sm bg-[var(--card-surface)]"
-            data-testid="acc-val-month">
-            {MONTH_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </SmartNativeSelect>
-        </div>
-        <button onClick={() => downloadReport('xlsx')} disabled={!!downloading}
-          className="inline-flex items-center gap-2 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5 disabled:opacity-50"
-          data-testid="acc-val-export-xlsx">
-          {downloading === 'xlsx' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />}
-          Excel
-        </button>
-        <button onClick={() => downloadReport('pdf')} disabled={!!downloading}
-          className="inline-flex items-center gap-2 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5 disabled:opacity-50"
-          data-testid="acc-val-export-pdf">
-          {downloading === 'pdf' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-red-700 dark:text-red-400" />}
-          PDF
-        </button>
-        <span className="text-xs text-muted-foreground">
-          Nilai persediaan = posisi terkini; periode hanya memfilter tabel mutasi.
-        </span>
-      </div>
-
-      {/* FASE 10 — otomasi: ringkasan harian "belum dinilai" + rapor bulanan ke email keuangan */}
-      <AccessoryValuationAutomation token={token} onChanged={load} />
-
-      {/* Tabel valuasi */}
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[840px]">
-          <thead className="bg-[var(--glass-bg)] border-b border-border">
-            <tr>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Kode</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Nama</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Kategori</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Stok</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">HPP</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Nilai Stok</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Metode</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr><td colSpan="8">
-                <EmptyState icon={Package} title="Tidak ada item"
-                  description="Sesuaikan pencarian atau filter untuk melihat item aksesoris." />
-              </td></tr>
-            ) : pg.paged.map((it) => (
-              <tr key={it.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`acc-val-row-${it.id}`}>
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{it.code}</td>
-                <td className="px-4 py-3 font-medium">{it.name}</td>
-                <td className="px-4 py-3 text-muted-foreground text-xs">{it.category}</td>
-                <td className="px-4 py-3 text-right">{fmtNum(it.stock_qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></td>
-                <td className="px-4 py-3 text-right text-xs">
-                  {it.valued ? fmtRp(it.unit_cost)
-                    : <span className="text-amber-700 dark:text-amber-400" title="Belum dinilai — jurnal persediaan tidak akan terbentuk">belum diisi</span>}
-                </td>
-                <td className="px-4 py-3 text-right font-medium">{it.stock_value > 0 ? fmtRp(it.stock_value) : '-'}</td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{METHOD_LABEL[it.cost_method] || '-'}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1">
-                    <button onClick={() => { setErr(''); setCostForm({ id: it.id, name: it.name, unit_cost: it.unit_cost || '', notes: '', old_cost: Number(it.unit_cost || 0), stock_qty: Number(it.stock_qty || 0), unit: it.unit }); }}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs border border-border hover:bg-foreground/5"
-                      title="Set / koreksi harga satuan" data-testid={`acc-set-cost-${it.id}`}>
-                      <Tag className="w-3.5 h-3.5" /> Set HPP
-                    </button>
-                    <button onClick={() => { setErr(''); setScrapForm({ id: it.id, name: it.name, unit: it.unit, stock_qty: it.stock_qty, unit_cost: it.unit_cost, qty: '', reason: '', notes: '' }); }}
-                      disabled={!(it.stock_qty > 0)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs border border-border hover:bg-red-100 dark:hover:bg-red-500/10 disabled:opacity-40"
-                      title={it.stock_qty > 0 ? 'Scrap / write-off' : 'Stok kosong'} data-testid={`acc-scrap-${it.id}`}>
-                      <Trash2 className="w-3.5 h-3.5 text-red-700 dark:text-red-400" /> Scrap
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total}
-          pageSize={pg.pageSize} onPageChange={pg.setPage} />
-      </div>
+      <TabelData kolom={kolom} baris={pg.paged} testId="acc-val-table"
+        kosong={<EmptyState icon={Package} title="Tidak ada item"
+          description="Sesuaikan pencarian atau saringan untuk melihat item aksesoris." />} />
 
       {/* Rekap per kategori */}
       {(data?.by_category || []).length > 0 && (
-        <div className="bg-[var(--card-surface)] border border-border rounded-xl p-4">
-          <div className="text-sm font-medium mb-3">Nilai persediaan per kategori</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {data.by_category.map((c) => (
-              <div key={c.category} className="rounded-lg border border-border px-3 py-2" data-testid={`acc-val-cat-${c.category}`}>
-                <div className="text-xs text-muted-foreground">{c.category}</div>
-                <div className="text-lg font-bold">{fmtRp(c.value)}</div>
-                <div className="text-[11px] text-muted-foreground">
-                  {c.items} item · {fmtNum(c.qty)} unit
-                  {c.unvalued_items ? ` · ${c.unvalued_items} belum dinilai` : ''}
-                </div>
-              </div>
-            ))}
+        <div className="space-y-2" data-testid="acc-val-by-category">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-base font-semibold">Nilai persediaan per kategori</p>
+            <TombolUnduh namaBerkas="valuasi-aksesoris-per-kategori" namaLembar="Per kategori" baris={data.by_category}
+              testId="acc-val-cat-unduh"
+              kolom={[
+                { label: 'Kategori', nilai: (c) => c.category },
+                { label: 'Item', nilai: (c) => Number(c.items || 0) },
+                { label: 'Stok (unit)', nilai: (c) => Number(c.qty || 0) },
+                { label: 'Nilai (Rp)', nilai: (c) => Number(c.value || 0) },
+                { label: 'Belum dinilai', nilai: (c) => Number(c.unvalued_items || 0) },
+              ]} />
           </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Kategori</TableHead>
+                <TableHead className="text-right">Item</TableHead>
+                <TableHead className="text-right">Stok (unit)</TableHead>
+                <TableHead className="text-right">Belum dinilai</TableHead>
+                <TableHead className="text-right">Nilai</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.by_category.map((c) => (
+                <TableRow key={c.category} data-testid={`acc-val-cat-${c.category}`}>
+                  <TableCell className="font-medium">{c.category}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(c.items)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(c.qty)}</TableCell>
+                  <TableCell className={`text-right tabular-nums ${c.unvalued_items ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}>
+                    {fmtNum(c.unvalued_items || 0)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtRp(c.value)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
 
       {/* Kartu stok bernilai + riwayat HPP */}
       <AccessoryValuationLedger token={token} refreshKey={refreshKey} />
 
-      {/* Modal Set HPP */}
+      {/* FASE 10 — otomasi: ringkasan harian "belum dinilai" + rapor bulanan ke email keuangan (popup) */}
+      <DetailPopup open={otomasiOpen} onClose={() => setOtomasiOpen(false)} testId="acc-val-otomasi"
+        judul="Otomasi valuasi" keterangan="Alarm harian item belum dinilai dan rapor bulanan otomatis ke keuangan.">
+        <AccessoryValuationAutomation token={token} onChanged={load} />
+      </DetailPopup>
+
+      {/* Rapor bulanan — lampiran laporan keuangan */}
+      <FormPopup open={raporOpen} onClose={() => setRaporOpen(false)} ukuran="pendek"
+        onSimpan={() => downloadReport(raporFormat)} menyimpan={!!downloading} galat={formErr}
+        judul="Unduh rapor valuasi" labelSimpan="Unduh rapor" testId="acc-val-rapor"
+        keterangan="Nilai persediaan = posisi terkini; periode hanya menyaring tabel mutasi.">
+        <Isian label="Periode mutasi" htmlFor="acc-val-month">
+          <SmartNativeSelect id="acc-val-month" value={month} onChange={e => setMonth(e.target.value)}
+            className="w-full" data-testid="acc-val-month">
+            {MONTH_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Format">
+          <FilterChips value={raporFormat} onChange={setRaporFormat} hideWhenEmpty={false} testId="acc-val-export"
+            options={[{ key: 'xlsx', label: 'Excel (untuk diolah)' }, { key: 'pdf', label: 'PDF (untuk ditandatangani)' }]} />
+        </Isian>
+      </FormPopup>
+
+      {/* Set HPP (popup pendek) */}
       {costForm && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={() => setCostForm(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}
-            data-testid="acc-set-cost-modal">
-            <h3 className="text-lg font-bold mb-1">Set Harga Satuan (HPP)</h3>
-            <p className="text-sm text-muted-foreground mb-4">{costForm.name}</p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Harga satuan (Rp) *</label>
-                <MoneyInput unstyled decimals={2} value={costForm.unit_cost}
-                  onChange={(e) => setCostForm({ ...costForm, unit_cost: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  placeholder="0" data-testid="acc-set-cost-input" />
+        <FormPopup open onClose={() => setCostForm(null)} ukuran="pendek" onSimpan={saveCost} menyimpan={saving}
+          galat={formErr} judul="Set harga satuan (HPP)" keterangan={costForm.name} testId="acc-set-cost-modal">
+          <Isian label="Harga satuan (Rp)" wajib htmlFor="acc-set-cost-input">
+            <MoneyInput id="acc-set-cost-input" decimals={2} value={costForm.unit_cost}
+              onChange={(e) => setCostForm({ ...costForm, unit_cost: e.target.value })}
+              placeholder="0" data-testid="acc-set-cost-input" />
+          </Isian>
+          <Isian label="Alasan koreksi" wajib htmlFor="acc-set-cost-notes">
+            <Input id="acc-set-cost-notes" value={costForm.notes} onChange={(e) => setCostForm({ ...costForm, notes: e.target.value })}
+              placeholder="mis. hasil audit harga beli terakhir" data-testid="acc-set-cost-notes" />
+          </Isian>
+          {(() => {
+            const nv = parseFloat(costForm.unit_cost);
+            const delta = Number.isFinite(nv) ? (costForm.stock_qty || 0) * (nv - (costForm.old_cost || 0)) : 0;
+            return (
+              <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] px-3 py-2 text-sm" data-testid="acc-set-cost-preview">
+                <div className="text-muted-foreground">Revaluasi stok bernilai</div>
+                <div className="tabular-nums">
+                  {fmtNum(costForm.stock_qty || 0)} {costForm.unit || ''} × ({Number.isFinite(nv) ? fmtRp(nv) : '—'} − {fmtRp(costForm.old_cost || 0)})
+                  {' = '}<strong className={delta < 0 ? 'text-[hsl(var(--danger-text))]' : ''}>{delta < 0 ? '−' : '+'}{fmtRp(Math.abs(delta))}</strong>
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Alasan koreksi *</label>
-                <input value={costForm.notes} onChange={(e) => setCostForm({ ...costForm, notes: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  placeholder="mis. hasil audit harga beli terakhir" data-testid="acc-set-cost-notes" />
-              </div>
-              {(() => {
-                const nv = parseFloat(costForm.unit_cost);
-                const delta = Number.isFinite(nv) ? (costForm.stock_qty || 0) * (nv - (costForm.old_cost || 0)) : 0;
-                return (
-                  <div className="rounded-lg border border-border px-3 py-2 text-xs" data-testid="acc-set-cost-preview">
-                    <div className="text-muted-foreground">Revaluasi stok bernilai</div>
-                    <div>
-                      {fmtNum(costForm.stock_qty || 0)} {costForm.unit || ''} × ({Number.isFinite(nv) ? fmtRp(nv) : '—'} − {fmtRp(costForm.old_cost || 0)})
-                      {' = '}<strong className={delta < 0 ? 'text-red-700 dark:text-red-400' : ''}>{delta < 0 ? '−' : '+'}{fmtRp(Math.abs(delta))}</strong>
-                    </div>
-                  </div>
-                );
-              })()}
-              <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
-                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                Set HPP mengubah nilai SELURUH stok yang ada sekarang. Selisihnya dibukukan sebagai dokumen revaluasi
-                + jurnal: Persediaan Aksesoris (1-1402) lawan Selisih Persediaan (5-1950). Alasan, pelaku, dan riwayat tercatat.
-              </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setCostForm(null)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={saveCost} disabled={saving}
-                className="flex-1 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                data-testid="acc-set-cost-save">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />} Simpan
-              </button>
-            </div>
-          </div>
-        </div>
+            );
+          })()}
+          <p className="flex items-start gap-2 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Set HPP mengubah nilai SELURUH stok yang ada sekarang. Selisihnya dibukukan sebagai dokumen revaluasi
+            + jurnal: Persediaan Aksesoris (1-1402) lawan Selisih Persediaan (5-1950). Alasan, pelaku, dan riwayat tercatat.
+          </p>
+        </FormPopup>
       )}
 
-      {/* Modal Scrap */}
+      {/* Scrap (popup pendek) */}
       {scrapForm && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={() => setScrapForm(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}
-            data-testid="acc-scrap-modal">
-            <h3 className="text-lg font-bold mb-1">Scrap / Susut Aksesoris</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              {scrapForm.name} · stok {fmtNum(scrapForm.stock_qty)} {scrapForm.unit}
-            </p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Jumlah di-scrap ({scrapForm.unit}) *</label>
-                <input type="number" min="0.01" step="0.01" value={scrapForm.qty}
-                  onChange={(e) => setScrapForm({ ...scrapForm, qty: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  placeholder="0" data-testid="acc-scrap-qty" />
-                {scrapForm.qty > 0 && scrapForm.unit_cost > 0 && (
-                  <small className="text-xs text-muted-foreground">
-                    Nilai write-off ≈ {fmtRp(parseFloat(scrapForm.qty || 0) * scrapForm.unit_cost)}
-                  </small>
-                )}
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Alasan *</label>
-                <SmartNativeSelect value={scrapForm.reason}
-                  onChange={(e) => setScrapForm({ ...scrapForm, reason: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  data-testid="acc-scrap-reason">
-                  <option value="">— pilih alasan —</option>
-                  <option value="Rusak">Rusak</option>
-                  <option value="Hilang">Hilang</option>
-                  <option value="Kadaluarsa">Kadaluarsa</option>
-                  <option value="Cacat produksi">Cacat produksi</option>
-                  <option value="Lain-lain">Lain-lain</option>
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-                <input value={scrapForm.notes} onChange={(e) => setScrapForm({ ...scrapForm, notes: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  placeholder="Keterangan tambahan..." data-testid="acc-scrap-notes" />
-              </div>
-              <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
-                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                Scrap = write-off nilai persediaan: jurnal Beban Scrap (Dr) / Persediaan (Cr) dibuat otomatis bila HPP sudah terisi.
-              </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={() => setScrapForm(null)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={doScrap} disabled={saving}
-                className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                data-testid="acc-scrap-confirm">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />} Scrap
-              </button>
-            </div>
-          </div>
-        </div>
+        <FormPopup open onClose={() => setScrapForm(null)} ukuran="pendek" onSimpan={doScrap} menyimpan={saving}
+          galat={formErr} judul="Scrap / susut aksesoris" labelSimpan="Scrap" testId="acc-scrap-modal"
+          keterangan={`${scrapForm.name} · stok ${fmtNum(scrapForm.stock_qty)} ${scrapForm.unit}`}>
+          <Isian label={`Jumlah di-scrap (${scrapForm.unit})`} wajib htmlFor="acc-scrap-qty"
+            petunjuk={scrapForm.qty > 0 && scrapForm.unit_cost > 0
+              ? `Nilai hapus buku ≈ ${fmtRp(parseFloat(scrapForm.qty || 0) * scrapForm.unit_cost)}` : undefined}>
+            <Input id="acc-scrap-qty" type="number" min="0.01" step="0.01" value={scrapForm.qty}
+              onChange={(e) => setScrapForm({ ...scrapForm, qty: e.target.value })}
+              placeholder="0" data-testid="acc-scrap-qty" />
+          </Isian>
+          <Isian label="Alasan" wajib>
+            <SmartNativeSelect value={scrapForm.reason}
+              onChange={(e) => setScrapForm({ ...scrapForm, reason: e.target.value })}
+              className="w-full" data-testid="acc-scrap-reason">
+              <option value="">— pilih alasan —</option>
+              {SCRAP_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Catatan" htmlFor="acc-scrap-notes">
+            <Input id="acc-scrap-notes" value={scrapForm.notes} onChange={(e) => setScrapForm({ ...scrapForm, notes: e.target.value })}
+              placeholder="Keterangan tambahan..." data-testid="acc-scrap-notes" />
+          </Isian>
+          <p className="flex items-start gap-2 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Scrap = hapus buku nilai persediaan: jurnal Beban Scrap (Dr) / Persediaan (Cr) dibuat otomatis bila HPP sudah terisi.
+          </p>
+        </FormPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }

@@ -7,12 +7,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { BookOpen, Download, Plus, RefreshCw, Search, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { ambilSemuaHalaman } from '../DataTable';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiFetch, apiGet } from '../../../../lib/api';
 import PageLayout, { RowDetail, RowToggle } from '../../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../DataTable';
 import { EmptyState, Notice } from '../../moduleAtoms';
 import KirimanDetail, { downloadPdf } from './KirimanDetail';
 import KirimanForm from './KirimanForm';
@@ -78,20 +82,20 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="kirim-kiriman"
       title="Kirim ke CMT"
       subtitle="Potongan & aksesoris keluar gudang otomatis saat kiriman dibuat; angkanya sama dengan surat jalan."
       actions={canCreate && (
-        <Button onClick={() => { setOpen(null); setCreating(true); }} data-testid="kirim-new"><Plus className="w-4 h-4" />Kiriman baru</Button>
+        <Button type="button" onClick={() => { setOpen(null); setCreating(true); }} data-testid="kirim-new"><Plus className="w-4 h-4" />Kiriman baru</Button>
       )}
       filters={<>
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari no. kiriman / vendor / PO…"
-            onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); load(); } }} className="pl-8 h-9" data-testid="kirim-search" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kiriman, vendor, PO (Enter)"
+            onKeyDown={(e) => { if (e.key === 'Enter') { setPage(1); load(); } }} className="pl-8" data-testid="kirim-search" />
         </div>
-        <SmartNativeSelect value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="h-9 w-44"
+        <SmartNativeSelect value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} className="w-44"
           aria-label="Status kiriman" data-testid="kirim-status-filter">
           <option value="">Semua status</option>
           <option value="Sent">Dikirim</option>
@@ -99,10 +103,28 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
         </SmartNativeSelect>
       </>}
       tools={<>
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="kirim-refresh">
+        <Button type="button" title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="kirim-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
-        <Button variant="outline" onClick={exportExcel} data-testid="kirim-export"><Download className="w-4 h-4" />Unduh Excel</Button>
+        {/* Standar UI/UX v2: unduh daftar (Excel/CSV, SEMUA kiriman hasil saringan) + unduh lama per baris barang (server). */}
+        <TombolUnduh namaBerkas="kiriman-ke-cmt" namaLembar="Kiriman" baris={rows} testId="kirim-unduh"
+          ambilSemua={() => ambilSemuaHalaman(({ page: pg, per_page }) => {
+            const qs = new URLSearchParams({ page: String(pg), per_page: String(per_page), parent_only: '1' });
+            if (businessType) qs.set('business_type', businessType);
+            if (status) qs.set('status', status);
+            if (search.trim()) qs.set('search', search.trim());
+            return apiGet(`/vendor-shipments?${qs}`);
+          })}
+          kolom={[
+            { label: 'No. kiriman', nilai: (r) => r.shipment_number }, { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' },
+            { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Tanggal', nilai: (r) => fmtDate(r.shipment_date) },
+            { label: 'Jenis', nilai: (r) => r.shipment_type || '' }, { label: 'Pcs', nilai: (r) => pcs(r) },
+            { label: 'Pcs tambahan', nilai: (r) => Number(r.child_qty_total) || 0 },
+            { label: 'Pengeluaran gudang', nilai: (r) => r.material_issue_number || (r.opening ? 'saldo awal' : '') },
+            { label: 'Status', nilai: (r) => (r.status === 'Received' ? 'Diterima CMT' : r.status === 'Sent' ? 'Dikirim' : (r.status || '')) },
+          ]} />
+        <Button type="button" variant="outline" onClick={exportExcel} data-testid="kirim-export" title="Excel dari server: satu baris per barang, semua kiriman">
+          <Download className="w-4 h-4" />Unduh per barang</Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat data" testId="kirim-error">{error}</Notice>}
       detail={creating ? (
@@ -116,7 +138,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={PER_PAGE} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat kiriman…</div>
         ) : rows.length === 0 ? (
@@ -138,7 +160,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
                     <RowToggle open={!!expanded[r.id]} onClick={() => toggle(r)} label="Lihat kiriman tambahan"
                       testId={`kirim-row-toggle-${r.shipment_number}`} />)}</TableCell>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setCreating(false); setOpen(r.id); }}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setCreating(false); setOpen(r.id); }}
                       data-testid={`kirim-open-${r.shipment_number}`}>{r.shipment_number}</Button>
                   </TableCell>
                   <TableCell>{r.vendor_name || '—'}</TableCell>
@@ -153,13 +175,11 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
                     || <span className="text-muted-foreground">{r.opening ? 'saldo awal' : '—'}</span>}</TableCell>
                   <TableCell><ShipStatusBadge status={r.status} /></TableCell>
                   <TableCell className="text-right whitespace-nowrap">
-                    <Button variant="ghost" size="icon-sm" title="Surat jalan (PDF)" aria-label="Surat jalan (PDF)"
+                    <Button type="button" variant="ghost" size="icon-sm" title="Surat jalan (PDF)" aria-label="Surat jalan (PDF)"
                       onClick={() => downloadPdf('vendor-shipment', r.id, `SJ-${r.shipment_number}.pdf`, 'Surat jalan')}>
                       <Download className="w-4 h-4" /></Button>
-                    <Button variant="ghost" size="icon-sm" title="Panduan produk (PDF)" aria-label="Panduan produk (PDF)"
-                      onClick={() => downloadPdf('production-guide', r.id, `Panduan-${r.shipment_number}.pdf`, 'Panduan produk')}>
-                      <BookOpen className="w-4 h-4" /></Button>
-                    <Button variant="outline" size="sm" onClick={() => { setCreating(false); setOpen(r.id); }}>Rincian</Button>
+                    {/* Panduan produk (PDF) ada di popup rincian — paling banyak 2 aksi tampil per baris. */}
+                    <Button type="button" variant="outline" size="sm" onClick={() => { setCreating(false); setOpen(r.id); }}>Rincian</Button>
                   </TableCell>
                 </TableRow>,
                 expanded[r.id] && (
@@ -168,7 +188,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
                       <div className="space-y-1">
                         {children[r.id].map((c) => (
                           <div key={c.id} className="flex flex-wrap items-center gap-3 text-sm">
-                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => { setCreating(false); setOpen(c.id); }}>
+                            <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => { setCreating(false); setOpen(c.id); }}>
                               {c.shipment_number}</Button>
                             <ShipTypeBadge type={c.shipment_type} />
                             <span className="text-xs text-muted-foreground">{fmtDate(c.shipment_date)} · {fmtNum(c.total_pcs)} pcs</span>
@@ -185,6 +205,6 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

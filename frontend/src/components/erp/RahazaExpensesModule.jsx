@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import { AlertTriangle, Plus, RefreshCw, CreditCard } from 'lucide-react';
 import { GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import PageLayout from './layout/PageLayout';
 import { Notice } from './moduleAtoms';
 import { DataTable } from './DataTableV2';
@@ -95,7 +96,7 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
           {formatDateID(period.from)} – {formatDateID(period.to)} · {rows.length} pengeluaran · total <b className="text-foreground tabular-nums">{fmt(total)}</b>
         </p>
         {rows.length >= EXP_LIMIT && (
-          <Notice tone="warning" icon={AlertTriangle} testId="exp-truncated" className="text-xs">
+          <Notice tone="warning" icon={AlertTriangle} testId="exp-truncated">
             Ditampilkan {EXP_LIMIT.toLocaleString('id-ID')} pengeluaran terbaru saja — persempit periode supaya semua terlihat.
           </Notice>
         )}
@@ -114,16 +115,18 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
         ]}
         columns={[
           { key: 'date', label: 'Tanggal', sortable: true, className: 'whitespace-nowrap',
-            render: (r, v) => formatDateID(v) },
+            render: (r) => formatDateID(r.date) },
           { key: 'category', label: 'Kategori', sortable: true,
-            render: (r, v) => humanize(v) },
+            render: (r, v) => humanize(v), accessor: (r) => humanize(r.category) },
           { key: 'description', label: 'Deskripsi', sortable: true },
           { key: 'gl_debit_code', label: 'Akun beban',
-            render: (r) => <span className="text-[11px] text-foreground/70">{r.gl_debit_code ? `${r.gl_debit_code} · ${coaName[r.gl_debit_code] || ''}` : 'bawaan (Beban Umum)'}</span> },
+            accessor: (r) => (r.gl_debit_code ? `${r.gl_debit_code} · ${coaName[r.gl_debit_code] || ''}` : 'bawaan (Beban Umum)'),
+            render: (r) => <span className="text-sm text-muted-foreground">{r.gl_debit_code ? `${r.gl_debit_code} · ${coaName[r.gl_debit_code] || ''}` : 'bawaan (Beban Umum)'}</span> },
           { key: 'cost_center_code', label: 'Pusat biaya',
-            render: (r) => <span className="text-[11px] text-foreground/60">{r.cost_center_code || '—'} {r.cost_center_name && `· ${r.cost_center_name}`}</span> },
+            accessor: (r) => [r.cost_center_code, r.cost_center_name].filter(Boolean).join(' · '),
+            render: (r) => <span className="text-sm text-muted-foreground">{r.cost_center_code || '—'} {r.cost_center_name && `· ${r.cost_center_name}`}</span> },
           { key: 'amount', label: 'Jumlah', align: 'right', sortable: true, className: 'whitespace-nowrap tabular-nums',
-            render: (r) => fmt(r.amount) },
+            render: (r) => fmt(r.amount), accessor: (r) => Number(r.amount) || 0 },
         ]}
         emptyTitle="Belum ada pengeluaran di periode ini"
         emptyDescription='Tekan "Pengeluaran baru" untuk mencatat biaya operasional.'
@@ -142,30 +145,43 @@ function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, categor
   // Rekening pembayar juga wajib: bila kosong, jurnal dulu jatuh diam-diam ke rekening bawaan profil.
   const missing = !s.gl_debit_code ? 'Pilih akun beban.' : !s.account_id ? 'Pilih rekening yang membayar.'
     : !(Number(s.amount) > 0) ? 'Isi jumlah.' : '';
-  // 2026-11-05 (PANDUAN_UI G9/G13): formulir isian pendek tetap popup, kini Dialog aplikasi (dulu lapisan buatan sendiri + <h2>)
+  // 2026-11-08 (Standar UI/UX v2): popup form standar (FormPopup pendek, Isian, DatePicker, Simpan hijau).
   return (
-    <Dialog open onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-md" data-testid="exp-dialog">
-        <DialogHeader><DialogTitle>Pengeluaran baru</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div><label className="text-xs text-muted-foreground" htmlFor="exp-date">Tanggal</label><GlassInput id="exp-date" type="date" value={s.date} onChange={e => upd('date', e.target.value)} /></div>
-          <div><label className="text-xs text-muted-foreground">Akun beban</label>
-            <SmartNativeSelect value={s.gl_debit_code} onChange={e => upd('gl_debit_code', e.target.value)} searchable
-              className="w-full h-9" data-testid="exp-gl-account">
-              <option value="">— Pilih akun beban (ketik untuk mencari) —</option>
-              {expenseAccounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
-            </SmartNativeSelect></div>
-          <div><label className="text-xs text-muted-foreground" htmlFor="exp-desc">Deskripsi</label><GlassInput id="exp-desc" value={s.description} onChange={e => upd('description', e.target.value)} placeholder="mis. Listrik kantor Oktober" data-testid="exp-desc" /></div>
-          <div><label className="text-xs text-muted-foreground" htmlFor="exp-amount">Jumlah</label><MoneyInput glass id="exp-amount" value={s.amount} onChange={e => upd('amount', Number(e.target.value))} data-testid="exp-amount" /></div>
-          <div><label className="text-xs text-muted-foreground">Bayar dari rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={s.account_id} onChange={v => upd('account_id', v)} testId="exp-cash-account" /></div>
-          {/* 2026-11-07 (audit form Tahap 5): kategori = teks bebas (tidak ada master), kini dengan saran kategori yang sudah dipakai supaya ejaannya seragam */}
-          <div><label className="text-xs text-muted-foreground" htmlFor="exp-category">Kategori (untuk penyaring daftar)</label><GlassInput id="exp-category" list="exp-category-list" value={s.category} onChange={e => upd('category', e.target.value)} placeholder="operasional | sewa | listrik | ..." data-testid="exp-category" />
-            <datalist id="exp-category-list">{[...new Set(['operasional', ...categories])].map(c => <option key={c} value={c} />)}</datalist></div>
-          <div><label className="text-xs text-muted-foreground">Pusat biaya (opsional)</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-9" data-testid="exp-cost-center"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
-          {missing && <p className="text-[11px] text-muted-foreground" data-testid="exp-missing">{missing}</p>}
-        </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Batal</Button><Button onClick={() => onSave(s)} disabled={saving || !!missing} data-testid="exp-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="exp-dialog" judul="Pengeluaran baru"
+      keterangan="Jurnal: debit akun beban, kredit rekening yang membayar."
+      onSimpan={() => onSave(s)} menyimpan={saving} bisaSimpan={!missing}
+      galat={missing && (s.gl_debit_code || s.account_id || Number(s.amount) > 0) ? missing : undefined}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Tanggal" wajib>
+          <DatePicker id="exp-date" value={s.date} onChange={v => upd('date', v)} bolehKosong={false} testId="exp-date" />
+        </Isian>
+        <Isian label="Jumlah" wajib htmlFor="exp-amount">
+          <MoneyInput glass id="exp-amount" value={s.amount} onChange={e => upd('amount', Number(e.target.value))} data-testid="exp-amount" />
+        </Isian>
+      </div>
+      <Isian label="Akun beban" wajib>
+        <SmartNativeSelect value={s.gl_debit_code} onChange={e => upd('gl_debit_code', e.target.value)} searchable
+          className="w-full h-9" data-testid="exp-gl-account">
+          <option value="">— Pilih akun beban (ketik untuk mencari) —</option>
+          {expenseAccounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Deskripsi" htmlFor="exp-desc">
+        <GlassInput id="exp-desc" value={s.description} onChange={e => upd('description', e.target.value)} placeholder="mis. Listrik kantor Oktober" data-testid="exp-desc" />
+      </Isian>
+      <Isian label="Bayar dari rekening" wajib>
+        <CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={s.account_id} onChange={v => upd('account_id', v)} testId="exp-cash-account" />
+      </Isian>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* 2026-11-07 (audit form Tahap 5): kategori = teks bebas (tidak ada master), dengan saran kategori yang sudah dipakai */}
+        <Isian label="Kategori" htmlFor="exp-category" petunjuk="Untuk penyaring daftar.">
+          <GlassInput id="exp-category" list="exp-category-list" value={s.category} onChange={e => upd('category', e.target.value)} placeholder="operasional, sewa, listrik…" data-testid="exp-category" />
+          <datalist id="exp-category-list">{[...new Set(['operasional', ...categories])].map(c => <option key={c} value={c} />)}</datalist>
+        </Isian>
+        <Isian label="Pusat biaya (opsional)">
+          <SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-9" data-testid="exp-cost-center"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect>
+        </Isian>
+      </div>
+    </FormPopup>
   );
 }

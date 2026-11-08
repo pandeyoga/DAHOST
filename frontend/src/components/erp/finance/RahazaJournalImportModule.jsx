@@ -5,8 +5,11 @@
  *
  * 2026-11-05 (PANDUAN_UI G1/G3/G5/G8): cetakan PageLayout; satu tombol utama (Pratinjau → Posting setelah
  * pratinjau lolos; dulu dua tombol utama, satu berwarna hijau mentah); kartu dari GlassCard; warna hanya token.
+ * 2026-11-08 (Standar UI/UX v2): tombol pilih berkas berbahasa Indonesia (dulu kotak berkas bawaan peramban), "template"
+ * → "format isian", Posting hijau, pratinjau bisa diunduh Excel/CSV, ukuran huruf standar, kartu berketerangan.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Download, Upload, CheckCircle2, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -24,6 +27,7 @@ export default function RahazaJournalImportModule({ token }) {
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const fileRef = useRef(null);
 
   const send = async (path) => {
     const fd = new FormData(); fd.append('file', file);
@@ -62,15 +66,17 @@ export default function RahazaJournalImportModule({ token }) {
       subtitle="Catat mutasi kas/bank & jurnal umum di Excel, unggah, pratinjau, lalu posting."
       actions={<Button variant="outline" data-testid="journal-import-template"
         onClick={() => downloadXlsx(`${API}/template`, token, 'IMPOR_JURNAL.xlsx').catch(e => toast.error(e.message))}>
-        <Download className="w-4 h-4" /> Unduh template</Button>}
+        <Download className="w-4 h-4" /> Unduh format isian</Button>}
     >
       <GlassCard className="p-4 space-y-2">
         <div className="flex flex-wrap items-center gap-3">
           <FileSpreadsheet className="w-5 h-5 text-muted-foreground" />
-          <input type="file" accept=".xlsx" data-testid="journal-import-file" className="text-sm" aria-label="Berkas Excel"
+          <input ref={fileRef} type="file" accept=".xlsx" data-testid="journal-import-file" className="hidden" aria-label="Berkas Excel"
             onChange={e => { setFile(e.target.files?.[0] || null); setPreview(null); setResult(null); }} />
+          <Button variant="outline" onClick={() => fileRef.current?.click()} data-testid="journal-import-pick">Pilih berkas .xlsx</Button>
+          <span className="text-sm text-muted-foreground min-w-0 truncate max-w-xs" data-testid="journal-import-filename">{file ? file.name : 'Belum ada berkas dipilih'}</span>
           <Button variant={canApply ? 'outline' : 'default'} onClick={doPreview} disabled={!file || busy} data-testid="journal-import-preview"><Upload className="w-4 h-4" /> Pratinjau</Button>
-          <Button variant={canApply ? 'default' : 'outline'} onClick={doApply} disabled={!canApply || busy} data-testid="journal-import-apply"><CheckCircle2 className="w-4 h-4" /> Posting</Button>
+          <Button variant={canApply ? 'success' : 'outline'} onClick={doApply} disabled={!canApply || busy} data-testid="journal-import-apply"><CheckCircle2 className="w-4 h-4" /> Posting</Button>
         </div>
         <p className="text-xs text-muted-foreground">Berkas yang sama diunggah dua kali → baris yang sudah masuk dilewati.</p>
       </GlassCard>
@@ -78,10 +84,10 @@ export default function RahazaJournalImportModule({ token }) {
       {preview && (
         <div className="space-y-4" data-testid="journal-import-result">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Jurnal siap posting" value={preview.totals.journals} />
-            <StatTile label="Total nilai" value={`Rp ${fmt(preview.totals.amount)}`} />
-            <StatTile label="Sudah pernah diimpor (dilewati)" value={preview.skipped_existing} />
-            <StatTile label="Kesalahan" value={preview.errors.length} accent={preview.errors.length ? 'danger' : 'default'} />
+            <StatTile label="Jurnal siap posting" value={preview.totals.journals} sub="Baris di tabel pratinjau" />
+            <StatTile label="Total nilai" value={`Rp ${fmt(preview.totals.amount)}`} sub="Jumlah kolom Nilai" />
+            <StatTile label="Sudah pernah diimpor (dilewati)" value={preview.skipped_existing} sub="Tidak diposting ulang" />
+            <StatTile label="Kesalahan" value={preview.errors.length} accent={preview.errors.length ? 'danger' : 'default'} sub="Perbaiki di Excel lalu unggah ulang" />
           </div>
           {preview.errors.length > 0 && (
             <Notice tone="danger" icon={AlertTriangle} testId="journal-import-errors" className="text-xs"
@@ -90,12 +96,28 @@ export default function RahazaJournalImportModule({ token }) {
             </Notice>
           )}
           <GlassCard className="p-0 overflow-hidden">
+            {preview.journals.length > 0 && (
+              <div className="flex items-center justify-between gap-2 px-4 pt-3">
+                <p className="text-base font-semibold text-foreground">Pratinjau jurnal</p>
+                <TombolUnduh namaBerkas="pratinjau-impor-jurnal" namaLembar="Pratinjau" baris={preview.journals} testId="journal-import-unduh"
+                  kolom={[
+                    { label: 'Lembar', nilai: (j) => (j.sheet === 'MUTASI_KAS_BANK' ? 'Mutasi' : 'Umum') },
+                    { label: 'Baris', nilai: (j) => j.row },
+                    { label: 'No. jurnal', nilai: (j) => j.no_jurnal || '' },
+                    { label: 'Tanggal', nilai: (j) => formatDateID(j.date) },
+                    { label: 'Keterangan', nilai: (j) => j.memo || '' },
+                    { label: 'Referensi', nilai: (j) => j.reference || '' },
+                    { label: 'Baris jurnal', nilai: (j) => j.lines.map((l) => `${l.debit ? 'Debit' : 'Kredit'} ${l.account_code} ${l.account_name} ${l.debit || l.credit}`).join('; ') },
+                    { label: 'Nilai', nilai: (j) => Number(j.total) || 0 },
+                  ]} />
+              </div>
+            )}
             {preview.journals.length === 0 ? (
               <EmptyState icon={FileSpreadsheet} title="Tidak ada jurnal baru di berkas ini"
                 description="Semua baris sudah pernah diimpor atau berkas masih kosong." />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className="w-full text-sm">
                   <thead><tr>
                     <th className="text-left px-3 py-2">Lembar / baris</th><th className="text-left px-3 py-2">Tanggal</th>
                     <th className="text-left px-3 py-2">Keterangan</th><th className="text-left px-3 py-2">Baris jurnal</th>
@@ -106,7 +128,7 @@ export default function RahazaJournalImportModule({ token }) {
                         <td className="px-3 py-1.5 whitespace-nowrap">{j.sheet === 'MUTASI_KAS_BANK' ? 'Mutasi' : 'Umum'} #{j.row}{j.no_jurnal ? ` · ${j.no_jurnal}` : ''}</td>
                         <td className="px-3 py-1.5 whitespace-nowrap">{formatDateID(j.date)}</td>
                         <td className="px-3 py-1.5">{j.memo}{j.reference ? <span className="text-muted-foreground"> [{j.reference}]</span> : null}</td>
-                        <td className="px-3 py-1.5 text-[11px]">
+                        <td className="px-3 py-1.5 text-xs">
                           {j.lines.map((l, i) => (
                             <div key={i}>
                               <span className="text-muted-foreground">{l.debit ? 'Debit' : 'Kredit'}</span> {l.account_code} {l.account_name} <span className="tabular-nums whitespace-nowrap">{fmt(l.debit || l.credit)}</span>
@@ -129,7 +151,7 @@ export default function RahazaJournalImportModule({ token }) {
           title={`${result.posted_count} jurnal terposting${result.skipped_existing ? ` · ${result.skipped_existing} dilewati (sudah ada)` : ''}`}>
           <div className="space-y-0.5">
             {result.posted?.map(p => <div key={p.je_number}>{p.je_number} · {formatDateID(p.date)} · {p.memo} · <span className="tabular-nums">Rp {fmt(p.total)}</span></div>)}
-            {result.failed?.map((f, i) => <div key={i} className="text-[hsl(var(--destructive))]">✗ {f.sheet} baris {f.row}: {f.error}</div>)}
+            {result.failed?.map((f, i) => <div key={i} className="text-[hsl(var(--danger-text))]">✗ {f.sheet} baris {f.row}: {f.error}</div>)}
           </div>
         </Notice>
       )}

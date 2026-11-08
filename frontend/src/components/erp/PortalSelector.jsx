@@ -271,7 +271,7 @@ export default function PortalSelector({ user, onSelectPortal, onLogout, deniedN
         )}
 
         {/* Announcement Board */}
-        <AnnouncementBoard />
+        <AnnouncementBoard portalIds={accessiblePortals.map((p) => p.id)} />
 
         {/* Portal cards grid — uniform heights */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 auto-rows-fr">

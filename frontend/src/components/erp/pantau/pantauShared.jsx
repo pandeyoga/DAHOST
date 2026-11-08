@@ -8,7 +8,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Skeleton } from '@/components/ui/skeleton';
 import FilterChips from '@/components/ui/filter-chips';
 import { StatusBadge } from '../moduleAtoms';
@@ -94,9 +96,9 @@ export function useApi(path, { auto = 0 } = {}) {
 
 export function SearchBox({ value, onChange, placeholder, testId }) {
   return (
-    <div className="relative w-72 max-w-full">
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-      <GlassInput className="pl-9 h-9" placeholder={placeholder} value={value}
+    <div className="relative w-full sm:w-64">
+      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+      <Input className="pl-8" placeholder={placeholder} value={value}
         onChange={(e) => onChange(e.target.value)} data-testid={testId} aria-label={placeholder} />
     </div>
   );
@@ -104,7 +106,7 @@ export function SearchBox({ value, onChange, placeholder, testId }) {
 
 export function RefreshButton({ onClick, loading, testId = 'pantau-refresh' }) {
   return (
-    <Button variant="outline" size="icon" onClick={onClick} title="Muat ulang" aria-label="Muat ulang" data-testid={testId}>
+    <Button type="button" variant="outline" size="icon" onClick={onClick} title="Muat ulang" aria-label="Muat ulang" data-testid={testId}>
       <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
     </Button>
   );
@@ -117,17 +119,26 @@ export function ScopeChips({ value, onChange, testId = 'pantau-scope' }) {
   );
 }
 
-/** Judul kecil satu bagian + isinya dalam SATU kartu (tabel). */
-export function Section({ title, hint, children, testId }) {
+/** Judul kecil satu bagian + isinya dalam SATU kartu (tabel).
+ *  Standar UI/UX v2 (8 Nov 2026): `unduh={{ namaBerkas, kolom, baris }}` → tombol Unduh (Excel + CSV) di kepala bagian;
+ *  kartu bisa digeser ke samping bila tabelnya lebar (tidak ada sel terpotong). */
+export function Section({ title, hint, children, testId, unduh }) {
+  const adaUnduh = unduh && (unduh.baris || []).length > 0;
   return (
     <section className="space-y-2" data-testid={testId}>
-      {title && (
-        <div className="flex items-baseline justify-between gap-3 flex-wrap">
-          <p className="text-sm font-semibold text-foreground">{title}</p>
-          {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      {(title || adaUnduh) && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
+            {title && <p className="text-sm font-semibold text-foreground">{title}</p>}
+            {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+          </div>
+          {adaUnduh && (
+            <TombolUnduh namaBerkas={unduh.namaBerkas} namaLembar={unduh.namaLembar} kolom={unduh.kolom} baris={unduh.baris}
+              testId={`${testId || 'pantau'}-unduh`} />
+          )}
         </div>
       )}
-      <GlassCard className="p-0 overflow-hidden">{children}</GlassCard>
+      <GlassCard className="p-0 overflow-x-auto">{children}</GlassCard>
     </section>
   );
 }
@@ -139,9 +150,9 @@ export function LoadingRows({ rows = 5 }) {
 /** Sel angka standar (rata kanan, tabular). `tone` = success | warning | danger | muted. */
 export function numClass(tone) {
   return {
-    success: 'text-[hsl(var(--success))] font-semibold',
-    warning: 'text-[hsl(var(--warning))] font-semibold',
-    danger: 'text-[hsl(var(--destructive))] font-semibold',
+    success: 'text-[hsl(var(--success-text))] font-semibold',
+    warning: 'text-[hsl(var(--warning-text))] font-semibold',
+    danger: 'text-[hsl(var(--danger-text))] font-semibold',
     muted: 'text-muted-foreground',
   }[tone] || '';
 }
@@ -150,7 +161,7 @@ export function numClass(tone) {
 export function Signed({ v }) {
   const x = Number(v || 0);
   if (!x) return <span className="text-muted-foreground tabular-nums">0</span>;
-  return <span className={`tabular-nums font-semibold ${x > 0 ? 'text-[hsl(var(--warning))]' : 'text-[hsl(var(--destructive))]'}`}>
+  return <span className={`tabular-nums font-semibold ${x > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}`}>
     {x > 0 ? `+${n(x)}` : `−${n(-x)}`}
   </span>;
 }

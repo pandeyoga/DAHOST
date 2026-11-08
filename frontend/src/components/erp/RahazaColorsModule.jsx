@@ -1,12 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Plus, Edit2, Trash2, Palette } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import Modal from './Modal';
+import { Checkbox } from '@/components/ui/checkbox';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 
+// Nilai awal pemilih warna (data, bukan gaya layar).
 const DEFAULT_FORM = { code: '', name: '', hex: '#3B82F6', order_seq: 50, active: true };
 
 /* Master Warna (DINAMIS) — Fase 2 Master Product Refactor.
@@ -62,7 +67,7 @@ export function RahazaColorsModule({ token }) {
   };
 
   const handleDelete = async (row) => {
-    if (!window.confirm(`Nonaktifkan warna ${row.name} (${row.code})?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan warna ${row.name} (${row.code})?`, confirmLabel: 'Nonaktifkan', danger: true }))) return;
     const r = await fetch(`/api/rahaza/colors/${row.id}`, { method: 'DELETE', headers });
     if (r.ok) { toast.success('Warna dinonaktifkan'); fetchRows(); }
     else {
@@ -71,135 +76,73 @@ export function RahazaColorsModule({ token }) {
     }
   };
 
+  // Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul tersembunyi), TabelData + unduh, form = FormPopup.
+  const kolom = [
+    { kunci: 'warna', label: 'Warna', hp: false, isi: (row) => (
+      <span className="inline-block w-7 h-7 rounded-md border border-[var(--glass-border)]" style={{ backgroundColor: row.hex || 'transparent' }} title={row.hex} />) },
+    { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (row) => <span className="tabular-nums font-medium">{row.code}</span> },
+    { kunci: 'nama', label: 'Nama', hp: 'keterangan', isi: (row) => row.name },
+    { kunci: 'hex', label: 'Kode warna', isi: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.hex}</span> },
+    { kunci: 'status', label: 'Status', isi: (row) => (row.active === false
+      ? <StatusBadge status="inactive" tone="muted" label="Nonaktif" /> : <StatusBadge status="active" tone="success" label="Aktif" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (row) => (
+      <div className="inline-flex items-center gap-1">
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => openEdit(row)} title="Ubah" aria-label="Ubah" data-testid={`color-edit-${row.code}`}><Edit2 className="w-3.5 h-3.5" /></Button>
+        {row.active !== false && (
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(row)} title="Nonaktifkan" aria-label="Nonaktifkan" data-testid={`color-delete-${row.code}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+        )}
+      </div>) },
+  ];
   return (
-    <div className="space-y-4" data-testid="rahaza-colors-module">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
-            <Palette className="w-4 h-4 text-primary" /> Master Warna
-          </h2>
-          <p className="text-muted-foreground text-sm mt-1">
-            Palet warna (gaya techpack). Kode singkatan dipakai di SKU varian:
-            <span className="tabular-nums text-foreground"> KODE-WARNA-SIZE</span>.
-          </p>
-        </div>
-        <Button onClick={openCreate} className="gap-1.5" data-testid="color-create-btn">
-          <Plus className="w-4 h-4" /> Tambah Warna
-        </Button>
-      </div>
-
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-16">Warna</TableHead>
-                <TableHead>Kode</TableHead>
-                <TableHead>Nama</TableHead>
-                <TableHead>Hex</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Aksi</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Memuat...</TableCell></TableRow>
-              ) : rows.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Belum ada warna.</TableCell></TableRow>
-              ) : rows.map(row => (
-                <TableRow key={row.id} data-testid={`color-row-${row.code}`} className={row.active === false ? 'opacity-50' : ''}>
-                  <TableCell>
-                    <span
-                      className="inline-block w-7 h-7 rounded-md border border-[var(--glass-border)]"
-                      style={{ backgroundColor: row.hex || '#ccc' }}
-                      title={row.hex}
-                    />
-                  </TableCell>
-                  <TableCell className="tabular-nums font-semibold text-foreground">{row.code}</TableCell>
-                  <TableCell className="text-foreground">{row.name}</TableCell>
-                  <TableCell className="tabular-nums text-xs text-muted-foreground">{row.hex}</TableCell>
-                  <TableCell>
-                    {row.active === false
-                      ? <Badge variant="outline" className="text-muted-foreground">Nonaktif</Badge>
-                      : <Badge variant="default">Aktif</Badge>}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <button
-                        onClick={() => openEdit(row)}
-                        className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground"
-                        title="Edit" data-testid={`color-edit-${row.code}`}
-                      ><Edit2 className="w-3.5 h-3.5" /></button>
-                      {row.active !== false && (
-                        <button
-                          onClick={() => handleDelete(row)}
-                          className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
-                          title="Nonaktifkan" data-testid={`color-delete-${row.code}`}
-                        ><Trash2 className="w-3.5 h-3.5" /></button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </GlassCard>
+    <PageLayout testId="rahaza-colors-module" title="Master warna"
+      subtitle="Palet warna (gaya techpack). Kode singkatan dipakai di SKU varian: KODE-WARNA-UKURAN."
+      actions={<Button type="button" onClick={openCreate} data-testid="color-create-btn"><Plus className="w-4 h-4" /> Tambah warna</Button>}
+      tools={<TombolUnduh namaBerkas="master-warna" baris={rows} testId="color-unduh" kolom={[
+        { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Nama', nilai: (r) => r.name || '' }, { label: 'Kode warna (hex)', nilai: (r) => r.hex || '' },
+        { label: 'Urutan', nilai: (r) => Number(r.order_seq) || 0 }, { label: 'Status', nilai: (r) => (r.active === false ? 'Nonaktif' : 'Aktif') },
+      ]} />}>
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p> : (
+        <TabelData kolom={kolom} baris={rows} testId="color-table"
+          kosong={<EmptyState icon={Palette} title="Belum ada warna" description="Klik Tambah warna untuk menambah palet." />} />
+      )}
 
       {modalOpen && (
-        <Modal onClose={() => setModalOpen(false)} title={editing ? 'Edit Warna' : 'Tambah Warna'} size="sm">
-          <div className="space-y-3" data-testid="color-form">
-            <div>
-              <label className="text-xs text-muted-foreground">Nama Warna <span className="text-[hsl(var(--destructive))]">*</span></label>
+        <FormPopup open onClose={() => setModalOpen(false)} ukuran="pendek" testId="color-form-popup"
+          judul={editing ? 'Ubah warna' : 'Tambah warna'} onSimpan={handleSave} menyimpan={saving}>
+          <div className="space-y-4" data-testid="color-form">
+            <Isian label="Nama warna" wajib>
               <GlassInput value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                placeholder="cth: Merah Marun" data-testid="color-form-name" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-muted-foreground">Kode (singkatan) <span className="text-[hsl(var(--destructive))]">*</span></label>
+                placeholder="Contoh: Merah Marun" data-testid="color-form-name" />
+            </Isian>
+            <div className="grid grid-cols-2 gap-4">
+              <Isian label="Kode (singkatan)" wajib petunjuk="Dipakai di SKU. Kosongkan = otomatis 3 huruf.">
                 <GlassInput value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })}
-                  placeholder="cth: MRN" maxLength={6} data-testid="color-form-code" />
-                <p className="text-[10px] text-muted-foreground mt-1">Dipakai di SKU. Kosongkan = auto 3 huruf.</p>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Warna (hex)</label>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <input
-                    type="color"
-                    value={form.hex}
-                    onChange={e => setForm({ ...form, hex: e.target.value })}
-                    className="w-10 h-9 rounded-md border border-[var(--glass-border)] bg-transparent cursor-pointer p-0.5"
-                    data-testid="color-form-hex-picker"
-                  />
+                  placeholder="Contoh: MRN" maxLength={6} data-testid="color-form-code" />
+              </Isian>
+              <Isian label="Warna (hex)">
+                <div className="flex items-center gap-2">
+                  <input type="color" value={form.hex} onChange={e => setForm({ ...form, hex: e.target.value })} aria-label="Pilih warna"
+                    className="w-10 h-9 shrink-0 rounded-md border border-[var(--glass-border)] bg-transparent cursor-pointer p-0.5"
+                    data-testid="color-form-hex-picker" />
                   <GlassInput value={form.hex} onChange={e => setForm({ ...form, hex: e.target.value })}
                     placeholder="#RRGGBB" data-testid="color-form-hex" />
                 </div>
-              </div>
+              </Isian>
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Urutan</label>
+            <Isian label="Urutan">
               <GlassInput type="number" value={form.order_seq}
-                onChange={e => setForm({ ...form, order_seq: parseInt(e.target.value) || 50 })}
-                data-testid="color-form-order" />
-            </div>
+                onChange={e => setForm({ ...form, order_seq: parseInt(e.target.value) || 50 })} data-testid="color-form-order" />
+            </Isian>
             {editing && (
               <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                <input type="checkbox" checked={form.active}
-                  onChange={e => setForm({ ...form, active: e.target.checked })}
-                  data-testid="color-form-active" />
+                <Checkbox checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: !!v })} data-testid="color-form-active" />
                 Aktif
               </label>
             )}
-            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} data-testid="color-form-cancel">Batal</Button>
-              <Button onClick={handleSave} disabled={saving} data-testid="color-form-save">
-                {saving ? 'Menyimpan...' : 'Simpan'}
-              </Button>
-            </div>
           </div>
-        </Modal>
+        </FormPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
 

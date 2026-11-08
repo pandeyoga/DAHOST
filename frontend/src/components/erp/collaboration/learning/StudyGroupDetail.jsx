@@ -4,11 +4,13 @@
  * Shows group info + embedded chat (Communication Hub channel) + shared documents (Workspace folder)
  */
 
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
+import PanelTabs from '@/components/ui/panel-tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
@@ -42,20 +44,20 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
       setGroup(data.study_group);
     } catch (error) {
       console.error('Error fetching group detail:', error);
-      toast.error('Gagal memuat detail study group');
+      toast.error('Gagal memuat rincian kelompok belajar');
     } finally {
       setLoading(false);
     }
   };
 
   const handleLeaveGroup = async () => {
-    if (!confirm('Yakin ingin keluar dari study group ini?')) return;
+    if (!(await confirmDialog({ title: 'Keluar dari kelompok belajar ini?', confirmLabel: 'Keluar', danger: true }))) return;
 
     try {
       await apiFetch(`/collab/study-groups/${groupId}/members/${user.id}`, {
         method: 'DELETE',
       });
-      toast.success('Berhasil keluar dari study group');
+      toast.success('Anda keluar dari kelompok belajar');
       onNavigate('study-groups'); // Back to list
     } catch (error) {
       console.error('Error leaving group:', error);
@@ -64,13 +66,13 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
   };
 
   const handleDeleteGroup = async () => {
-    if (!confirm('Yakin ingin menghapus study group ini? Tindakan tidak dapat dibatalkan.')) return;
+    if (!(await confirmDialog({ title: 'Hapus kelompok belajar ini?', body: 'Tindakan ini tidak bisa dibatalkan.', confirmLabel: 'Hapus', danger: true }))) return;
 
     try {
       await apiFetch(`/collab/study-groups/${groupId}`, {
         method: 'DELETE',
       });
-      toast.success('Study group berhasil dihapus');
+      toast.success('Kelompok belajar dihapus');
       onNavigate('study-groups'); // Back to list
     } catch (error) {
       console.error('Error deleting group:', error);
@@ -90,7 +92,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
   if (loading) {
     return (
-      <div className="space-y-4 p-6">
+      <div className="space-y-4 p-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-96 w-full" />
       </div>
@@ -99,10 +101,10 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
   if (!group) {
     return (
-      <div className="p-6">
+      <div className="p-4">
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <p className="text-muted-foreground">Study group tidak ditemukan</p>
+          <CardContent className="flex flex-col items-center justify-center py-10">
+            <p className="text-muted-foreground">Kelompok belajar tidak ditemukan</p>
             <Button 
               onClick={() => onNavigate('study-groups')} 
               className="mt-4"
@@ -121,7 +123,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
   const isMember = group.members_detail?.some(m => m.id === user.id);
 
   return (
-    <div className="space-y-4 p-6" data-testid="study-group-detail-view">
+    <div className="space-y-4 p-4" data-testid="study-group-detail-view">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -134,10 +136,10 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="h-6 w-6 text-purple-600" />
+            <p className="text-lg font-bold flex items-center gap-2">
+              <Users className="h-6 w-6 text-primary" />
               {group.name}
-            </h2>
+            </p>
             {group.course && (
               <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                 <BookOpen className="h-4 w-4" />
@@ -176,12 +178,12 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
       {/* Info Card */}
       <Card>
         <CardContent className="pt-6">
-          <div className="grid md:grid-cols-3 gap-6">
+          <div className="grid md:grid-cols-3 gap-4">
             {/* Description */}
             <div className="md:col-span-2 space-y-3">
               {group.description && (
                 <div>
-                  <h3 className="text-sm font-semibold mb-1">Deskripsi</h3>
+                  <p className="text-sm font-semibold mb-1">Deskripsi</p>
                   <p className="text-sm text-muted-foreground">{group.description}</p>
                 </div>
               )}
@@ -195,10 +197,10 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
             {/* Members */}
             <div>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <p className="text-sm font-semibold mb-3 flex items-center gap-2">
                 <Users className="h-4 w-4" />
                 Anggota ({group.members_detail?.length || 0})
-              </h3>
+              </p>
               <div className="space-y-2 max-h-32 overflow-y-auto">
                 {group.members_detail?.map((member) => (
                   <div 
@@ -224,16 +226,8 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
 
       {/* Tabs: Chat & Documents */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="chat" className="flex items-center gap-2" data-testid="tab-chat">
-            <MessageSquare className="h-4 w-4" />
-            Diskusi
-          </TabsTrigger>
-          <TabsTrigger value="docs" className="flex items-center gap-2" data-testid="tab-docs">
-            <FolderOpen className="h-4 w-4" />
-            Dokumen
-          </TabsTrigger>
-        </TabsList>
+        <PanelTabs value={activeTab} onChange={setActiveTab} testId="tab" ariaLabel="Bagian kelompok"
+          tabs={[{ key: 'chat', label: 'Diskusi' }, { key: 'docs', label: 'Dokumen' }]} />
 
         {/* Chat Tab - Embed Communication Hub Channel */}
         <TabsContent value="chat" className="mt-4">
@@ -249,9 +243,9 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
                   />
                 </div>
               ) : (
-                <div className="p-12 text-center text-muted-foreground">
+                <div className="py-8 text-center text-muted-foreground">
                   <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Channel diskusi belum dibuat</p>
+                  <p>Kanal diskusi belum dibuat</p>
                 </div>
               )}
             </CardContent>
@@ -271,7 +265,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
                   />
                 </div>
               ) : (
-                <div className="p-12 text-center text-muted-foreground">
+                <div className="py-8 text-center text-muted-foreground">
                   <FolderOpen className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p>Folder dokumen belum dibuat</p>
                 </div>

@@ -39,7 +39,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
-import { Notice } from '@/components/erp/moduleAtoms';
+import { EmptyState, Notice, StatusBadge } from '@/components/erp/moduleAtoms';
+import { Input } from '@/components/ui/input';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PageLayout from '../layout/PageLayout';
+import DetailPopup from '@/components/ui/detail-popup';
 import SkuMappingPanel from './SkuMappingPanel';
 import ImportValueMapPanel from './ImportValueMapPanel';
 import ImportPlanPanel from './ImportPlanPanel';
@@ -50,13 +55,8 @@ import {
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/marketing/data-import`;
 
-const GROUP_ICON = {
-  // SESI #37 — 22 jenis diringkas jadi 6 KELOMPOK; label di sini mengikuti
-  // `SOURCE_GROUPS` di backend (satu sumber, bukan dua daftar yang bisa beda).
-  'Pesanan & Penjualan': '💰', Iklan: '📣', 'Live Selling': '🎥',
-  'Katalog & Lainnya': '🏷️', Konten: '🗓️', 'Retur, Komplain & Ulasan': '↩️',
-  'Belum dikelompokkan': '❓',
-};
+// Standar UI/UX v2 (8 Nov 2026): ikon emoji per kelompok dihapus (tampilan polos, tanpa hiasan).
+
 
 // BUG UX DITUTUP 2026-08-12 — grup dulu diurutkan ALFABETIS (`Object.keys().sort()`),
 // sehingga "Penjualan" (berisi **Pesanan Marketplace** — jenis impor yang dipakai
@@ -70,11 +70,11 @@ const GROUP_ORDER = ['Pesanan & Penjualan', 'Iklan', 'Konten', 'Live Selling',
 const PRIMARY_TYPES = new Set(['marketplace_orders']);
 
 const METHOD_BADGE = {
-  exact: { label: 'pasti', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' },
-  synonym: { label: 'sinonim', cls: 'bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300' },
-  fuzzy: { label: 'mirip', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' },
-  manual: { label: 'manual', cls: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' },
-  suggest: { label: 'perlu dipilih', cls: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300' },
+  exact: { label: 'pasti', cls: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' },
+  synonym: { label: 'sinonim', cls: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' },
+  fuzzy: { label: 'mirip', cls: 'bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))]' },
+  manual: { label: 'manual', cls: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' },
+  suggest: { label: 'perlu dipilih', cls: 'bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))]' },
   none: { label: 'tidak dipakai', cls: 'bg-muted text-muted-foreground' },
 };
 
@@ -82,13 +82,13 @@ function Step({ n, current, title, done }) {
   const active = current === n;
   return (
     <div className="flex items-center gap-2">
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border
-        ${done ? 'bg-emerald-600 text-white border-emerald-600'
-          : active ? 'bg-[hsl(var(--primary))] text-white border-[hsl(var(--primary))]'
-            : 'bg-muted text-muted-foreground border-border'}`}>
-        {done ? '✓' : n}
+      <div className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold
+        ${done ? 'border-transparent bg-[hsl(var(--success-strong))] text-white'
+          : active ? 'border-transparent bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
+            : 'border-[var(--glass-border)] text-muted-foreground'}`}>
+        {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : n}
       </div>
-      <span className={`text-xs ${active ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>
+      <span className={`text-sm ${active ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
         {title}
       </span>
     </div>
@@ -784,41 +784,21 @@ export default function DataImportWizard({ token }) {
 
   /* ─────────────────────────── RENDER ─────────────────────────── */
   return (
-    <div className="space-y-4" data-testid="data-import-wizard">
-      {/* header + stepper */}
-      <div className="rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-bold flex items-center gap-2">
-              <Upload className="w-5 h-5 text-[hsl(var(--primary))]" />
-              Impor Data Marketing
-            </h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Berjalan penuh <b>tanpa AI</b>: kolom dipetakan dengan aturan pasti,
-              kamus sinonim ekspor marketplace, lalu kemiripan teks. AI hanya tombol bantuan.
-            </p>
-          </div>
-          {step > 1 && (
-            <Button variant="outline" size="sm" onClick={resetAll} data-testid="import-reset">
-              <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Mulai ulang
-            </Button>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
-          <Step n={1} current={step} title="Jenis data" done={step > 1} />
-          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-          <Step n={2} current={step} title="Toko & konteks" done={step > 2} />
-          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-          <Step n={3} current={step} title="Template & unggah" done={step > 3} />
-          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-          <Step n={4} current={step} title="Pemetaan kolom" done={step > 4} />
-          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-          <Step n={5} current={step} title="Pratinjau" done={step > 5} />
-          <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-          <Step n={6} current={step} title="Selesai" done={step > 6} />
-        </div>
-      </div>
-
+    <PageLayout testId="data-import-wizard" title="Impor data"
+      subtitle="Impor berkas marketplace tanpa AI: kolom dipetakan dengan aturan pasti, kamus sinonim, lalu kemiripan teks."
+      actions={step > 1 && (
+        <Button variant="outline" onClick={resetAll} data-testid="import-reset"><RotateCcw />Mulai ulang</Button>
+      )}
+      summary={(
+        <ol className="flex flex-wrap items-center gap-x-3 gap-y-2" aria-label="Langkah impor" data-testid="import-steps">
+          {['Jenis data', 'Toko & konteks', 'Contoh berkas & unggah', 'Pemetaan kolom', 'Pratinjau', 'Selesai'].map((t, i) => (
+            <li key={t} className="flex items-center gap-3">
+              {i > 0 && <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
+              <Step n={i + 1} current={step} title={t} done={step > i + 1} />
+            </li>
+          ))}
+        </ol>
+      )}>
       {/* TUJUAN IMPOR — terlihat di SETIAP langkah sesudah toko dipilih.
           Satu klik salah pada daftar toko yang namanya mirip memindahkan omzet
           seluruh berkas ke toko lain; strip ini membuat kesalahan itu terlihat
@@ -841,7 +821,7 @@ export default function DataImportWizard({ token }) {
                   </span>
                 </b>
               ) : (
-                <b className="text-amber-600 dark:text-amber-400">belum dipilih</b>
+                <b className="text-[hsl(var(--warning-text))]">belum dipilih</b>
               )}
             </span>
           )}
@@ -860,7 +840,7 @@ export default function DataImportWizard({ token }) {
               {selectedAccount.platform_warehouse_name ? (
                 <b className="text-foreground">{selectedAccount.platform_warehouse_name}</b>
               ) : (
-                <b className="text-amber-600 dark:text-amber-400">belum diisi</b>
+                <b className="text-[hsl(var(--warning-text))]">belum diisi</b>
               )}
             </span>
           )}
@@ -873,10 +853,10 @@ export default function DataImportWizard({ token }) {
           toko, supaya impor berikutnya terjaga otomatis. Nama datang dari ekspor
           platform — bukan dari ingatan staf. */}
       {session?.shop_guard_hint && step > 3 && (
-        <div className="rounded-[var(--radius-md)] border border-amber-500/40 bg-amber-500/10
+        <div className="rounded-[var(--radius-md)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)]
           p-3 text-xs space-y-2" data-testid="import-shop-guard-hint">
           <div className="flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-px shrink-0 text-amber-600 dark:text-amber-400" />
+            <AlertTriangle className="w-4 h-4 mt-px shrink-0 text-[hsl(var(--warning-text))]" />
             <span>{session.shop_guard_hint}</span>
           </div>
           {session?.shop_guard_warehouse && selectedAccount && (
@@ -892,7 +872,7 @@ export default function DataImportWizard({ token }) {
                   : <Store className="w-3.5 h-3.5 mr-1.5" />}
                 Simpan gudang &lsquo;{session.shop_guard_warehouse}&rsquo; ke master toko
               </Button>
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-xs text-muted-foreground">
                 Tersimpan ke toko <b>{selectedAccount.account_name}</b> — sekali saja;
                 impor berikutnya untuk toko ini otomatis terjaga dari salah pilih toko.
               </span>
@@ -909,16 +889,16 @@ export default function DataImportWizard({ token }) {
         <div
           className={`rounded-[var(--radius-md)] border p-3 text-xs flex items-start gap-2 ${
             warehouseSaved.ok
-              ? 'border-emerald-500/40 bg-emerald-500/10'
-              : 'border-red-500/40 bg-red-500/10'}`}
+              ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)]'
+              : 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)]'}`}
           data-testid={warehouseSaved.ok ? 'import-warehouse-saved' : 'import-warehouse-error'}>
           {warehouseSaved.ok
-            ? <CheckCircle2 className="w-4 h-4 mt-px shrink-0 text-emerald-600 dark:text-emerald-400" />
-            : <XCircle className="w-4 h-4 mt-px shrink-0 text-red-600 dark:text-red-400" />}
+            ? <CheckCircle2 className="w-4 h-4 mt-px shrink-0 text-[hsl(var(--success-text))]" />
+            : <XCircle className="w-4 h-4 mt-px shrink-0 text-[hsl(var(--danger-text))]" />}
           <div className="space-y-1">
             <p className={warehouseSaved.ok
-              ? 'text-emerald-700 dark:text-emerald-300'
-              : 'text-red-700 dark:text-red-300'}>{warehouseSaved.message}</p>
+              ? 'text-[hsl(var(--success-text))]'
+              : 'text-[hsl(var(--danger-text))]'}>{warehouseSaved.message}</p>
             {!warehouseSaved.ok && (
               <Button size="sm" variant="outline" className="h-7"
                 onClick={() => { setStep(2); setWarehouseSaved(null); }}
@@ -941,9 +921,9 @@ export default function DataImportWizard({ token }) {
           disusun dari bentuk Ekspor A, jadi langkah "Pemetaan kolom" adalah
           satu-satunya tempat kesalahan kolom masih bisa ditangkap. */}
       {step > 1 && selectedType?.update_only && (
-        <div className="rounded-[var(--radius-md)] border border-blue-500/40 bg-blue-500/10 p-3
+        <div className="rounded-[var(--radius-md)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-3
           text-xs space-y-1" data-testid="import-update-only-notice">
-          <p className="font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+          <p className="font-semibold text-[hsl(var(--info-text))] flex items-center gap-1.5">
             <Info className="w-4 h-4" /> Berkas ini HANYA MEMPERBARUI pesanan yang sudah ada
           </p>
           <p className="text-muted-foreground">
@@ -957,9 +937,9 @@ export default function DataImportWizard({ token }) {
         </div>
       )}
       {step > 1 && selectedType?.mapping_unverified && (
-        <div className="rounded-[var(--radius-md)] border border-amber-500/40 bg-amber-500/10 p-3
+        <div className="rounded-[var(--radius-md)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] p-3
           text-xs space-y-1" data-testid="import-mapping-unverified">
-          <p className="font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+          <p className="font-semibold text-[hsl(var(--warning-text))] flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4" />
             {step === 6
               ? 'Hasil di atas memakai pemetaan yang BELUM diverifikasi'
@@ -983,27 +963,18 @@ export default function DataImportWizard({ token }) {
         <div className="space-y-4">
           {/* pencarian — 17 jenis data tidak mungkin dihafal; tanpa ini staf menggulir
               melewati 6 grup untuk menemukan satu kartu */}
-          <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] p-3">
+          <div className="flex flex-wrap items-center gap-2">
             {groupKey && (
-              <Button variant="outline" size="sm" className="h-9"
+              <Button variant="outline"
                 data-testid="import-group-back"
                 onClick={() => { setGroupKey(''); setTypeQuery(''); }}>
                 <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> Semua kelompok
               </Button>
             )}
-            <div className="relative flex-1 min-w-[240px]">
-              <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                type="text"
-                value={typeQuery}
-                onChange={(e) => setTypeQuery(e.target.value)}
-                placeholder="Cari jenis data… (mis. pesanan, iklan, live, katalog)"
-                data-testid="import-type-search"
-                className="w-full h-9 pl-8 pr-3 rounded-[var(--radius-sm)] border border-border
-                  bg-[hsl(var(--background))] text-sm text-foreground
-                  placeholder:text-muted-foreground focus:outline-none
-                  focus:ring-2 focus:ring-[hsl(var(--primary))]"
-              />
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={typeQuery} onChange={(e) => setTypeQuery(e.target.value)} className="pl-8"
+                placeholder="Cari jenis data (pesanan, iklan, live…)" data-testid="import-type-search" />
             </div>
             <span className="text-xs text-muted-foreground" data-testid="import-type-count">
               {!groupKey && !typeQuery.trim()
@@ -1012,7 +983,7 @@ export default function DataImportWizard({ token }) {
                 : `${visibleTypes.length} dari ${activeTypeCount} jenis data`}
             </span>
             {hiddenInGroup.length > 0 && (
-              <Button variant="ghost" size="sm" className="h-9 text-xs"
+              <Button variant="link" size="sm"
                 data-testid="import-toggle-deprecated"
                 onClick={() => setShowDeprecated((v) => !v)}>
                 {showDeprecated ? 'Sembunyikan' : 'Tampilkan'} {hiddenInGroup.length} jenis usang
@@ -1027,8 +998,7 @@ export default function DataImportWizard({ token }) {
               biarkan sistem membaca berkasnya, atau pilih kelompoknya sendiri. */}
           {!groupKey && !typeQuery.trim() && (
             <div className="space-y-4" data-testid="import-step1-entry">
-              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--primary))]/40
-                bg-[hsl(var(--primary))]/5 p-4 space-y-3" data-testid="import-detect-panel">
+              <Card className="space-y-3 p-4" data-testid="import-detect-panel">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold flex items-center gap-1.5">
@@ -1045,9 +1015,7 @@ export default function DataImportWizard({ token }) {
                       accept=".csv,.xlsx,.xls,.xlsm,.tsv,.txt"
                       data-testid="import-detect-file"
                       onChange={(e) => runDetect(e.target.files?.[0])} />
-                    <span className="inline-flex items-center h-9 px-3 rounded-[var(--radius-sm)]
-                      text-sm font-medium cursor-pointer bg-[hsl(var(--primary))]
-                      text-[hsl(var(--primary-foreground))] hover:opacity-90 transition-opacity">
+                    <span className="inline-flex h-9 cursor-pointer items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90">
                       {busy === 'detect'
                         ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Membaca…</>
                         : <><Upload className="w-4 h-4 mr-1.5" /> Periksa berkas</>}
@@ -1066,8 +1034,7 @@ export default function DataImportWizard({ token }) {
                       )}
                     </p>
                     {!detectRes.row_count && (
-                      <p className="text-xs rounded-[var(--radius-sm)] border border-red-500/40
-                        bg-red-500/10 p-2 text-red-700 dark:text-red-300"
+                      <p className="text-xs rounded-[var(--radius-sm)] border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] p-2 text-[hsl(var(--danger-text))]"
                         data-testid="import-detect-empty-file">
                         <b>Berkas ini tidak punya satu pun baris data</b> (hanya baris kolom).
                         Ekspor ulang dari Seller Center dengan rentang tanggal yang benar —
@@ -1075,14 +1042,13 @@ export default function DataImportWizard({ token }) {
                       </p>
                     )}
                     {detectRes.platform_warning && (
-                      <p className="text-xs rounded-[var(--radius-sm)] border border-amber-500/40
-                        bg-amber-500/10 p-2 text-amber-700 dark:text-amber-300"
+                      <p className="text-xs rounded-[var(--radius-sm)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] p-2 text-[hsl(var(--warning-text))]"
                         data-testid="import-detect-platform-warning">
                         {detectRes.platform_warning}
                       </p>
                     )}
                     {(detectRes.platform?.evidence || []).length > 0 && (
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         Bukti platform: {(detectRes.platform.evidence || []).slice(0, 6).join(' · ')}
                       </p>
                     )}
@@ -1097,18 +1063,18 @@ export default function DataImportWizard({ token }) {
                             <div className="flex items-start justify-between gap-2">
                               <span className="text-sm font-semibold">{r.label || t?.label || key}</span>
                               {i === 0 && (
-                                <Badge className="text-[10px] shrink-0 bg-[hsl(var(--primary))] text-white">
+                                <Badge className="text-xs shrink-0 bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]">
                                   paling cocok
                                 </Badge>
                               )}
                             </div>
-                            <p className="text-[11px] text-muted-foreground mt-1">
+                            <p className="text-xs text-muted-foreground mt-1">
                               {r.mapped_columns}/{r.total_columns} kolom cocok ·
                               {' '}kolom wajib {r.required_hit}/{r.required_total} ·
                               {' '}skor {Math.round((r.score || 0) * 100)}%
                             </p>
                             {(r.required_missing || []).length > 0 && (
-                              <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                              <p className="text-xs text-[hsl(var(--warning-text))] mt-0.5">
                                 Kolom wajib belum ada: {(r.required_missing || []).join(', ')}
                               </p>
                             )}
@@ -1124,38 +1090,25 @@ export default function DataImportWizard({ token }) {
                       })}
                     </div>
                     {(detectRes.matching_accounts || []).length > 0 && (
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-xs text-muted-foreground">
                         Toko berplatform sama: {(detectRes.matching_accounts || [])
                           .map((a) => a.account_name).slice(0, 6).join(' · ')}
                       </p>
                     )}
                   </div>
                 )}
-              </div>
+              </Card>
 
-              <div>
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                  …atau pilih kelompoknya sendiri
-                </h4>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {groups.map((g) => (
-                    <button key={g.key}
-                      data-testid={`import-group-${g.key}`}
-                      onClick={() => setGroupKey(g.key)}
-                      className="text-left rounded-[var(--radius-md)] border border-border p-3
-                        bg-[hsl(var(--card))] transition hover:border-[hsl(var(--primary))]">
-                      <div className="font-semibold text-sm">
-                        {GROUP_ICON[g.label] || '📄'} {g.label}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-1 line-clamp-3">
-                        {g.describe}
-                      </p>
-                      <Badge variant="outline" className="text-[10px] mt-2">
-                        {(g.types || []).filter((t) => !t.deprecated).length} jenis data
-                      </Badge>
-                    </button>
-                  ))}
-                </div>
+              <div className="space-y-2">
+                <p className="text-base font-semibold">Atau pilih kelompoknya sendiri</p>
+                <TabelData baris={groups} kunci={(g) => g.key} onKlikBaris={(g) => setGroupKey(g.key)} testId="import-groups"
+                  kolom={[
+                    { kunci: 'nama', label: 'Kelompok', hp: 'judul', isi: (g) => <span className="font-medium" data-testid={`import-group-${g.key}`}>{g.label}</span> },
+                    { kunci: 'ket', label: 'Isi', hp: 'keterangan', isi: (g) => <span className="block text-sm text-muted-foreground md:max-w-[34rem]">{g.describe}</span> },
+                    { kunci: 'n', label: 'Jenis data', rata: 'kanan', isi: (g) => <span className="tabular-nums">{(g.types || []).filter((t) => !t.deprecated).length}</span> },
+                    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (g) => (
+                      <Button size="sm" variant="outline" onClick={() => setGroupKey(g.key)}>Pilih<ArrowRight /></Button>) },
+                  ]} />
               </div>
             </div>
           )}
@@ -1176,76 +1129,36 @@ export default function DataImportWizard({ token }) {
           )}
 
           {groupNames.map((g) => (
-            <div key={g}>
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                {GROUP_ICON[g] || '📄'} {g}
-              </h4>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {grouped[g].map((t) => (
-                  <button
-                    key={t.key}
-                    data-testid={`import-type-${t.key}`}
-                    onClick={() => { setTypeKey(t.key); setStep(2); }}
-                    className={`text-left rounded-[var(--radius-md)] border p-3 transition
-                      bg-[hsl(var(--card))] hover:border-[hsl(var(--primary))]
-                      ${typeKey === t.key ? 'border-[hsl(var(--primary))] ring-1 ring-[hsl(var(--primary))]'
-                        : PRIMARY_TYPES.has(t.key) ? 'border-[hsl(var(--primary))]/60 shadow-sm'
-                          : 'border-border'}`}
-                  >
-                    <div className="font-semibold text-sm flex items-start justify-between gap-2">
-                      <span>{t.label}</span>
-                      {PRIMARY_TYPES.has(t.key) && (
-                        <Badge className="text-[10px] shrink-0 bg-[hsl(var(--primary))] text-white">
-                          paling sering
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-1 line-clamp-3">{t.describe}</p>
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      {t.module_hint && (
-                        <Badge variant="outline" className="text-[10px]">
-                          <Database className="w-2.5 h-2.5 mr-1" />{t.module_hint}
-                        </Badge>
-                      )}
-                      <Badge variant="outline" className="text-[10px]">{t.total_columns} kolom</Badge>
-                      {t.account_scope === 'required' && (
-                        <Badge className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
-                          <Store className="w-2.5 h-2.5 mr-1" />pilih toko
-                        </Badge>
-                      )}
+            <section key={g} className="space-y-2">
+              <p className="text-base font-semibold">{g}</p>
+              <TabelData baris={grouped[g]} kunci={(t) => t.key} onKlikBaris={(t) => { setTypeKey(t.key); setStep(2); }}
+                testId={`import-types-${g}`}
+                kolom={[
+                  { kunci: 'jenis', label: 'Jenis data', hp: 'judul', isi: (t) => (
+                    <div className="min-w-0 md:max-w-[26rem]" data-testid={`import-type-${t.key}`}>
+                      <p className="font-medium">{t.label}{PRIMARY_TYPES.has(t.key) && <> <StatusBadge status="sering" label="Paling sering" tone="primary" /></>}</p>
+                      <p className="text-xs text-muted-foreground">{t.describe}</p>
+                      {t.export_hint && <p className="text-xs text-muted-foreground">Unduh dari: {t.export_hint}</p>}
+                    </div>) },
+                  { kunci: 'tanda', label: 'Keterangan', isi: (t) => (
+                    <div className="flex flex-wrap gap-1">
+                      {t.module_hint && <StatusBadge status="modul" label={t.module_hint} tone="default" />}
+                      {t.account_scope === 'required' && <StatusBadge status="toko" label="Pilih toko" tone="info" />}
                       {(t.context || []).map((c) => (
-                        <Badge key={c} className="text-[10px] bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-300">
-                          pilih {c === 'host' ? 'host' : c === 'creator' ? 'kreator' : 'katalog'}
-                        </Badge>
+                        <StatusBadge key={c} status={c} label={`Pilih ${c === 'host' ? 'host' : c === 'creator' ? 'kreator' : 'katalog'}`} tone="primary" />
                       ))}
-                      {t.prenorm && (
-                        <Badge className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
-                          berkas asli, tanpa dirapikan
-                        </Badge>
-                      )}
-                      {/* F3 — dua penanda yang WAJIB terlihat sebelum staf memilih:
-                          jenis ini tidak melahirkan pesanan baru, dan pemetaan
-                          kolomnya belum diverifikasi dengan berkas asli owner. */}
-                      {t.update_only && (
-                        <Badge className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
-                          hanya memperbarui
-                        </Badge>
-                      )}
-                      {t.mapping_unverified && (
-                        <Badge className="text-[10px] bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300">
-                          pemetaan perlu diperiksa
-                        </Badge>
-                      )}
-                    </div>
-                    {t.export_hint && (
-                      <p className="text-[10px] text-muted-foreground mt-1.5 leading-snug">
-                        Unduh dari: {t.export_hint}
-                      </p>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
+                      {t.prenorm && <StatusBadge status="asli" label="Berkas asli, tanpa dirapikan" tone="success" />}
+                      {/* F3 — dua penanda yang WAJIB terlihat sebelum staf memilih */}
+                      {t.update_only && <StatusBadge status="update" label="Hanya memperbarui" tone="warning" />}
+                      {t.mapping_unverified && <StatusBadge status="periksa" label="Pemetaan perlu diperiksa" tone="warning" />}
+                    </div>) },
+                  { kunci: 'kolom', label: 'Kolom', rata: 'kanan', isi: (t) => <span className="tabular-nums">{t.total_columns}</span> },
+                  { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (t) => (
+                    <Button size="sm" variant={typeKey === t.key ? 'default' : 'outline'} onClick={() => { setTypeKey(t.key); setStep(2); }}>
+                      Pilih<ArrowRight />
+                    </Button>) },
+                ]} />
+            </section>
           ))}
         </div>
       )}
@@ -1283,7 +1196,7 @@ export default function DataImportWizard({ token }) {
               {needCatalog && (
                 <div>
                   <label className="text-xs font-medium text-foreground/80 mb-1 block">
-                    Katalog tujuan <span className="text-red-500">*</span>
+                    Katalog tujuan <span className="text-[hsl(var(--danger-text))]">*</span>
                   </label>
                   <Select value={catalogId} onValueChange={setCatalogId} disabled={!accountId}>
                     <SelectTrigger data-testid="import-catalog-select" className="h-9">
@@ -1300,7 +1213,7 @@ export default function DataImportWizard({ token }) {
               {needLiveSession && (
                 <div className="sm:col-span-2">
                   <label className="text-xs font-medium text-foreground/80 mb-1 block">
-                    Sesi live tujuan <span className="text-red-500">*</span>
+                    Sesi live tujuan <span className="text-[hsl(var(--danger-text))]">*</span>
                   </label>
                   <Select value={liveSessionId} onValueChange={setLiveSessionId}
                     disabled={!accountId}>
@@ -1319,7 +1232,7 @@ export default function DataImportWizard({ token }) {
                     </SelectContent>
                   </Select>
                   {accountId && liveSessions.length === 0 && (
-                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1">
+                    <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
                       Toko ini belum punya sesi live. Catat sesinya dulu di
                       <b> Live Selling → Catat Sesi Live</b> — rincian produk harus
                       menempel pada sesi yang nyata.
@@ -1369,19 +1282,19 @@ export default function DataImportWizard({ token }) {
               /* F7.2 — berkas KPI Seller Center TIDAK punya template: baris pertamanya
                  memang bukan header. Menawarkan template di sini justru mengajak staf
                  "merapikan" berkas — persis yang membuat impor gagal. */
-              <div className="rounded-[var(--radius-md)] border border-emerald-500/40 bg-emerald-500/10 p-3"
+              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)] p-3"
                 data-testid="import-prenorm-hint">
-                <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-[hsl(var(--success-text))] flex items-center gap-1.5">
                   <Info className="w-3.5 h-3.5" /> Unggah berkas ASLI — jangan diubah
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Jenis ini tidak memakai template. Sistem sudah mengenali bentuk ekspor
                   Seller Center: baris judul grup kolom, baris metadata (Username / Nama
                   Toko / Periode), blok “Sumber Penonton”, dan sheet ganda akan dipotong
                   otomatis. Menghapus/merapikan baris justru membuat berkas tidak dikenali.
                 </p>
                 {selectedType.export_hint && (
-                  <p className="text-[11px] mt-1.5">
+                  <p className="text-xs mt-1.5">
                     <b>Unduh dari:</b> {selectedType.export_hint}
                   </p>
                 )}
@@ -1413,7 +1326,7 @@ export default function DataImportWizard({ token }) {
             >
               <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
               <p className="text-sm font-medium">{file ? file.name : 'Pilih berkas CSV / Excel'}</p>
-              <p className="text-[11px] text-muted-foreground mt-1">Maks 15 MB · .csv .xlsx</p>
+              <p className="text-xs text-muted-foreground mt-1">Maks 15 MB · .csv .xlsx</p>
               <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden"
                 data-testid="import-file-input"
                 onChange={(e) => setFile(e.target.files?.[0] || null)} />
@@ -1426,13 +1339,13 @@ export default function DataImportWizard({ token }) {
             {/* F8 — pintu masuk ke ingatan pemetaan SEBELUM unggah. Kalau impor
                 kemarin salah petakan, staf harus bisa melupakannya tanpa harus
                 mengunggah berkas lagi lebih dulu. */}
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Berkas rutin dengan susunan kolom yang sama akan memakai pemetaan yang
               pernah Anda konfirmasi (langsung siap, tanpa memetakan ulang).{' '}
-              <button type="button" onClick={loadFormats} data-testid="import-formats-open-step3"
-                className="underline text-[hsl(var(--primary))] hover:opacity-80">
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-sm" onClick={loadFormats}
+                data-testid="import-formats-open-step3">
                 Lihat / lupakan pemetaan yang diingat
-              </button>
+              </Button>
             </p>
 
             <div className="flex justify-between">
@@ -1448,9 +1361,9 @@ export default function DataImportWizard({ token }) {
             </div>
 
             {blockError?.where === 'upload' && (
-              <div className="rounded-[var(--radius-md)] border border-red-500/40 bg-red-500/10 p-3"
+              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] p-3"
                 data-testid="import-upload-error">
-                <p className="text-xs font-semibold text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-[hsl(var(--danger-text))] flex items-center gap-1.5">
                   <XCircle className="w-4 h-4" /> {blockError.title}
                 </p>
                 <p className="text-xs mt-1">{blockError.detail}</p>
@@ -1475,8 +1388,8 @@ export default function DataImportWizard({ token }) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <ListChecks className="w-4 h-4" /> Pemetaan kolom
-                <Badge variant="outline" className="text-[10px]">{session.filename}</Badge>
-                <Badge variant="outline" className="text-[10px]">{session.total_rows} baris</Badge>
+                <Badge variant="outline" className="text-xs">{session.filename}</Badge>
+                <Badge variant="outline" className="text-xs">{session.total_rows} baris</Badge>
               </CardTitle>
               <Button variant="outline" size="sm" onClick={askAI} disabled={busy === 'ai'}
                 data-testid="import-ai-assist">
@@ -1486,7 +1399,7 @@ export default function DataImportWizard({ token }) {
               </Button>
             </div>
             {report && (
-              <div className="flex flex-wrap gap-2 mt-2 text-[11px]">
+              <div className="flex flex-wrap gap-2 mt-2 text-xs">
                 <Badge variant="outline">{report.mapped}/{report.total_columns} kolom terpakai</Badge>
                 {Object.entries(report.methods || {}).filter(([, v]) => v > 0).map(([k, v]) => (
                   <span key={k} className={`px-2 py-0.5 rounded-full ${METHOD_BADGE[k]?.cls || ''}`}>
@@ -1494,7 +1407,7 @@ export default function DataImportWizard({ token }) {
                   </span>
                 ))}
                 {report.missing_required?.length > 0 && (
-                  <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300">
+                  <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))]">
                     wajib belum terpetakan: {report.missing_required.join(', ')}
                   </span>
                 )}
@@ -1523,9 +1436,9 @@ export default function DataImportWizard({ token }) {
                 (berapa kolom cocok, kolom wajib apa yang hilang) dan menyediakan
                 satu tombol untuk pindah jenis. */}
             {session.detection?.type_mismatch && (
-              <div className="rounded-[var(--radius-md)] border border-amber-500/50 bg-amber-500/10 p-3
+              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] p-3
                 text-xs space-y-2" data-testid="import-type-mismatch">
-                <p className="font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+                <p className="font-semibold text-[hsl(var(--warning-text))] flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4" /> Jenis data ini sepertinya bukan yang Anda pilih
                 </p>
                 <p className="text-muted-foreground">{session.detection.type_mismatch.message}</p>
@@ -1542,17 +1455,17 @@ export default function DataImportWizard({ token }) {
               </div>
             )}
             {(session.detection?.platform_detected || session.detection?.platform_mismatch) && (
-              <div className={`rounded-[var(--radius-md)] border p-2.5 text-[11px] ${
+              <div className={`rounded-[var(--radius-md)] border p-2.5 text-xs ${
                 session.detection.platform_mismatch
-                  ? 'border-red-500/50 bg-red-500/10' : 'border-border bg-muted/40'}`}
+                  ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)]' : 'border-border bg-muted/40'}`}
                 data-testid="import-platform-detect">
                 {session.detection.platform_mismatch ? (
-                  <p className="text-red-600 dark:text-red-400 font-semibold">
+                  <p className="text-[hsl(var(--danger-text))] font-semibold">
                     {session.detection.platform_mismatch}
                   </p>
                 ) : (
                   <p className="text-muted-foreground">
-                    Platform berkas terdeteksi <b className="uppercase">{session.detection.platform_detected}</b>
+                    Platform berkas terdeteksi <b>{session.detection.platform_detected}</b>
                     {' '}dari sidik kolom{session.detection.platform_evidence?.length
                       ? ` (${session.detection.platform_evidence.slice(0, 3).join(', ')})` : ''} —
                     cocok dengan toko {session.account_name}.
@@ -1585,7 +1498,7 @@ export default function DataImportWizard({ token }) {
                   atau lupakan ingatannya sekarang.
                 </p>
                 {(session.format_memory.dropped || []).length > 0 && (
-                  <p className="text-amber-700 dark:text-amber-300"
+                  <p className="text-[hsl(var(--warning-text))]"
                     data-testid="import-format-memory-dropped">
                     {session.format_memory.dropped.length} pemetaan tersimpan DIBUANG
                     ({session.format_memory.dropped.map((d) => (d.reason
@@ -1594,13 +1507,13 @@ export default function DataImportWizard({ token }) {
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2 pt-0.5">
-                  <Button variant="outline" size="sm" className="h-7 text-[11px]"
+                  <Button variant="outline" size="sm" className="h-7 text-xs"
                     disabled={busy === 'forget'}
                     onClick={() => forgetFormat(session.format_fingerprint, typeKey, true)}
                     data-testid="import-forget-format">
                     <Trash2 className="w-3 h-3 mr-1" /> Lupakan pemetaan ini
                   </Button>
-                  <Button variant="ghost" size="sm" className="h-7 text-[11px]"
+                  <Button variant="ghost" size="sm" className="h-7 text-xs"
                     onClick={loadFormats} data-testid="import-open-formats">
                     Lihat semua susunan kolom yang diingat
                   </Button>
@@ -1608,7 +1521,7 @@ export default function DataImportWizard({ token }) {
               </div>
             )}
             {forgotten && (
-              <p className="text-[11px] text-muted-foreground" data-testid="import-format-forgotten">
+              <p className="text-xs text-muted-foreground" data-testid="import-format-forgotten">
                 Ingatan untuk susunan kolom ini sudah dilupakan. Pemetaan di bawah tetap
                 berlaku untuk impor ini; impor <b>berikutnya</b> akan dipetakan ulang oleh
                 mesin dan meminta konfirmasi Anda lagi.
@@ -1618,9 +1531,9 @@ export default function DataImportWizard({ token }) {
                 "kolom wajib mana yang belum terpetakan" adalah badge kecil di
                 header, dan staf harus menebak kolom berkas mana yang cocok. */}
             {report?.missing_required?.length > 0 && (
-              <div className="rounded-[var(--radius-md)] border border-red-500/40 bg-red-500/10 p-3
+              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] p-3
                 text-xs space-y-2" data-testid="import-missing-required">
-                <p className="font-semibold text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                <p className="font-semibold text-[hsl(var(--danger-text))] flex items-center gap-1.5">
                   <XCircle className="w-4 h-4" /> Kolom WAJIB belum terpetakan:{' '}
                   {report.missing_required.join(', ')}
                 </p>
@@ -1645,13 +1558,11 @@ export default function DataImportWizard({ token }) {
                           tidak ada kolom berkas yang mirip — pilih manual di tabel bawah
                         </span>
                       ) : h.candidates.map((c) => (
-                        <button key={c.column} type="button"
+                        <Button key={c.column} type="button" variant="outline" size="sm"
                           onClick={() => changeMap(c.column, h.name)}
-                          data-testid={`required-pick-${h.name}-${c.column}`}
-                          className="px-1.5 py-0.5 rounded border border-[hsl(var(--primary))]/50
-                            text-[10px] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10">
-                          pakai kolom “{c.column}” ({Math.round((c.score || 0) * 100)}%)
-                        </button>
+                          data-testid={`required-pick-${h.name}-${c.column}`}>
+                          Pakai kolom “{c.column}” ({Math.round((c.score || 0) * 100)}%)
+                        </Button>
                       ))}
                     </div>
                   ))}
@@ -1666,7 +1577,7 @@ export default function DataImportWizard({ token }) {
             <ImportValueMapPanel report={valueReport} onChange={changeValue}
               busy={busy === 'mapping'} />
             {unmappedCols.length > 0 && (
-              <p className="text-[11px] text-muted-foreground" data-testid="import-unused-columns">
+              <p className="text-xs text-muted-foreground" data-testid="import-unused-columns">
                 <b>{unmappedCols.length} kolom berkas tidak dipakai</b> — itu boleh:
                 kolom yang tidak dikenali TIDAK ditebak diam-diam. Kalau salah satunya
                 sebenarnya penting, pilih field-nya di tabel bawah.
@@ -1679,13 +1590,13 @@ export default function DataImportWizard({ token }) {
                 pemetaan bisa DIPERIKSA dengan mata, bukan dihafal. */}
             {(session?.raw_preview || []).length > 0 && (
               <div className="space-y-1.5" data-testid="import-file-viewer">
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   <b>Isi berkas Anda</b> — {session.raw_preview.length} baris pertama dari{' '}
                   {session.total_rows} baris. Kolom berwarna sudah punya tujuan; kolom kelabu
                   belum dipakai.
                 </p>
                 <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-border max-h-64">
-                  <table className="text-[11px] whitespace-nowrap">
+                  <table className="text-xs whitespace-nowrap">
                     <thead className="bg-muted/60 sticky top-0">
                       <tr>
                         {(session.headers || []).map((h) => {
@@ -1695,7 +1606,7 @@ export default function DataImportWizard({ token }) {
                               ${m?.field ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground'}`}
                               data-testid={`viewer-col-${h}`}>
                               <div className="font-mono">{h}</div>
-                              <div className="text-[9px] font-normal">
+                              <div className="text-xs font-normal">
                                 {m?.field ? `→ ${m.field_label || m.field}` : '(tidak dipakai)'}
                               </div>
                             </th>
@@ -1736,14 +1647,14 @@ export default function DataImportWizard({ token }) {
                 <tbody>
                   {fieldRows.map((fr) => (
                     <tr key={fr.name} className={`border-t border-border hover:bg-muted/40 ${
-                      fr.required && !fr.column ? 'bg-red-500/5' : ''}`}
+                      fr.required && !fr.column ? 'bg-[hsl(var(--destructive)/0.05)]' : ''}`}
                       data-testid={`fieldrow-${fr.name}`}>
                       <td className="px-2 py-1">
                         <span className="font-medium">{fr.label}</span>
-                        {fr.required && <span className="text-red-500 ml-1">*</span>}
-                        <span className="ml-1.5 text-[10px] text-muted-foreground">{fr.kind}</span>
+                        {fr.required && <span className="text-[hsl(var(--danger-text))] ml-1">*</span>}
+                        <span className="ml-1.5 text-xs text-muted-foreground">{fr.kind}</span>
                         {fr.example ? (
-                          <div className="text-[10px] text-muted-foreground">contoh: {fr.example}</div>
+                          <div className="text-xs text-muted-foreground">contoh: {fr.example}</div>
                         ) : null}
                       </td>
                       <td className="px-2 py-1">
@@ -1773,17 +1684,15 @@ export default function DataImportWizard({ token }) {
                         ) : fr.candidates.length ? (
                           <span className="inline-flex flex-wrap gap-1">
                             {fr.candidates.slice(0, 2).map((c) => (
-                              <button key={c.column} type="button"
+                              <Button key={c.column} type="button" variant="outline" size="sm"
                                 onClick={() => changeField(fr.name, c.column)}
-                                data-testid={`fieldpick-${fr.name}-${c.column}`}
-                                className="px-1.5 py-0.5 rounded border border-[hsl(var(--primary))]/50
-                                  text-[10px] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10">
-                                pakai “{c.column}”
-                              </button>
+                                data-testid={`fieldpick-${fr.name}-${c.column}`}>
+                                Pakai “{c.column}”
+                              </Button>
                             ))}
                           </span>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground">
+                          <span className="text-xs text-muted-foreground">
                             {fr.required ? 'wajib — pilih kolomnya' : 'kosong (boleh)'}
                           </span>
                         )}
@@ -1849,18 +1758,16 @@ export default function DataImportWizard({ token }) {
                         {!m.field && (m.candidates || []).length > 0 && (
                           <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
                             {m.candidates.slice(0, 3).map((c) => (
-                              <button key={c.field} type="button"
+                              <Button key={c.field} type="button" variant="outline" size="sm"
                                 onClick={() => changeMap(m.column, c.field)}
-                                data-testid={`map-suggest-${m.column}-${c.field}`}
-                                className="px-1.5 py-0.5 rounded border border-[hsl(var(--primary))]/50
-                                  text-[10px] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10">
-                                pakai: {c.field_label} ({Math.round((c.score || 0) * 100)}%)
-                              </button>
+                                data-testid={`map-suggest-${m.column}-${c.field}`}>
+                                Pakai: {c.field_label} ({Math.round((c.score || 0) * 100)}%)
+                              </Button>
                             ))}
                           </span>
                         )}
                         {m.note && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{m.note}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{m.note}</p>
                         )}
                       </td>
                     </tr>
@@ -1890,14 +1797,14 @@ export default function DataImportWizard({ token }) {
               <Table2 className="w-4 h-4" /> Pratinjau &amp; validasi
             </CardTitle>
             {summary && (
-              <div className="flex flex-wrap gap-2 mt-2 text-[11px]">
-                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+              <div className="flex flex-wrap gap-2 mt-2 text-xs">
+                <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]">
                   <CheckCircle2 className="w-3 h-3 inline mr-1" />{summary.valid} siap
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))]">
                   <AlertTriangle className="w-3 h-3 inline mr-1" />{summary.warning} peringatan
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300">
+                <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))]">
                   <XCircle className="w-3 h-3 inline mr-1" />{summary.error} ditolak
                 </span>
                 <span className="text-muted-foreground">dari {summary.total} baris dibaca</span>
@@ -1922,14 +1829,14 @@ export default function DataImportWizard({ token }) {
                     <tr key={r.row_id} className="border-t border-border">
                       <td className="px-2 py-1.5 text-muted-foreground">{r.row_id + 2}</td>
                       <td className="px-2 py-1.5">
-                        {r.status === 'valid' && <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 text-[10px]">siap</Badge>}
-                        {r.status === 'warning' && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300 text-[10px]">periksa</Badge>}
-                        {r.status === 'error' && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300 text-[10px]">ditolak</Badge>}
+                        {r.status === 'valid' && <Badge className="bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] text-xs">siap</Badge>}
+                        {r.status === 'warning' && <Badge className="bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))] text-xs">periksa</Badge>}
+                        {r.status === 'error' && <Badge className="bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))] text-xs">ditolak</Badge>}
                       </td>
                       {(selectedType?.fields || []).filter((f) => f.required).map((f) => (
                         <td key={f.name} className="px-2 py-1.5">{String(r.data?.[f.name] ?? '—')}</td>
                       ))}
-                      <td className="px-2 py-1.5 text-[11px] text-muted-foreground">
+                      <td className="px-2 py-1.5 text-xs text-muted-foreground">
                         {[...(r.errors || []), ...(r.warnings || [])].join(' · ') || '—'}
                       </td>
                     </tr>
@@ -1945,11 +1852,11 @@ export default function DataImportWizard({ token }) {
                 baris yang terdampak = memilih dengan mata tertutup. */}
             {dups?.checked && (
               <div className={`rounded-[var(--radius-md)] border p-3 text-xs space-y-1
-                ${dups.existing > 0 ? 'border-amber-500/40 bg-amber-500/10'
+                ${dups.existing > 0 ? 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)]'
                   : 'border-border bg-muted/40'}`} data-testid="import-duplicates">
                 {dups.existing > 0 ? (
                   <>
-                    <p className="font-semibold text-amber-700 dark:text-amber-300">
+                    <p className="font-semibold text-[hsl(var(--warning-text))]">
                       {dups.existing} baris di berkas ini SUDAH ADA di sistem
                       {dups.overlap_date_from && (
                         <> — tanggal yang bertindih: {dups.overlap_date_from} s/d{' '}
@@ -2033,9 +1940,9 @@ export default function DataImportWizard({ token }) {
             </div>
 
             {blockError?.where === 'commit' && (
-              <div className="rounded-[var(--radius-md)] border border-red-500/40 bg-red-500/10 p-3"
+              <div className="rounded-[var(--radius-md)] border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] p-3"
                 data-testid="import-commit-error">
-                <p className="text-xs font-semibold text-red-600 dark:text-red-400 flex items-center gap-1.5">
+                <p className="text-xs font-semibold text-[hsl(var(--danger-text))] flex items-center gap-1.5">
                   <XCircle className="w-4 h-4" /> {blockError.title}
                 </p>
                 <p className="text-xs mt-1">{blockError.detail}</p>
@@ -2051,7 +1958,7 @@ export default function DataImportWizard({ token }) {
       {step === 6 && result && (
         <Card className="bg-[hsl(var(--card))]" data-testid="import-result">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+            <CardTitle className="text-base flex items-center gap-2 text-[hsl(var(--success-text))]">
               <CheckCircle2 className="w-5 h-5" /> Impor selesai
             </CardTitle>
           </CardHeader>
@@ -2069,35 +1976,35 @@ export default function DataImportWizard({ token }) {
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3"
                   data-testid="import-result-update-only">
-                  <div className="rounded-[var(--radius-sm)] border-2 border-blue-500/50 bg-blue-500/5 p-3">
-                    <p className="text-[11px] text-muted-foreground">Pesanan diperbarui</p>
-                    <p className="text-2xl font-bold text-blue-600 dark:text-blue-400"
+                  <div className="rounded-[var(--radius-sm)] border border-[var(--glass-border)] p-3">
+                    <p className="text-xs text-muted-foreground">Pesanan diperbarui</p>
+                    <p className="text-2xl font-bold text-[hsl(var(--info-text))]"
                       data-testid="import-result-updated">{result.updated ?? 0}</p>
-                    <p className="text-[10px] text-muted-foreground">ini angka yang dihitung</p>
+                    <p className="text-xs text-muted-foreground">ini angka yang dihitung</p>
                   </div>
                   <div className="rounded-[var(--radius-sm)] border border-border p-3">
-                    <p className="text-[11px] text-muted-foreground">Ditolak</p>
-                    <p className="text-xl font-bold text-red-600">{result.rejected ?? 0}</p>
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">Ditolak</p>
+                    <p className="text-xl font-bold text-[hsl(var(--danger-text))]">{result.rejected ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">
                       belum pernah diimpor / status mundur
                     </p>
                   </div>
                   <div className="rounded-[var(--radius-sm)] border border-border p-3">
-                    <p className="text-[11px] text-muted-foreground">Baris masuk</p>
+                    <p className="text-xs text-muted-foreground">Baris masuk</p>
                     <p className="text-xl font-bold text-muted-foreground">{result.inserted ?? 0}</p>
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       0 memang benar — jenis ini tidak membuat pesanan baru
                     </p>
                   </div>
                   <div className="rounded-[var(--radius-sm)] border border-border p-3">
-                    <p className="text-[11px] text-muted-foreground">Bisa dipulihkan</p>
+                    <p className="text-xs text-muted-foreground">Bisa dipulihkan</p>
                     <p className="text-xl font-bold text-foreground">{result.undo_count ?? 0}</p>
-                    <p className="text-[10px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       keadaan sebelum diubah tersimpan
                     </p>
                   </div>
                 </div>
-                <div className="rounded-[var(--radius-sm)] border border-blue-500/30 bg-blue-500/5 p-3 text-xs"
+                <div className="rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 text-xs"
                   data-testid="import-result-update-only-note">
                   <b>Jangan unggah ulang Ekspor A untuk “memperbaiki” angka ini.</b>{' '}
                   Ekspor A tidak memuat pesanan yang sudah selesai; mengunggahnya
@@ -2108,12 +2015,12 @@ export default function DataImportWizard({ token }) {
               </>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {[['Baris masuk', result.inserted, 'text-emerald-600'],
-                  ['Diperbarui', result.updated, 'text-blue-600'],
-                  ['Duplikat dilewati', result.skipped_duplicates, 'text-amber-600'],
-                  ['Ditolak', result.rejected, 'text-red-600']].map(([l, v, c]) => (
+                {[['Baris masuk', result.inserted, 'text-[hsl(var(--success-text))]'],
+                  ['Diperbarui', result.updated, 'text-[hsl(var(--info-text))]'],
+                  ['Duplikat dilewati', result.skipped_duplicates, 'text-[hsl(var(--warning-text))]'],
+                  ['Ditolak', result.rejected, 'text-[hsl(var(--danger-text))]']].map(([l, v, c]) => (
                     <div key={l} className="rounded-[var(--radius-sm)] border border-border p-3">
-                      <p className="text-[11px] text-muted-foreground">{l}</p>
+                      <p className="text-xs text-muted-foreground">{l}</p>
                       <p className={`text-xl font-bold ${c}`}>{v ?? 0}</p>
                     </div>
                   ))}
@@ -2121,7 +2028,7 @@ export default function DataImportWizard({ token }) {
             )}
             {result.row_notes?.length > 0 && (
               <div className="rounded-[var(--radius-sm)] border border-border max-h-56 overflow-y-auto">
-                <table className="w-full text-[11px]">
+                <table className="w-full text-xs">
                   <thead className="bg-muted/60"><tr>
                     <th className="px-2 py-1.5 text-left">Baris</th>
                     <th className="px-2 py-1.5 text-left">Tindakan</th>
@@ -2166,7 +2073,7 @@ export default function DataImportWizard({ token }) {
               )}
             </div>
             {result.daily_rollup && (
-              <div className="rounded-[var(--radius-sm)] border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs"
+              <div className="rounded-[var(--radius-sm)] border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)] p-3 text-xs"
                 data-testid="import-rollup-info">
                 <b>Rekap harian ikut diperbarui otomatis</b> — {result.daily_rollup.upserted} tanggal
                 dihitung ulang dari pesanan ({result.daily_rollup.orders} pesanan ·
@@ -2190,22 +2097,27 @@ export default function DataImportWizard({ token }) {
       )}
 
       {/* RIWAYAT */}
-      <Card className="bg-[hsl(var(--card))]">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <History className="w-4 h-4" /> Riwayat impor
-          </CardTitle>
-          <p className="text-xs text-muted-foreground">
+      <section className="space-y-2" data-testid="import-history">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold">Riwayat impor</p>
+          <TombolUnduh namaBerkas="riwayat-impor-marketing" namaLembar="Riwayat impor" baris={history} testId="import-history-unduh"
+            kolom={[
+              { label: 'Waktu', nilai: (h) => (h.committed_at || h.created_at || '').slice(0, 16).replace('T', ' ') },
+              { label: 'Jenis', nilai: (h) => h.source_label || h.source_type }, { label: 'Toko', nilai: (h) => h.account_name || '' },
+              { label: 'Berkas', nilai: (h) => h.filename || '' }, { label: 'Masuk', nilai: (h) => Number(h.committed_count || 0) },
+              { label: 'Diperbarui', nilai: (h) => Number(h.updated_count || 0) }, { label: 'Oleh', nilai: (h) => h.committed_by || h.created_by || '' },
+              { label: 'Status', nilai: (h) => (h.status === 'committed' ? 'Tersimpan' : 'Dibatalkan') },
+            ]} />
+        </div>
+          <p className="text-sm text-muted-foreground">
             Kolom <b>Masuk</b> = baris baru, <b>Diperbarui</b> = baris lama yang
             diubah. Impor “hanya memperbarui” (Ekspor B &amp; C) selalu 0 di kolom
             Masuk — itu benar, bukan gagal.
           </p>
-        </CardHeader>
-        <CardContent>
           {history.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Belum ada impor yang disimpan.</p>
+            <EmptyState icon={History} title="Belum ada impor yang disimpan" description="Impor yang sudah disimpan muncul di sini dan bisa dibatalkan." />
           ) : (
-            <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-border">
+            <div className="overflow-x-auto">
               <table className="w-full text-xs" data-testid="import-history-table">
                 <thead className="bg-muted/60"><tr>
                   <th className="px-3 py-2 text-left">Waktu</th>
@@ -2228,31 +2140,31 @@ export default function DataImportWizard({ token }) {
                         <td className="px-3 py-1.5">
                           {h.source_label || h.source_type}
                           {isUpd && (
-                            <Badge className="ml-1.5 text-[9px] bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+                            <Badge className="ml-1.5 text-xs bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))]">
                               hanya memperbarui
                             </Badge>
                           )}
                         </td>
                         <td className="px-3 py-1.5">{h.account_name || '—'}</td>
-                        <td className="px-3 py-1.5 font-mono text-[11px]">{h.filename}</td>
+                        <td className="px-3 py-1.5 font-mono text-xs">{h.filename}</td>
                         <td className="px-3 py-1.5 text-right font-semibold">
                           {isUpd
                             ? <span className="text-muted-foreground" title="jenis ini tidak membuat baris baru">0</span>
                             : (h.committed_count ?? 0)}
                         </td>
-                        <td className="px-3 py-1.5 text-right font-semibold text-blue-600 dark:text-blue-400"
+                        <td className="px-3 py-1.5 text-right font-semibold text-[hsl(var(--info-text))]"
                           data-testid={`history-updated-${h.id}`}>
                           {h.updated_count ?? 0}
                         </td>
                         <td className="px-3 py-1.5">{h.committed_by || h.created_by}</td>
                         <td className="px-3 py-1.5">
                           {h.status === 'committed'
-                            ? <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 text-[10px]">tersimpan</Badge>
+                            ? <Badge className="bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] text-xs">tersimpan</Badge>
                             : (
                               <div className="space-y-0.5">
-                                <Badge variant="outline" className="text-[10px]">dibatalkan</Badge>
+                                <Badge variant="outline" className="text-xs">dibatalkan</Badge>
                                 {(h.rolled_back_at || '') && (
-                                  <p className="text-[10px] text-muted-foreground">
+                                  <p className="text-xs text-muted-foreground">
                                     {String(h.rolled_back_at).slice(0, 16).replace('T', ' ')}
                                   </p>
                                 )}
@@ -2271,7 +2183,7 @@ export default function DataImportWizard({ token }) {
                                   diunduh. Tanpa ini, "kenapa 12 baris tidak
                                   masuk minggu lalu?" tidak punya jawaban selain
                                   ingatan orang. */}
-                              <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]"
+                              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs"
                                 onClick={() => downloadAuthed(
                                   `sessions/${h.id}/result.csv`,
                                   `hasil-impor-${String(h.id).slice(0, 8)}.csv`)}
@@ -2279,7 +2191,7 @@ export default function DataImportWizard({ token }) {
                                 data-testid={`history-result-csv-${h.id}`}>
                                 <Download className="w-3 h-3" />
                               </Button>
-                              <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]"
+                              <Button variant="outline" size="sm" className="h-7 px-2 text-xs"
                                 onClick={() => askRollback(h.id)}
                                 data-testid={`history-rollback-${h.id}`}>
                                 <RotateCcw className="w-3 h-3 mr-1" />
@@ -2287,7 +2199,7 @@ export default function DataImportWizard({ token }) {
                               </Button>
                             </div>
                           ) : (
-                            <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]"
+                            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs"
                               onClick={() => openUndoReport(h.id)}
                               data-testid={`history-undo-report-${h.id}`}>
                               <FileSpreadsheet className="w-3 h-3 mr-1" /> Laporan pemulihan
@@ -2301,8 +2213,7 @@ export default function DataImportWizard({ token }) {
               </table>
             </div>
           )}
-        </CardContent>
-      </Card>
+      </section>
 
       {/* F3.F — KONFIRMASI PEMBATALAN yang menyebut angka sebenarnya lebih dulu */}
       <AlertDialog open={!!rollbackTarget}
@@ -2316,7 +2227,7 @@ export default function DataImportWizard({ token }) {
               <div className="space-y-2 text-xs" data-testid="rollback-preview">
                 {!undoInfo && <p>Memeriksa apa yang bisa dipulihkan…</p>}
                 {undoInfo?.error && (
-                  <p className="text-red-600 dark:text-red-400">{undoInfo.error}</p>
+                  <p className="text-[hsl(var(--danger-text))]">{undoInfo.error}</p>
                 )}
                 {undoInfo && !undoInfo.error && (
                   <>
@@ -2330,7 +2241,7 @@ export default function DataImportWizard({ token }) {
                           {undoInfo.undo_restored > 0
                             && ` (${undoInfo.undo_restored} sudah pernah dipulihkan sebelumnya)`}.
                         </p>
-                        <p className="text-amber-700 dark:text-amber-300">
+                        <p className="text-[hsl(var(--warning-text))]">
                           Pesanan yang berkas ini jadikan <b>batal/retur</b> hanya
                           field susulannya yang dipulihkan — statusnya TIDAK
                           dihidupkan lagi karena reservasi stoknya sudah dilepas.
@@ -2356,21 +2267,18 @@ export default function DataImportWizard({ token }) {
           <AlertDialogFooter>
             <AlertDialogCancel>Tidak</AlertDialogCancel>
             <AlertDialogAction onClick={() => rollback(rollbackTarget)}
+              className="bg-[hsl(var(--destructive-strong))] text-white hover:bg-[hsl(var(--destructive-strong)/0.9)]"
               data-testid="rollback-confirm">Ya, batalkan</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       {/* F3.F — LAPORAN PEMULIHAN (menetap; bisa dibuka lagi besok dari Riwayat) */}
-      <AlertDialog open={!!undoReport} onOpenChange={(o) => !o && setUndoReport(null)}>
-        <AlertDialogContent className="max-w-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Laporan pemulihan impor</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-xs" data-testid="undo-report">
+      <DetailPopup open={!!undoReport} onClose={() => setUndoReport(null)} judul="Laporan pemulihan impor" testId="undo-report-popup">
+              <div className="space-y-3 text-sm" data-testid="undo-report">
                 {undoReport?.loading && <p>Memuat laporan…</p>}
                 {undoReport?.error && (
-                  <p className="text-red-600 dark:text-red-400">{undoReport.error}</p>
+                  <p className="text-[hsl(var(--danger-text))]">{undoReport.error}</p>
                 )}
                 {undoReport && !undoReport.loading && !undoReport.error && (
                   <>
@@ -2391,14 +2299,14 @@ export default function DataImportWizard({ token }) {
                         ['Jejak belum dipakai', undoReport.undo_pending],
                         ['Jejak sudah dipakai', undoReport.undo_restored]].map(([l, v]) => (
                           <div key={l} className="rounded-[var(--radius-sm)] border border-border p-2">
-                            <p className="text-[10px] text-muted-foreground">{l}</p>
+                            <p className="text-xs text-muted-foreground">{l}</p>
                             <p className="text-base font-bold text-foreground">{v ?? 0}</p>
                           </div>
                         ))}
                     </div>
                     {undoReport.restore_fields_only > 0 && (
-                      <p className="rounded-[var(--radius-sm)] border border-amber-500/40 bg-amber-500/10 p-2
-                        text-amber-800 dark:text-amber-200">
+                      <p className="rounded-[var(--radius-sm)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] p-2
+                        text-[hsl(var(--warning-text))]">
                         <b>Perlu tindak lanjut manual.</b>{' '}
                         {undoReport.restore_fields_only} pesanan tidak dihidupkan
                         kembali statusnya (sudah batal/retur ⇒ stok sudah dilepas).
@@ -2414,10 +2322,10 @@ export default function DataImportWizard({ token }) {
                             JSON mentah sama dengan tidak menampilkannya. */}
                         {undoReport.restore_notes.map((n, i) => (
                           typeof n === 'string' ? (
-                            <p key={i} className="text-[11px] text-muted-foreground">• {n}</p>
+                            <p key={i} className="text-xs text-muted-foreground">• {n}</p>
                           ) : (
-                            <p key={i} className="text-[11px] text-muted-foreground">
-                              • <span className="font-mono text-foreground">{n.order || '—'}</span>
+                            <p key={i} className="text-xs text-muted-foreground">
+                              • <span className="text-foreground">{n.order || '—'}</span>
                               {n.result ? <> — <b>{n.result}</b></> : null}
                               {n.why ? `: ${n.why}` : ''}
                               {n.next ? ` · Langkah berikutnya: ${n.next}` : ''}
@@ -2428,7 +2336,7 @@ export default function DataImportWizard({ token }) {
                     )}
                     {(undoReport.trail || []).length > 0 && (
                       <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-border max-h-48">
-                        <table className="w-full text-[11px]">
+                        <table className="w-full text-xs">
                           <thead className="bg-muted/60"><tr>
                             <th className="px-2 py-1 text-left">No. Pesanan</th>
                             <th className="px-2 py-1 text-left">Status sebelum diimpor</th>
@@ -2437,7 +2345,7 @@ export default function DataImportWizard({ token }) {
                           <tbody>
                             {undoReport.trail.map((t, i) => (
                               <tr key={`${t.order_ref}-${i}`} className="border-t border-border">
-                                <td className="px-2 py-1 font-mono">{t.order_ref}</td>
+                                <td className="px-2 py-1">{t.order_ref}</td>
                                 <td className="px-2 py-1">{t.status_before || '—'}</td>
                                 <td className="px-2 py-1">
                                   {t.restored_at
@@ -2461,22 +2369,11 @@ export default function DataImportWizard({ token }) {
                   </>
                 )}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setUndoReport(null)}
-              data-testid="undo-report-close">Tutup</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      </DetailPopup>
 
       {/* F8 — DAFTAR SUSUNAN KOLOM YANG DIINGAT (bisa dilihat & dilupakan) */}
-      <AlertDialog open={formats !== null} onOpenChange={(o) => !o && setFormats(null)}>
-        <AlertDialogContent className="max-w-3xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Susunan kolom yang diingat sistem</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 text-xs" data-testid="import-formats-dialog">
+      <DetailPopup open={formats !== null} onClose={() => setFormats(null)} judul="Susunan kolom yang diingat sistem" testId="import-formats-popup">
+              <div className="space-y-2 text-sm" data-testid="import-formats-dialog">
                 <p className="text-muted-foreground">
                   Setiap kali Anda menyimpan impor, susunan kolom berkasnya diingat
                   beserta pemetaan yang Anda konfirmasi — supaya berkas rutin harian
@@ -2490,7 +2387,7 @@ export default function DataImportWizard({ token }) {
                   </p>
                 ) : (
                   <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-border max-h-72">
-                    <table className="w-full text-[11px]">
+                    <table className="w-full text-xs">
                       <thead className="bg-muted/60 sticky top-0"><tr>
                         <th className="px-2 py-1.5 text-left">Jenis data</th>
                         <th className="px-2 py-1.5 text-left">Kolom</th>
@@ -2514,7 +2411,7 @@ export default function DataImportWizard({ token }) {
                               {(f.headers_preview || []).slice(0, 4).join(' · ')}
                             </td>
                             <td className="px-2 py-1.5 text-right">
-                              <Button variant="outline" size="sm" className="h-6 text-[10px]"
+                              <Button variant="outline" size="sm" className="h-6 text-xs"
                                 disabled={busy === 'forget'}
                                 onClick={() => forgetFormat(f.fingerprint, f.source_type, false)}
                                 data-testid={`import-forget-${f.fingerprint}`}>
@@ -2528,14 +2425,7 @@ export default function DataImportWizard({ token }) {
                   </div>
                 )}
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setFormats(null)}
-              data-testid="import-formats-close">Tutup</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+      </DetailPopup>
+    </PageLayout>
   );
 }

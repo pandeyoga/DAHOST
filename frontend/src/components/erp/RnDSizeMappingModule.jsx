@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Wand2, RefreshCw, CheckCircle2, Link2, Info } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Ruler, Wand2, RefreshCw, AlertTriangle, CheckCircle2, Link2,
-  ChevronDown, ChevronRight, Layers, Info, PackageCheck,
-} from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { toast } from '../ui/sonner';
+import PageLayout from './layout/PageLayout';
+import { Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -18,6 +20,12 @@ async function readErr(res, fallback) {
   try { const d = await res.json(); return d?.detail || fallback; } catch { return fallback; }
 }
 
+const sumberTeks = (it) => [it.from_size_list && 'Daftar ukuran style', it.from_variants && 'Varian'].filter(Boolean).join(', ');
+const styleTeks = (it, maks = 99) => {
+  const kode = (it.styles || []).map(s => s.style_code || s.style_id.slice(0, 6));
+  return kode.length > maks ? `${kode.slice(0, maks).join(', ')} +${kode.length - maks} lagi` : kode.join(', ');
+};
+
 /**
  * Padankan Ukuran — memetakan ukuran R&D yang masih "belum dipadankan" ke master
  * produksi (`rahaza_sizes`).
@@ -27,6 +35,9 @@ async function readErr(res, fallback) {
  * dipadankan juga membuat promosi style ke produksi menambah ukuran master BARU —
  * sehingga master bisa punya `ALLSIZE` dan `ALL SIZE` sekaligus dan SKU FG pecah.
  * Satu klik di sini menutup keduanya.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, kartu angka StatTile (dengan keterangan), tabel ui/table tanpa judul
+ * kolom huruf besar, daftar "sudah terhubung" dari pil lipat menjadi tabel yang selalu tampil, unduh Excel/CSV.
  */
 export default function RnDSizeMappingModule({ token }) {
   const hdr = useMemo(
@@ -41,7 +52,6 @@ export default function RnDSizeMappingModule({ token }) {
   const [choice, setChoice] = useState({});      // label → size_id | NEW_SIZE
   const [newCode, setNewCode] = useState({});    // label → kode master usulan
   const [picked, setPicked] = useState({});      // label → boolean (batch)
-  const [showMatched, setShowMatched] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,7 +118,7 @@ export default function RnDSizeMappingModule({ token }) {
       if (out.applied === 0 && (out.skipped || []).length) {
         toast.warning(
           `${out.skipped.length} ukuran tidak punya padanan di master: ${out.skipped.join(', ')}. ` +
-          `Aktifkan "buat ukuran baru di master" atau pilih padanannya satu per satu.`,
+          `Aktifkan "boleh membuat ukuran baru di master" atau pilih padanannya satu per satu.`,
         );
       } else {
         toast.success(
@@ -122,186 +132,142 @@ export default function RnDSizeMappingModule({ token }) {
   };
 
   const items = data?.items || [];
+  const matched = data?.matched || [];
   const pickedCount = items.filter(it => picked[it.label]).length;
   const allClear = !loading && data && items.length === 0;
+  const masterNama = (id) => {
+    const m = (data?.master_sizes || []).find(x => x.size_id === id);
+    return m ? `${m.code}${m.name && m.name !== m.code ? ` — ${m.name}` : ''}` : '';
+  };
+  const angka = (k) => (data ? (data[k] ?? '—') : '—');
 
   return (
-    <div className="p-6" data-testid="rnd-size-mapping-module">
-      {/* ── Header ── */}
-      <div className="flex items-start justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Ruler className="w-5 h-5 text-violet-500" /> Padankan Ukuran
-          </h1>
-          <p className="text-sm text-foreground/50 mt-0.5">
-            Hubungkan ukuran R&amp;D yang ditulis bebas ke master ukuran produksi — supaya
-            style bisa naik ke PO tanpa tertahan
-          </p>
+    <PageLayout testId="rnd-size-mapping-module" title="Padankan ukuran"
+      subtitle="Hubungkan ukuran RnD yang ditulis bebas ke master ukuran produksi supaya style tidak tertahan saat masuk PO."
+      actions={(
+        <Button onClick={autoAll} disabled={loading || !!busy || items.length === 0} data-testid="rnd-size-mapping-auto-btn"
+          title={items.length === 0 ? 'Tidak ada ukuran yang perlu dipadankan' : 'Padankan semua ukuran sekaligus'}>
+          <Wand2 />{busy === '__auto__' ? 'Memadankan…' : 'Padankan semua'}
+        </Button>
+      )}
+      tools={(
+        <Button variant="outline" size="icon" onClick={load} disabled={loading || !!busy} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="rnd-size-mapping-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      )}
+      // Saat semua beres, empat kartu (dua bernilai 0) diganti satu kalimat hijau di isi halaman supaya tabel
+      // "sudah terhubung" langsung terlihat; kartu tampil lagi begitu ada ukuran yang perlu dipadankan.
+      summary={!allClear && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile testId="rnd-size-stat-unmatched_labels" label="Belum dipadankan" value={angka('unmatched_labels')}
+            accent={items.length > 0 ? 'warning' : 'default'}
+            sub="Label ukuran RnD yang belum terhubung ke master" />
+          <StatTile testId="rnd-size-stat-blocked_styles" label="Style tertahan" value={angka('blocked_styles')}
+            accent={data?.blocked_styles > 0 ? 'danger' : 'default'}
+            sub="Style yang tertahan saat masuk PO karena ukurannya" />
+          <StatTile testId="rnd-size-stat-matched_labels" label="Sudah dipadankan" value={angka('matched_labels')}
+            sub="Label ukuran yang sudah terhubung ke master" />
+          <StatTile testId="rnd-size-stat-variants_scanned" label="Varian diperiksa" value={angka('variants_scanned')}
+            sub="Semua varian RnD yang dibaca ukurannya" />
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={load} disabled={loading || !!busy}
-            className="gap-2" data-testid="rnd-size-mapping-refresh">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-          </Button>
-          <Button onClick={autoAll} disabled={loading || !!busy || items.length === 0}
-            className="gap-2" data-testid="rnd-size-mapping-auto-btn">
-            <Wand2 className="w-4 h-4" />
-            {busy === '__auto__' ? 'Memadankan…' : 'Padankan Semua'}
-          </Button>
-        </div>
-      </div>
-
-      {/* ── Kenapa ini penting ── */}
-      <GlassCard className="p-4 mb-5 border-sky-300 dark:border-sky-500/40 bg-sky-50 dark:bg-sky-500/10">
-        <div className="flex items-start gap-2">
-          <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 mt-0.5 flex-shrink-0" />
-          <div className="text-xs text-sky-900/80 dark:text-sky-200/80 leading-relaxed">
-            Ukuran di R&amp;D memang <b>bebas ditulis</b> (mis. <span className="font-mono">All Size</span>,
-            <span className="font-mono"> 28/30</span>) — itu tidak diubah oleh layar ini.
-            Tapi <b>PO produksi internal mewajibkan ukuran yang ada di master</b>. Selama sebuah
-            ukuran belum dipadankan, style yang memakainya akan tertahan saat masuk PO, dan
-            saat dipromosikan sistem akan menambah ukuran master baru — sehingga master bisa
-            punya dua ukuran yang sebenarnya sama.
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* ── Ringkasan ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        {[
-          { k: 'unmatched_labels', label: 'Belum dipadankan', icon: AlertTriangle,
-            cls: items.length > 0
-              ? 'text-amber-600 dark:text-amber-400'
-              : 'text-emerald-600 dark:text-emerald-400' },
-          { k: 'blocked_styles', label: 'Style tertahan', icon: Layers, cls: 'text-red-600 dark:text-red-400' },
-          { k: 'matched_labels', label: 'Sudah dipadankan', icon: CheckCircle2, cls: 'text-emerald-600 dark:text-emerald-400' },
-          { k: 'variants_scanned', label: 'Varian diperiksa', icon: PackageCheck, cls: 'text-foreground/70' },
-        ].map(({ k, label, icon: Icon, cls }) => (
-          <GlassCard key={k} className="p-4" data-testid={`rnd-size-stat-${k}`}>
-            <div className="flex items-center gap-2 text-xs text-foreground/50 mb-1">
-              <Icon className="w-3.5 h-3.5" /> {label}
-            </div>
-            <div className={`text-2xl font-bold ${cls}`}>{data?.[k] ?? '—'}</div>
-          </GlassCard>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center h-32 items-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-500" />
-        </div>
+      )}>
+      {loading && !data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pemadanan ukuran…</p>
       ) : allClear ? (
-        <GlassCard className="p-10 text-center border-emerald-300 dark:border-emerald-500/40 bg-emerald-50 dark:bg-emerald-500/10"
-          data-testid="rnd-size-mapping-allclear">
-          <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
-          <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
-            Semua ukuran sudah dipadankan ke master produksi.
-          </p>
-          <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-1">
-            Tidak ada style yang tertahan karena ukuran. {data?.matched_labels ?? 0} label
-            ukuran terhubung ke master, {data?.variants_scanned ?? 0} varian diperiksa.
-          </p>
-        </GlassCard>
+        <Notice tone="success" icon={CheckCircle2} testId="rnd-size-mapping-allclear"
+          title="Semua ukuran sudah dipadankan ke master produksi">
+          <span className="inline-block" data-testid="rnd-size-stat-matched_labels">{angka('matched_labels')} label ukuran terhubung</span>
+          {' · '}<span className="inline-block" data-testid="rnd-size-stat-variants_scanned">{angka('variants_scanned')} varian diperiksa</span>
+          {' · '}<span className="inline-block" data-testid="rnd-size-stat-blocked_styles">{angka('blocked_styles')} style tertahan</span>.
+        </Notice>
       ) : (
-        <>
-          {/* ── Aksi batch ── */}
-          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-            <label className="flex items-center gap-2 text-xs text-foreground/70 cursor-pointer">
-              <input type="checkbox" checked={createMissing}
-                onChange={e => setCreateMissing(e.target.checked)}
-                className="rounded border-input"
+        <div className="space-y-3">
+          <Notice tone="info" icon={Info}>
+            Ukuran RnD boleh ditulis bebas (mis. All Size, 28/30), tetapi PO produksi hanya menerima ukuran yang ada di
+            master. Selama belum dipadankan, style yang memakainya tertahan saat masuk PO, dan saat dipromosikan sistem
+            menambah ukuran master baru sehingga master bisa punya dua ukuran yang sebenarnya sama.
+          </Notice>
+
+          {/* ── Aksi massal ── */}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-sm text-foreground" htmlFor="rnd-size-create-missing">
+              <Checkbox id="rnd-size-create-missing" checked={createMissing}
+                onCheckedChange={(v) => setCreateMissing(v === true)}
                 data-testid="rnd-size-mapping-create-missing" />
               Boleh membuat ukuran baru di master bila tidak ada padanannya
             </label>
-            <Button variant="outline" size="sm" onClick={applySelected}
-              disabled={pickedCount === 0 || !!busy}
-              className="h-8 text-xs gap-1" data-testid="rnd-size-mapping-apply-selected">
-              <Link2 className="w-3 h-3" />
-              {busy === '__selected__' ? 'Memadankan…' : `Padankan Terpilih (${pickedCount})`}
+            <TombolUnduh namaBerkas="ukuran-belum-dipadankan" namaLembar="Belum dipadankan" baris={items}
+              testId="rnd-size-unmatched-unduh"
+              kolom={[
+                { label: 'Ukuran RnD', nilai: (it) => it.label },
+                { label: 'Dipakai oleh (style)', nilai: (it) => styleTeks(it) },
+                { label: 'Terbaca dari', nilai: (it) => sumberTeks(it) },
+                { label: 'Padankan ke', nilai: (it) => {
+                  const sel = choice[it.label];
+                  return (!sel || sel === NEW_SIZE) ? `Ukuran baru: ${(newCode[it.label] || it.proposed_new_code || '').trim()}` : masterNama(sel);
+                } },
+              ]} />
+            <Button variant="outline" onClick={applySelected} disabled={pickedCount === 0 || !!busy}
+              data-testid="rnd-size-mapping-apply-selected">
+              <Link2 />{busy === '__selected__' ? 'Memadankan…' : `Padankan terpilih (${pickedCount})`}
             </Button>
           </div>
 
           {/* ── Tabel label belum dipadankan ── */}
-          <div className="overflow-x-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-            <table className="w-full text-sm">
-              <thead className="bg-foreground/5 border-b border-foreground/10">
-                <tr>
-                  <th className="px-3 py-3 w-10">
-                    <input type="checkbox"
+          <div className="rounded-lg border border-[var(--glass-border)]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox aria-label="Pilih semua"
                       checked={pickedCount > 0 && pickedCount === items.length}
-                      onChange={e => {
+                      onCheckedChange={(v) => {
                         const all = {};
-                        if (e.target.checked) items.forEach(it => { all[it.label] = true; });
+                        if (v === true) items.forEach(it => { all[it.label] = true; });
                         setPicked(all);
                       }}
-                      className="rounded border-input"
                       data-testid="rnd-size-mapping-pick-all" />
-                  </th>
-                  {['Ukuran R&D', 'Dipakai oleh', 'Terbaca dari', 'Padankan ke', 'Aksi'].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-foreground/50 uppercase tracking-wider">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+                  </TableHead>
+                  <TableHead>Ukuran RnD</TableHead>
+                  <TableHead>Dipakai oleh</TableHead>
+                  <TableHead>Terbaca dari</TableHead>
+                  <TableHead>Padankan ke</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {items.map(it => {
                   const sel = choice[it.label];
                   const isNew = sel === NEW_SIZE || !sel;
                   return (
-                    <tr key={it.label} className="border-b border-foreground/5 last:border-0 hover:bg-foreground/[0.03] align-top"
-                      data-testid={`rnd-size-row-${it.label}`}>
-                      <td className="px-3 py-3">
-                        <input type="checkbox" checked={!!picked[it.label]}
-                          onChange={e => setPicked(p => ({ ...p, [it.label]: e.target.checked }))}
-                          className="rounded border-input"
+                    <TableRow key={it.label} className="align-top" data-testid={`rnd-size-row-${it.label}`}>
+                      <TableCell>
+                        <Checkbox aria-label={`Pilih ${it.label}`} checked={!!picked[it.label]}
+                          onCheckedChange={(v) => setPicked(p => ({ ...p, [it.label]: v === true }))}
                           data-testid={`rnd-size-pick-${it.label}`} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center px-2 py-1 rounded-md font-mono text-sm font-bold
-                          bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-200
-                          border border-amber-300 dark:border-amber-500/40">
-                          {it.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell><span className="text-sm font-semibold">{it.label}</span></TableCell>
+                      <TableCell>
                         {it.styles.length === 0 ? (
-                          <span className="text-xs text-foreground/40">—</span>
+                          <span className="text-muted-foreground">—</span>
                         ) : (
-                          <div className="flex flex-wrap gap-1 max-w-[240px]">
-                            {it.styles.slice(0, 3).map(s => (
-                              <span key={s.style_id} title={s.style_name}
-                                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/70">
-                                {s.style_code || s.style_id.slice(0, 6)}
-                              </span>
-                            ))}
-                            {it.styles.length > 3 && (
-                              <span className="text-[10px] px-1.5 py-0.5 text-foreground/50">
-                                +{it.styles.length - 3} lagi
-                              </span>
-                            )}
-                          </div>
+                          <span className="block max-w-[15rem] whitespace-normal text-sm" title={it.styles.map(s => s.style_name).join(', ')}>
+                            {styleTeks(it, 3)}
+                          </span>
                         )}
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {it.from_size_list && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-sky-300 dark:border-sky-500/40 bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-300">
-                              daftar ukuran
-                            </span>
-                          )}
-                          {it.from_variants && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded border border-violet-300 dark:border-violet-500/40 bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300">
-                              varian
-                            </span>
-                          )}
+                          {it.from_size_list && <StatusBadge status="size_list" label="Daftar ukuran" tone="info" />}
+                          {it.from_variants && <StatusBadge status="variants" label="Varian" tone="primary" />}
                         </div>
-                      </td>
-                      <td className="px-4 py-3 min-w-[260px]">
+                      </TableCell>
+                      <TableCell className="min-w-[16rem]">
                         <SmartNativeSelect
                           value={sel || NEW_SIZE}
                           onChange={e => setChoice(c => ({ ...c, [it.label]: e.target.value }))}
-                          className="w-full"
+                          className="w-full" aria-label={`Padankan ${it.label} ke`}
                           data-testid={`rnd-size-target-${it.label}`}>
                           <option value={NEW_SIZE}>+ Buat ukuran baru di master…</option>
                           {(data?.master_sizes || []).map(m => (
@@ -313,64 +279,61 @@ export default function RnDSizeMappingModule({ token }) {
 
                         {isNew ? (
                           <div className="mt-2 flex items-center gap-2">
-                            <span className="text-[10px] text-foreground/50 whitespace-nowrap">Kode master</span>
+                            <span className="whitespace-nowrap text-xs text-muted-foreground">Kode master</span>
                             <Input value={newCode[it.label] ?? ''}
                               onChange={e => setNewCode(n => ({ ...n, [it.label]: e.target.value }))}
-                              className="h-7 text-xs font-mono"
-                              placeholder={it.proposed_new_code || 'KODE'}
+                              className="h-8 text-sm" aria-label="Kode master baru"
+                              placeholder={it.proposed_new_code || 'Kode'}
                               data-testid={`rnd-size-newcode-${it.label}`} />
                           </div>
                         ) : it.suggestion && it.suggestion.size_id === sel ? (
-                          <div className="mt-1.5 text-[10px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3" /> saran sistem: {it.suggestion.reason}
-                          </div>
+                          <p className="mt-1.5 flex items-center gap-1 text-xs text-[hsl(var(--success-text))]">
+                            <CheckCircle2 className="h-3 w-3" /> Saran sistem: {it.suggestion.reason}
+                          </p>
                         ) : null}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Button size="sm" variant="outline" disabled={!!busy}
-                          onClick={() => applyRow(it)}
-                          className="h-7 text-xs gap-1 whitespace-nowrap"
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button size="sm" variant="outline" disabled={!!busy} onClick={() => applyRow(it)}
                           data-testid={`rnd-size-apply-${it.label}`}>
-                          <Link2 className="w-3 h-3" />
-                          {busy === it.label ? 'Memadankan…' : 'Padankan'}
+                          <Link2 />{busy === it.label ? 'Memadankan…' : 'Padankan'}
                         </Button>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
-        </>
-      )}
-
-      {/* ── Yang sudah dipadankan (transparansi) ── */}
-      {!loading && (data?.matched || []).length > 0 && (
-        <div className="mt-5">
-          <button type="button" onClick={() => setShowMatched(v => !v)}
-            className="flex items-center gap-1.5 text-xs font-medium text-foreground/60 hover:text-foreground transition-colors"
-            data-testid="rnd-size-mapping-matched-toggle">
-            {showMatched ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            {data.matched.length} ukuran sudah terhubung ke master
-          </button>
-          {showMatched && (
-            <GlassCard className="p-4 mt-2" data-testid="rnd-size-mapping-matched-panel">
-              <div className="flex flex-wrap gap-2">
-                {data.matched.map(m => (
-                  <span key={m.label}
-                    className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-md
-                      bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200
-                      border border-emerald-300 dark:border-emerald-500/30">
-                    <span className="font-mono font-semibold">{m.label}</span>
-                    <span className="opacity-50">→</span>
-                    <span className="font-mono">{m.code}</span>
-                  </span>
-                ))}
-              </div>
-            </GlassCard>
-          )}
         </div>
       )}
-    </div>
+
+      {/* ── Yang sudah dipadankan (transparansi) — dulu pil lipat, kini tabel ── */}
+      {!loading && matched.length > 0 && (
+        <section className="space-y-2" data-testid="rnd-size-mapping-matched-panel">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-base font-semibold text-foreground">Sudah terhubung ke master ({matched.length})</p>
+            <TombolUnduh namaBerkas="ukuran-sudah-dipadankan" namaLembar="Sudah dipadankan" baris={matched}
+              testId="rnd-size-matched-unduh"
+              kolom={[
+                { label: 'Ukuran RnD', nilai: (m) => m.label },
+                { label: 'Kode master', nilai: (m) => m.code || '' },
+                { label: 'Nama master', nilai: (m) => m.name || '' },
+                { label: 'Jumlah style', nilai: (m) => Number(m.used_by_count ?? (m.styles || []).length) || 0 },
+                { label: 'Style', nilai: (m) => styleTeks(m) },
+              ]} />
+          </div>
+          <TabelData baris={matched} kunci={(m) => m.label} testId="rnd-size-mapping-matched"
+            kolom={[
+              { kunci: 'label', label: 'Ukuran RnD', hp: 'judul', isi: (m) => <span className="font-semibold">{m.label}</span> },
+              { kunci: 'master', label: 'Ukuran master', isi: (m) => (
+                <span><span className="tabular-nums">{m.code}</span>{m.name && m.name !== m.code ? ` — ${m.name}` : ''}</span>) },
+              { kunci: 'jumlah', label: 'Dipakai style', rata: 'kanan', isi: (m) => (
+                <span className="tabular-nums">{m.used_by_count ?? (m.styles || []).length}</span>) },
+              { kunci: 'style', label: 'Contoh style', hp: 'keterangan', isi: (m) => (
+                <span className="block max-w-[24rem] truncate text-sm text-muted-foreground" title={styleTeks(m)}>{styleTeks(m, 5)}</span>) },
+            ]} />
+        </section>
+      )}
+    </PageLayout>
   );
 }

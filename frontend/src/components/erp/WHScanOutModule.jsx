@@ -14,24 +14,32 @@
  *                       pengecualian, unduh CSV.
  *   Tab Kontrol       — pcs pesanan impor (tanggal kirim) vs pcs scan, per hari + kumulatif.
  * Semua angka dihitung backend (`backend/core/scan_out.py`); layar ini tidak menghitung ulang.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tab = HubTabs (dulu deret tombol buatan), tombol mode/pengali = Button,
+ * konfirmasi & alasan = confirmDialog (dulu window.confirm/prompt), tanggal = DatePicker, semua tabel laporan =
+ * TabelData + unduh Excel/CSV, kotak pemberitahuan = Notice. Daftar baris scan hari ini sengaja tetap baris
+ * ringkas (bukan kartu) karena layar ini dipakai di HP sambil men-scan.
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  ScanLine, MapPin, Store, Lock, AlertTriangle, RefreshCw, Undo2, FileDown,
-  ClipboardList, Scale, CheckCircle2, RotateCw,
+  MapPin, Store, Lock, AlertTriangle, RefreshCw, Undo2, Scale, CheckCircle2, RotateCw,
 } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { GlassCard } from '@/components/ui/glass';
 import { formatRupiah, formatNumber } from '@/lib/format';
-import { downloadCsv } from '@/lib/csv';
 import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 import UniversalScanner from './scanner/UniversalScanner';
 import { scanFeedback } from './scanner/scanCode';
 import { toScanResult } from './scanner/ScanResult';
 import PageLayout from './layout/PageLayout';
-import { StatTile } from './moduleAtoms';
+import { EmptyState, Notice, StatTile } from './moduleAtoms';
+import HubTabs from './hubs/HubTabs';
+import DatePicker from '@/components/ui/date-picker';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 const API = '/api/wh/scan-out';
 const LS_LOC = 'whScanOut.location';
@@ -66,16 +74,6 @@ const fmtTime = (v) => {
   catch (_) { return ''; }
 };
 
-function Tab({ active, onClick, icon: Icon, children, testId }) {
-  return (
-    <button type="button" onClick={onClick} data-testid={testId}
-      className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-md text-xs font-semibold transition-colors ${
-        active ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'text-muted-foreground hover:text-foreground'}`}>
-      <Icon className="w-3.5 h-3.5" /> {children}
-    </button>
-  );
-}
-
 // Kartu angka = StatTile bersama (2026-11-06). Label & angka boleh turun baris — dulu dipotong
 // ("PCS NETO …") di HP. `break-words` diwariskan ke angka sehingga "Rp 12.345.678" tidak meluber.
 function Stat({ label, value, accent, className = '' }) {
@@ -86,13 +84,10 @@ function Stat({ label, value, accent, className = '' }) {
 const fgFirst = (list) => [...list.filter((l) => Number(l.fg_qty) > 0), ...list.filter((l) => !(Number(l.fg_qty) > 0))];
 const locLabel = (l) => `${l.code}${l.name ? ` · ${l.name}` : ''} · ${num(l.fg_qty)} pcs barang jadi`;
 
+// Kotak pemberitahuan = Notice bersama (dulu kotak berwarna buatan sendiri).
 function Banner({ tone = 'red', children, testId }) {
-  const cls = tone === 'red'
-    ? 'bg-[hsl(var(--destructive)/0.1)]  border-[hsl(var(--destructive)/0.35)]  text-[hsl(var(--destructive))] '
-    : tone === 'green'
-      ? 'bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)]  text-[hsl(var(--success))] '
-      : 'bg-[hsl(var(--warning)/0.1)]  border-[hsl(var(--warning)/0.35)]  text-[hsl(var(--warning))] ';
-  return <div className={`rounded-lg border px-3 py-2 text-xs ${cls}`} data-testid={testId}>{children}</div>;
+  const nada = tone === 'red' ? 'danger' : tone === 'green' ? 'success' : 'warning';
+  return <Notice tone={nada} testId={testId}>{children}</Notice>;
 }
 
 // ─── Tab Scan ────────────────────────────────────────────────────────────────
@@ -219,8 +214,11 @@ function ScanTab({ token }) {
   };
 
   const voidLine = async (ln) => {
-    const reason = window.prompt(`Batalkan ${ln.sku} ×${ln.qty}? Stok kembali ke lokasi. Alasan:`, 'salah scan');
-    if (reason === null) return;
+    const reason = await confirmDialog({
+      title: `Batalkan ${ln.sku} ×${ln.qty}?`, body: 'Stok kembali ke lokasi.', confirmLabel: 'Batalkan baris', danger: true,
+      input: { label: 'Alasan', value: 'salah scan' },
+    });
+    if (reason === false || reason === null) return;
     setBusy(true);
     try {
       const r = await fetch(`${API}/lines/${ln.id}/void`, { method: 'POST', headers: jsonH, body: JSON.stringify({ reason }) });
@@ -233,8 +231,13 @@ function ScanTab({ token }) {
 
   const closeSheet = async (sheet) => {
     const t = sheet.id === data?.open_sheet?.id ? (data?.open_totals || {}) : null;
-    if (!window.confirm(`Tutup Hari ${sheet.number}?\n${t ? `${t.pcs} pcs neto · HPP ${rp(t.value)}\n` : ''}`
-      + 'Sesudah ditutup: jurnal HPP dibuat, baris tidak bisa dibatalkan, scan berikutnya masuk lembar baru.')) return;
+    const ok = await confirmDialog({
+      title: `Tutup hari ${sheet.number}?`,
+      body: `${t ? `${t.pcs} pcs neto · HPP ${rp(t.value)}. ` : ''}`
+        + 'Sesudah ditutup: jurnal HPP dibuat, baris tidak bisa dibatalkan, scan berikutnya masuk lembar baru.',
+      confirmLabel: 'Tutup hari',
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       const r = await fetch(`${API}/sheets/${sheet.id}/close`, { method: 'POST', headers: authH });
@@ -257,20 +260,20 @@ function ScanTab({ token }) {
   return (
     <div className="space-y-3" data-testid="scan-out-tab-scan">
       <GlassCard className="p-3 space-y-2" hover={false}>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label className="block text-xs">
-            <span className="flex items-center gap-1 text-muted-foreground mb-1"><MapPin className="w-3 h-3" /> Lokasi asal (wajib)</span>
+        <div className="flex flex-wrap gap-3">
+          <label className="block w-full text-xs sm:w-80">
+            <span className="mb-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="w-3 h-3" /> Lokasi asal (wajib)</span>
             <SmartNativeSelect value={loc} data-testid="scan-out-location"
               onChange={(e) => { setLoc(e.target.value); lsSet(LS_LOC, e.target.value); }}
               className="w-full h-10 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm">
-              <option value="">— pilih lokasi —</option>
+              <option value="">Pilih lokasi</option>
               {locOptions.map((l) => (
                 <option key={l.id} value={l.id}>{locLabel(l)}</option>
               ))}
             </SmartNativeSelect>
           </label>
-          <label className="block text-xs">
-            <span className="flex items-center gap-1 text-muted-foreground mb-1"><Store className="w-3 h-3" /> Toko (opsional)</span>
+          <label className="block w-full text-xs sm:w-72">
+            <span className="mb-1 flex items-center gap-1 text-sm text-muted-foreground"><Store className="w-3 h-3" /> Toko (opsional)</span>
             <SmartNativeSelect value={store} data-testid="scan-out-store"
               onChange={(e) => { setStore(e.target.value); lsSet(LS_STORE, e.target.value); }}
               className="w-full h-10 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm">
@@ -280,28 +283,27 @@ function ScanTab({ token }) {
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-lg border border-[var(--glass-border)] p-0.5" data-testid="scan-out-mode">
-            <button type="button" onClick={() => setMode('scan')}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold ${mode === 'scan' ? 'bg-[hsl(var(--success))] text-white' : 'text-muted-foreground'}`}>
+          <div className="inline-flex items-center gap-1" role="group" aria-label="Jenis scan" data-testid="scan-out-mode">
+            <Button type="button" size="sm" variant={mode === 'scan' ? 'success' : 'outline'} aria-pressed={mode === 'scan'}
+              onClick={() => setMode('scan')}>
               Keluar
-            </button>
-            <button type="button" onClick={() => setMode('batal_kirim')} data-testid="scan-out-mode-cancel"
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold ${mode === 'batal_kirim' ? 'bg-[hsl(var(--warning))] text-white' : 'text-muted-foreground'}`}>
+            </Button>
+            <Button type="button" size="sm" variant={mode === 'batal_kirim' ? 'default' : 'outline'} aria-pressed={mode === 'batal_kirim'}
+              onClick={() => setMode('batal_kirim')} data-testid="scan-out-mode-cancel">
               Batal kirim
-            </button>
+            </Button>
           </div>
-          <div className="inline-flex items-center gap-1" data-testid="scan-out-mult">
-            <span className="text-[11px] text-muted-foreground">Pengali</span>
+          <div className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Pengali" data-testid="scan-out-mult">
+            <span className="text-xs text-muted-foreground">Pengali</span>
             {MULTS.map((m) => (
-              <button key={m} type="button" onClick={() => setMult(m)}
-                className={`min-w-[34px] px-2 py-1 rounded-md border text-xs font-semibold ${
-                  mult === m ? 'border-[hsl(var(--primary))] text-[hsl(var(--primary))]' : 'border-[var(--glass-border)] text-muted-foreground'}`}>
+              <Button key={m} type="button" size="sm" variant={mult === m ? 'default' : 'outline'} aria-pressed={mult === m}
+                onClick={() => setMult(m)} className="min-w-[2.5rem] px-2">
                 ×{m}
-              </button>
+              </Button>
             ))}
-            <Input type="number" min={1} max={500} value={mult} data-testid="scan-out-mult-input"
+            <Input type="number" min={1} max={500} value={mult} data-testid="scan-out-mult-input" aria-label="Pengali lain"
               onChange={(e) => setMult(Math.max(1, Math.min(500, parseInt(e.target.value, 10) || 1)))}
-              className="w-16 h-8 text-xs" />
+              className="h-8 w-16 text-sm" />
           </div>
         </div>
         <div className={mode === 'batal_kirim' ? 'rounded-lg ring-2 ring-[hsl(var(--warning)/0.35)] p-1' : ''}>
@@ -359,7 +361,7 @@ function ScanTab({ token }) {
             </div>
           </Banner>
         )}
-        <div className="text-[11px] text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           Khusus penjualan <b>marketplace</b>. Barang nota Portal Penjualan <b>tidak</b> di-scan di sini.
           {mult > 1 && <span className="ml-1 font-semibold text-[hsl(var(--primary))]">Scan berikutnya dihitung ×{mult} pcs.</span>}
           {inflight > 0 && <span className="ml-1">Mengirim {inflight}…</span>}
@@ -425,7 +427,7 @@ function ScanTab({ token }) {
 
       {(redLines.length > 0 || (data?.rejects || []).length > 0) && (
         <GlassCard className="p-3 space-y-1" hover={false} data-testid="scan-out-red-list">
-          <div className="text-xs font-semibold text-[hsl(var(--destructive))] flex items-center gap-1">
+          <div className="flex items-center gap-1 text-sm font-semibold text-[hsl(var(--danger-text))]">
             <AlertTriangle className="w-3.5 h-3.5" /> Daftar merah hari ini
           </div>
           {redLines.map((l) => (
@@ -445,9 +447,23 @@ function ScanTab({ token }) {
 
       {loc && (
         <GlassCard className="p-0 overflow-hidden" hover={false}>
-          <div className="px-3 py-2 text-xs font-semibold border-b border-[var(--glass-border)]">Baris hari ini ({lines.length})</div>
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--glass-border)] px-3 py-2">
+            <span className="text-sm font-semibold">Baris hari ini ({lines.length})</span>
+            <TombolUnduh namaBerkas={`scan-keluar-baris-${data?.date || todayWIB()}`} namaLembar="Baris scan" baris={lines}
+              testId="scan-out-lines-unduh" kolom={[
+                { label: 'Jam', nilai: (l) => fmtTime(l.scanned_at) },
+                { label: 'Jenis', nilai: (l) => (l.kind === 'batal_kirim' ? 'Batal kirim' : 'Keluar') },
+                { label: 'SKU', nilai: (l) => l.sku },
+                { label: 'Qty', nilai: (l) => Number(l.qty || 0) },
+                { label: 'HPP (WAC)', nilai: (l) => Number(l.value || 0) },
+                { label: 'Petugas', nilai: (l) => l.operator_name || '' },
+                { label: 'Toko', nilai: (l) => l.store?.account_name || '' },
+                { label: 'Status', nilai: (l) => (l.status === 'active' ? 'Aktif' : `Dibatalkan (${l.void_reason || '-'})`) },
+                { label: 'Catatan', nilai: (l) => (l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ') },
+              ]} />
+          </div>
           <div className="divide-y divide-[var(--glass-border)] max-h-[60vh] overflow-y-auto" data-testid="scan-out-lines">
-            {lines.length === 0 && <div className="px-3 py-6 text-center text-xs text-muted-foreground">Belum ada scan.</div>}
+            {lines.length === 0 && <EmptyState className="py-6" title="Belum ada scan hari ini" description="Scan pertama membuat lembar hari ini otomatis." />}
             {lines.map((l) => {
               const voided = l.status !== 'active';
               const red = !voided && (l.flags || []).length > 0;
@@ -460,7 +476,7 @@ function ScanTab({ token }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       {l.kind === 'batal_kirim'
-                        ? <span className="px-1.5 rounded bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  font-semibold">BATAL</span>
+                        ? <span className="rounded px-1.5 font-semibold bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning-text))]">Batal</span>
                         : null}
                       <span className="tabular-nums font-semibold truncate">{l.sku}</span>
                       <span className="font-bold">×{l.qty}</span>
@@ -472,8 +488,8 @@ function ScanTab({ token }) {
                     {red && <div className="text-[hsl(var(--destructive))] ">{(l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')}</div>}
                   </div>
                   {mayVoid && (
-                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => voidLine(l)} title="Batalkan baris"
-                      data-testid="scan-out-void">
+                    <Button size="icon-sm" variant="ghost" disabled={busy} onClick={() => voidLine(l)} title="Batalkan baris"
+                      aria-label="Batalkan baris" data-testid="scan-out-void">
                       <Undo2 className="w-4 h-4" />
                     </Button>
                   )}
@@ -489,23 +505,39 @@ function ScanTab({ token }) {
 }
 
 // ─── Tab Laporan Harian ──────────────────────────────────────────────────────
-function Table({ head, rows, testId, empty = 'Tidak ada data.' }) {
+/**
+ * Tabel laporan kecil = TabelData (kartu ringkas di HP) + unduh Excel/CSV di sebelah judulnya.
+ * kolom: [{ label, nilai: (r) => nilai mentah untuk unduhan, isi?: (r) => tampilan, rata? }]
+ */
+function TabelLaporan({ judul, kolom, baris, namaBerkas, kosong = 'Tidak ada data.', testId, merah, judulCls = '' }) {
+  const kol = kolom.map((k, i) => ({
+    kunci: `k${i}`, label: k.label, rata: k.rata, hp: k.hp !== undefined ? k.hp : (i === 0 ? 'judul' : 'nilai'),
+    isi: (r) => {
+      const v = k.isi ? k.isi(r) : k.nilai(r);
+      return merah && merah(r) && i === 0 ? <span className="text-[hsl(var(--danger-text))]">{v}</span> : v;
+    },
+  }));
+  // Tanpa data: satu baris ringkas (dulu kartu kosong + tombol unduh nonaktif berulang — di HP layar jadi panjang).
+  if (!baris || baris.length === 0) {
+    return (
+      <p className="px-1 text-sm text-muted-foreground" data-testid={testId}>
+        <span className={`font-medium text-foreground ${judulCls}`}>{judul}</span> — {kosong}
+      </p>
+    );
+  }
   return (
-    <div className="overflow-x-auto" data-testid={testId}>
-      <table className="w-full text-xs">
-        <thead><tr className="text-left text-muted-foreground">{head.map((h) => <th key={h} className="px-2 py-1 font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
-        <tbody>
-          {rows.length === 0 && <tr><td colSpan={head.length} className="px-2 py-3 text-center text-muted-foreground">{empty}</td></tr>}
-          {rows.map((r, i) => (
-            <tr key={i} className={`border-t border-[var(--glass-border)] ${r.red ? 'text-[hsl(var(--destructive))] ' : ''}`}>
-              {r.cells.map((c, j) => <td key={j} className="px-2 py-1 whitespace-nowrap">{c}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <GlassCard className="space-y-2 p-3" hover={false} data-testid={testId}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className={`text-sm font-semibold ${judulCls}`}>{judul}</div>
+        <TombolUnduh namaBerkas={namaBerkas} namaLembar={String(judul).slice(0, 31)} baris={baris}
+          kolom={kolom.map((k) => ({ label: k.label, nilai: k.nilai }))} testId={testId ? `${testId}-unduh` : undefined} />
+      </div>
+      <TabelData kolom={kol} baris={baris} kunci={(r) => r._k} testId={testId ? `${testId}-tabel` : undefined}
+        kosong={<p className="py-3 text-center text-sm text-muted-foreground">{kosong}</p>} />
+    </GlassCard>
   );
 }
+const berkunci = (list) => (list || []).map((r, i) => ({ ...r, _k: `${i}-${r.id || r.sku || r.date || ''}` }));
 
 function ReportTab({ token }) {
   const authH = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -530,82 +562,94 @@ function ReportTab({ token }) {
 
   const s = rep?.summary || {};
   const ctl = rep?.control || {};
+  const pengecualian = berkunci([
+    ...(rep?.rejects || []).map((j) => ({ red: true, jam: fmtTime(j.at), kode: j.code, ket: `Ditolak: ${j.reason}` })),
+    ...(rep?.flagged || []).map((l) => ({ red: true, jam: fmtTime(l.scanned_at), kode: `${l.sku} ×${l.qty}`, ket: (l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ') })),
+    ...(rep?.voided || []).map((l) => ({ jam: fmtTime(l.voided_at), kode: `${l.sku} ×${l.qty}`, ket: `Dibatalkan oleh ${l.voided_by || '-'}: ${l.void_reason || '-'}` })),
+  ]);
   return (
-    <div className="space-y-3" data-testid="scan-out-tab-report">
-      <div className="flex flex-wrap items-end gap-2">
-        <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="w-40 h-9" data-testid="scan-out-report-date" />
-        <SmartNativeSelect value={loc} onChange={(e) => setLoc(e.target.value)}
-          className="h-9 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm min-w-[160px]">
+    <PageLayout testId="scan-out-tab-report" title="Laporan scan keluar"
+      subtitle="Ringkasan per SKU, toko, dan petugas untuk satu hari."
+      filters={<>
+        <div className="w-full sm:w-44"><DatePicker value={day} onChange={(v) => setDay(v || todayWIB())} bolehKosong={false}
+          testId="scan-out-report-date" /></div>
+        <SmartNativeSelect value={loc} onChange={(e) => setLoc(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-52" aria-label="Lokasi">
           <option value="">Semua lokasi</option>
           {locations.map((l) => <option key={l.id} value={l.id}>{l.code} {l.name ? `· ${l.name}` : ''}</option>)}
         </SmartNativeSelect>
-        <Button size="sm" variant="outline" onClick={load} disabled={loading}><RefreshCw className="w-4 h-4" /></Button>
-        <Button size="sm" variant="outline" disabled={!rep}
-          onClick={() => downloadCsv(`scan-keluar-${day}`, ['SKU', 'Nama', 'Keluar', 'Batal kirim', 'Neto', 'HPP (WAC)'],
-            (rep?.per_sku || []).map((r) => [r.sku, r.name, r.out, r.cancel, r.net, r.value]))}>
-          <FileDown className="w-4 h-4 mr-1" /> CSV
+      </>}
+      tools={
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      </div>
-      {rep && (
+      }
+      summary={rep ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat label="Pcs neto" value={num(s.pcs)} />
+          <Stat label="HPP (WAC)" value={rp(s.value)} />
+          <Stat label="SKU" value={num(s.skus)} />
+          <Stat label="Impor vs scan (pcs)" value={`${num(ctl.today?.import_pcs)} / ${num(ctl.today?.scan_pcs)}`}
+            accent={ctl.today?.flag ? 'danger' : undefined} />
+        </div>
+      ) : null}>
+      {!rep ? (
+        <EmptyState title={loading ? 'Memuat laporan…' : 'Laporan belum tersedia'} description="Pilih tanggal lalu muat ulang." />
+      ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <Stat label="Pcs neto" value={num(s.pcs)} />
-            <Stat label="HPP (WAC)" value={rp(s.value)} />
-            <Stat label="SKU" value={num(s.skus)} />
-            <Stat label="Impor vs scan" value={`${num(ctl.today?.import_pcs)} / ${num(ctl.today?.scan_pcs)}`}
-              accent={ctl.today?.flag ? 'danger' : undefined} />
+          <TabelLaporan judul="Lembar" namaBerkas={`scan-keluar-lembar-${day}`} kosong="Tidak ada lembar."
+            baris={berkunci(rep.sheets)} kolom={[
+              { label: 'Nomor', nilai: (sh) => sh.number },
+              { label: 'Status', nilai: (sh) => (sh.status === 'closed' ? `Ditutup${sh.auto_closed ? ' otomatis' : ''}` : 'Terbuka') },
+              { label: 'Jurnal', nilai: (sh) => (sh.status === 'closed' ? (sh.je_number || sh.je_note || '-') : '') },
+            ]} />
+          <TabelLaporan judul="Per SKU" testId="scan-out-report-sku" namaBerkas={`scan-keluar-${day}`}
+            baris={berkunci(rep.per_sku)} merah={(r) => r.negative_lines > 0} kolom={[
+              { label: 'SKU', nilai: (r) => r.sku },
+              { label: 'Nama', nilai: (r) => r.name || '', hp: 'keterangan' },
+              { label: 'Keluar', nilai: (r) => r.out, rata: 'kanan' },
+              { label: 'Batal kirim', nilai: (r) => r.cancel, rata: 'kanan' },
+              { label: 'Neto', nilai: (r) => r.net, rata: 'kanan' },
+              { label: 'HPP (WAC)', nilai: (r) => Number(r.value || 0), isi: (r) => rp(r.value), rata: 'kanan' },
+            ]} />
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <TabelLaporan judul="Per toko" namaBerkas={`scan-keluar-per-toko-${day}`} baris={berkunci(rep.per_store)} kolom={[
+              { label: 'Toko', nilai: (r) => r.account_name },
+              { label: 'Neto', nilai: (r) => r.net, rata: 'kanan' },
+              { label: 'HPP', nilai: (r) => Number(r.value || 0), isi: (r) => rp(r.value), rata: 'kanan' },
+            ]} />
+            <TabelLaporan judul="Per petugas" namaBerkas={`scan-keluar-per-petugas-${day}`} baris={berkunci(rep.per_operator)} kolom={[
+              { label: 'Petugas', nilai: (r) => r.operator },
+              { label: 'Scan', nilai: (r) => r.scans, rata: 'kanan' },
+              { label: 'Neto', nilai: (r) => r.net, rata: 'kanan' },
+            ]} />
           </div>
-          <GlassCard className="p-3 space-y-1" hover={false}>
-            <div className="text-xs font-semibold">Lembar</div>
-            {(rep.sheets || []).length === 0 && <div className="text-xs text-muted-foreground">Tidak ada lembar.</div>}
-            {(rep.sheets || []).map((sh) => (
-              <div key={sh.id} className="text-xs flex flex-wrap justify-between gap-2">
-                <span className="tabular-nums">{sh.number}</span>
-                <span>{sh.status === 'closed' ? `ditutup${sh.auto_closed ? ' otomatis' : ''} · ${sh.je_number || sh.je_note || '-'}` : 'TERBUKA'}</span>
-              </div>
-            ))}
-          </GlassCard>
-          <GlassCard className="p-3 space-y-2" hover={false}>
-            <div className="text-xs font-semibold">Per SKU</div>
-            <Table testId="scan-out-report-sku" head={['SKU', 'Keluar', 'Batal', 'Neto', 'HPP']}
-              rows={(rep.per_sku || []).map((r) => ({ red: r.negative_lines > 0, cells: [r.sku, r.out, r.cancel, r.net, rp(r.value)] }))} />
-          </GlassCard>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <GlassCard className="p-3 space-y-2" hover={false}>
-              <div className="text-xs font-semibold">Per toko</div>
-              <Table head={['Toko', 'Neto', 'HPP']} rows={(rep.per_store || []).map((r) => ({ cells: [r.account_name, r.net, rp(r.value)] }))} />
-            </GlassCard>
-            <GlassCard className="p-3 space-y-2" hover={false}>
-              <div className="text-xs font-semibold">Per petugas</div>
-              <Table head={['Petugas', 'Scan', 'Neto']} rows={(rep.per_operator || []).map((r) => ({ cells: [r.operator, r.scans, r.net] }))} />
-            </GlassCard>
-          </div>
-          <GlassCard className="p-3 space-y-2" hover={false} data-testid="scan-out-report-nota">
-            <div className="text-xs font-semibold">Keluar via nota Portal Penjualan (pembanding — tidak di-scan, tidak dijumlah)</div>
-            <Table head={['SKU', 'Pcs', 'Nota']} empty="Tidak ada nota hari ini."
-              rows={(rep.direct_sales?.per_sku || []).map((r) => ({ cells: [r.sku, r.pcs, (r.notes || []).join(', ')] }))} />
-            {(rep.direct_sales?.overlap_with_scan || []).length > 0 && (
-              <Banner tone="amber">SKU ini keluar lewat nota DAN ter-scan hari ini — pastikan barang nota tidak ikut di-scan:{' '}
-                {rep.direct_sales.overlap_with_scan.map((r) => r.sku).join(', ')}</Banner>
-            )}
-          </GlassCard>
-          <GlassCard className="p-3 space-y-2" hover={false}>
-            <div className="text-xs font-semibold">Retur diputuskan gudang hari ini</div>
-            <Table head={['Kode', 'SKU', 'Keputusan', 'Qty']} empty="Tidak ada retur."
-              rows={(rep.returns_received || []).map((r) => ({ cells: [r.return_code, r.sku, r.action, r.restock_qty || r.qty] }))} />
-          </GlassCard>
-          <GlassCard className="p-3 space-y-2" hover={false}>
-            <div className="text-xs font-semibold text-[hsl(var(--destructive))] ">Pengecualian</div>
-            <Table head={['Jam', 'Kode/SKU', 'Keterangan']} empty="Tidak ada."
-              rows={[
-                ...(rep.rejects || []).map((j) => ({ red: true, cells: [fmtTime(j.at), j.code, `Ditolak: ${j.reason}`] })),
-                ...(rep.flagged || []).map((l) => ({ red: true, cells: [fmtTime(l.scanned_at), `${l.sku} ×${l.qty}`, (l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')] })),
-                ...(rep.voided || []).map((l) => ({ cells: [fmtTime(l.voided_at), `${l.sku} ×${l.qty}`, `Dibatalkan oleh ${l.voided_by || '-'}: ${l.void_reason || '-'}`] })),
-              ]} />
-          </GlassCard>
+          <TabelLaporan judul="Keluar via nota Portal Penjualan (pembanding — tidak di-scan, tidak dijumlah)"
+            testId="scan-out-report-nota" namaBerkas={`scan-keluar-nota-${day}`} kosong="Tidak ada nota hari ini."
+            baris={berkunci(rep.direct_sales?.per_sku)} kolom={[
+              { label: 'SKU', nilai: (r) => r.sku },
+              { label: 'Pcs', nilai: (r) => r.pcs, rata: 'kanan' },
+              { label: 'Nota', nilai: (r) => (r.notes || []).join(', ') },
+            ]} />
+          {(rep.direct_sales?.overlap_with_scan || []).length > 0 && (
+            <Banner tone="amber">SKU ini keluar lewat nota DAN ter-scan hari ini — pastikan barang nota tidak ikut di-scan:{' '}
+              {rep.direct_sales.overlap_with_scan.map((r) => r.sku).join(', ')}</Banner>
+          )}
+          <TabelLaporan judul="Retur diputuskan gudang hari ini" namaBerkas={`scan-keluar-retur-${day}`} kosong="Tidak ada retur."
+            baris={berkunci(rep.returns_received)} kolom={[
+              { label: 'Kode', nilai: (r) => r.return_code },
+              { label: 'SKU', nilai: (r) => r.sku },
+              { label: 'Keputusan', nilai: (r) => r.action },
+              { label: 'Qty', nilai: (r) => r.restock_qty || r.qty, rata: 'kanan' },
+            ]} />
+          <TabelLaporan judul="Pengecualian" judulCls="text-[hsl(var(--danger-text))]" namaBerkas={`scan-keluar-pengecualian-${day}`}
+            kosong="Tidak ada." baris={pengecualian} merah={(r) => r.red} kolom={[
+              { label: 'Jam', nilai: (r) => r.jam },
+              { label: 'Kode/SKU', nilai: (r) => r.kode },
+              { label: 'Keterangan', nilai: (r) => r.ket },
+            ]} />
         </>
       )}
-    </div>
+    </PageLayout>
   );
 }
 
@@ -625,8 +669,11 @@ function ControlTab({ token, canSupervise }) {
   useEffect(() => { load(); }, [load]);
 
   const review = async (d) => {
-    const note = window.prompt(`Tandai selisih ${d} sudah diperiksa. Catatan:`, '');
-    if (note === null) return;
+    const note = await confirmDialog({
+      title: `Tandai selisih ${d} sudah diperiksa?`, confirmLabel: 'Tandai diperiksa',
+      input: { label: 'Catatan', value: 'Sudah diperiksa' },
+    });
+    if (note === false || note === null) return;
     const r = await fetch(`${API}/control/${d}/review`, { method: 'POST', headers: jsonH, body: JSON.stringify({ note }) });
     setMsg(r.ok ? `Selisih ${d} ditandai sudah diperiksa.` : 'Gagal menandai.');
     load();
@@ -639,59 +686,79 @@ function ControlTab({ token, canSupervise }) {
   };
 
   const cum = ctl?.cumulative || {};
+  const akhir = (ctl?.rows || []).slice(-1)[0];
   return (
-    <div className="space-y-3" data-testid="scan-out-tab-control">
-      <div className="flex flex-wrap items-end gap-2">
-        <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="w-40 h-9" data-testid="scan-out-control-date" />
-        <Button size="sm" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
-      </div>
-      {msg && <Banner tone="green">{msg}</Banner>}
-      {ctl && (
-        <>
-          <div className="grid grid-cols-3 gap-2">
-            <Stat label={`Impor ${ctl.days} hr`} value={num(cum.import_pcs)} />
-            <Stat label={`Scan ${ctl.days} hr`} value={num(cum.scan_pcs)} />
+    <PageLayout testId="scan-out-tab-control" title="Kontrol scan vs impor"
+      subtitle="Pcs pesanan impor (tanggal kirim) dibanding pcs scan, per hari dan kumulatif."
+      filters={<div className="w-full sm:w-44"><DatePicker value={day} onChange={(v) => setDay(v || daysAgoWIB(1))}
+        bolehKosong={false} testId="scan-out-control-date" /></div>}
+      tools={
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw />
+        </Button>
+      }
+      summary={<>
+        {msg && <Banner tone="green">{msg}</Banner>}
+        {ctl && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label={`Impor ${ctl.days} hari (pcs)`} value={num(cum.import_pcs)} />
+            <Stat label={`Scan ${ctl.days} hari (pcs)`} value={num(cum.scan_pcs)} />
             <Stat label="Selisih kumulatif" value={num(cum.gap)} accent={cum.flag ? 'danger' : undefined} />
           </div>
-          <GlassCard className="p-3" hover={false}>
-            <Table testId="scan-out-control-rows" head={['Tanggal', 'Impor', 'basis pesanan', 'Scan', 'Selisih', 'Kumulatif', '']}
-              rows={(ctl.rows || []).map((r) => ({
-                red: r.flag,
-                cells: [r.date, r.import_pcs, r.import_pcs_order || '', r.scan_pcs, r.gap, r.cum_gap,
-                  r.review?.status === 'reviewed'
-                    ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]"><CheckCircle2 className="w-3 h-3" />diperiksa</span>
-                    : (r.flag && canSupervise
-                      ? <button type="button" className="underline" onClick={() => review(r.date)}>Tandai diperiksa</button> : ''),
-                ],
-              }))} />
-          </GlassCard>
-          <GlassCard className="p-3 space-y-2" hover={false}>
-            <div className="text-xs font-semibold">Per SKU {ctl.sku_day} (item impor tertaut master FG)</div>
-            <Table head={['SKU', 'Impor', 'Scan', 'Selisih']} empty="Tidak ada."
-              rows={(ctl.per_sku || []).map((r) => ({ red: r.gap !== 0, cells: [r.sku, r.import_pcs, r.scan_pcs, r.gap] }))} />
-            {(ctl.rows || []).slice(-1)[0]?.unlinked_pcs > 0 && (
-              <div className="text-xs text-muted-foreground">Tak tertaut master FG: {ctl.rows.slice(-1)[0].unlinked_pcs} pcs.</div>
-            )}
-          </GlassCard>
-          <GlassCard className="p-3 space-y-1 text-[11px] text-muted-foreground" hover={false}>
-            {(ctl.data_notes || []).map((n) => <div key={n}>• {n}</div>)}
-          </GlassCard>
+        )}
+      </>}>
+      {!ctl ? (
+        <EmptyState title="Memuat kontrol…" description="Data kontrol impor vs scan sedang diambil." />
+      ) : (
+        <>
+          <TabelLaporan judul="Per hari" testId="scan-out-control-rows" namaBerkas={`kontrol-scan-keluar-${day}`}
+            baris={berkunci(ctl.rows)} merah={(r) => r.flag} kolom={[
+              { label: 'Tanggal', nilai: (r) => r.date },
+              { label: 'Impor', nilai: (r) => r.import_pcs, rata: 'kanan' },
+              { label: 'Basis pesanan', nilai: (r) => r.import_pcs_order || '', rata: 'kanan', hp: false },
+              { label: 'Scan', nilai: (r) => r.scan_pcs, rata: 'kanan' },
+              { label: 'Selisih', nilai: (r) => r.gap, rata: 'kanan' },
+              { label: 'Kumulatif', nilai: (r) => r.cum_gap, rata: 'kanan' },
+              { label: 'Pemeriksaan', nilai: (r) => (r.review?.status === 'reviewed' ? 'Diperiksa' : ''),
+                isi: (r) => (r.review?.status === 'reviewed'
+                  ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success-text))]"><CheckCircle2 className="w-3 h-3" />Diperiksa</span>
+                  : (r.flag && canSupervise
+                    ? <Button size="sm" variant="link" className="h-auto p-0" onClick={() => review(r.date)}>Tandai diperiksa</Button> : '')) },
+            ]} />
+          <TabelLaporan judul={`Per SKU ${ctl.sku_day || ''} (item impor tertaut master produk jadi)`}
+            namaBerkas={`kontrol-scan-keluar-per-sku-${day}`} kosong="Tidak ada." baris={berkunci(ctl.per_sku)}
+            merah={(r) => r.gap !== 0} kolom={[
+              { label: 'SKU', nilai: (r) => r.sku },
+              { label: 'Impor', nilai: (r) => r.import_pcs, rata: 'kanan' },
+              { label: 'Scan', nilai: (r) => r.scan_pcs, rata: 'kanan' },
+              { label: 'Selisih', nilai: (r) => r.gap, rata: 'kanan' },
+            ]} />
+          {akhir?.unlinked_pcs > 0 && (
+            <p className="text-sm text-muted-foreground">Tak tertaut master produk jadi: {akhir.unlinked_pcs} pcs.</p>
+          )}
+          {(ctl.data_notes || []).length > 0 && (
+            <Notice tone="info" title="Catatan data">
+              <ul className="list-disc space-y-0.5 pl-4">{ctl.data_notes.map((n) => <li key={n}>{n}</li>)}</ul>
+            </Notice>
+          )}
           {canSupervise && cfg && (
-            <GlassCard className="p-3 flex flex-wrap items-end gap-2" hover={false}>
-              <label className="text-xs">Ambang pcs
-                <Input type="number" min={1} value={cfg.control_gap_pcs} className="w-24 h-8"
+            <GlassCard className="flex flex-wrap items-end gap-3 p-3" hover={false}>
+              <label className="space-y-1 text-sm">
+                <span className="block text-muted-foreground">Ambang pcs</span>
+                <Input type="number" min={1} value={cfg.control_gap_pcs} className="h-9 w-24"
                   onChange={(e) => setCfg({ ...cfg, control_gap_pcs: e.target.value })} />
               </label>
-              <label className="text-xs">Ambang %
-                <Input type="number" min={0} max={100} value={cfg.control_gap_pct} className="w-24 h-8"
+              <label className="space-y-1 text-sm">
+                <span className="block text-muted-foreground">Ambang %</span>
+                <Input type="number" min={0} max={100} value={cfg.control_gap_pct} className="h-9 w-24"
                   onChange={(e) => setCfg({ ...cfg, control_gap_pct: e.target.value })} />
               </label>
-              <Button size="sm" variant="outline" onClick={saveCfg}><Scale className="w-4 h-4 mr-1" /> Simpan ambang</Button>
+              <Button variant="success" onClick={saveCfg}><Scale />Simpan ambang</Button>
             </GlassCard>
           )}
         </>
       )}
-    </div>
+    </PageLayout>
   );
 }
 
@@ -699,17 +766,16 @@ export default function WHScanOutModule({ token, user, initialTab }) {
   const [tab, setTab] = useState(['scan', 'report', 'control'].includes(initialTab) ? initialTab : 'scan');
   const role = (user?.role || '').toLowerCase();
   const canSupervise = !['tim_packing', 'admin_aksesoris'].includes(role);
+  const tabs = useMemo(() => [
+    { key: 'scan', label: 'Scan', Component: ScanTab },
+    { key: 'report', label: 'Laporan', Component: ReportTab },
+    { key: 'control', label: 'Kontrol', Component: ControlTab },
+  ], []);
   return (
-    <PageLayout testId="wh-scan-out-module" title="Scan keluar penjualan"
-      subtitle="Barang marketplace keluar gudang: stok & HPP (WAC) dipotong per scan, jurnal saat tutup hari.">
-      <div className="inline-flex rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-1 w-full">
-        <Tab active={tab === 'scan'} onClick={() => setTab('scan')} icon={ScanLine} testId="scan-out-tabbtn-scan">Scan</Tab>
-        <Tab active={tab === 'report'} onClick={() => setTab('report')} icon={ClipboardList} testId="scan-out-tabbtn-report">Laporan</Tab>
-        <Tab active={tab === 'control'} onClick={() => setTab('control')} icon={Scale} testId="scan-out-tabbtn-control">Kontrol</Tab>
-      </div>
-      {tab === 'scan' && <ScanTab token={token} />}
-      {tab === 'report' && <ReportTab token={token} />}
-      {tab === 'control' && <ControlTab token={token} canSupervise={canSupervise} />}
-    </PageLayout>
+    <div data-testid="wh-scan-out-module">
+      <HubTabs hubId="wh-scan-out" title="Scan keluar penjualan"
+        subtitle="Barang marketplace keluar gudang: stok & HPP (WAC) dipotong per scan, jurnal saat tutup hari."
+        tabs={tabs} value={tab} onValueChange={setTab} token={token} canSupervise={canSupervise} />
+    </div>
   );
 }

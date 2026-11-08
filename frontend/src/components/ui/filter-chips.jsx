@@ -18,7 +18,7 @@ export default function FilterChips({ options, value, onChange, hideWhenEmpty = 
   const counted = options.filter((o) => o.count !== undefined && o.count !== null)
   if (hideWhenEmpty && counted.length === options.length && counted.every((o) => !Number(o.count))) return null
   return (
-    <div role="group" aria-label={ariaLabel} className={cn("inline-flex flex-wrap items-center gap-1.5", className)} data-testid={testId}>
+    <div role="group" aria-label={ariaLabel} className={cn("flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:inline-flex sm:flex-wrap sm:overflow-visible sm:pb-0", className)} data-testid={testId}>
       {options.map((o) => {
         const active = String(value ?? "") === String(o.key ?? "")
         return (

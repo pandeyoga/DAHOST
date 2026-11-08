@@ -1,28 +1,56 @@
+/**
+ * Master bahan & aksesoris (Portal Gudang › Master Item › tab "Bahan & aksesoris").
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (di dalam hub judulnya tersembunyi → tidak ada lagi kepala
+ * ganda "Master Item" + "Master Material"), penyaring satu baris (cari 16 rem, jenis, pil "Stok menipis"),
+ * tabel → kartu ringkas di HP, unduh Excel/CSV semua baris hasil saringan, form = FormPopup panjang,
+ * nonaktifkan lewat confirmDialog. Field, validasi, dan panggilan API tidak berubah.
+ *
+ * Angka: dulu spanduk "n material di bawah ambang" menghitung baris HALAMAN yang tampil saja (dan selalu 0 di
+ * mode biasa karena barisnya tidak membawa tanda rendah). Kini jumlah di pil = `pagination.total` dari
+ * /api/rahaza/materials?low_stock=true (definisi rendah satu sumber: core/stock_thresholds).
+ */
 import { useState, useEffect, useCallback } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Edit2, Trash2, Package, Scale, Gem, Archive, AlertTriangle, Search } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Plus, Pencil, Ban, AlertTriangle, Search, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import Modal from './Modal';
+import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { MoneyInput } from '@/components/ui/money-input';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import PaginationBar from './PaginationBar';
 import ImportExportToolbar from './ImportExportToolbar';
 import { CATEGORY_OPTIONS, categoryToStoredType, typeToCategory, isKgLike } from '@/lib/itemTaxonomy';
 import UomEditor from './UomEditor';
 import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf, MATERIAL_UNITS } from '@/lib/uom';
-import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
-import { MoneyInput } from '@/components/ui/money-input';
+import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
-// Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk Jadi). Semua tipe legacy
-// dipetakan ke kategori yang sama agar label konsisten.
-const TYPE_META = {
-  yarn:        { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
-  fabric:      { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
-  kain:        { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
-  interlining: { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
-  accessory:   { label: 'Aksesoris',   icon: Gem,     color: 'text-primary',                           bg: 'bg-primary/10',     border: 'border-primary/25' },
-  packaging:   { label: 'Aksesoris',   icon: Gem,     color: 'text-primary',                           bg: 'bg-primary/10',     border: 'border-primary/25' },
-  fg:          { label: 'Produk Jadi', icon: Archive, color: 'text-[hsl(var(--success))] ', bg: 'bg-[hsl(var(--success)/0.1)]', border: 'border-[hsl(var(--success)/0.2)]' },
-  other:       { label: 'Lainnya',     icon: Package, color: 'text-muted-foreground',                  bg: 'bg-muted/20',       border: 'border-border' },
+// Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk jadi). Semua tipe lama dipetakan ke kategori yang sama.
+const JENIS_LABEL = {
+  yarn: 'Bahan', fabric: 'Bahan', kain: 'Bahan', interlining: 'Bahan',
+  accessory: 'Aksesoris', packaging: 'Aksesoris', fg: 'Produk jadi', other: 'Lainnya',
+};
+const jenisLabel = (t) => JENIS_LABEL[t] || 'Lainnya';
+
+const FORM_KOSONG = {
+  code: '', name: '', type: 'fabric', unit: 'kg', category: '', category_name: '', composition: '', color: '', notes: '',
+  min_stock: 0, min_stock_qty: '', min_stock_percentage: '', reorder_point: '', active: true,
+  unit_cost: 0, gsm: '', width_cm: '',
+  // Satuan berjenjang (SSOT: lib/uom.js). `pack_*` tetap ada sebagai cermin supaya dokumen & konsumen lama tidak pecah.
+  uoms: [], purchase_uom: '', issue_uom: '', display_uom: '',
+  pack_unit: 'pack', pack_size: 1, display_in_packs: false,
+};
+
+const minStokTeks = (r) => {
+  if (r.min_stock_qty) return `${Number(r.min_stock_qty).toLocaleString('id-ID')} ${r.unit || ''}`.trim();
+  if (r.min_stock) return Number(r.min_stock).toLocaleString('id-ID');
+  return '';
 };
 
 export default function RahazaMaterialsModule({ token }) {
@@ -33,18 +61,12 @@ export default function RahazaMaterialsModule({ token }) {
   const [filterType, setFilterType] = useState('');
   const [filterLowStock, setFilterLowStock] = useState(false);
   const [search, setSearch] = useState('');
-  const [form, setForm] = useState({
-    code: '', name: '', type: 'fabric', unit: 'kg', category: '', category_name: '', composition: '', color: '', notes: '',
-    min_stock: 0, min_stock_qty: '', min_stock_percentage: '', reorder_point: '', active: true,
-    unit_cost: 0,
-    // Satuan berjenjang (SSOT: lib/uom.js). `pack_*` tetap ada sebagai cermin
-    // supaya dokumen lama & konsumen lama tidak pecah (INV-UOM-4).
-    uoms: [], purchase_uom: '', issue_uom: '', display_uom: '',
-    pack_unit: 'pack', pack_size: 1, display_in_packs: false,
-  });
+  const [cari, setCari] = useState('');
+  const [form, setForm] = useState(FORM_KOSONG);
   const [categories, setCategories] = useState([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [jumlah, setJumlah] = useState({ semua: null, menipis: null });
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -52,14 +74,27 @@ export default function RahazaMaterialsModule({ token }) {
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
+  // Ketikan pencarian diteruskan setelah jeda singkat (dulu tiap huruf memicu permintaan).
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(cari.trim()), 300);
+    return () => clearTimeout(t);
+  }, [cari]);
+
+  const paramsDasar = useCallback(() => {
+    const params = new URLSearchParams();
+    if (filterType) params.set('type', filterType);
+    else params.set('exclude_type', 'fg'); // tab "Bahan & aksesoris" tidak menampilkan Produk jadi (FG punya tab sendiri)
+    if (search) params.set('search', search);
+    return params;
+  }, [filterType, search]);
+
   const fetchRows = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: targetPage, limit: 50 });
-      if (filterType) params.set('type', filterType);
-      else params.set('exclude_type', 'fg'); // tab "Bahan & Aksesoris" tidak menampilkan Produk Jadi (FG punya tab sendiri)
+      const params = paramsDasar();
+      params.set('page', targetPage);
+      params.set('limit', 50);
       if (filterLowStock) params.set('low_stock', 'true');
-      if (search) params.set('search', search);
       const r = await fetch(`/api/rahaza/materials?${params}`, { headers });
       if (r.ok) {
         const data = await r.json();
@@ -73,10 +108,29 @@ export default function RahazaMaterialsModule({ token }) {
       }
     } finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, filterType, filterLowStock, search]);
+  }, [token, paramsDasar, filterLowStock]);
+
+  // Jumlah untuk pil penyaring: total semua & total stok menipis (sesuai jenis + pencarian).
+  const fetchJumlah = useCallback(async () => {
+    const hitung = async (low) => {
+      const p = paramsDasar();
+      p.set('page', 1); p.set('limit', 1);
+      if (low) p.set('low_stock', 'true');
+      try {
+        const r = await fetch(`/api/rahaza/materials?${p}`, { headers });
+        if (!r.ok) return null;
+        const d = await r.json();
+        return d?.pagination?.total ?? null;
+      } catch { return null; }
+    };
+    const [semua, menipis] = await Promise.all([hitung(false), hitung(true)]);
+    setJumlah({ semua, menipis });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, paramsDasar]);
 
   useEffect(() => { setPage(1); fetchRows(1); }, [filterType, filterLowStock, search]); // eslint-disable-line
   useEffect(() => { fetchRows(page); }, [page]); // eslint-disable-line
+  useEffect(() => { fetchJumlah(); }, [fetchJumlah]);
   useEffect(() => {
     (async () => {
       try {
@@ -86,9 +140,28 @@ export default function RahazaMaterialsModule({ token }) {
     })();
   }, []); // eslint-disable-line
 
+  const muatUlang = () => { fetchRows(page); fetchJumlah(); };
+
+  // Unduh: SEMUA baris hasil saringan (bukan hanya halaman yang tampil) — loop halaman API yang sama.
+  const ambilSemua = async () => {
+    const semua = [];
+    for (let pg = 1; pg <= 200; pg += 1) {
+      const p = paramsDasar();
+      p.set('page', pg); p.set('limit', 200);
+      if (filterLowStock) p.set('low_stock', 'true');
+      const r = await fetch(`/api/rahaza/materials?${p}`, { headers });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      const items = Array.isArray(d) ? d : (d.items || []);
+      semua.push(...items);
+      if (Array.isArray(d) || !d.pagination || pg >= d.pagination.total_pages) break;
+    }
+    return semua;
+  };
+
   const openCreate = () => {
     setEditing(null);
-    setForm({ code: '', name: '', type: 'fabric', unit: 'kg', category: '', category_name: '', composition: '', color: '', notes: '', min_stock: 0, min_stock_qty: '', min_stock_percentage: '', reorder_point: '', active: true, unit_cost: 0, gsm: '', width_cm: '', uoms: [], purchase_uom: '', issue_uom: '', display_uom: '', pack_unit: 'pack', pack_size: 1, display_in_packs: false });
+    setForm(FORM_KOSONG);
     setFormError(''); setModalOpen(true);
   };
   const openEdit = (r) => {
@@ -121,305 +194,270 @@ export default function RahazaMaterialsModule({ token }) {
         uoms: sanitizeUoms(form.uoms, form.unit),
       };
       if (editing) delete payload.unit_cost;   // harga tidak diedit dari master
-      const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });      if (!res.ok) {
+      const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+      if (!res.ok) {
         const STATUS_MSG = { 400: 'Data tidak valid.', 403: 'Tidak ada akses.', 409: 'Kode sudah terpakai.' };
         throw new Error(STATUS_MSG[res.status] || `Gagal simpan (HTTP ${res.status})`);
       }
-      setModalOpen(false); fetchRows();
+      setModalOpen(false); fetchRows(); fetchJumlah();
     } catch (e) { setFormError(e.message); }
     finally { setSaving(false); }
   };
   const remove = async (r) => {
-    if (!window.confirm(`Nonaktifkan material ${r.code}?`)) return;
-    await fetch(`/api/rahaza/materials/${r.id}`, { method: 'DELETE', headers });
-    fetchRows();
+    const ok = await confirmDialog({
+      title: `Nonaktifkan material ${r.code}?`,
+      body: `"${r.name}" tidak lagi muncul di daftar dan pilihan material.`,
+      confirmLabel: 'Nonaktifkan', danger: true,
+    });
+    if (!ok) return;
+    const res = await fetch(`/api/rahaza/materials/${r.id}`, { method: 'DELETE', headers });
+    if (res.ok) toast.success(`Material ${r.code} dinonaktifkan.`);
+    else toast.error(`Gagal menonaktifkan (HTTP ${res.status}).`);
+    fetchRows(); fetchJumlah();
   };
 
-  const lowStockCount = rows.filter(r => r.is_low_stock || r.below_min).length;
+  const kolom = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (r) => {
+      const isLow = r.is_low_stock || r.below_min;
+      return (
+        <span className="inline-flex items-center gap-1.5 tabular-nums" data-testid={`mat-row-${r.code}`}>
+          {r.code}
+          {isLow && <AlertTriangle className="h-3.5 w-3.5 text-[hsl(var(--warning-text))]" aria-label="Stok menipis"
+            title={r.low_stock_reason || 'Stok menipis'} data-testid={`mat-low-badge-${r.code}`} />}
+        </span>
+      );
+    } },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (r) => [r.name, jenisLabel(r.type), r.unit].filter(Boolean).join(' · ') },
+    { kunci: 'name', label: 'Nama', hp: false, isi: (r) => <span className="text-foreground">{r.name}</span> },
+    { kunci: 'type', label: 'Jenis', hp: false, isi: (r) => jenisLabel(r.type) },
+    { kunci: 'unit', label: 'Satuan', hp: false, isi: (r) => <span className="text-muted-foreground">{r.unit}</span> },
+    { kunci: 'min', label: 'Min stok', hp: false, rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums text-muted-foreground">
+        {minStokTeks(r) || '—'}
+        {r.min_stock_percentage ? <span className="ml-1 text-xs">({r.min_stock_percentage}%)</span> : null}
+      </span>
+    ) },
+    { kunci: 'color', label: 'Warna / komposisi', hp: false, isi: (r) => <span className="text-muted-foreground">{r.color || readField(r, FIELD.composition) || '—'}</span> },
+    { kunci: 'active', label: 'Status', hp: false, isi: (r) => (r.active
+      ? <StatusBadge status="aktif" label="Aktif" tone="success" />
+      : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="inline-flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openEdit(r)} title="Ubah" aria-label={`Ubah ${r.code}`}
+          data-testid={`mat-edit-${r.code}`}><Pencil /></Button>
+        {r.active && (
+          <Button variant="ghost" size="icon-sm" onClick={() => remove(r)} title="Nonaktifkan" aria-label={`Nonaktifkan ${r.code}`}
+            data-testid={`mat-deactivate-${r.code}`}><Ban /></Button>
+        )}
+      </div>
+    ) },
+  ];
 
-  if (loading) return (<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>);
+  const opsiSaring = [
+    { key: '', label: 'Semua', count: jumlah.semua == null ? undefined : Number(jumlah.semua).toLocaleString('id-ID') },
+    { key: 'menipis', label: 'Stok menipis', count: jumlah.menipis == null ? undefined : Number(jumlah.menipis).toLocaleString('id-ID') },
+  ];
 
   return (
-    <div className="space-y-5" data-testid="rahaza-materials-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Master Material</h1>
-          <p className="text-muted-foreground text-sm mt-1">Bahan, aksesoris, dan produk jadi. Dipakai di Stock, Material Issue, dan WO.</p>
+    <PageLayout testId="rahaza-materials-page" title="Bahan & aksesoris"
+      subtitle="Master bahan dan aksesoris yang dipakai di stok, pengeluaran material, dan WO."
+      actions={<>
+        <ImportExportToolbar collectionKey="materials" label="Bahan / Material" onImported={muatUlang} size="default" caption="master" />
+        <Button onClick={openCreate} data-testid="mat-add-btn"><Plus />Material baru</Button>
+      </>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari kode atau nama"
+            className="pl-8" data-testid="mat-search" />
         </div>
-        <div className="flex items-center gap-2">
-          <ImportExportToolbar collectionKey="materials" label="Bahan / Material" onImported={fetchRows} />
-          <Button onClick={openCreate} data-testid="mat-add-btn"><Plus className="w-4 h-4 mr-1.5" /> Material Baru</Button>
-        </div>
-      </div>
-
-      {/* Sprint 3.4: Low Stock Alert Banner */}
-      {lowStockCount > 0 && (
-        <div className="flex items-center gap-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] rounded-lg px-4 py-2.5" data-testid="mat-low-stock-banner">
-          <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0" />
-          <span className="text-sm text-[hsl(var(--warning))] font-medium">{lowStockCount} material di bawah ambang minimum stok.</span>
-          <button onClick={() => setFilterLowStock(true)} className="text-xs text-[hsl(var(--warning))] underline ml-auto">Lihat semua</button>
-        </div>
-      )}
-
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[160px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari kode/nama..." className="pl-8 h-9 text-sm" data-testid="mat-search" />
-        </div>
-        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-52 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-filter-type">
-          <option value="">Semua (Bahan &amp; Aksesoris)</option>
+        <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-48"
+          searchable={false} aria-label="Jenis" data-testid="mat-filter-type">
+          <option value="">Bahan &amp; aksesoris</option>
           <option value="bahan">Bahan</option>
           <option value="aksesoris">Aksesoris</option>
         </SmartNativeSelect>
-        <button
-          onClick={() => setFilterLowStock(!filterLowStock)}
-          className={`h-9 px-3 rounded-lg border text-sm flex items-center gap-1.5 transition-colors ${filterLowStock ? 'bg-[hsl(var(--warning)/0.15)] border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))]' : 'border-[var(--glass-border)] text-muted-foreground hover:text-foreground'}`}
-          data-testid="mat-filter-low-stock">
-          <AlertTriangle className="w-3.5 h-3.5" /> Low Stock {filterLowStock && `(aktif)`}
-        </button>
-      </div>
-
-      <GlassCard className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--glass-bg)]">
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-4 py-3">Kode</th>
-                <th className="px-4 py-3">Nama</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Unit</th>
-                <th className="px-4 py-3">Min Stok</th>
-                <th className="px-4 py-3">Warna/Jenis</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-12 text-muted-foreground">
-                  {filterLowStock ? 'Tidak ada material low stock.' : 'Belum ada material. Klik "Material Baru" untuk menambah.'}
-                </td></tr>
-              ) : rows.map(r => {
-                const meta = TYPE_META[r.type] || {};
-                const Icon = meta.icon || Package;
-                const isLow = r.is_low_stock || r.below_min;
-                return (
-                  <tr key={r.id} className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${!r.active ? 'opacity-50' : ''} ${isLow ? 'bg-[hsl(var(--warning)/0.04)]' : ''}`} data-testid={`mat-row-${r.code}`}>
-                    <td className="px-4 py-3 tabular-nums text-xs text-foreground">
-                      {r.code}
-                      {isLow && <AlertTriangle className="w-3 h-3 text-[hsl(var(--warning))] inline ml-1.5" title={r.low_stock_reason || 'Low Stock'} data-testid={`mat-low-badge-${r.code}`} />}
-                    </td>
-                    <td className="px-4 py-3 text-foreground">{r.name}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${meta.bg} ${meta.border} border ${meta.color}`}>
-                        <Icon className="w-3 h-3" /> {meta.label || r.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{r.unit}</td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">
-                      {r.min_stock_qty ? <span className="tabular-nums">{r.min_stock_qty} {r.unit}</span> : (r.min_stock ? r.min_stock : '—')}
-                      {r.min_stock_percentage ? <span className="ml-1 text-[10px] text-primary/70">({r.min_stock_percentage}%)</span> : null}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">{r.color || readField(r, FIELD.composition) || '—'}</td>
-                    <td className="px-4 py-3">{r.active ? <span className="text-[hsl(var(--success))] text-xs font-medium">Aktif</span> : <span className="text-muted-foreground text-xs">Non-aktif</span>}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="inline-flex items-center gap-1">
-                        <button onClick={() => openEdit(r)} className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" title="Edit" data-testid={`mat-edit-${r.code}`}><Edit2 className="w-3.5 h-3.5" /></button>
-                        {r.active && <button onClick={() => remove(r)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]" title="Nonaktifkan"><Trash2 className="w-3.5 h-3.5" /></button>}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <FilterChips options={opsiSaring} value={filterLowStock ? 'menipis' : ''} hideWhenEmpty={false}
+          onChange={(k) => setFilterLowStock(k === 'menipis')} testId="mat-filter-low-stock" ariaLabel="Penyaring stok" className="w-full sm:w-auto" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <TombolUnduh namaBerkas={filterLowStock ? 'bahan-aksesoris-stok-menipis' : 'bahan-aksesoris'} namaLembar="Bahan & aksesoris"
+          baris={rows} ambilSemua={ambilSemua} testId="mat-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (r) => r.code },
+            { label: 'Nama', nilai: (r) => r.name },
+            { label: 'Jenis', nilai: (r) => jenisLabel(r.type) },
+            { label: 'Kategori', nilai: (r) => r.category_name || '' },
+            { label: 'Satuan', nilai: (r) => r.unit },
+            { label: 'Min stok', nilai: (r) => (r.min_stock_qty ? Number(r.min_stock_qty) : (r.min_stock ? Number(r.min_stock) : '')) },
+            { label: 'Titik pesan ulang', nilai: (r) => (r.reorder_point ? Number(r.reorder_point) : '') },
+            { label: 'Warna / komposisi', nilai: (r) => r.color || readField(r, FIELD.composition) || '' },
+            { label: 'Status', nilai: (r) => (r.active ? 'Aktif' : 'Nonaktif') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
         </div>
-        {/* Pagination */}
-        {pagination && pagination.total_pages > 1 && (
-          <div className="px-4 py-3 border-t border-border">
-            <PaginationBar pagination={pagination} onPageChange={setPage} />
-          </div>
-        )}
-      </GlassCard>
+      </>}
+      footer={pagination && pagination.total_pages > 1 ? <PaginationBar pagination={pagination} onPageChange={setPage} /> : null}>
+      {loading && rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat material…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={rows} testId="mat-table"
+          kosong={<EmptyState title={filterLowStock ? 'Tidak ada material yang stoknya menipis' : 'Belum ada material'}
+            description={filterLowStock ? 'Semua material berambang masih di atas ambangnya.' : 'Klik "Material baru" untuk menambah.'} />} />
+      )}
 
-      {modalOpen && (
-        <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit ${editing.code}` : 'Material Baru'} size="md">
-          <div className="space-y-3" data-testid="mat-form">
-            {formError && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.2)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]">{formError}</div>}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Kode <span className="text-[hsl(var(--destructive))]">*</span></label>
-                <GlassInput value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} placeholder="BHN-KTN30S" data-testid="mat-field-code" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Jenis <span className="text-[hsl(var(--destructive))]">*</span></label>
-                <SmartNativeSelect value={typeToCategory(form.type)} onChange={e => { const st = categoryToStoredType(e.target.value); setForm({...form, type: st, unit: isKgLike(st) ? 'kg' : 'pcs'}); }} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-field-type">
-                  {CATEGORY_OPTIONS.filter(o => o.value !== 'fg').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </SmartNativeSelect>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Kategori Material</label>
-              <SmartNativeSelect
-                value={form.category}
-                onChange={e => {
-                  const cat = categories.find(c => c.code === e.target.value);
-                  setForm({...form, category: e.target.value, category_name: cat ? cat.name : ''});
-                }}
-                className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                data-testid="mat-field-category">
-                <option value="">— Pilih Kategori —</option>
-                {categories.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Nama <span className="text-[hsl(var(--destructive))]">*</span></label>
-              <GlassInput value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="Kain Katun 30s" data-testid="mat-field-name" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Unit</label>
-                <SmartNativeSelect value={form.unit} onChange={e => setForm({...form, unit: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-field-unit">
-                  {MATERIAL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Min Stok (Legacy)</label>
-                <GlassInput type="number" step="0.1" value={form.min_stock} onChange={e => setForm({...form, min_stock: e.target.value})} />
-              </div>
-            </div>
+      <FormPopup open={modalOpen} onClose={() => setModalOpen(false)} ukuran="panjang" onSimpan={save} menyimpan={saving}
+        judul={editing ? `Ubah ${editing.code}` : 'Material baru'} galat={formError} testId="mat-form"
+        keterangan="Kode, jenis, satuan, dan ambang stok bahan atau aksesoris."
+        labelSimpan={editing ? 'Simpan perubahan' : 'Simpan'}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kode" wajib htmlFor="mat-kode">
+            <Input id="mat-kode" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
+              placeholder="BHN-KTN30S" data-testid="mat-field-code" />
+          </Isian>
+          <Isian label="Jenis" wajib>
+            <SmartNativeSelect value={typeToCategory(form.type)} searchable={false}
+              onChange={(e) => { const st = categoryToStoredType(e.target.value); setForm({ ...form, type: st, unit: isKgLike(st) ? 'kg' : 'pcs' }); }}
+              className="w-full" data-testid="mat-field-type">
+              {CATEGORY_OPTIONS.filter((o) => o.value !== 'fg').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <Isian label="Kategori material">
+          <SmartNativeSelect value={form.category} className="w-full" data-testid="mat-field-category"
+            onChange={(e) => {
+              const cat = categories.find((c) => c.code === e.target.value);
+              setForm({ ...form, category: e.target.value, category_name: cat ? cat.name : '' });
+            }}>
+            <option value="">Pilih kategori</option>
+            {categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Nama" wajib htmlFor="mat-nama">
+          <Input id="mat-nama" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Kain Katun 30s" data-testid="mat-field-name" />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Satuan">
+            <SmartNativeSelect value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className="w-full"
+              data-testid="mat-field-unit">
+              {MATERIAL_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Min stok (lama)" htmlFor="mat-min-lama" petunjuk="Isian lama; ambang yang dipakai alert ada di bawah.">
+            <Input id="mat-min-lama" type="number" step="0.1" value={form.min_stock} onChange={(e) => setForm({ ...form, min_stock: e.target.value })} />
+          </Isian>
+        </div>
 
-            {/* HARGA SATUAN (HPP) — sejak 2026-08-21 harganya LAHIR DARI PEMBELIAN
-                (PO → Penerimaan Barang, rata-rata bergerak), bukan ketikan master.
-                Saat membuat barang baru masih boleh diisi sebagai HARGA AWAL karena
-                belum ada pembeliannya. */}
-            {editing ? (
-              <div className="border border-[var(--glass-border)] rounded-lg p-3 space-y-1" data-testid="mat-cost-derived">
-                <p className="text-xs font-semibold text-foreground/70 uppercase">Harga Satuan / HPP</p>
-                <p className="text-lg font-bold text-foreground tabular-nums" data-testid="mat-cost-value">
-                  Rp {Number(form.unit_cost || 0).toLocaleString('id-ID')}
-                  <span className="text-xs font-normal text-muted-foreground"> / {form.unit}</span>
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  Sumber: <strong>{
-                    form.cost_method === 'wac' ? 'rata-rata pembelian (PO → penerimaan)'
-                      : form.cost_method === 'manual' ? 'koreksi manual (Valuasi HPP)'
-                        : form.cost_method === 'opening' ? 'harga awal saat barang didaftarkan'
-                          : 'belum ada pembelian bernilai'
-                  }</strong>
-                  {form.last_receipt_unit_cost > 0 && (
-                    <> · harga beli terakhir Rp {Number(form.last_receipt_unit_cost).toLocaleString('id-ID')}</>
-                  )}
-                </p>
-                <p className="text-[11px] text-[hsl(var(--warning))] ">
-                  Harga tidak diketik di sini. Ia terbentuk otomatis dari harga pembelian di PO saat
-                  barang diterima. Koreksi manual (bila salah harga) lewat <strong>Valuasi HPP</strong>
-                  agar ada jejak audit.
-                </p>
-              </div>
-            ) : (
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Harga Awal (Rp) — opsional</label>
-                <MoneyInput glass
-                  value={form.unit_cost}
-                  onChange={e => setForm({...form, unit_cost: e.target.value})}
-                  placeholder="Cth: 25.000" data-testid="mat-field-unit-cost" />
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Hanya untuk barang yang sudah ada di gudang sebelum sistem ini. Setelah ada
-                  pembelian (PO → penerimaan), harga <strong>otomatis mengikuti harga beli</strong>.
-                </p>
-              </div>
-            )}
-
-            {/* 2026-08-02 · Kain: gramasi & lebar → konversi meter ⇄ kg */}
-            {['fabric', 'kain', 'yarn', 'interlining'].includes(form.type) && (
-              <div className="border border-primary/20 bg-primary/5 rounded-lg p-3 space-y-2">
-                <p className="text-xs font-semibold text-primary uppercase">Data Kain — Konversi Meter ⇄ Kg</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-foreground/70 mb-1">Gramasi / GSM (g/m²)</label>
-                    <GlassInput type="number" step="1" min="0" value={form.gsm ?? ''}
-                      onChange={e => setForm({ ...form, gsm: e.target.value })}
-                      placeholder="Cth: 240" data-testid="mat-field-gsm" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-foreground/70 mb-1">Lebar Kain (cm)</label>
-                    <GlassInput type="number" step="0.5" min="0" value={form.width_cm ?? ''}
-                      onChange={e => setForm({ ...form, width_cm: e.target.value })}
-                      placeholder="Cth: 160" data-testid="mat-field-width" />
-                  </div>
-                </div>
-                <p className="text-[11px] text-muted-foreground" data-testid="mat-fabric-conv-hint">
-                  {Number(form.gsm) > 0 && Number(form.width_cm) > 0 ? (
-                    <>1 meter ≈ <strong>{((Number(form.gsm) * (Number(form.width_cm) / 100)) / 1000).toFixed(4)} kg</strong>
-                      {' '}· 1 kg ≈ <strong>{(1 / ((Number(form.gsm) * (Number(form.width_cm) / 100)) / 1000)).toFixed(3)} meter</strong>
-                      {' '}— dipakai BOM, RnD/HPP &amp; costing untuk mengubah meter ke kg.</>
-                  ) : (
-                    <>Isi keduanya agar sistem bisa mengubah pemakaian <strong>meter</strong> menjadi <strong>kg</strong> (kain dibeli per kg).</>
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* Satuan & kemasan berjenjang (maks 3 tingkat) — SSOT lib/uom.js */}
-            <UomEditor
-              baseUnit={form.unit}
-              uoms={form.uoms}
-              purchaseUom={form.purchase_uom}
-              issueUom={form.issue_uom}
-              displayUom={form.display_uom}
-              resetKey={editing?.id || 'new'}
-              materialId={editing?.id || null}
-              token={token}
-              onRebased={() => { setModalOpen(false); fetchRows(); }}
-              onChange={patch => setForm(f => ({ ...f, ...patch }))}
-            />
-
-            {/* Sprint 3.4: Configurable Low Stock Threshold */}
-            <div className="border border-[hsl(var(--warning)/0.2)] bg-[hsl(var(--warning)/0.05)] rounded-lg p-3 space-y-2">
-              <p className="text-xs font-semibold text-[hsl(var(--warning))] uppercase">Konfigurasi Ambang Low Stock</p>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-foreground/70 mb-1">Min Qty Tetap ({form.unit})</label>
-                  <GlassInput type="number" step="0.01" min="0" value={form.min_stock_qty} onChange={e => setForm({...form, min_stock_qty: e.target.value})} placeholder="Cth: 50" data-testid="mat-field-min-qty" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-foreground/70 mb-1">Titik Pesan Ulang ({form.unit})</label>
-                  <GlassInput type="number" step="0.01" min="0" value={form.reorder_point} onChange={e => setForm({...form, reorder_point: e.target.value})} placeholder="Cth: 80" data-testid="mat-field-reorder-point" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-foreground/70 mb-1">Min % dari Max Hist</label>
-                  <GlassInput type="number" step="1" min="0" max="100" value={form.min_stock_percentage} onChange={e => setForm({...form, min_stock_percentage: e.target.value})} placeholder="Cth: 20" data-testid="mat-field-min-pct" />
-                </div>
-              </div>
-              <p className="text-[10px] text-muted-foreground">
-                <strong>Min Qty</strong> = stok kritis (di bawah ini → alert merah). <strong>Titik pesan ulang</strong> = saatnya
-                order lagi (alert kuning). Untuk mengisi banyak material sekaligus beserta usulannya,
-                pakai tab <strong>Ambang Stok</strong>.
+        {/* HARGA SATUAN (HPP) — sejak 2026-08-21 harganya LAHIR DARI PEMBELIAN (PO → Penerimaan Barang,
+            rata-rata bergerak), bukan ketikan master. Saat membuat barang baru masih boleh diisi sebagai
+            HARGA AWAL karena belum ada pembeliannya. */}
+        {editing ? (
+          <Isian label="Harga satuan / HPP"
+            petunjuk="Harga tidak diketik di sini. Ia terbentuk otomatis dari harga pembelian di PO saat barang diterima. Koreksi manual (bila salah harga) lewat Valuasi HPP agar ada jejak audit.">
+            <div data-testid="mat-cost-derived">
+              <p className="text-base font-semibold tabular-nums text-foreground" data-testid="mat-cost-value">
+                Rp {Number(form.unit_cost || 0).toLocaleString('id-ID')}
+                <span className="text-sm font-normal text-muted-foreground"> / {form.unit}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Sumber: {
+                  form.cost_method === 'wac' ? 'rata-rata pembelian (PO → penerimaan)'
+                    : form.cost_method === 'manual' ? 'koreksi manual (Valuasi HPP)'
+                      : form.cost_method === 'opening' ? 'harga awal saat barang didaftarkan'
+                        : 'belum ada pembelian bernilai'
+                }
+                {form.last_receipt_unit_cost > 0 && (
+                  <> · harga beli terakhir Rp {Number(form.last_receipt_unit_cost).toLocaleString('id-ID')}</>
+                )}
               </p>
             </div>
+          </Isian>
+        ) : (
+          <Isian label="Harga awal (Rp), opsional"
+            petunjuk="Hanya untuk barang yang sudah ada di gudang sebelum sistem ini. Setelah ada pembelian (PO → penerimaan), harga otomatis mengikuti harga beli.">
+            <MoneyInput value={form.unit_cost} onChange={(e) => setForm({ ...form, unit_cost: e.target.value })}
+              placeholder="Cth: 25.000" data-testid="mat-field-unit-cost" />
+          </Isian>
+        )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Jenis/Komposisi</label>
-                <GlassInput value={form.composition || ''} onChange={e => setForm({...form, composition: e.target.value})} placeholder="Acrylic 100%" data-testid="mat-field-composition" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Warna</label>
-                <GlassInput value={form.color} onChange={e => setForm({...form, color: e.target.value})} placeholder="Navy" />
-              </div>
+        {/* 2026-08-02 · Kain: gramasi & lebar → konversi meter ⇄ kg */}
+        {['fabric', 'kain', 'yarn', 'interlining'].includes(form.type) && (
+          <div className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+            <p className="text-sm font-medium text-foreground">Data kain: konversi meter ⇄ kg</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Isian label="Gramasi / GSM (g/m²)" htmlFor="mat-gsm">
+                <Input id="mat-gsm" type="number" step="1" min="0" value={form.gsm ?? ''}
+                  onChange={(e) => setForm({ ...form, gsm: e.target.value })} placeholder="Cth: 240" data-testid="mat-field-gsm" />
+              </Isian>
+              <Isian label="Lebar kain (cm)" htmlFor="mat-lebar">
+                <Input id="mat-lebar" type="number" step="0.5" min="0" value={form.width_cm ?? ''}
+                  onChange={(e) => setForm({ ...form, width_cm: e.target.value })} placeholder="Cth: 160" data-testid="mat-field-width" />
+              </Isian>
             </div>
-            <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Catatan</label>
-              <GlassInput value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} placeholder="Opsional" />
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={saving}>Batal</Button>
-              <Button onClick={save} disabled={saving} data-testid="mat-save-btn">{saving ? 'Menyimpan...' : 'Simpan'}</Button>
-            </div>
+            <p className="text-xs text-muted-foreground" data-testid="mat-fabric-conv-hint">
+              {Number(form.gsm) > 0 && Number(form.width_cm) > 0 ? (
+                <>1 meter ≈ <strong>{((Number(form.gsm) * (Number(form.width_cm) / 100)) / 1000).toFixed(4)} kg</strong>
+                  {' '}· 1 kg ≈ <strong>{(1 / ((Number(form.gsm) * (Number(form.width_cm) / 100)) / 1000)).toFixed(3)} meter</strong>
+                  {' '}— dipakai BOM, RnD/HPP &amp; costing untuk mengubah meter ke kg.</>
+              ) : (
+                <>Isi keduanya agar sistem bisa mengubah pemakaian <strong>meter</strong> menjadi <strong>kg</strong> (kain dibeli per kg).</>
+              )}
+            </p>
           </div>
-        </Modal>
-      )}
-    </div>
+        )}
+
+        {/* Satuan & kemasan berjenjang (maks 3 tingkat) — SSOT lib/uom.js */}
+        <UomEditor
+          baseUnit={form.unit}
+          uoms={form.uoms}
+          purchaseUom={form.purchase_uom}
+          issueUom={form.issue_uom}
+          displayUom={form.display_uom}
+          resetKey={editing?.id || 'new'}
+          materialId={editing?.id || null}
+          token={token}
+          onRebased={() => { setModalOpen(false); fetchRows(); }}
+          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+        />
+
+        {/* Sprint 3.4: ambang stok menipis per material */}
+        <div className="space-y-3 border-t border-[var(--glass-border)] pt-4">
+          <p className="text-sm font-medium text-foreground">Ambang stok menipis</p>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Isian label={`Min qty tetap (${form.unit})`} htmlFor="mat-min-qty">
+              <Input id="mat-min-qty" type="number" step="0.01" min="0" value={form.min_stock_qty}
+                onChange={(e) => setForm({ ...form, min_stock_qty: e.target.value })} placeholder="Cth: 50" data-testid="mat-field-min-qty" />
+            </Isian>
+            <Isian label={`Titik pesan ulang (${form.unit})`} htmlFor="mat-rp">
+              <Input id="mat-rp" type="number" step="0.01" min="0" value={form.reorder_point}
+                onChange={(e) => setForm({ ...form, reorder_point: e.target.value })} placeholder="Cth: 80" data-testid="mat-field-reorder-point" />
+            </Isian>
+            <Isian label="Min % dari stok tertinggi" htmlFor="mat-min-pct">
+              <Input id="mat-min-pct" type="number" step="1" min="0" max="100" value={form.min_stock_percentage}
+                onChange={(e) => setForm({ ...form, min_stock_percentage: e.target.value })} placeholder="Cth: 20" data-testid="mat-field-min-pct" />
+            </Isian>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Min qty = stok kritis (di bawah ini → peringatan merah). Titik pesan ulang = saatnya pesan lagi (peringatan kuning).
+            Untuk mengisi banyak material sekaligus beserta usulannya, pakai tab Ambang stok.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Jenis / komposisi" htmlFor="mat-komposisi">
+            <Input id="mat-komposisi" value={form.composition || ''} onChange={(e) => setForm({ ...form, composition: e.target.value })}
+              placeholder="Acrylic 100%" data-testid="mat-field-composition" />
+          </Isian>
+          <Isian label="Warna" htmlFor="mat-warna">
+            <Input id="mat-warna" value={form.color || ''} onChange={(e) => setForm({ ...form, color: e.target.value })} placeholder="Navy" />
+          </Isian>
+        </div>
+        <Isian label="Catatan" htmlFor="mat-catatan">
+          <Input id="mat-catatan" value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Opsional" />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }

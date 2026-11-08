@@ -1,38 +1,31 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Grid3X3, Layers, Package, RefreshCw, Search, X, MinusCircle,
-  Lock, CheckCircle2, AlertCircle, ChevronDown, ChevronRight,
-  Activity, ArrowUpCircle, ArrowDownCircle, Calendar, Tag, Sparkles,
+  RefreshCw, Search, MinusCircle, Lock, ChevronDown, ChevronRight, Sparkles,
 } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
+import { formatDateID } from '@/lib/format';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
-// Color palette for visual color mapping in cells
-const COLOR_DOT = {
-  BLACK:  'bg-card ring-border',
-  WHITE:  'bg-white ring-border',
-  GRAY:   'bg-muted ring-border',
-  NAVY:   'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
-  BLUE:   'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
-  RED:    'bg-[hsl(var(--destructive))] ring-[hsl(var(--destructive)/0.35)]',
-  GREEN:  'bg-[hsl(var(--success))] ring-[hsl(var(--success)/0.35)]',
-  YELLOW: 'bg-[hsl(var(--warning))] ring-[hsl(var(--warning)/0.35)]',
-  PURPLE: 'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
-  PINK:   'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
-  BROWN:  'bg-[hsl(var(--warning))] ring-[hsl(var(--warning)/0.35)]',
-  ORANGE: 'bg-[hsl(var(--warning))] ring-[hsl(var(--warning)/0.35)]',
-};
-
-function colorDotClass(color) {
-  return COLOR_DOT[(color || '').toUpperCase()] || 'bg-gradient-to-br from-zinc-400 to-zinc-600 ring-border';
-}
+const pcs = (n) => Number(n || 0).toLocaleString('id-ID');
 
 /**
  * FG Stock Matrix viewer — pivots inventory by Model × Color (rows) × Size (columns).
- * Interactive: cell click opens detail panel with allocate/issue actions.
+ * Interactive: cell click opens detail popup with allocate/issue actions.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): penyaring satu baris tanpa panel abu, kartu angka = StatTile (disembunyikan bila
+ * semuanya 0 → tampilan kosong), detail sel = DetailPopup, reservasi = FormPopup pendek, unduh Excel/CSV per sel.
+ * Kartu "Size range" dihapus: isinya daftar ukuran global (bukan ukuran yang punya stok) — menyesatkan.
+ * Titik warna dihapus: banyak nama warna dipetakan ke token yang salah (PINK → ungu, BROWN → kuning).
  */
 export default function FGStockMatrixView({ token, onCellAction }) {
   const { toast } = useToast();
@@ -44,7 +37,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
   const [onlyWithStock, setOnlyWithStock] = useState(true);
   const [collapsedModels, setCollapsedModels] = useState({});
   const [detailCell, setDetailCell] = useState(null); // { material_id, code, ... }
-  const [actionMode, setActionMode] = useState(null); // 'allocate' | 'issue' | null
+  const [actionMode, setActionMode] = useState(null); // 'allocate' | null
   const [actionQty, setActionQty] = useState('');
   const [actionRef, setActionRef] = useState('');
   const [actionNotes, setActionNotes] = useState('');
@@ -73,7 +66,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
       }
       if (modelsRes.ok) setModels(await modelsRes.json());
     } catch (e) {
-      toast({ title: 'Gagal memuat matrix', description: e.message, variant: 'destructive' });
+      toast({ title: 'Gagal memuat matriks', description: e.message, variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -108,7 +101,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
   const handleAllocate = async () => {
     if (!detailCell?.material_id) return;
     const qty = parseInt(actionQty, 10);
-    if (!qty || qty <= 0) return toast({ title: 'Qty harus > 0', variant: 'destructive' });
+    if (!qty || qty <= 0) return toast({ title: 'Qty harus lebih dari 0', variant: 'destructive' });
     if (qty > detailCell.available) return toast({ title: `Maksimal: ${detailCell.available} pcs`, variant: 'destructive' });
 
     setActionSubmitting(true);
@@ -125,8 +118,8 @@ export default function FGStockMatrixView({ token, onCellAction }) {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Allocate failed');
-      toast({ title: `✅ Direservasi ${qty} pcs — ${data.reservation_no}` });
+      if (!res.ok) throw new Error(data.detail || 'Reservasi gagal');
+      toast({ title: `Direservasi ${qty} pcs — ${data.reservation_no}` });
       setActionMode(null);
       setActionQty('');
       setActionRef('');
@@ -145,8 +138,8 @@ export default function FGStockMatrixView({ token, onCellAction }) {
       const res = await fetch(`/api/rahaza/fg-matrix/release/${reservationId}`, {
         method: 'POST', headers: h,
       });
-      if (!res.ok) throw new Error('Release failed');
-      toast({ title: '✅ Reservasi dilepas' });
+      if (!res.ok) throw new Error('Gagal melepas reservasi');
+      toast({ title: 'Reservasi dilepas' });
       fetchMatrix();
       if (detailCell?.material_id) fetchCellDetail(detailCell.material_id);
     } catch (e) {
@@ -159,9 +152,9 @@ export default function FGStockMatrixView({ token, onCellAction }) {
       const res = await fetch('/api/rahaza/fg-matrix/seed-demo', { method: 'POST', headers: h });
       const data = await res.json();
       if (data.status === 'seeded') {
-        toast({ title: `✅ Demo data seeded: ${data.materials_inserted} SKUs` });
+        toast({ title: `Data contoh ditambahkan: ${data.materials_inserted} SKU` });
       } else {
-        toast({ title: 'Demo data sudah ada' });
+        toast({ title: 'Data contoh sudah ada' });
       }
       fetchMatrix();
     } catch (e) {
@@ -183,107 +176,92 @@ export default function FGStockMatrixView({ token, onCellAction }) {
     );
   }, [matrix.models, search]);
 
-  // Heatmap intensity helper — returns Tailwind classes based on qty
+  // Baris unduhan: satu baris per sel (model · warna · ukuran) dari model yang tampil.
+  const barisUnduh = useMemo(() => {
+    const out = [];
+    filteredModels.forEach((m) => m.colors.forEach((color) => m.sizes.forEach((size) => {
+      const c = m.cells[color]?.[size];
+      if (c) out.push({ model: m.model_key, color, size, ...c });
+    })));
+    return out;
+  }, [filteredModels]);
+
+  // Intensitas sel (token warna) — makin banyak stok makin pekat.
   const cellIntensity = (qty, max) => {
-    if (qty <= 0) return 'bg-card/40 text-muted-foreground/40 border-border/30';
+    if (qty <= 0) return 'text-muted-foreground';
     const ratio = max > 0 ? qty / max : 0;
-    if (ratio < 0.25) return 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ';
-    if (ratio < 0.5)  return 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] border-[hsl(var(--success)/0.4)]';
-    if (ratio < 0.75) return 'bg-[hsl(var(--success)/0.3)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.5)]';
-    return 'bg-[hsl(var(--success)/0.4)] text-foreground border-[hsl(var(--success)/0.6)]';
+    if (ratio < 0.5) return 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)]';
+    if (ratio < 0.75) return 'bg-[hsl(var(--success)/0.22)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.5)]';
+    return 'bg-[hsl(var(--success)/0.32)] text-foreground border-[hsl(var(--success)/0.6)]';
   };
+
+  const s = matrix.summary || {};
+  const adaAngka = Number(s.total_models || 0) || Number(s.total_skus || 0) || Number(s.total_qty || 0);
 
   return (
     <div className="space-y-4" data-testid="fg-matrix-view">
-      {/* Toolbar */}
-      <GlassPanel className="p-3 flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <GlassInput
-            placeholder="Cari model / warna / SKU…"
-            className="pl-8 h-8 text-sm"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            data-testid="fg-matrix-search"
-          />
+      {/* Penyaring (satu baris) */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari model, warna, atau SKU" className="pl-8" value={search}
+            onChange={e => setSearch(e.target.value)} data-testid="fg-matrix-search" />
         </div>
-        <Select value={filterModel} onValueChange={setFilterModel}>
-          <SelectTrigger className="w-40 h-8 text-xs" data-testid="fg-matrix-model-filter">
-            <SelectValue placeholder="Semua model" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Semua model</SelectItem>
-            {models.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
-          <input
-            type="checkbox"
-            checked={onlyWithStock}
-            onChange={e => setOnlyWithStock(e.target.checked)}
-            className="accent-primary"
-            data-testid="fg-matrix-stock-toggle"
-          />
+        <SmartNativeSelect value={filterModel} onChange={e => setFilterModel(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-48"
+          aria-label="Model" data-testid="fg-matrix-model-filter">
+          <option value="all">Semua model</option>
+          {models.map(m => <option key={m} value={m}>{m}</option>)}
+        </SmartNativeSelect>
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+          <Checkbox checked={onlyWithStock} onCheckedChange={(v) => setOnlyWithStock(!!v)} data-testid="fg-matrix-stock-toggle" />
           Hanya yang ada stok
         </label>
-        <Button size="sm" variant="ghost" onClick={fetchMatrix} className="gap-1.5 text-xs ml-auto">
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
-        {matrix.models.length === 0 && (
-          <Button size="sm" variant="outline" onClick={handleSeedDemo} className="gap-1.5 text-xs" data-testid="fg-matrix-seed-btn">
-            <Sparkles className="w-3.5 h-3.5" />
-            Seed Demo
+        <div className="ml-auto flex items-center gap-2">
+          {matrix.models.length === 0 && (
+            <Button variant="outline" onClick={handleSeedDemo} data-testid="fg-matrix-seed-btn">
+              <Sparkles />Isi data contoh
+            </Button>
+          )}
+          <TombolUnduh namaBerkas="matriks-produk-jadi" namaLembar="Matriks" baris={barisUnduh} testId="fg-matrix-unduh"
+            kolom={[
+              { label: 'Model', nilai: (r) => r.model },
+              { label: 'Warna', nilai: (r) => r.color },
+              { label: 'Ukuran', nilai: (r) => r.size },
+              { label: 'SKU', nilai: (r) => r.code },
+              { label: 'Nama', nilai: (r) => r.name },
+              { label: 'Stok (pcs)', nilai: (r) => Number(r.qty || 0) },
+              { label: 'Direservasi (pcs)', nilai: (r) => Number(r.reserved || 0) },
+              { label: 'Tersedia (pcs)', nilai: (r) => Number(r.available || 0) },
+            ]} />
+          <Button variant="outline" size="icon" onClick={fetchMatrix} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-        )}
-      </GlassPanel>
-
-      {/* Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Total Model</div>
-          <div className="text-xl font-bold text-foreground">{matrix.summary?.total_models || 0}</div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Total SKU</div>
-          <div className="text-xl font-bold text-foreground">{matrix.summary?.total_skus || 0}</div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Total Qty</div>
-          <div className="text-xl font-bold text-primary">
-            {Number(matrix.summary?.total_qty || 0).toLocaleString('id-ID')}
-            <span className="text-xs text-muted-foreground ml-1">pcs</span>
-          </div>
-        </GlassPanel>
-        <GlassPanel className="p-3 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Size Range</div>
-          <div className="text-xl font-bold text-foreground">
-            {(matrix.size_order || []).slice(0, 6).filter(s => s.length <= 4).join(' · ') || '—'}
-          </div>
-        </GlassPanel>
+        </div>
       </div>
 
-      {/* Loading / Empty states */}
-      {loading && (
-        <div className="flex items-center justify-center h-48">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      {/* Ringkasan — disembunyikan bila semuanya 0 (tampilan kosong menjelaskan) */}
+      {adaAngka ? (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Model" value={pcs(s.total_models)} sub={onlyWithStock ? 'yang punya stok' : 'semua model'} />
+          <StatTile label="SKU" value={pcs(s.total_skus)} sub={onlyWithStock ? 'yang punya stok' : 'semua SKU produk jadi'} />
+          <StatTile label="Total stok" value={pcs(s.total_qty)} suffix="pcs" accent={Number(s.total_qty) < 0 ? 'danger' : 'default'}
+            sub="jumlah semua sel di matriks" />
         </div>
+      ) : null}
+
+      {loading && (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat matriks…</p>
       )}
       {!loading && filteredModels.length === 0 && (
-        <GlassCard className="p-12 text-center" hover={false}>
-          <Package className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground mb-1">
-            {matrix.models.length === 0 ? 'Belum ada data FG.' : 'Tidak ada model yang cocok dengan filter.'}
-          </p>
-          {matrix.models.length === 0 && (
-            <p className="text-xs text-muted-foreground/60">
-              Klik tombol <span className="font-semibold">Seed Demo</span> untuk melihat tampilan matrix dengan data contoh.
-            </p>
-          )}
-        </GlassCard>
+        <EmptyState
+          title={matrix.models.length === 0
+            ? (onlyWithStock ? 'Belum ada produk jadi yang punya stok' : 'Belum ada data produk jadi')
+            : 'Tidak ada model yang cocok dengan saringan'}
+          description={matrix.models.length === 0 && onlyWithStock
+            ? 'Lepas centang "Hanya yang ada stok" untuk melihat semua model.' : undefined} />
       )}
 
-      {/* Matrix rendered per model */}
+      {/* Matriks per model */}
       {!loading && filteredModels.map(model => {
         const isCollapsed = collapsedModels[model.model_key];
         // Compute max qty within this model's cells for heatmap intensity
@@ -291,331 +269,186 @@ export default function FGStockMatrixView({ token, onCellAction }) {
         Object.values(model.cells).forEach(row => Object.values(row).forEach(c => { if (c.qty > maxQty) maxQty = c.qty; }));
 
         return (
-          <GlassCard key={model.model_key} className="p-0 overflow-hidden" data-testid={`fg-matrix-model-${model.model_key}`}>
-            {/* Header */}
-            <button
-              type="button"
-              onClick={() => toggleModel(model.model_key)}
-              className="w-full px-4 py-3 flex items-center gap-3 border-b border-[var(--glass-border)] bg-[var(--glass-bg)] hover:bg-[var(--glass-bg-hover)] transition-colors text-left"
-            >
-              {isCollapsed ? <ChevronRight className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-              <Layers className="w-4 h-4 text-primary" />
-              <div className="flex-1">
-                <div className="font-semibold text-foreground text-sm flex items-center gap-2">
-                  {model.model_key}
-                  <Badge variant="outline" className="text-[10px] text-muted-foreground border-[var(--glass-border)]">
-                    {model.sku_count} SKU
-                  </Badge>
-                </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5">
-                  {model.colors.length} warna × {model.sizes.length} size — total{' '}
-                  <span className="text-primary font-bold">{model.total_qty.toLocaleString('id-ID')}</span>{' '}
-                  <span className="text-muted-foreground/70">pcs</span>
-                  {model.total_available !== model.total_qty && (
-                    <span className="ml-2 text-[hsl(var(--warning))] ">({model.total_available} tersedia)</span>
-                  )}
-                </div>
+          <GlassCard key={model.model_key} className="overflow-hidden p-0" data-testid={`fg-matrix-model-${model.model_key}`}>
+            <div className="flex items-center gap-2 border-b border-[var(--glass-border)] px-3 py-2">
+              <Button variant="ghost" size="icon" onClick={() => toggleModel(model.model_key)}
+                aria-expanded={!isCollapsed} title={isCollapsed ? 'Buka matriks' : 'Tutup matriks'}
+                aria-label={isCollapsed ? `Buka matriks ${model.model_key}` : `Tutup matriks ${model.model_key}`}>
+                {isCollapsed ? <ChevronRight /> : <ChevronDown />}
+              </Button>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-foreground">
+                  {model.model_key} <span className="font-normal text-muted-foreground">· {model.sku_count} SKU</span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {model.colors.length} warna × {model.sizes.length} ukuran · total {pcs(model.total_qty)} pcs
+                  {model.total_available !== model.total_qty && <> · {pcs(model.total_available)} tersedia</>}
+                </p>
               </div>
-              <div className="hidden md:flex items-center gap-1">
-                {model.colors.slice(0, 5).map(c => (
-                  <div key={c} className={`w-3 h-3 rounded-full ring-1 ${colorDotClass(c)}`} title={c} />
-                ))}
-                {model.colors.length > 5 && (
-                  <span className="text-[10px] text-muted-foreground ml-1">+{model.colors.length - 5}</span>
-                )}
-              </div>
-            </button>
+            </div>
 
-            {/* Matrix Grid */}
             {!isCollapsed && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-[11px] text-muted-foreground bg-[var(--glass-bg)]/50">
-                      <th className="px-3 py-2 text-left font-medium sticky left-0 bg-[var(--glass-bg)] z-10 min-w-[140px]">
-                        <span className="flex items-center gap-1.5">
-                          <Tag className="w-3 h-3" /> Warna \ Size
-                        </span>
-                      </th>
-                      {model.sizes.map(size => (
-                        <th key={size} className="px-2 py-2 text-center tabular-nums font-semibold text-foreground min-w-[80px]">
-                          {size}
-                        </th>
-                      ))}
-                      <th className="px-3 py-2 text-right font-medium text-foreground/80">
-                        Subtotal
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {model.colors.map(color => {
-                      const row = model.cells[color] || {};
-                      const subtotal = Object.values(row).reduce((a, c) => a + (c.qty || 0), 0);
-                      return (
-                        <tr key={color} className="border-t border-[var(--glass-border)]">
-                          <td className="px-3 py-2 sticky left-0 bg-[var(--bg)]/95 backdrop-blur-sm z-10">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-3.5 h-3.5 rounded-full ring-1 ring-offset-1 ring-offset-transparent ${colorDotClass(color)}`} />
-                              <span className="text-xs font-medium text-foreground">{color}</span>
-                            </div>
-                          </td>
-                          {model.sizes.map(size => {
-                            const cell = row[size];
-                            if (!cell) {
-                              return (
-                                <td key={size} className="px-2 py-2 text-center">
-                                  <span className="inline-block w-full text-[11px] text-muted-foreground/30">—</span>
-                                </td>
-                              );
-                            }
-                            const cls = cellIntensity(cell.qty, maxQty);
-                            return (
-                              <td key={size} className="px-1.5 py-1.5 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => openCell(cell, model.model_key)}
-                                  className={`w-full px-2 py-1.5 rounded-md border ${cls} transition-all hover:scale-[1.03] hover:brightness-110 active:scale-[0.98] cursor-pointer`}
-                                  data-testid={`fg-matrix-cell-${cell.code}`}
-                                  title={`${cell.code}\n${cell.name}\nQty: ${cell.qty} | Reserved: ${cell.reserved} | Available: ${cell.available}`}
-                                >
-                                  <div className="text-sm font-bold leading-tight">{cell.qty}</div>
-                                  {cell.reserved > 0 && (
-                                    <div className="text-[9px] mt-0.5 opacity-80 flex items-center justify-center gap-0.5">
-                                      <Lock className="w-2 h-2" />
-                                      {cell.reserved}
-                                    </div>
-                                  )}
-                                </button>
-                              </td>
-                            );
-                          })}
-                          <td className="px-3 py-2 text-right font-bold text-primary">
-                            {subtotal.toLocaleString('id-ID')}
-                          </td>
-                        </tr>
-                      );
+              <Table stickyFirstCol>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[8rem]">Warna \ ukuran</TableHead>
+                    {model.sizes.map(size => (
+                      <TableHead key={size} className="min-w-[5rem] text-center">{size}</TableHead>
+                    ))}
+                    <TableHead className="text-right">Subtotal</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {model.colors.map(color => {
+                    const row = model.cells[color] || {};
+                    const subtotal = Object.values(row).reduce((a, c) => a + (c.qty || 0), 0);
+                    return (
+                      <TableRow key={color}>
+                        <TableCell className="font-medium">{color}</TableCell>
+                        {model.sizes.map(size => {
+                          const cell = row[size];
+                          if (!cell) {
+                            return <TableCell key={size} className="text-center text-muted-foreground">—</TableCell>;
+                          }
+                          return (
+                            <TableCell key={size} className="p-1.5 text-center">
+                              <Button variant="outline" size="sm" onClick={() => openCell(cell, model.model_key)}
+                                className={cn('h-auto w-full flex-col gap-0 py-1 tabular-nums', cellIntensity(cell.qty, maxQty))}
+                                data-testid={`fg-matrix-cell-${cell.code}`}
+                                title={`${cell.code} · ${cell.name} · stok ${cell.qty}, direservasi ${cell.reserved}, tersedia ${cell.available}`}>
+                                <span className="text-sm font-semibold">{cell.qty}</span>
+                                {cell.reserved > 0 && (
+                                  <span className="inline-flex items-center gap-0.5 text-xs font-normal">
+                                    <Lock className="!h-3 !w-3" />{cell.reserved}
+                                  </span>
+                                )}
+                              </Button>
+                            </TableCell>
+                          );
+                        })}
+                        <TableCell className="text-right font-semibold tabular-nums">{pcs(subtotal)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  <TableRow>
+                    <TableCell className="text-xs font-semibold text-muted-foreground">Total per ukuran</TableCell>
+                    {model.sizes.map(size => {
+                      const total = model.colors.reduce((a, c) => a + (model.cells[c]?.[size]?.qty || 0), 0);
+                      return <TableCell key={size} className="text-center font-semibold tabular-nums">{pcs(total)}</TableCell>;
                     })}
-                    {/* Per-size totals row */}
-                    <tr className="border-t-2 border-[var(--glass-border)] bg-[var(--glass-bg)]/30">
-                      <td className="px-3 py-2 sticky left-0 bg-[var(--glass-bg)] z-10 text-xs font-semibold text-muted-foreground">
-                        Total per Size
-                      </td>
-                      {model.sizes.map(size => {
-                        const total = model.colors.reduce((a, c) => a + (model.cells[c]?.[size]?.qty || 0), 0);
-                        return (
-                          <td key={size} className="px-2 py-2 text-center text-xs font-bold text-foreground/90">
-                            {total.toLocaleString('id-ID')}
-                          </td>
-                        );
-                      })}
-                      <td className="px-3 py-2 text-right font-bold text-primary text-base">
-                        {model.total_qty.toLocaleString('id-ID')}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+                    <TableCell className="text-right font-bold tabular-nums">{pcs(model.total_qty)}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
             )}
           </GlassCard>
         );
       })}
 
-      {/* Cell Detail Modal/Sheet */}
+      {/* Detail sel (popup) */}
       {detailCell && (
-        <div className="fixed inset-0 bg-foreground/50 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={closeDetail}>
-          <div
-            className="bg-[var(--glass-bg)] backdrop-blur-xl border border-[var(--glass-border)] rounded-t-2xl md:rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col"
-            onClick={e => e.stopPropagation()}
-            data-testid="fg-matrix-cell-modal"
-          >
-            {/* Header */}
-            <div className="px-5 py-4 border-b border-[var(--glass-border)] flex items-start gap-3">
-              <div className="flex-1">
-                <div className="text-xs text-muted-foreground mb-1">{detailCell.model_key}</div>
-                <div className="text-lg font-bold text-foreground">{detailCell.code}</div>
-                <div className="text-sm text-muted-foreground">{detailCell.name}</div>
-              </div>
-              <button onClick={closeDetail} className="text-muted-foreground hover:text-foreground p-1">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+        <DetailPopup open onClose={closeDetail} judul={detailCell.code} testId="fg-matrix-cell-modal"
+          keterangan={`${detailCell.name || ''}${detailCell.model_key ? ` · model ${detailCell.model_key}` : ''}`}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => setActionMode('allocate')} disabled={detailCell.available <= 0}
+              data-testid="fg-matrix-btn-allocate"><Lock />Reservasi</Button>
+            <Button size="sm" variant="outline" disabled={detailCell.available <= 0} data-testid="fg-matrix-btn-issue"
+              onClick={() => { closeDetail(); onCellAction?.('issue', detailCell); }}>
+              <MinusCircle />Keluarkan stok
+            </Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Stok"><span className="tabular-nums">{pcs(detailCell.qty)} pcs</span></BarisDetail>
+            <BarisDetail label="Direservasi"><span className="tabular-nums">{pcs(detailCell.reserved)} pcs</span></BarisDetail>
+            <BarisDetail label="Tersedia"><span className="tabular-nums font-medium">{pcs(detailCell.available)} pcs</span></BarisDetail>
+          </dl>
 
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-3 px-5 py-4 border-b border-[var(--glass-border)]">
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">On Hand</div>
-                <div className="text-xl font-bold text-foreground">{detailCell.qty}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase flex items-center justify-center gap-0.5">
-                  <Lock className="w-2.5 h-2.5" /> Reserved
+          {!detailData ? (
+            <p className="text-sm text-muted-foreground">Memuat rincian…</p>
+          ) : (
+            <>
+              {detailData.stocks_by_location?.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Stok per lokasi</p>
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Lokasi</TableHead><TableHead className="text-right">Qty (pcs)</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {detailData.stocks_by_location.map((sl, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{sl.location_name || sl.location_id || 'Bawaan'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{pcs(sl.qty)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
-                <div className="text-xl font-bold text-[hsl(var(--warning))] ">{detailCell.reserved}</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] text-muted-foreground uppercase">Available</div>
-                <div className="text-xl font-bold text-[hsl(var(--success))] ">{detailCell.available}</div>
-              </div>
-            </div>
-
-            {/* Action area */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              {actionMode === 'allocate' ? (
-                <div className="space-y-3" data-testid="fg-matrix-allocate-form">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-[hsl(var(--warning))] " /> Reservasi Stok
-                    </h4>
-                    <button onClick={() => setActionMode(null)} className="text-xs text-muted-foreground hover:text-foreground">
-                      Batal
-                    </button>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Qty</label>
-                    <GlassInput
-                      type="number" min="1" max={detailCell.available}
-                      value={actionQty}
-                      onChange={e => setActionQty(e.target.value)}
-                      placeholder={`Max ${detailCell.available} pcs`}
-                      data-testid="fg-matrix-allocate-qty"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Untuk (Reference)</label>
-                    <GlassInput
-                      value={actionRef}
-                      onChange={e => setActionRef(e.target.value)}
-                      placeholder="Contoh: PO-2026-001 / Customer XYZ"
-                      data-testid="fg-matrix-allocate-ref"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan</label>
-                    <GlassInput
-                      value={actionNotes}
-                      onChange={e => setActionNotes(e.target.value)}
-                      placeholder="Catatan tambahan…"
-                    />
-                  </div>
-                  <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
-                    onClick={handleAllocate}
-                    disabled={actionSubmitting || !actionQty || parseInt(actionQty, 10) <= 0 || parseInt(actionQty, 10) > detailCell.available}
-                    className="w-full bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] gap-2"
-                    data-testid="fg-matrix-allocate-submit"
-                  >
-                    {actionSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    Konfirmasi Reservasi
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  {/* Action buttons */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      onClick={() => setActionMode('allocate')}
-                      disabled={detailCell.available <= 0}
-                      variant="outline"
-                      className="gap-1.5 text-xs border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))]  hover:bg-[hsl(var(--warning)/0.1)] "
-                      data-testid="fg-matrix-btn-allocate"
-                    >
-                      <Lock className="w-3.5 h-3.5" /> Reservasi
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        closeDetail();
-                        onCellAction?.('issue', detailCell);
-                      }}
-                      disabled={detailCell.available <= 0}
-                      variant="outline"
-                      className="gap-1.5 text-xs border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.1)] "
-                      data-testid="fg-matrix-btn-issue"
-                    >
-                      <MinusCircle className="w-3.5 h-3.5" /> Keluarkan Stok
-                    </Button>
-                  </div>
-
-                  {detailData && (
-                    <>
-                      {/* Stock by location */}
-                      {detailData.stocks_by_location?.length > 0 && (
-                        <div>
-                          <div className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1.5">
-                            <Package className="w-3 h-3" /> Stok per Lokasi
-                          </div>
-                          <div className="space-y-1">
-                            {detailData.stocks_by_location.map((s, idx) => (
-                              <div key={idx} className="flex items-center justify-between text-xs px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                                <span className="text-foreground">{s.location_name || s.location_id || 'Default'}</span>
-                                <span className="tabular-nums text-primary font-bold">{s.qty} pcs</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Active reservations */}
-                      {detailData.active_reservations?.length > 0 && (
-                        <div>
-                          <div className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1.5">
-                            <Lock className="w-3 h-3" /> Reservasi Aktif
-                          </div>
-                          <div className="space-y-1">
-                            {detailData.active_reservations.map(r => (
-                              <div key={r.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] ">
-                                <div className="flex-1 min-w-0">
-                                  <div className="font-medium text-foreground truncate">{r.reservation_no}</div>
-                                  <div className="text-muted-foreground truncate">{r.reference_label || '—'}</div>
-                                </div>
-                                <div className="tabular-nums text-[hsl(var(--warning))] font-bold whitespace-nowrap">{r.qty} pcs</div>
-                                <button
-                                  onClick={() => handleRelease(r.id)}
-                                  className="text-[10px] text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))] underline whitespace-nowrap"
-                                  data-testid={`fg-matrix-release-${r.reservation_no}`}
-                                >
-                                  Release
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Recent movements */}
-                      {detailData.recent_movements?.length > 0 && (
-                        <div>
-                          <div className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1.5">
-                            <Activity className="w-3 h-3" /> Pergerakan Terakhir
-                          </div>
-                          <div className="space-y-1">
-                            {detailData.recent_movements.slice(0, 5).map(mv => (
-                              <div key={mv.id} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                                {mv.direction === 'in' ? (
-                                  <ArrowDownCircle className="w-3 h-3 text-[hsl(var(--success))] " />
-                                ) : (
-                                  <ArrowUpCircle className="w-3 h-3 text-[hsl(var(--destructive))] " />
-                                )}
-                                <span className="flex-1 truncate text-muted-foreground">
-                                  {mv.notes || mv.reason_label || mv.source || '—'}
-                                </span>
-                                <span className={`tabular-nums font-bold ${mv.direction === 'in' ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
-                                  {mv.direction === 'in' ? '+' : '-'}{mv.qty}
-                                </span>
-                                <span className="text-muted-foreground/70 text-[10px] whitespace-nowrap">
-                                  {new Date(mv.timestamp).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
               )}
-            </div>
-          </div>
-        </div>
+
+              {detailData.active_reservations?.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Reservasi aktif</p>
+                  <Table>
+                    <TableHeader><TableRow><TableHead>No. reservasi</TableHead><TableHead>Untuk</TableHead><TableHead className="text-right">Qty (pcs)</TableHead><TableHead /></TableRow></TableHeader>
+                    <TableBody>
+                      {detailData.active_reservations.map(r => (
+                        <TableRow key={r.id}>
+                          <TableCell className="tabular-nums">{r.reservation_no}</TableCell>
+                          <TableCell className="text-muted-foreground">{r.reference_label || '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{pcs(r.qty)}</TableCell>
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="outline" onClick={() => handleRelease(r.id)}
+                              data-testid={`fg-matrix-release-${r.reservation_no}`}>Lepas</Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {detailData.recent_movements?.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">Pergerakan terakhir</p>
+                  <Table>
+                    <TableHeader><TableRow><TableHead>Tanggal</TableHead><TableHead>Arah</TableHead><TableHead>Keterangan</TableHead><TableHead className="text-right">Qty (pcs)</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {detailData.recent_movements.slice(0, 5).map(mv => (
+                        <TableRow key={mv.id}>
+                          <TableCell className="whitespace-nowrap">{formatDateID(mv.timestamp)}</TableCell>
+                          <TableCell>{mv.direction === 'in'
+                            ? <StatusBadge status="masuk" label="Masuk" tone="success" />
+                            : <StatusBadge status="keluar" label="Keluar" tone="danger" />}</TableCell>
+                          <TableCell className="text-muted-foreground">{mv.notes || mv.reason_label || '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums">{mv.direction === 'in' ? '' : '−'}{pcs(mv.qty)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </>
+          )}
+        </DetailPopup>
       )}
+
+      {/* Reservasi stok (form popup pendek) */}
+      <FormPopup open={!!detailCell && actionMode === 'allocate'} onClose={() => setActionMode(null)}
+        judul="Reservasi stok" keterangan={detailCell ? `${detailCell.code} · tersedia ${pcs(detailCell.available)} pcs` : undefined}
+        testId="fg-matrix-allocate-form" onSimpan={handleAllocate} menyimpan={actionSubmitting} labelSimpan="Simpan reservasi"
+        bisaSimpan={!!actionQty && parseInt(actionQty, 10) > 0 && parseInt(actionQty, 10) <= (detailCell?.available || 0)}>
+        <Isian label="Qty (pcs)" wajib htmlFor="fg-alloc-qty">
+          <Input id="fg-alloc-qty" type="number" min="1" max={detailCell?.available} value={actionQty}
+            onChange={e => setActionQty(e.target.value)} placeholder={`Maks ${detailCell?.available ?? 0} pcs`}
+            data-testid="fg-matrix-allocate-qty" />
+        </Isian>
+        <Isian label="Untuk (referensi)" htmlFor="fg-alloc-ref">
+          <Input id="fg-alloc-ref" value={actionRef} onChange={e => setActionRef(e.target.value)}
+            placeholder="Contoh: PO-2026-001 / Customer XYZ" data-testid="fg-matrix-allocate-ref" />
+        </Isian>
+        <Isian label="Catatan" htmlFor="fg-alloc-notes">
+          <Input id="fg-alloc-notes" value={actionNotes} onChange={e => setActionNotes(e.target.value)} placeholder="Catatan tambahan" />
+        </Isian>
+      </FormPopup>
     </div>
   );
 }

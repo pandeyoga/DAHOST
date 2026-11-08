@@ -12,7 +12,10 @@ const buttonVariants = cva(
         default:
           "bg-primary text-primary-foreground shadow hover:bg-primary/90",
         destructive:
-          "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
+          "bg-[hsl(var(--destructive-strong))] text-white shadow-sm hover:bg-[hsl(var(--destructive-strong)/0.9)]",
+        // Standar UI/UX v2 (keputusan owner 8 Nov, K3): Simpan / Setujui = hijau.
+        success:
+          "bg-[hsl(var(--success-strong))] text-white shadow-sm hover:bg-[hsl(var(--success-strong)/0.9)]",
         // PANDUAN_UI G3 (2026-11-04): tombol "kedua" berlatar kartu — dulu tanpa latar sehingga tampak
         // tembus di atas latar gradasi; hover netral (dulu aksen limau di tema terang).
         outline:

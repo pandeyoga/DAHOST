@@ -4,7 +4,11 @@ import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { journalSourceLabel } from '@/lib/financeLabels';
+import { Notice, StatusBadge } from './moduleAtoms';
 import { todayWIB } from '../../lib/waktu';
+
+const BULAN_PENDEK = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
 const fmt =(n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
 
@@ -26,25 +30,23 @@ export function PeriodAlerts({ headers, onOpened }) {
     load();
   };
   if (!alerts.length) return null;
+  // 2026-11-08 (Standar UI/UX v2): kotak merah buatan sendiri → Notice; kode modul → label sumber jurnal.
   return (
-    <GlassCard className="p-4 border-red-400/30" data-testid="period-alerts-card">
-      <div className="flex items-center gap-2 text-red-300 text-sm font-semibold mb-2">
-        <AlertTriangle className="w-4 h-4" /> {alerts.length} jurnal ditolak — periode belum dibuka
-      </div>
-      <div className="space-y-2">
+    <Notice tone="danger" icon={AlertTriangle} testId="period-alerts-card" title={`${alerts.length} jurnal ditolak — periode belum dibuka`}>
+      <div className="mt-1 divide-y divide-[var(--glass-border)]">
         {alerts.map(a => (
-          <div key={a.id} className="flex flex-wrap items-center gap-3 text-xs rounded-md bg-red-400/5 border border-red-400/15 px-3 py-2" data-testid={`period-alert-${a.id}`}>
+          <div key={a.id} className="flex flex-wrap items-center gap-3 py-2 text-sm text-foreground" data-testid={`period-alert-${a.id}`}>
             <div className="flex-1 min-w-[240px]">
-              <div className="font-medium text-foreground/90">Tahun {a.year} · modul <span className="font-mono">{a.source_module}</span> · {a.count}× ditolak</div>
-              <div className="text-foreground/60">{a.message}</div>
-              {a.memo && <div className="text-foreground/50 italic">Terakhir: {a.memo}</div>}
+              <div className="font-medium">Tahun {a.year} · {journalSourceLabel(a.source_module)} · {a.count}× ditolak</div>
+              <div className="text-muted-foreground">{a.message}</div>
+              {a.memo && <div className="text-muted-foreground">Terakhir: {a.memo}</div>}
             </div>
             <Button size="sm" onClick={() => openYear(a.year)} data-testid={`period-alert-open-${a.id}`}>Buka tahun {a.year}</Button>
-            <Button size="sm" variant="ghost" onClick={() => resolve(a.id)} data-testid={`period-alert-resolve-${a.id}`}>Abaikan</Button>
+            <Button size="sm" variant="outline" onClick={() => resolve(a.id)} data-testid={`period-alert-resolve-${a.id}`}>Abaikan</Button>
           </div>
         ))}
       </div>
-    </GlassCard>
+    </Notice>
   );
 }
 
@@ -64,7 +66,7 @@ export function YearEndClose({ headers, year, onDone }) {
   useEffect(() => { load(); }, [load]);
 
   const doClose = async () => {
-    if (!(await confirmDialog(`Tutup tahun ${year}? Semua akun L/R di-nol-kan dan laba bersih Rp ${fmt(preview.net_income)} dipindah ke Laba Ditahan (3-2000).`))) return;
+    if (!(await confirmDialog(`Tutup tahun ${year}? Semua akun laba rugi di-nol-kan dan laba bersih Rp ${fmt(preview.net_income)} dipindah ke Laba Ditahan (3-2000).`))) return;
     setBusy(true);
     const r = await fetch('/api/rahaza/year-end/close', { method: 'POST', headers, body: JSON.stringify({ year }) });
     setBusy(false);
@@ -82,48 +84,51 @@ export function YearEndClose({ headers, year, onDone }) {
   const yearNotEnded = Number(todayWIB().slice(0, 4)) <= Number(year);
   const yearBlockReason = yearNotEnded
     ? `Tahun ${year} belum berakhir. Tutup tahun hanya boleh setelah 31 Desember ${year} (WIB).` : '';
+  const CLOSING_STATUS = { posted: 'terposting', reversed: 'dibatalkan', voided: 'dibatalkan', draft: 'draf' };
+  // 2026-11-08 (Standar UI/UX v2): tanpa kotak abu & lencana KAPITAL berwarna ungu; status = StatusBadge; huruf 12–16 px.
   return (
-    <GlassCard className="p-4" data-testid="year-end-card">
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        <BookLock className="w-4 h-4 text-violet-300" />
-        <div className="text-sm font-semibold">Tutup Tahun {year}</div>
-        <span className={`text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border ${closed ? 'text-violet-300 bg-violet-400/10 border-violet-400/25' : 'text-foreground/60 border-foreground/10'}`} data-testid="year-end-status">
-          {closed ? `Sudah ditutup · ${preview.existing_je?.je_number}` : 'Belum ditutup'}
+    <GlassCard className="p-4 space-y-3" data-testid="year-end-card">
+      <div className="flex flex-wrap items-center gap-3">
+        <BookLock className="w-4 h-4 text-muted-foreground" />
+        <p className="text-base font-semibold">Tutup tahun {year}</p>
+        <span data-testid="year-end-status">
+          <StatusBadge status={closed ? 'closed' : 'open'} tone={closed ? 'success' : 'muted'}
+            label={closed ? `Sudah ditutup · ${preview.existing_je?.je_number || ''}` : 'Belum ditutup'} />
         </span>
         <div className="ml-auto flex gap-2">
           {!closed && (
             <span title={yearBlockReason || undefined} className="inline-flex" data-testid="year-end-close-wrap">
-              <Button size="sm" disabled={!preview.can_close || busy || yearNotEnded} onClick={doClose} data-testid="year-end-close-btn">Tutup Tahun {year}</Button>
+              <Button size="sm" disabled={!preview.can_close || busy || yearNotEnded} onClick={doClose} data-testid="year-end-close-btn">Tutup tahun {year}</Button>
             </span>
           )}
-          {closed && <Button size="sm" variant="ghost" onClick={doReverse} data-testid="year-end-reverse-btn"><Undo2 className="w-3.5 h-3.5 mr-1" />Batalkan penutupan</Button>}
+          {closed && <Button size="sm" variant="destructive" onClick={doReverse} data-testid="year-end-reverse-btn"><Undo2 className="w-3.5 h-3.5 mr-1" />Batalkan penutupan</Button>}
         </div>
       </div>
-      <div className="grid sm:grid-cols-3 gap-3 text-xs">
-        <div className="rounded-md bg-foreground/5 px-3 py-2">
-          <div className="text-foreground/50">Laba (rugi) bersih {year}</div>
-          <div className="text-base font-semibold" data-testid="year-end-net-income">Rp {fmt(preview.net_income)}</div>
+      <dl className="grid sm:grid-cols-3 gap-3 text-sm">
+        <div>
+          <dt className="text-xs text-muted-foreground">Laba (rugi) bersih {year}</dt>
+          <dd className="text-base font-semibold tabular-nums" data-testid="year-end-net-income">Rp {fmt(preview.net_income)}</dd>
         </div>
-        <div className="rounded-md bg-foreground/5 px-3 py-2">
-          <div className="text-foreground/50">Akun L/R bersaldo</div>
-          <div className="text-base font-semibold">{preview.lines?.length || 0} akun</div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Akun laba rugi bersaldo</dt>
+          <dd className="text-base font-semibold">{preview.lines?.length || 0} akun</dd>
         </div>
-        <div className="rounded-md bg-foreground/5 px-3 py-2">
-          <div className="text-foreground/50">Periode belum closed</div>
-          <div className={`text-base font-semibold ${preview.open_periods?.length ? 'text-amber-300' : 'text-emerald-300'}`} data-testid="year-end-open-periods">
-            {preview.open_periods?.length ? preview.open_periods.map(p => p.slice(5)).join(', ') : 'semua closed'}
-          </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Periode belum ditutup</dt>
+          <dd className={`text-base font-semibold ${preview.open_periods?.length ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--success-text))]'}`} data-testid="year-end-open-periods">
+            {preview.open_periods?.length ? `${preview.open_periods.length} bulan (${preview.open_periods.map(p => BULAN_PENDEK[Number(p.slice(5)) - 1] || p.slice(5)).join(', ')})` : 'Semua sudah ditutup'}
+          </dd>
         </div>
-      </div>
+      </dl>
       {!closed && (!preview.can_close || yearNotEnded) && (
-        <div className="mt-2 text-[11px] text-foreground/55" data-testid="year-end-requirements">
-          Syarat: tahun {year} sudah berakhir (setelah 31 Desember, WIB), 12 periode closed/locked, ada saldo L/R, akun Laba Ditahan {preview.retained_earnings_account} aktif.
-        </div>
+        <p className="text-xs text-muted-foreground" data-testid="year-end-requirements">
+          Syarat: tahun {year} sudah berakhir (setelah 31 Desember, WIB), 12 periode ditutup/dikunci, ada saldo laba rugi, akun Laba Ditahan {preview.retained_earnings_account} aktif.
+        </p>
       )}
       {closings.length > 0 && (
-        <div className="mt-3 text-[11px] text-foreground/60" data-testid="year-end-history">
-          Riwayat: {closings.map(c => `${c.year} → ${c.je_number} (${c.status}, Rp ${fmt(c.net_income)})`).join(' · ')}
-        </div>
+        <p className="text-xs text-muted-foreground" data-testid="year-end-history">
+          Riwayat: {closings.map(c => `${c.year} → ${c.je_number} (${CLOSING_STATUS[c.status] || c.status}, Rp ${fmt(c.net_income)})`).join(' · ')}
+        </p>
       )}
     </GlassCard>
   );

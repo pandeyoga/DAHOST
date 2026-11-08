@@ -1,28 +1,25 @@
 /**
- * ImportExcelDialog — 2-step Excel import (preview → column mapping → import).
+ * ImportExcelDialog — impor Excel 2 langkah (pratinjau → pemetaan kolom → impor).
  *
- * Step 1: upload .xlsx/.xls → backend returns column suggestions + preview rows.
- * Step 2: user can rename columns, change types, toggle include, then submit.
+ * Langkah 1: unggah .xlsx/.xls → server mengirim usulan kolom + contoh baris.
+ * Langkah 2: pengguna boleh mengganti nama kolom, tipe, dan memilih kolom yang ikut, lalu impor.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup panjang (dulu Dialog + tabel buatan sendiri); alur & panggilan sama.
  */
 import { useState, useRef } from 'react';
 import { toast } from 'sonner';
+import { ArrowLeft, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
-  FileSpreadsheet, Upload, Download, Loader2,
-} from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import { API, apicall } from './utils';
 
 export default function ImportExcelDialog({ open, onClose, token, onImported }) {
-  const [step, setStep] = useState(1);   // 1 = upload, 2 = mapping
+  const [step, setStep] = useState(1);   // 1 = unggah, 2 = pemetaan
   const [preview, setPreview] = useState(null);   // { columns, preview_rows, total_rows, file_name }
   const [mapping, setMapping] = useState([]);     // [{ original_name, key, name, type, include }]
   const [docName, setDocName] = useState('');
@@ -47,21 +44,17 @@ export default function ImportExcelDialog({ open, onClose, token, onImported }) 
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Preview gagal');
+      if (!res.ok) throw new Error(data.detail || 'Pratinjau gagal');
       setPreview(data);
       setDocName(file.name.replace(/\.[^.]+$/, ''));
-      setMapping(data.columns.map((c) => ({
-        ...c, key: c.suggested_key, name: c.suggested_name,
-      })));
-
-      // Also read as base64 for final import
+      setMapping(data.columns.map((c) => ({ ...c, key: c.suggested_key, name: c.suggested_name })));
+      // Juga dibaca sebagai base64 untuk impor akhir
       const reader = new FileReader();
       reader.onload = () => setFileData(reader.result.split(',')[1]);
       reader.readAsDataURL(file);
-
       setStep(2);
-    } catch (e) {
-      toast.error(e.message || 'Upload gagal');
+    } catch (err) {
+      toast.error(err.message || 'Unggah gagal');
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -77,178 +70,112 @@ export default function ImportExcelDialog({ open, onClose, token, onImported }) 
         file_data: fileData, column_mapping: mapping,
         doc_name: docName || 'Import Excel',
       });
-      toast.success(`${doc.content?.rows?.length || 0} baris berhasil diimport ke "${doc.name}"`);
+      toast.success(`${doc.content?.rows?.length || 0} baris berhasil diimpor ke "${doc.name}"`);
       onImported(doc); onClose(); reset();
-    } catch (e) {
-      toast.error(e.message || 'Import gagal');
+    } catch (err) {
+      toast.error(err.message || 'Impor gagal');
     } finally {
       setImporting(false);
     }
   };
 
   const updateMapping = (idx, field, value) => {
-    setMapping((prev) => prev.map((m, i) => i === idx ? { ...m, [field]: value } : m));
+    setMapping((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
   };
+  const terpilih = mapping.filter((m) => m.include);
+  const tutup = () => { onClose(); reset(); };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) { onClose(); reset(); } }}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col" data-testid="import-excel-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Upload size={16} />Import Excel
-            <span className="text-xs font-normal text-muted-foreground">Langkah {step} dari 2</span>
-          </DialogTitle>
-          <div className="flex gap-1 mt-2">
-            {[1, 2].map((s) => (
-              <div key={s} className={`h-1 flex-1 rounded-full ${step >= s ? 'bg-primary' : 'bg-muted'}`} />
-            ))}
+    <FormPopup open={open} onClose={tutup} ukuran="panjang" testId="import-excel-dialog"
+      judul={`Impor Excel · langkah ${step} dari 2`}
+      keterangan={step === 1 ? 'Pilih berkas .xlsx atau .xls; kolom dan contoh datanya ditampilkan dulu sebelum diimpor.'
+        : 'Atur nama dan tipe tiap kolom, lalu impor.'}
+      onSimpan={handleImport} menyimpan={importing} bisaSimpan={step === 2 && terpilih.length > 0}
+      labelSimpan={step === 2 ? `Impor ${terpilih.length} kolom` : 'Impor'}
+      aksiKiri={step === 2 && (
+        <Button type="button" variant="outline" onClick={() => { setStep(1); setPreview(null); }} disabled={importing}>
+          <ArrowLeft />Kembali
+        </Button>
+      )}>
+      {step === 1 && (
+        <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+          <FileSpreadsheet className="h-10 w-10 text-primary" />
+          <div>
+            <p className="text-sm font-medium text-foreground">Pilih berkas Excel untuk diimpor</p>
+            <p className="mt-1 text-sm text-muted-foreground">Format yang didukung: .xlsx, .xls</p>
           </div>
-        </DialogHeader>
+          <Button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} data-testid="excel-file-btn">
+            {uploading ? <Loader2 className="animate-spin" /> : <Upload />}
+            {uploading ? 'Membaca berkas…' : 'Pilih berkas Excel'}
+          </Button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFileSelect} className="hidden" />
+        </div>
+      )}
 
-        <ScrollArea className="flex-1 overflow-auto">
-          {step === 1 && (
-            <div className="flex flex-col items-center justify-center py-10 gap-4">
-              <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center">
-                <FileSpreadsheet size={32} className="text-emerald-600" />
+      {step === 2 && preview && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            <b className="text-foreground">{preview.file_name}</b> · {preview.total_rows} baris data · {preview.columns.length} kolom
+          </p>
+          <Isian label="Nama dokumen" htmlFor="excel-doc-name">
+            <Input id="excel-doc-name" value={docName} onChange={(e) => setDocName(e.target.value)}
+              placeholder="Nama spreadsheet" data-testid="excel-doc-name" />
+          </Isian>
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium text-foreground">Pemetaan kolom</p>
+              <div className="flex gap-1">
+                <Button type="button" variant="ghost" size="sm" onClick={() => setMapping((prev) => prev.map((m) => ({ ...m, include: true })))}>Pilih semua</Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setMapping((prev) => prev.map((m) => ({ ...m, include: false })))}>Kosongkan</Button>
               </div>
-              <div className="text-center">
-                <p className="font-medium">Pilih file Excel untuk diimport</p>
-                <p className="text-sm text-muted-foreground mt-1">Format yang didukung: .xlsx, .xls</p>
-              </div>
-              <Button onClick={() => fileRef.current?.click()} disabled={uploading} data-testid="excel-file-btn">
-                {uploading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Upload size={14} className="mr-1" />}
-                {uploading ? 'Membaca file...' : 'Pilih File Excel'}
-              </Button>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFileSelect} className="hidden" />
             </div>
-          )}
-
-          {step === 2 && preview && (
-            <div className="space-y-4 p-1">
-              {/* Summary */}
-              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
-                <FileSpreadsheet size={20} className="text-emerald-600" />
-                <div>
-                  <p className="text-sm font-medium">{preview.file_name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {preview.total_rows} baris data · {preview.columns.length} kolom
-                  </p>
-                </div>
-              </div>
-
-              {/* Doc name */}
-              <div>
-                <label className="text-sm font-medium mb-1 block">Nama Dokumen</label>
-                <Input value={docName} onChange={(e) => setDocName(e.target.value)}
-                  placeholder="Nama spreadsheet..." data-testid="excel-doc-name" />
-              </div>
-
-              {/* Column Mapping */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium">Mapping Kolom</p>
-                  <div className="flex gap-2">
-                    <button className="text-xs text-primary"
-                      onClick={() => setMapping((prev) => prev.map((m) => ({ ...m, include: true })))}>Pilih semua</button>
-                    <span className="text-muted-foreground">·</span>
-                    <button className="text-xs text-muted-foreground"
-                      onClick={() => setMapping((prev) => prev.map((m) => ({ ...m, include: false })))}>Hapus semua</button>
-                  </div>
-                </div>
-                <div className="border rounded-lg overflow-hidden">
-                  <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
-                    <div className="col-span-1">Import</div>
-                    <div className="col-span-3">Kolom Excel</div>
-                    <div className="col-span-4">Nama di Spreadsheet</div>
-                    <div className="col-span-2">Tipe</div>
-                    <div className="col-span-2">Contoh Data</div>
-                  </div>
+            <div className="overflow-x-auto">
+              <Table className="min-w-[560px]">
+                <TableHeader><TableRow>
+                  <TableHead className="w-14">Impor</TableHead><TableHead>Kolom Excel</TableHead><TableHead>Nama di spreadsheet</TableHead>
+                  <TableHead className="w-32">Tipe</TableHead><TableHead>Contoh data</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
                   {mapping.map((m, idx) => (
-                    <div key={idx}
-                      className={`grid grid-cols-12 gap-2 px-3 py-2 items-center border-b last:border-0 text-sm ${!m.include ? 'opacity-50' : ''}`}>
-                      <div className="col-span-1">
-                        <input type="checkbox" checked={m.include}
-                          onChange={(e) => updateMapping(idx, 'include', e.target.checked)}
-                          className="rounded" />
-                      </div>
-                      <div className="col-span-3 text-xs text-muted-foreground truncate" title={m.original_name}>
-                        {m.original_name}
-                      </div>
-                      <div className="col-span-4">
-                        <Input value={m.name}
-                          onChange={(e) => updateMapping(idx, 'name', e.target.value)}
-                          className="h-7 text-xs" disabled={!m.include} />
-                      </div>
-                      <div className="col-span-2">
-                        <Select value={m.type}
-                          onValueChange={(v) => updateMapping(idx, 'type', v)} disabled={!m.include}>
-                          <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="text">Teks</SelectItem>
-                            <SelectItem value="number">Angka</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="col-span-2 text-xs text-muted-foreground truncate">
-                        {preview.preview_rows[0]?.[m.original_name] || '-'}
-                      </div>
-                    </div>
+                    <TableRow key={idx} className={!m.include ? 'opacity-50' : ''}>
+                      <TableCell><Checkbox checked={m.include} onCheckedChange={(v) => updateMapping(idx, 'include', !!v)} aria-label="Impor kolom ini" /></TableCell>
+                      <TableCell className="max-w-[10rem] truncate text-muted-foreground" title={m.original_name}>{m.original_name}</TableCell>
+                      <TableCell><Input value={m.name} onChange={(e) => updateMapping(idx, 'name', e.target.value)} className="h-8" disabled={!m.include} aria-label="Nama kolom" /></TableCell>
+                      <TableCell>
+                        <SmartNativeSelect value={m.type} onChange={(e) => updateMapping(idx, 'type', e.target.value)} disabled={!m.include}
+                          searchable={false} className="h-8 w-full" aria-label="Tipe kolom">
+                          <option value="text">Teks</option>
+                          <option value="number">Angka</option>
+                        </SmartNativeSelect>
+                      </TableCell>
+                      <TableCell className="max-w-[10rem] truncate text-muted-foreground">{preview.preview_rows[0]?.[m.original_name] || '—'}</TableCell>
+                    </TableRow>
                   ))}
-                </div>
-              </div>
-
-              {/* Data Preview */}
-              <div>
-                <p className="text-sm font-medium mb-2">Preview Data (10 baris pertama)</p>
-                <div className="border rounded-lg overflow-x-auto">
-                  <table className="text-xs w-full">
-                    <thead className="bg-muted/40">
-                      <tr>
-                        {mapping.filter((m) => m.include).map((m) => (
-                          <th key={m.original_name}
-                            className="px-3 py-2 text-left font-medium border-b border-r last:border-r-0 whitespace-nowrap">
-                            {m.name}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.preview_rows.map((row, ri) => (
-                        <tr key={ri} className="border-b last:border-0 hover:bg-muted/20">
-                          {mapping.filter((m) => m.include).map((m) => (
-                            <td key={m.original_name}
-                              className="px-3 py-1.5 border-r last:border-r-0 whitespace-nowrap max-w-[120px] truncate">
-                              {row[m.original_name] || ''}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                </TableBody>
+              </Table>
             </div>
-          )}
-        </ScrollArea>
-
-        <DialogFooter className="gap-2 pt-3 border-t">
-          {step === 2 && (
-            <Button variant="outline" onClick={() => { setStep(1); setPreview(null); }} disabled={importing}>
-              ← Kembali
-            </Button>
-          )}
-          <Button variant="outline" onClick={() => { onClose(); reset(); }}
-            disabled={importing || uploading}>Batal</Button>
-          {step === 2 && (
-            <Button onClick={handleImport}
-              disabled={importing || mapping.filter((m) => m.include).length === 0}
-              data-testid="excel-import-submit">
-              {importing ? <Loader2 size={14} className="animate-spin mr-1" /> : <Download size={14} className="mr-1" />}
-              {importing ? 'Mengimport...' : `Import ${mapping.filter((m) => m.include).length} Kolom`}
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground">Contoh data (10 baris pertama)</p>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader><TableRow>
+                  {terpilih.map((m) => <TableHead key={m.original_name} className="whitespace-nowrap">{m.name}</TableHead>)}
+                </TableRow></TableHeader>
+                <TableBody>
+                  {preview.preview_rows.map((row, ri) => (
+                    <TableRow key={ri}>
+                      {terpilih.map((m) => (
+                        <TableCell key={m.original_name} className="max-w-[10rem] truncate whitespace-nowrap">{row[m.original_name] || ''}</TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </>
+      )}
+    </FormPopup>
   );
 }

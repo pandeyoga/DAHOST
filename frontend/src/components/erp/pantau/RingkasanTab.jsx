@@ -45,7 +45,12 @@ export default function RingkasanTab(props) {
       </>}
     >
       {loading && !data ? <Section><LoadingRows /></Section> : data && <>
-        <Section title="Alur barang" hint="Jumlah barang yang SEDANG berada di tiap tahap (PO berjalan)." testId="pantau-alur">
+        <Section title="Alur barang" hint="Jumlah barang yang sedang berada di tiap tahap (PO berjalan)." testId="pantau-alur"
+          unduh={{ namaBerkas: 'alur-barang', baris: data.alur || [], kolom: [
+            { label: 'Tahap', nilai: (s) => s.label }, { label: 'Pcs', nilai: (s) => Number(s.qty) || 0 },
+            { label: 'Dokumen', nilai: (s) => Number(s.docs) || 0 }, { label: 'Jenis dokumen', nilai: (s) => s.doc_label || '' },
+            { label: 'Catatan', nilai: (s) => s.note || '' },
+          ] }}>
           <Table data-testid="pantau-alur-table">
             <TableHeader><TableRow>
               <TableHead>Tahap</TableHead><TableHead className="text-right">Pcs</TableHead>
@@ -60,7 +65,7 @@ export default function RingkasanTab(props) {
                   <TableCell className="text-xs text-muted-foreground">{s.note || ''}</TableCell>
                   <TableCell className="text-right">
                     {s.module && s.module !== 'pantau-produksi' && (
-                      <Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button>
+                      <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button>
                     )}
                   </TableCell>
                 </TableRow>
@@ -120,7 +125,15 @@ export default function RingkasanTab(props) {
           </Table>
         </Section>
 
-        <Section title="Lewat batas kirim & berisiko" hint="Batas kirim = tanggal kirim ke pemesan; berisiko = ≤ 5 hari dan lolos QC < 70%." testId="pantau-overdue">
+        <Section title="Lewat batas kirim & berisiko" hint="Batas kirim = tanggal kirim ke pemesan; berisiko = ≤ 5 hari dan lolos QC < 70%." testId="pantau-overdue"
+          unduh={{ namaBerkas: 'po-lewat-batas-kirim', baris: data.overdue, kolom: [
+            { label: 'PO', nilai: (r) => r.po_number }, { label: 'Pemesan', nilai: (r) => r.customer_name || '' },
+            { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' }, { label: 'Status PO', nilai: (r) => poStatusLabel(r.status) },
+            { label: 'Batas kirim', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
+            { label: 'Sisa hari', nilai: (r) => (r.days_to_deadline == null ? '' : Number(r.days_to_deadline)) },
+            { label: 'Dipesan', nilai: (r) => Number(r.ordered) || 0 }, { label: 'Lolos QC', nilai: (r) => Number(r.accepted) || 0 },
+            { label: 'Keadaan', nilai: (r) => (RISK_META[r.risk] || {}).label || '' },
+          ] }}>
           {data.overdue.length === 0 ? (
             <EmptyState icon={CheckCircle2} title="Tidak ada PO yang telat atau berisiko" description="Semua PO berjalan masih sesuai jadwal." />
           ) : (
@@ -136,7 +149,15 @@ export default function RingkasanTab(props) {
           {biaya.komponen_kurang ? ` · ${n(biaya.komponen_kurang)} permintaan komponen kurang (${n(biaya.komponen_kurang_qty)} pcs belum diterima)` : ''}.
         </Notice>
 
-        <Section title="Batas kirim dalam 14 hari" testId="pantau-upcoming">
+        <Section title="Batas kirim dalam 14 hari" testId="pantau-upcoming"
+          unduh={{ namaBerkas: 'po-batas-kirim-14-hari', baris: data.upcoming, kolom: [
+            { label: 'PO', nilai: (r) => r.po_number }, { label: 'Pemesan', nilai: (r) => r.customer_name || '' },
+            { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' }, { label: 'Status PO', nilai: (r) => poStatusLabel(r.status) },
+            { label: 'Batas kirim', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
+            { label: 'Sisa hari', nilai: (r) => (r.days_to_deadline == null ? '' : Number(r.days_to_deadline)) },
+            { label: 'Dipesan', nilai: (r) => Number(r.ordered) || 0 }, { label: 'Lolos QC', nilai: (r) => Number(r.accepted) || 0 },
+            { label: 'Keadaan', nilai: (r) => (RISK_META[r.risk] || {}).label || '' },
+          ] }}>
           {data.upcoming.length === 0 ? (
             <EmptyState icon={CheckCircle2} title="Tidak ada batas kirim dalam 14 hari" description="PO dengan batas kirim dekat akan muncul di sini." />
           ) : (
@@ -145,7 +166,11 @@ export default function RingkasanTab(props) {
         </Section>
 
         {dup.count > 0 && (
-          <Section title="Seri dobel" hint="Nomor seri yang dipakai lebih dari satu baris PO." testId="pantau-seri-dobel">
+          <Section title="Seri dobel" hint="Nomor seri yang dipakai lebih dari satu baris PO." testId="pantau-seri-dobel"
+            unduh={{ namaBerkas: 'seri-dobel', baris: dup.items || [], kolom: [
+              { label: 'Nomor seri', nilai: (d) => d.serial || '' }, { label: 'Dipakai', nilai: (d) => (d.usages || []).length },
+              { label: 'Di PO', nilai: (d) => (d.usages || []).map((u) => `${u.po_number} · ${u.sku || u.product_name}${u.size ? ` ${u.size}` : ''}`).join(' | ') },
+            ] }}>
             <div className="p-4 pb-0"><Notice tone="warning" icon={Copy}>{n(dup.count)} nomor seri dipakai di lebih dari satu baris PO — periksa supaya hasil jahit tidak tertukar.</Notice></div>
             <Table data-testid="pantau-seri-table">
               <TableHeader><TableRow>
@@ -182,11 +207,11 @@ function PoRiskTable({ rows, testId }) {
       <TableBody>
         {rows.map((r) => (
           <TableRow key={r.po_id} data-testid={`${testId}-${r.po_number}`}>
-            <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-[11px] text-muted-foreground">{r.customer_name}</div></TableCell>
+            <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-xs text-muted-foreground">{r.customer_name}</div></TableCell>
             <TableCell>{r.vendor_name || '—'}</TableCell>
             <TableCell>{poStatusLabel(r.status)}</TableCell>
             <TableCell className="whitespace-nowrap">{r.deadline ? formatDateID(r.deadline) : '—'}</TableCell>
-            <TableCell className={`text-right tabular-nums ${r.days_to_deadline < 0 ? 'text-[hsl(var(--destructive))] font-semibold' : ''}`}>
+            <TableCell className={`text-right tabular-nums ${r.days_to_deadline < 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : ''}`}>
               {r.days_to_deadline == null ? '—' : r.days_to_deadline < 0 ? `telat ${n(-r.days_to_deadline)}` : n(r.days_to_deadline)}
             </TableCell>
             <TableCell className="text-right tabular-nums">{n(r.ordered)}</TableCell>

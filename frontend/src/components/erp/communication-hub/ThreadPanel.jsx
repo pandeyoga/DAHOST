@@ -102,28 +102,28 @@ export default function ThreadPanel({
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
         <div className="flex items-center gap-2">
-          <button
+          <Button variant="ghost" size="sm" type="button"
             onClick={onClose}
             data-testid="thread-panel-close"
-            className="p-1.5 -ml-1.5 rounded hover:bg-muted text-muted-foreground"
+            className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal p-1.5 -ml-1.5 rounded hover:bg-muted text-muted-foreground"
             aria-label="Tutup thread"
           >
             <ArrowLeft size={16} />
-          </button>
+          </Button>
           <div>
-            <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <p className="text-sm font-semibold flex items-center gap-1.5">
               <MessagesSquare size={14} className="text-primary" /> Thread
-            </h3>
-            <p className="text-[11px] text-muted-foreground">{thread?.reply_count || 0} balasan</p>
+            </p>
+            <p className="text-xs text-muted-foreground">{thread?.reply_count || 0} balasan</p>
           </div>
         </div>
-        <button
+        <Button variant="ghost" size="sm" type="button"
           onClick={onClose}
-          className="p-1.5 rounded hover:bg-muted text-muted-foreground sm:hidden"
+          className="h-auto px-0 py-0 gap-0 justify-start whitespace-normal font-normal p-1.5 rounded hover:bg-muted text-muted-foreground sm:hidden"
           aria-label="Tutup"
         >
           <X size={16} />
-        </button>
+        </Button>
       </div>
 
       {/* Body */}
@@ -154,7 +154,7 @@ export default function ThreadPanel({
               />
             </div>
             {/* Divider */}
-            <div className="flex items-center gap-2 px-4 mb-1 text-[11px] text-muted-foreground">
+            <div className="flex items-center gap-2 px-4 mb-1 text-xs text-muted-foreground">
               <span className="font-medium">{thread.reply_count} balasan</span>
               <div className="flex-1 h-px bg-border" />
             </div>
@@ -194,7 +194,7 @@ export default function ThreadPanel({
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Balas di thread..."
+            placeholder="Balas di utas"
             data-testid="thread-input"
             rows={1}
             className="resize-none min-h-9 max-h-32 text-sm"

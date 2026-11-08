@@ -1,14 +1,47 @@
-
+/**
+ * Pengaturan Sistem › Perusahaan — profil tiap CV (nama, alamat, NPWP, logo, kop PDF, status pajak).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (di hub judul disembunyikan), profil tampil sebagai ringkasan
+ * baca + pratinjau kop; mengubah = FormPopup (dulu form panjang di halaman, tombol Simpan di paling bawah);
+ * status pajak lewat FormPopup pendek dengan pemilih tanggal seragam (dulu input tanggal bawaan browser).
+ * Data, validasi PKP, dan jalur simpan tidak berubah.
+ */
 import { useState, useEffect } from 'react';
-import { Settings, Save, Upload, Building2, FileText, RefreshCw, CheckCircle, Image, Receipt } from 'lucide-react';
+import { Image as ImageIcon, Pencil, Receipt, RefreshCw, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { GlassCard } from '@/components/ui/glass';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { resetTaxProfileCache } from '../../lib/taxProfile';
 import FilterChips from '@/components/ui/filter-chips';
 import { CV_DA, CV_SMU, cvLabel } from '@/lib/entitas';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { StatusBadge } from './moduleAtoms';
 
 // Tahap 8 (dua CV): satu profil per CV — nama, alamat, NPWP, logo, kop PDF, dan status PKP masing-masing.
 const CV_CHOICES = [{ key: CV_DA, label: cvLabel(CV_DA) }, { key: CV_SMU, label: cvLabel(CV_SMU) }];
+const OPSI_PAJAK = [
+  { v: false, t: 'Non-PKP', d: 'Tidak memungut PPN. PPN dari supplier masuk ke harga beli.' },
+  { v: true, t: 'PKP', d: 'Memungut PPN 12% × DPP 11/12 (efektif 11%, kode 04). PPN supplier dikreditkan.' },
+];
+
+function Bagian({ judul, alat, children, testId, className }) {
+  return (
+    <GlassCard className={`space-y-3 p-4 ${className || ''}`} data-testid={testId}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-lg font-semibold text-foreground">{judul}</h3>
+        {alat}
+      </div>
+      {children}
+    </GlassCard>
+  );
+}
 
 export default function CompanySettingsModule({ token, userRole }) {
   const [settings, setSettings] = useState({
@@ -16,15 +49,16 @@ export default function CompanySettingsModule({ token, userRole }) {
     company_email: '', company_website: '', company_logo_url: '',
     pdf_header_line1: '', pdf_header_line2: '', pdf_footer_text: '', npwp: '',
   });
+  const [tersimpan, setTersimpan] = useState(null);
   // 2026-11-03: saklar Status Pajak (SSOT backend core/tax_status.py)
   const [tax, setTax] = useState({ pkp: false, pkp_since: '' });
   const [taxSaved, setTaxSaved] = useState({ pkp: false, pkp_since: '' });
   const [taxHistory, setTaxHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [cv, setCv] = useState(CV_DA);
+  const [form, setForm] = useState(null); // null | 'profil' | 'pajak'
 
   const canEdit = ['superadmin', 'admin'].includes(userRole);
 
@@ -37,7 +71,7 @@ export default function CompanySettingsModule({ token, userRole }) {
       const res = await fetch(`/api/company-settings?entity=${cv}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
       if (data && !data.error) {
-        setSettings({
+        const s = {
           company_name: data.company_name || '',
           company_address: data.company_address || '',
           company_phone: data.company_phone || '',
@@ -48,7 +82,8 @@ export default function CompanySettingsModule({ token, userRole }) {
           pdf_header_line2: data.pdf_header_line2 || '',
           pdf_footer_text: data.pdf_footer_text || '',
           npwp: data.npwp || '',
-        });
+        };
+        setSettings(s); setTersimpan(s);
         const tp = { pkp: !!data.tax_profile?.pkp, pkp_since: data.tax_profile?.pkp_since || '' };
         setTax(tp); setTaxSaved(tp);
         setTaxHistory(Array.isArray(data.tax_profile_history) ? data.tax_profile_history.slice(-5).reverse() : []);
@@ -57,20 +92,19 @@ export default function CompanySettingsModule({ token, userRole }) {
     setLoading(false);
   };
 
-  const handleSave = async (e) => {
-    e.preventDefault();
+  const handleSave = async () => {
     const taxChanged = tax.pkp !== taxSaved.pkp || (tax.pkp && tax.pkp_since !== taxSaved.pkp_since);
+    if (!settings.company_name.trim()) { toast.error('Nama perusahaan wajib diisi.'); return; }
     // 2026-11-07 (audit form Tahap 5): syarat PKP disebut sebelum simpan (dulu baru ditolak server), dan
     // konfirmasi memakai dialog aplikasi (PANDUAN_UI G9 — dulu window.confirm/alert bawaan browser).
     if (tax.pkp && !tax.pkp_since) { toast.error('Isi tanggal "PKP sejak" (tanggal pengukuhan PKP).'); return; }
     if (tax.pkp && !settings.npwp.trim()) { toast.error('Isi NPWP perusahaan dulu — wajib untuk status PKP.'); return; }
     if (taxChanged && !(await confirmDialog(tax.pkp
-      ? { title: `Ubah status pajak menjadi PKP sejak ${tax.pkp_since}?`, confirmLabel: 'Ubah ke PKP',
-          body: 'Dokumen penjualan BARU akan memungut PPN 12% × DPP 11/12, dan PPN dari supplier dikreditkan. Dokumen lama tidak berubah.' }
+      ? { title: `Ubah status pajak menjadi PKP sejak ${formatDateID(tax.pkp_since)}?`, confirmLabel: 'Ubah ke PKP',
+          body: 'Dokumen penjualan baru akan memungut PPN 12% × DPP 11/12, dan PPN dari supplier dikreditkan. Dokumen lama tidak berubah.' }
       : { title: 'Ubah status pajak menjadi Non-PKP?', confirmLabel: 'Ubah ke Non-PKP',
-          body: 'Dokumen penjualan BARU tidak memungut PPN, dan PPN dari supplier dicatat sebagai bagian harga beli. Dokumen lama tidak berubah.' }))) return;
+          body: 'Dokumen penjualan baru tidak memungut PPN, dan PPN dari supplier dicatat sebagai bagian harga beli. Dokumen lama tidak berubah.' }))) return;
     setSaving(true);
-    setSaved(false);
     try {
       const res = await fetch(`/api/company-settings?entity=${cv}`, {
         method: 'POST',
@@ -83,8 +117,9 @@ export default function CompanySettingsModule({ token, userRole }) {
         setTax(tp); setTaxSaved(tp);
         setTaxHistory(Array.isArray(data.tax_profile_history) ? data.tax_profile_history.slice(-5).reverse() : []);
         resetTaxProfileCache();
-        setSaved(true);
-        setTimeout(() => setSaved(false), 3000);
+        setTersimpan(settings);
+        toast.success(`Profil ${cvLabel(cv)} tersimpan.`);
+        setForm(null);
       } else {
         const data = await res.json().catch(() => ({}));
         toast.error(data.detail || data.error || 'Gagal menyimpan');
@@ -96,7 +131,7 @@ export default function CompanySettingsModule({ token, userRole }) {
   const handleLogoUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    
+
     // Validate file type and size
     if (!file.type.startsWith('image/')) {
       toast.error('Hanya file gambar yang diperbolehkan');
@@ -133,245 +168,182 @@ export default function CompanySettingsModule({ token, userRole }) {
     setSettings(s => ({ ...s, [field]: value }));
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  // Batal di popup = kembalikan isian ke nilai tersimpan.
+  const tutupForm = () => {
+    if (tersimpan) setSettings(tersimpan);
+    setTax(taxSaved);
+    setForm(null);
+  };
+
+  const p = tersimpan || settings;
+  const kosong = (v) => v || <span className="text-muted-foreground">—</span>;
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Pengaturan Perusahaan</h1>
-          <p className="text-muted-foreground text-sm mt-1">Kelola informasi perusahaan untuk header PDF dan dokumen resmi</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-sm text-muted-foreground">Profil CV</span>
-            <FilterChips options={CV_CHOICES} value={cv} onChange={(k) => setCv(k || CV_DA)} hideWhenEmpty={false}
-              testId="company-cv-switch" ariaLabel="Pilih profil CV" />
-          </div>
-          <p className="text-xs text-muted-foreground mt-1" data-testid="company-cv-note">
-            {cv === CV_SMU ? 'Dipakai untuk dokumen maklon (invoice, surat jalan, kwitansi klien) dan buku CV Sukma.' : 'Dipakai untuk dokumen CV Dewi Aditya (toko, penjualan, pembelian, gaji).'}
-          </p>
-        </div>
-        {saved && (
-          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2 text-sm text-emerald-700">
-            <CheckCircle className="w-4 h-4" /> Berhasil disimpan!
-          </div>
-        )}
-      </div>
+    <PageLayout testId="company-settings-module" title="Perusahaan"
+      subtitle="Informasi tiap CV untuk kop PDF dan dokumen resmi, termasuk status pajaknya."
+      actions={canEdit && (
+        <Button onClick={() => setForm('profil')} disabled={loading} data-testid="company-edit">
+          <Pencil />Ubah profil
+        </Button>
+      )}
+      filters={<>
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={CV_CHOICES} value={cv} onChange={(k) => setCv(k || CV_DA)} hideWhenEmpty={false}
+          testId="company-cv-switch" ariaLabel="Pilih profil CV" />
+        <p className="text-xs text-muted-foreground" data-testid="company-cv-note">
+          {cv === CV_SMU ? 'Dipakai untuk dokumen maklon (invoice, surat jalan, kwitansi klien) dan buku CV Sukma.' : 'Dipakai untuk dokumen CV Dewi Aditya (toko, penjualan, pembelian, gaji).'}
+        </p>
+      </>}>
+      {loading ? (
+        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+          <RefreshCw className="h-4 w-4 animate-spin" />Memuat profil…
+        </p>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
+          <div className="min-w-0 space-y-4">
+            <Bagian judul="Identitas perusahaan" testId="company-identity">
+              <dl className="divide-y divide-[var(--glass-border)]">
+                <BarisDetail label="Nama perusahaan">{kosong(p.company_name)}</BarisDetail>
+                <BarisDetail label="Alamat"><span className="whitespace-pre-line">{kosong(p.company_address)}</span></BarisDetail>
+                <BarisDetail label="Telepon">{kosong(p.company_phone)}</BarisDetail>
+                <BarisDetail label="Email"><span className="break-all">{kosong(p.company_email)}</span></BarisDetail>
+                <BarisDetail label="NPWP"><span className="break-all tabular-nums">{kosong(p.npwp)}</span></BarisDetail>
+                <BarisDetail label="Website"><span className="break-all">{kosong(p.company_website)}</span></BarisDetail>
+                <BarisDetail label="Kop baris 1">{kosong(p.pdf_header_line1)}</BarisDetail>
+                <BarisDetail label="Kop baris 2">{kosong(p.pdf_header_line2)}</BarisDetail>
+                <BarisDetail label="Kaki PDF">{kosong(p.pdf_footer_text)}</BarisDetail>
+              </dl>
+            </Bagian>
 
-      <form onSubmit={handleSave} className="space-y-6">
-        {/* Company Info */}
-        <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-            <Building2 className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold text-foreground">Informasi Perusahaan</h3>
-          </div>
-          <div className="p-5 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <label className="block text-sm font-medium text-foreground mb-1">Nama Perusahaan *</label>
-                <input type="text" required disabled={!canEdit}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                  value={settings.company_name} onChange={e => updateField('company_name', e.target.value)}
-                  placeholder="PT Garment Manufacturing" />
+            <Bagian judul="Status pajak" testId="company-tax-status"
+              alat={canEdit && (
+                <Button variant="outline" size="sm" onClick={() => setForm('pajak')} data-testid="company-tax-edit">
+                  <Receipt />Ubah status pajak
+                </Button>
+              )}>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <StatusBadge status={taxSaved.pkp ? 'pkp' : 'nonpkp'} label={taxSaved.pkp ? 'PKP' : 'Non-PKP'}
+                  tone={taxSaved.pkp ? 'primary' : 'default'} testId="company-tax-badge" />
+                {taxSaved.pkp && taxSaved.pkp_since && <span>sejak {formatDateID(taxSaved.pkp_since)}</span>}
               </div>
-              <div className="col-span-2">
-                <label className="block text-sm font-medium text-foreground mb-1">Alamat</label>
-                <textarea rows="2" disabled={!canEdit}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                  value={settings.company_address} onChange={e => updateField('company_address', e.target.value)}
-                  placeholder="Jl. Industri No. 123, Jakarta" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Telepon</label>
-                <input type="text" disabled={!canEdit}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                  value={settings.company_phone} onChange={e => updateField('company_phone', e.target.value)}
-                  placeholder="+62 21 1234567" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Email</label>
-                <input type="email" disabled={!canEdit}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                  value={settings.company_email} onChange={e => updateField('company_email', e.target.value)}
-                  placeholder="info@company.com" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">NPWP Perusahaan</label>
-                <input type="text" disabled={!canEdit}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                  value={settings.npwp} onChange={e => updateField('npwp', e.target.value)}
-                  placeholder="00.000.000.0-000.000" data-testid="company-npwp" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Website</label>
-                <input type="text" disabled={!canEdit}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                  value={settings.company_website} onChange={e => updateField('company_website', e.target.value)}
-                  placeholder="www.company.com" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Status Pajak — saklar PKP */}
-        <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm" data-testid="company-tax-status">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-            <Receipt className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold text-foreground">Status Pajak</h3>
-          </div>
-          <div className="p-5 space-y-4 text-sm">
-            <div className="flex flex-wrap gap-3">
-              {[{ v: false, t: 'Non-PKP', d: 'Tidak memungut PPN. PPN dari supplier masuk ke harga beli.' },
-                { v: true, t: 'PKP', d: 'Memungut PPN 12% × DPP 11/12 (efektif 11%, kode 04). PPN supplier dikreditkan.' }].map(o => (
-                <label key={o.t} className={`flex-1 min-w-[220px] cursor-pointer rounded-lg border px-4 py-3 ${tax.pkp === o.v ? 'border-primary bg-primary/5' : 'border-border'}`}>
-                  <div className="flex items-center gap-2 font-medium">
-                    <input type="radio" name="tax-status" disabled={!canEdit} checked={tax.pkp === o.v}
-                      onChange={() => setTax(t => ({ ...t, pkp: o.v }))} data-testid={`tax-status-${o.v ? 'pkp' : 'nonpkp'}`} />
-                    {o.t}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">{o.d}</p>
-                </label>
-              ))}
-            </div>
-            {tax.pkp && (
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">PKP sejak *</label>
-                  <input type="date" disabled={!canEdit} required
-                    className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                    value={tax.pkp_since} onChange={e => setTax(t => ({ ...t, pkp_since: e.target.value }))} data-testid="tax-pkp-since" />
-                  <p className="text-xs text-muted-foreground mt-1">Tanggal pengukuhan PKP dari KPP. NPWP wajib diisi.</p>
+              <p className="text-sm text-muted-foreground">{OPSI_PAJAK.find((o) => o.v === taxSaved.pkp)?.d}</p>
+              {taxHistory.length > 0 && (
+                <div className="space-y-0.5 border-t border-[var(--glass-border)] pt-3 text-xs text-muted-foreground">
+                  <p className="text-sm font-medium text-foreground">Riwayat perubahan</p>
+                  {taxHistory.map((h, i) => (
+                    <p key={i}>{formatDateID(String(h.at || '').slice(0, 10))} · {h.by}: {h.from_pkp ? 'PKP' : 'Non-PKP'} → {h.to_pkp ? `PKP (sejak ${formatDateID(h.pkp_since)})` : 'Non-PKP'}</p>
+                  ))}
                 </div>
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              Perubahan hanya berlaku untuk dokumen BARU. Faktur, nota, dan tagihan yang sudah dibuat tidak berubah.
-            </p>
-            {taxHistory.length > 0 && (
-              <div className="text-xs text-muted-foreground border-t border-border pt-3 space-y-0.5">
-                <div className="font-medium text-foreground">Riwayat perubahan</div>
-                {taxHistory.map((h, i) => (
-                  <div key={i}>{String(h.at || '').slice(0, 10)} · {h.by}: {h.from_pkp ? 'PKP' : 'Non-PKP'} → {h.to_pkp ? `PKP (sejak ${h.pkp_since})` : 'Non-PKP'}</div>
-                ))}
-              </div>
-            )}
+              )}
+            </Bagian>
           </div>
-        </div>
 
-        {/* Logo Upload */}
-        <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-            <Image className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold text-foreground">Logo Perusahaan</h3>
-          </div>
-          <div className="p-5">
-            <div className="flex items-start gap-6">
-              <div className="w-32 h-32 border-2 border-dashed border-border rounded-xl flex items-center justify-center bg-[var(--glass-bg)] overflow-hidden flex-shrink-0">
-                {settings.company_logo_url ? (
-                  <img src={settings.company_logo_url} alt="Logo" className="w-full h-full object-contain p-2" />
+          <Bagian judul="Pratinjau kop PDF" testId="company-pdf-preview" className="self-start">
+            <div className="rounded-lg border border-[var(--glass-border)] bg-white p-5 text-black/80">
+              <div className="space-y-1 text-center">
+                {p.company_logo_url ? (
+                  <img src={p.company_logo_url} alt="Logo" className="mx-auto mb-2 h-12 object-contain" />
                 ) : (
-                  <div className="text-center">
-                    <Image className="w-8 h-8 text-muted-foreground mx-auto" />
-                    <p className="text-xs text-muted-foreground mt-1">No Logo</p>
-                  </div>
+                  <p className="mx-auto mb-2 flex w-fit items-center gap-1 text-xs text-black/50"><ImageIcon className="h-4 w-4" />Belum ada logo</p>
+                )}
+                <p className="text-lg font-bold">{p.company_name || 'Nama perusahaan'}</p>
+                {p.pdf_header_line1 && <p className="text-xs">{p.pdf_header_line1}</p>}
+                {p.pdf_header_line2 && <p className="text-xs">{p.pdf_header_line2}</p>}
+                {p.company_address && <p className="text-xs">{p.company_address}</p>}
+                {(p.company_phone || p.company_email) && (
+                  <p className="text-xs">{[p.company_phone, p.company_email].filter(Boolean).join(' | ')}</p>
                 )}
               </div>
-              <div className="flex-1">
-                {canEdit && (
-                  <div>
-                    <label className="flex items-center gap-2 px-4 py-2 bg-primary/10 border border-primary/20 rounded-lg text-sm text-primary cursor-pointer hover:bg-primary/15 w-fit">
-                      <Upload className="w-4 h-4" />
-                      {uploading ? 'Mengupload...' : 'Upload Logo'}
-                      <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} disabled={uploading} />
-                    </label>
-                    <p className="text-xs text-muted-foreground mt-2">Format: JPG, PNG, SVG. Maksimal 2MB.</p>
-                  </div>
-                )}
-                <div className="mt-3">
-                  <label className="block text-sm font-medium text-foreground mb-1">Atau masukkan URL Logo</label>
-                  <input type="text" disabled={!canEdit}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm disabled:bg-[var(--glass-bg)]"
-                    value={settings.company_logo_url} onChange={e => updateField('company_logo_url', e.target.value)}
-                    placeholder="https://example.com/logo.png" />
-                </div>
-              </div>
+              <div className="mb-2 mt-3 border-t-2 border-black/20" />
+              <p className="text-center text-sm font-bold">Judul dokumen</p>
+              <p className="text-center text-xs">No. dokumen: XXX-001</p>
             </div>
-          </div>
+          </Bagian>
         </div>
+      )}
 
-        {/* PDF Settings */}
-        <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-            <FileText className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold text-foreground">Pengaturan Header & Footer PDF</h3>
-          </div>
-          <div className="p-5 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Header Baris 1 (opsional)</label>
-              <input type="text" disabled={!canEdit}
-                className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                value={settings.pdf_header_line1} onChange={e => updateField('pdf_header_line1', e.target.value)}
-                placeholder="Contoh: Divisi Produksi Garmen" />
-              <p className="text-xs text-muted-foreground mt-1">Teks tambahan di bawah nama perusahaan pada header PDF</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Header Baris 2 (opsional)</label>
-              <input type="text" disabled={!canEdit}
-                className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                value={settings.pdf_header_line2} onChange={e => updateField('pdf_header_line2', e.target.value)}
-                placeholder="Contoh: ISO 9001 Certified" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Footer PDF (opsional)</label>
-              <input type="text" disabled={!canEdit}
-                className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
-                value={settings.pdf_footer_text} onChange={e => updateField('pdf_footer_text', e.target.value)}
-                placeholder="Contoh: Dokumen ini dicetak secara otomatis oleh sistem" />
-            </div>
-          </div>
+      {/* Ubah profil */}
+      <FormPopup open={form === 'profil'} onClose={tutupForm} ukuran="panjang" testId="company-form"
+        judul={`Ubah profil ${cvLabel(cv)}`} keterangan="Dipakai di kop PDF dan dokumen resmi CV ini."
+        onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan pengaturan">
+        <Isian label="Nama perusahaan" wajib htmlFor="company-name">
+          <Input id="company-name" required value={settings.company_name} onChange={e => updateField('company_name', e.target.value)}
+            placeholder="PT Garment Manufacturing" />
+        </Isian>
+        <Isian label="Alamat" htmlFor="company-address">
+          <Textarea id="company-address" rows={2} value={settings.company_address} onChange={e => updateField('company_address', e.target.value)}
+            placeholder="Jl. Industri No. 123, Jakarta" />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Telepon" htmlFor="company-phone">
+            <Input id="company-phone" value={settings.company_phone} onChange={e => updateField('company_phone', e.target.value)}
+              placeholder="+62 21 1234567" />
+          </Isian>
+          <Isian label="Email" htmlFor="company-email">
+            <Input id="company-email" type="email" value={settings.company_email} onChange={e => updateField('company_email', e.target.value)}
+              placeholder="info@company.com" />
+          </Isian>
+          <Isian label="NPWP perusahaan" htmlFor="company-npwp-input" petunjuk="Wajib bila status pajak PKP.">
+            <Input id="company-npwp-input" value={settings.npwp} onChange={e => updateField('npwp', e.target.value)}
+              placeholder="00.000.000.0-000.000" data-testid="company-npwp" />
+          </Isian>
+          <Isian label="Website" htmlFor="company-website">
+            <Input id="company-website" value={settings.company_website} onChange={e => updateField('company_website', e.target.value)}
+              placeholder="www.company.com" />
+          </Isian>
         </div>
-
-        {/* PDF Preview */}
-        <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm">
-          <div className="px-5 py-4 border-b border-border">
-            <h3 className="font-semibold text-foreground">Preview Header PDF</h3>
-          </div>
-          <div className="p-5">
-            <div className="border-2 border-border rounded-lg p-6 bg-[var(--card-surface)] max-w-md mx-auto">
-              <div className="text-center space-y-1">
-                {settings.company_logo_url && (
-                  <img src={settings.company_logo_url} alt="Logo" className="h-12 mx-auto mb-2 object-contain" />
-                )}
-                <p className="text-lg font-bold text-foreground">{settings.company_name || 'Nama Perusahaan'}</p>
-                {settings.pdf_header_line1 && <p className="text-xs text-muted-foreground">{settings.pdf_header_line1}</p>}
-                {settings.pdf_header_line2 && <p className="text-xs text-muted-foreground">{settings.pdf_header_line2}</p>}
-                {settings.company_address && <p className="text-xs text-muted-foreground">{settings.company_address}</p>}
-                {(settings.company_phone || settings.company_email) && (
-                  <p className="text-xs text-muted-foreground">
-                    {[settings.company_phone, settings.company_email].filter(Boolean).join(' | ')}
-                  </p>
-                )}
-              </div>
-              <div className="border-t-2 border-border mt-3 mb-2"></div>
-              <p className="text-center text-sm font-bold text-muted-foreground">JUDUL DOKUMEN</p>
-              <p className="text-center text-xs text-muted-foreground">No. Dokumen: XXX-001</p>
+        <Isian label="Logo" petunjuk="Format JPG, PNG, SVG. Maksimal 2 MB. Atau tempel alamat gambar di bawah.">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-[var(--glass-border)]">
+              {settings.company_logo_url
+                ? <img src={settings.company_logo_url} alt="Logo" className="h-full w-full object-contain p-1" />
+                : <ImageIcon className="h-6 w-6 text-muted-foreground" />}
             </div>
+            <Button type="button" variant="outline" size="sm" asChild disabled={uploading}>
+              <label className="cursor-pointer">
+                <Upload />{uploading ? 'Mengunggah…' : 'Unggah logo'}
+                <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} disabled={uploading} />
+              </label>
+            </Button>
           </div>
-        </div>
+          <Input className="mt-2" value={settings.company_logo_url} onChange={e => updateField('company_logo_url', e.target.value)}
+            placeholder="https://example.com/logo.png" aria-label="Alamat gambar logo" />
+        </Isian>
+        <Isian label="Kop baris 1 (opsional)" htmlFor="company-h1" petunjuk="Teks tambahan di bawah nama perusahaan pada kop PDF.">
+          <Input id="company-h1" value={settings.pdf_header_line1} onChange={e => updateField('pdf_header_line1', e.target.value)}
+            placeholder="Contoh: Divisi Produksi Garmen" />
+        </Isian>
+        <Isian label="Kop baris 2 (opsional)" htmlFor="company-h2">
+          <Input id="company-h2" value={settings.pdf_header_line2} onChange={e => updateField('pdf_header_line2', e.target.value)}
+            placeholder="Contoh: ISO 9001 Certified" />
+        </Isian>
+        <Isian label="Kaki PDF (opsional)" htmlFor="company-footer">
+          <Input id="company-footer" value={settings.pdf_footer_text} onChange={e => updateField('pdf_footer_text', e.target.value)}
+            placeholder="Contoh: Dokumen ini dicetak secara otomatis oleh sistem" />
+        </Isian>
+      </FormPopup>
 
-        {canEdit && (
-          <button type="submit" disabled={saving}
-            className="flex items-center gap-2 px-6 py-3 bg-primary text-foreground rounded-xl text-sm font-medium hover:brightness-110 disabled:opacity-50 shadow-sm">
-            <Save className="w-4 h-4" />
-            {saving ? 'Menyimpan...' : 'Simpan Pengaturan'}
-          </button>
+      {/* Ubah status pajak */}
+      <FormPopup open={form === 'pajak'} onClose={tutupForm} ukuran="pendek" testId="company-tax-form"
+        judul={`Status pajak ${cvLabel(cv)}`} keterangan="Perubahan hanya berlaku untuk dokumen baru. Faktur, nota, dan tagihan lama tidak berubah."
+        onSimpan={handleSave} menyimpan={saving} labelSimpan="Simpan status pajak">
+        <div className="grid gap-2" role="radiogroup" aria-label="Status pajak">
+          {OPSI_PAJAK.map(o => (
+            <label key={o.t} className={`cursor-pointer rounded-lg border px-4 py-3 text-sm ${tax.pkp === o.v ? 'border-primary bg-primary/5' : 'border-[var(--glass-border)]'}`}>
+              <span className="flex items-center gap-2 font-medium">
+                <input type="radio" name="tax-status" checked={tax.pkp === o.v} className="accent-[hsl(var(--primary))]"
+                  onChange={() => setTax(t => ({ ...t, pkp: o.v }))} data-testid={`tax-status-${o.v ? 'pkp' : 'nonpkp'}`} />
+                {o.t}
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">{o.d}</span>
+            </label>
+          ))}
+        </div>
+        {tax.pkp && (
+          <Isian label="PKP sejak" wajib petunjuk="Tanggal pengukuhan PKP dari KPP. NPWP wajib diisi di profil.">
+            <DatePicker value={tax.pkp_since} onChange={(v) => setTax(t => ({ ...t, pkp_since: v || '' }))} testId="tax-pkp-since" />
+          </Isian>
         )}
-      </form>
-    </div>
+      </FormPopup>
+    </PageLayout>
   );
 }

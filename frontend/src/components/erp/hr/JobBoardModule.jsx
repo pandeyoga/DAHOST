@@ -1,49 +1,86 @@
+/**
+ * Job Board (Portal SDM) — lowongan internal, lamaran saya, jalur karier.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tab halaman (HubTabs) + cetakan PageLayout, lowongan & lamaran = tabel
+ * + unduh Excel/CSV (dulu kartu besar berulang), detail lowongan = DetailPopup, form pasang lowongan &
+ * lamar = FormPopup, tenggat = DatePicker (dulu input tanggal bawaan), bahasa Indonesia, tanpa gradien.
+ * Daftar lowongan dulu diam-diam 50 pertama — kini sampai 500 (batas server).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
+import { Plus, RefreshCw, Send } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { toast } from 'sonner';
-import { Briefcase, Plus, Search, Send, Loader2, MapPin, DollarSign, Calendar, Award, TrendingUp, FileText } from 'lucide-react';
-import { IconButton } from '../IconButton';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { formatDateID, formatRupiah } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import HubTabs from '../hubs/HubTabs';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { DepartmentSelect } from './hrPickers';
 
-const MATCH_COLOR = { 
-  'Strongly Recommended': '#10b981',
-  'Recommended': '#3b82f6',
-  'Consider': '#f59e0b',
-  'Not Recommended': '#ef4444'
+// Nilai dari server → label layar (nilai yang dikirim tetap sama).
+const REKOMENDASI = {
+  'Strongly Recommended': { label: 'Sangat cocok', tone: 'success' },
+  'Recommended': { label: 'Cocok', tone: 'info' },
+  'Consider': { label: 'Pertimbangkan', tone: 'warning' },
+  'Not Recommended': { label: 'Kurang cocok', tone: 'danger' },
+};
+const LEVEL = { junior: 'Junior', mid: 'Menengah', senior: 'Senior', lead: 'Pimpinan tim' };
+const JENIS = { 'full-time': 'Penuh waktu', 'part-time': 'Paruh waktu', contract: 'Kontrak' };
+const STATUS_LAMARAN = {
+  pending: { label: 'Terkirim', tone: 'muted' },
+  reviewing: { label: 'Ditinjau', tone: 'info' },
+  shortlisted: { label: 'Masuk daftar pendek', tone: 'primary' },
+  accepted: { label: 'Diterima', tone: 'success' },
+  rejected: { label: 'Ditolak', tone: 'danger' },
+};
+const labelLevel = (l) => LEVEL[l] || l || '—';
+const labelJenis = (j) => JENIS[j] || j || '—';
+const tanggal = (d) => (d ? formatDateID(d) : '—');
+const gaji = (j) => (j.salary_range_min && j.salary_range_max
+  ? `${formatRupiah(j.salary_range_min)} – ${formatRupiah(j.salary_range_max)}` : '—');
+
+const FORM_KOSONG = {
+  title: '', department: '', location: '', job_type: 'full-time', level: 'mid',
+  description: '', responsibilities: [], required_skills: [], preferred_skills: [],
+  salary_range_min: null, salary_range_max: null, deadline: '',
 };
 
+/** Isi satu tab: cetakan PageLayout di dalam hub. */
+function IsiTab({ actions, tools, children }) {
+  return <PageLayout actions={actions} tools={tools}>{children}</PageLayout>;
+}
+
+function DaftarKeahlian({ judul, isi }) {
+  if (!isi?.length) return null;
+  return (
+    <div>
+      <p className="mb-1 text-sm font-medium text-foreground">{judul}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {isi.map((s, i) => <StatusBadge key={i} status="skill" label={s} tone="default" />)}
+      </div>
+    </div>
+  );
+}
+
 export default function JobBoardModule({ token }) {
-  const [activeTab, setActiveTab] = useState('browse'); // browse, my-applications, post, career-paths
+  const [activeTab, setActiveTab] = useState('browse'); // browse, my-applications, career-paths
   const [jobs, setJobs] = useState([]);
   const [myApplications, setMyApplications] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [loading, setLoading] = useState(false);
   const [userRole, setUserRole] = useState('');
-  
+
   // Post job dialog
   const [showPostDialog, setShowPostDialog] = useState(false);
-  const [jobForm, setJobForm] = useState({
-    title: '',
-    department: '',
-    location: '',
-    job_type: 'full-time',
-    level: 'mid',
-    description: '',
-    responsibilities: [],
-    required_skills: [],
-    preferred_skills: [],
-    salary_range_min: null,
-    salary_range_max: null,
-    deadline: ''
-  });
-  
+  const [jobForm, setJobForm] = useState(FORM_KOSONG);
+
   // Apply dialog
   const [showApplyDialog, setShowApplyDialog] = useState(false);
   const [applyForm, setApplyForm] = useState({
@@ -58,12 +95,12 @@ export default function JobBoardModule({ token }) {
   const fetchJobs = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/job-board/jobs?status=open`, { headers });
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/job-board/jobs?status=open&limit=500`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setJobs(data?.data || []);
     } catch (e) {
-      toast.error(`Gagal memuat jobs: ${e.message}`);
+      toast.error(`Gagal memuat lowongan: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -76,7 +113,7 @@ export default function JobBoardModule({ token }) {
       const data = await r.json();
       setMyApplications(data?.data || []);
     } catch (e) {
-      toast.error(`Gagal memuat aplikasi: ${e.message}`);
+      toast.error(`Gagal memuat lamaran: ${e.message}`);
     }
   }, [headers]);
 
@@ -94,13 +131,13 @@ export default function JobBoardModule({ token }) {
       const data = await r.json();
       setSelectedJob(data?.data);
     } catch (e) {
-      toast.error(`Gagal load detail: ${e.message}`);
+      toast.error(`Gagal memuat rincian: ${e.message}`);
     }
   };
 
   const handlePostJob = async () => {
     if (!jobForm.title || !jobForm.department || !jobForm.description) {
-      toast.error('Lengkapi form job posting');
+      toast.error('Lengkapi isian lowongan: posisi, departemen, dan deskripsi');
       return;
     }
 
@@ -111,22 +148,18 @@ export default function JobBoardModule({ token }) {
         body: JSON.stringify(jobForm)
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      toast.success('Job berhasil diposting!');
+      toast.success('Lowongan berhasil dipasang!');
       setShowPostDialog(false);
-      setJobForm({
-        title: '', department: '', location: '', job_type: 'full-time', level: 'mid',
-        description: '', responsibilities: [], required_skills: [], preferred_skills: [],
-        salary_range_min: null, salary_range_max: null, deadline: ''
-      });
+      setJobForm(FORM_KOSONG);
       fetchJobs();
     } catch (e) {
-      toast.error(`Post job gagal: ${e.message}`);
+      toast.error(`Gagal memasang lowongan: ${e.message}`);
     }
   };
 
   const handleApply = async () => {
     if (!applyForm.cover_letter) {
-      toast.error('Cover letter harus diisi');
+      toast.error('Surat lamaran harus diisi');
       return;
     }
 
@@ -140,13 +173,13 @@ export default function JobBoardModule({ token }) {
         const errorData = await r.json();
         throw new Error(errorData.detail || `HTTP ${r.status}`);
       }
-      toast.success('Aplikasi berhasil dikirim!');
+      toast.success('Lamaran berhasil dikirim!');
       setShowApplyDialog(false);
       setApplyForm({ job_id: '', cover_letter: '', additional_info: '', resume_url: '' });
       fetchMyApplications();
       setSelectedJob(null);
     } catch (e) {
-      toast.error(`Aplikasi gagal: ${e.message}`);
+      toast.error(`Lamaran gagal: ${e.message}`);
     }
   };
 
@@ -155,387 +188,193 @@ export default function JobBoardModule({ token }) {
     setShowApplyDialog(true);
   };
 
+  const muatUlang = (
+    <Button variant="outline" size="icon" onClick={() => { fetchJobs(); fetchMyApplications(); }} disabled={loading}
+      title="Muat ulang" aria-label="Muat ulang">
+      <RefreshCw className={loading ? 'animate-spin' : ''} />
+    </Button>
+  );
+  // Tombol pasang lowongan hanya untuk SDM/manajer (perilaku lama dipertahankan).
+  const aksiPasang = (userRole === 'hr' || userRole === 'manager') ? (
+    <Button onClick={() => setShowPostDialog(true)}><Plus />Pasang lowongan</Button>
+  ) : null;
+
+  const kolomLowongan = [
+    { kunci: 'posisi', label: 'Posisi', hp: 'judul', isi: (j) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{j.title}</p>
+        <p className="text-xs text-muted-foreground">{j.department || '—'}</p>
+      </div>) },
+    { kunci: 'lokasi', label: 'Lokasi', isi: (j) => <span className="text-sm">{j.location || '—'}</span> },
+    { kunci: 'tingkat', label: 'Tingkat', isi: (j) => <span className="text-sm">{labelLevel(j.level)}</span> },
+    { kunci: 'tenggat', label: 'Tenggat', isi: (j) => <span className="text-sm md:whitespace-nowrap">{tanggal(j.deadline)}</span> },
+    { kunci: 'gaji', label: 'Kisaran gaji', isi: (j) => <span className="text-sm tabular-nums">{gaji(j)}</span> },
+    { kunci: 'pelamar', label: 'Pelamar', rata: 'kanan', isi: (j) => <span className="tabular-nums">{j.application_count || 0}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (j) => (
+      <Button size="sm" variant="outline" onClick={() => openApplyDialog(j)} data-testid={`job-apply-${j.id}`}><Send />Lamar</Button>) },
+  ];
+  const kolomLamaran = [
+    { kunci: 'posisi', label: 'Posisi', hp: 'judul', isi: (a) => <span className="font-medium text-foreground">{a.job_title || '—'}</span> },
+    { kunci: 'tanggal', label: 'Dilamar', isi: (a) => <span className="text-sm md:whitespace-nowrap">{tanggal(a.applied_at)}</span> },
+    { kunci: 'status', label: 'Status', isi: (a) => {
+      const s = STATUS_LAMARAN[a.status] || { label: a.status || '—', tone: 'default' };
+      return <StatusBadge status={a.status} label={s.label} tone={s.tone} />;
+    } },
+    { kunci: 'surat', label: 'Surat lamaran', hp: 'keterangan', isi: (a) => (
+      <span className="block truncate text-sm text-muted-foreground md:max-w-[28rem]" title={a.cover_letter}>{a.cover_letter || '—'}</span>) },
+  ];
+
+  const sm = selectedJob?.skill_match;
+  const rek = sm ? (REKOMENDASI[sm.recommendation] || { label: sm.recommendation, tone: 'default' }) : null;
+
   return (
-    <div className="space-y-6 p-6" data-testid="job-board-module">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center">
-            <Briefcase className="w-5 h-5 text-foreground" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Internal Job Board</h1>
-            <p className="text-sm text-muted-foreground">Peluang karir internal & pengembangan</p>
-          </div>
-        </div>
-        {(userRole === 'hr' || userRole === 'manager') && (
-          <Button onClick={() => setShowPostDialog(true)}>
-            <Plus className="w-4 h-4 mr-2" /> Post Job
-          </Button>
-        )}
-      </div>
+    <div data-testid="job-board-module">
+      <HubTabs hubId="hr-job-board" title="Job Board" subtitle="Lowongan internal untuk karyawan yang ingin pindah posisi atau naik jenjang."
+        value={activeTab} onValueChange={setActiveTab}
+        tabs={[
+          { key: 'browse', label: `Lowongan (${jobs.length})`, Component: IsiTab, props: {
+            actions: aksiPasang,
+            tools: <>
+              <TombolUnduh namaBerkas="lowongan-internal" namaLembar="Lowongan" baris={jobs} testId="job-board-unduh"
+                kolom={[
+                  { label: 'Posisi', nilai: (j) => j.title }, { label: 'Departemen', nilai: (j) => j.department || '' },
+                  { label: 'Lokasi', nilai: (j) => j.location || '' }, { label: 'Tingkat', nilai: (j) => labelLevel(j.level) },
+                  { label: 'Jenis', nilai: (j) => labelJenis(j.job_type) }, { label: 'Tenggat', nilai: (j) => tanggal(j.deadline) },
+                  { label: 'Gaji minimum', nilai: (j) => j.salary_range_min ?? '' }, { label: 'Gaji maksimum', nilai: (j) => j.salary_range_max ?? '' },
+                  { label: 'Pelamar', nilai: (j) => j.application_count || 0 },
+                ]} />
+              {muatUlang}
+            </>,
+            children: loading && jobs.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat lowongan…</p> : (
+              <TabelData kolom={kolomLowongan} baris={jobs} onKlikBaris={(j) => handleViewJob(j.id)} testId="job-board-jobs"
+                kosong={<EmptyState title="Belum ada lowongan terbuka" description="Lowongan internal yang dipasang SDM akan tampil di sini." />} />
+            ),
+          } },
+          { key: 'my-applications', label: `Lamaran saya (${myApplications.length})`, Component: IsiTab, props: {
+            tools: <>
+              <TombolUnduh namaBerkas="lamaran-saya" namaLembar="Lamaran" baris={myApplications} testId="job-board-unduh-lamaran"
+                kolom={[
+                  { label: 'Posisi', nilai: (a) => a.job_title || '' }, { label: 'Dilamar', nilai: (a) => tanggal(a.applied_at) },
+                  { label: 'Status', nilai: (a) => STATUS_LAMARAN[a.status]?.label || a.status || '' },
+                  { label: 'Surat lamaran', nilai: (a) => a.cover_letter || '' },
+                ]} />
+              {muatUlang}
+            </>,
+            children: (
+              <TabelData kolom={kolomLamaran} baris={myApplications} testId="job-board-applications"
+                kosong={<EmptyState title="Anda belum pernah melamar" description="Pilih lowongan di tab Lowongan, lalu klik Lamar." />} />
+            ),
+          } },
+          { key: 'career-paths', label: 'Jalur karier', Component: IsiTab, props: {
+            children: <EmptyState title="Jalur karier segera hadir"
+              description="Nantinya tampil peta jabatan dan jenjang yang bisa dituju dari posisi Anda sekarang." />,
+          } },
+        ]} />
 
-      {/* Tabs */}
-      <GlassCard className="p-1">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('browse')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'browse' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Search className="w-4 h-4 inline-block mr-2" />
-            Browse Jobs
-          </button>
-          <button
-            onClick={() => setActiveTab('my-applications')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'my-applications' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <FileText className="w-4 h-4 inline-block mr-2" />
-            My Applications
-          </button>
-          <button
-            onClick={() => setActiveTab('career-paths')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === 'career-paths' ? 'bg-[var(--glass-hover)] text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4 inline-block mr-2" />
-            Career Paths
-          </button>
-        </div>
-      </GlassCard>
-
-      {/* Browse Jobs Tab */}
-      {activeTab === 'browse' && (
-        <div className="space-y-4">
-          {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : jobs.length === 0 ? (
-            <GlassCard className="p-12">
-              <div className="flex flex-col items-center justify-center text-center">
-                <Briefcase className="w-16 h-16 text-muted-foreground/40 mb-4" />
-                <p className="text-sm text-muted-foreground">Belum ada lowongan tersedia saat ini.</p>
-              </div>
-            </GlassCard>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {jobs.map(job => (
-                <GlassCard key={job.id} className="p-5 hover:bg-[var(--glass-hover)] transition-colors cursor-pointer" onClick={() => handleViewJob(job.id)}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-semibold text-foreground mb-1">{job.title}</h3>
-                      <p className="text-sm text-muted-foreground">{job.department}</p>
-                    </div>
-                    <Badge variant={job.status === 'open' ? 'default' : 'secondary'}>{job.level}</Badge>
-                  </div>
-
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <MapPin className="w-3 h-3" />
-                      <span>{job.location}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Calendar className="w-3 h-3" />
-                      <span>Deadline: {new Date(job.deadline).toLocaleDateString('id-ID')}</span>
-                    </div>
-                    {job.salary_range_min && job.salary_range_max && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <DollarSign className="w-3 h-3" />
-                        <span>Rp {job.salary_range_min.toLocaleString()} - Rp {job.salary_range_max.toLocaleString()}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">{job.application_count || 0} aplikasi</span>
-                    <Button size="sm" onClick={(e) => { e.stopPropagation(); openApplyDialog(job); }}>
-                      <Send className="w-3 h-3 mr-1" /> Apply
-                    </Button>
-                  </div>
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* My Applications Tab */}
-      {activeTab === 'my-applications' && (
-        <div className="space-y-4">
-          {myApplications.length === 0 ? (
-            <GlassCard className="p-12">
-              <div className="flex flex-col items-center justify-center text-center">
-                <FileText className="w-16 h-16 text-muted-foreground/40 mb-4" />
-                <p className="text-sm text-muted-foreground">Anda belum pernah melamar pekerjaan.</p>
-              </div>
-            </GlassCard>
-          ) : (
-            <div className="space-y-3">
-              {myApplications.map(app => (
-                <GlassCard key={app.id} className="p-5">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-lg font-semibold text-foreground mb-1">{app.job_title}</h3>
-                      <p className="text-sm text-muted-foreground">Applied: {new Date(app.applied_at).toLocaleDateString('id-ID')}</p>
-                    </div>
-                    <Badge variant={
-                      app.status === 'accepted' ? 'default' :
-                      app.status === 'rejected' ? 'destructive' :
-                      app.status === 'shortlisted' ? 'secondary' : 'outline'
-                    }>
-                      {app.status}
-                    </Badge>
-                  </div>
-
-                  {app.cover_letter && (
-                    <div className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] mb-3">
-                      <p className="text-xs text-muted-foreground line-clamp-2">{app.cover_letter}</p>
-                    </div>
-                  )}
-                </GlassCard>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Career Paths Tab */}
-      {activeTab === 'career-paths' && (
-        <GlassCard className="p-8">
-          <div className="text-center">
-            <TrendingUp className="w-16 h-16 text-indigo-500 mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-foreground mb-2">Career Path Visualization</h2>
-            <p className="text-sm text-muted-foreground mb-6">Eksplorasi jalur karir yang tersedia di perusahaan</p>
-            <p className="text-xs text-muted-foreground">Feature coming soon: Interactive career path tree & role progression visualization</p>
-          </div>
-        </GlassCard>
-      )}
-
-      {/* Job Detail Dialog */}
+      {/* ─── Rincian lowongan (popup) ─── */}
       {selectedJob && (
-        <Dialog open={!!selectedJob} onOpenChange={() => setSelectedJob(null)}>
-          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>{selectedJob.title}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              {/* Basic Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Department</p>
-                  <p className="text-sm font-medium">{selectedJob.department}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Location</p>
-                  <p className="text-sm font-medium">{selectedJob.location}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Level</p>
-                  <Badge>{selectedJob.level}</Badge>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Type</p>
-                  <Badge variant="outline">{selectedJob.job_type}</Badge>
-                </div>
+        <DetailPopup open onClose={() => setSelectedJob(null)} judul={selectedJob.title} testId="job-board-detail"
+          keterangan={[selectedJob.department, selectedJob.location].filter(Boolean).join(' · ')}
+          aksi={<Button size="sm" onClick={() => openApplyDialog(selectedJob)}><Send />Lamar posisi ini</Button>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Departemen">{selectedJob.department || '—'}</BarisDetail>
+            <BarisDetail label="Lokasi">{selectedJob.location || '—'}</BarisDetail>
+            <BarisDetail label="Tingkat">{labelLevel(selectedJob.level)}</BarisDetail>
+            <BarisDetail label="Jenis">{labelJenis(selectedJob.job_type)}</BarisDetail>
+            <BarisDetail label="Tenggat">{tanggal(selectedJob.deadline)}</BarisDetail>
+            <BarisDetail label="Kisaran gaji">{gaji(selectedJob)}</BarisDetail>
+          </dl>
+
+          {sm && (
+            <div className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-foreground">Kecocokan Anda</p>
+                <span className="text-base font-semibold tabular-nums">{sm.overall_score}%</span>
+                {rek && <StatusBadge status={sm.recommendation} label={rek.label} tone={rek.tone} />}
               </div>
-
-              {/* Skill Match */}
-              {selectedJob.skill_match && (
-                <div className="p-4 rounded-xl" style={{ background: `${MATCH_COLOR[selectedJob.skill_match.recommendation]}15`, border: `1px solid ${MATCH_COLOR[selectedJob.skill_match.recommendation]}35` }}>
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-sm font-semibold text-foreground">Your Match Score</h4>
-                    <div className="text-2xl font-bold" style={{ color: MATCH_COLOR[selectedJob.skill_match.recommendation] }}>
-                      {selectedJob.skill_match.overall_score}%
-                    </div>
-                  </div>
-                  <Badge style={{ background: MATCH_COLOR[selectedJob.skill_match.recommendation] }}>
-                    {selectedJob.skill_match.recommendation}
-                  </Badge>
-                  
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-muted-foreground">Required Skills Match:</span>
-                      <span className="font-medium ml-1">{selectedJob.skill_match.required_match}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Preferred Skills Match:</span>
-                      <span className="font-medium ml-1">{selectedJob.skill_match.preferred_match}</span>
-                    </div>
-                  </div>
-
-                  {selectedJob.skill_match.missing_required && selectedJob.skill_match.missing_required.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-xs text-muted-foreground mb-1">Missing Required Skills:</p>
-                      <div className="flex flex-wrap gap-1">
-                        {selectedJob.skill_match.missing_required.map((skill, i) => (
-                          <Badge key={i} variant="destructive" className="text-xs">{skill}</Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Description */}
-              <div>
-                <h4 className="text-sm font-semibold text-foreground mb-2">Description</h4>
-                <p className="text-sm text-muted-foreground leading-relaxed">{selectedJob.description}</p>
-              </div>
-
-              {/* Responsibilities */}
-              {selectedJob.responsibilities && selectedJob.responsibilities.length > 0 && (
+              <dl>
+                <BarisDetail label="Keahlian wajib cocok">{sm.required_match ?? '—'}</BarisDetail>
+                <BarisDetail label="Keahlian tambahan cocok">{sm.preferred_match ?? '—'}</BarisDetail>
+              </dl>
+              {sm.missing_required?.length > 0 && (
                 <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2">Responsibilities</h4>
-                  <ul className="space-y-1">
-                    {selectedJob.responsibilities.map((resp, i) => (
-                      <li key={i} className="text-sm text-muted-foreground flex items-start gap-2">
-                        <span className="text-blue-500 mt-1">•</span>{resp}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Skills */}
-              <div>
-                <h4 className="text-sm font-semibold text-foreground mb-2">Required Skills</h4>
-                <div className="flex flex-wrap gap-2">
-                  {selectedJob.required_skills?.map((skill, i) => (
-                    <Badge key={i} variant="default">{skill}</Badge>
-                  ))}
-                </div>
-              </div>
-
-              {selectedJob.preferred_skills && selectedJob.preferred_skills.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-foreground mb-2">Preferred Skills</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedJob.preferred_skills.map((skill, i) => (
-                      <Badge key={i} variant="outline">{skill}</Badge>
-                    ))}
+                  <p className="mb-1 text-xs text-muted-foreground">Keahlian wajib yang belum Anda miliki</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {sm.missing_required.map((s, i) => <StatusBadge key={i} status="kurang" label={s} tone="danger" />)}
                   </div>
                 </div>
               )}
-
-              <Button onClick={() => openApplyDialog(selectedJob)} className="w-full">
-                <Send className="w-4 h-4 mr-2" /> Apply for this Position
-              </Button>
             </div>
-          </DialogContent>
-        </Dialog>
+          )}
+
+          <div>
+            <p className="mb-1 text-sm font-medium text-foreground">Deskripsi</p>
+            <p className="text-sm leading-relaxed text-muted-foreground">{selectedJob.description || '—'}</p>
+          </div>
+          {selectedJob.responsibilities?.length > 0 && (
+            <div>
+              <p className="mb-1 text-sm font-medium text-foreground">Tanggung jawab</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                {selectedJob.responsibilities.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            </div>
+          )}
+          <DaftarKeahlian judul="Keahlian wajib" isi={selectedJob.required_skills} />
+          <DaftarKeahlian judul="Keahlian tambahan" isi={selectedJob.preferred_skills} />
+        </DetailPopup>
       )}
 
-      {/* Post Job Dialog */}
-      <Dialog open={showPostDialog} onOpenChange={setShowPostDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Post New Job</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Job Title *</Label>
-                <Input value={jobForm.title} onChange={e => setJobForm({ ...jobForm, title: e.target.value })} placeholder="Senior Developer" />
-              </div>
-              <div>
-                <Label>Departemen *</Label>
-                {/* 2026-11-07 (OR1): dari Struktur Organisasi (satu daftar untuk semua formulir) */}
-                <DepartmentSelect token={token} value={jobForm.department} testId="job-board-department"
-                  onChange={v => setJobForm(f => ({ ...f, department: v }))} />
-              </div>
-            </div>
+      {/* ─── Pasang lowongan (popup) ─── */}
+      <FormPopup open={showPostDialog} onClose={() => setShowPostDialog(false)} ukuran="panjang" onSimpan={handlePostJob}
+        judul="Pasang lowongan baru" labelSimpan="Pasang lowongan" testId="job-board-post-form">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Posisi" wajib htmlFor="job-posisi">
+            <Input id="job-posisi" value={jobForm.title} onChange={e => setJobForm({ ...jobForm, title: e.target.value })} placeholder="Contoh: Kepala regu jahit" />
+          </Isian>
+          <Isian label="Departemen" wajib>
+            {/* 2026-11-07 (OR1): dari Struktur Organisasi (satu daftar untuk semua formulir) */}
+            <DepartmentSelect token={token} value={jobForm.department} testId="job-board-department"
+              onChange={v => setJobForm(f => ({ ...f, department: v }))} />
+          </Isian>
+          <Isian label="Lokasi" htmlFor="job-lokasi">
+            <Input id="job-lokasi" value={jobForm.location} onChange={e => setJobForm({ ...jobForm, location: e.target.value })} placeholder="Contoh: Bandung" />
+          </Isian>
+          <Isian label="Jenis pekerjaan">
+            <SmartNativeSelect searchable={false} value={jobForm.job_type} onChange={e => setJobForm({ ...jobForm, job_type: e.target.value })}>
+              {Object.entries(JENIS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Tingkat">
+            <SmartNativeSelect searchable={false} value={jobForm.level} onChange={e => setJobForm({ ...jobForm, level: e.target.value })}>
+              {Object.entries(LEVEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Tenggat lamaran" petunjuk="Kosong = tanpa tenggat.">
+            <DatePicker value={jobForm.deadline} onChange={v => setJobForm(f => ({ ...f, deadline: v }))} placeholder="Tanpa tenggat" testId="job-board-deadline" />
+          </Isian>
+        </div>
+        <Isian label="Deskripsi" wajib htmlFor="job-deskripsi">
+          <Textarea id="job-deskripsi" value={jobForm.description} onChange={e => setJobForm({ ...jobForm, description: e.target.value })} rows={4} />
+        </Isian>
+      </FormPopup>
 
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Label>Location</Label>
-                <Input value={jobForm.location} onChange={e => setJobForm({ ...jobForm, location: e.target.value })} placeholder="Jakarta" />
-              </div>
-              <div>
-                <Label>Job Type</Label>
-                <Select value={jobForm.job_type} onValueChange={v => setJobForm({ ...jobForm, job_type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full-time">Full-time</SelectItem>
-                    <SelectItem value="part-time">Part-time</SelectItem>
-                    <SelectItem value="contract">Contract</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Level</Label>
-                <Select value={jobForm.level} onValueChange={v => setJobForm({ ...jobForm, level: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="junior">Junior</SelectItem>
-                    <SelectItem value="mid">Mid</SelectItem>
-                    <SelectItem value="senior">Senior</SelectItem>
-                    <SelectItem value="lead">Lead</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div>
-              <Label>Description *</Label>
-              <Textarea value={jobForm.description} onChange={e => setJobForm({ ...jobForm, description: e.target.value })} rows={3} />
-            </div>
-
-            <div>
-              <Label>Deadline</Label>
-              <Input type="date" value={jobForm.deadline} onChange={e => setJobForm({ ...jobForm, deadline: e.target.value })} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPostDialog(false)}>Cancel</Button>
-            <Button onClick={handlePostJob}><Plus className="w-4 h-4 mr-2" /> Post Job</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Apply Dialog */}
-      <Dialog open={showApplyDialog} onOpenChange={setShowApplyDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Apply for Position</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Cover Letter *</Label>
-              <Textarea
-                value={applyForm.cover_letter}
-                onChange={e => setApplyForm({ ...applyForm, cover_letter: e.target.value })}
-                placeholder="Jelaskan mengapa Anda cocok untuk posisi ini..."
-                rows={5}
-              />
-            </div>
-            <div>
-              <Label>Additional Info (Optional)</Label>
-              <Textarea
-                value={applyForm.additional_info}
-                onChange={e => setApplyForm({ ...applyForm, additional_info: e.target.value })}
-                rows={2}
-              />
-            </div>
-            <div>
-              <Label>Resume URL (Optional)</Label>
-              <Input
-                value={applyForm.resume_url}
-                onChange={e => setApplyForm({ ...applyForm, resume_url: e.target.value })}
-                placeholder="https://..."
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowApplyDialog(false)}>Cancel</Button>
-            <Button onClick={handleApply}><Send className="w-4 h-4 mr-2" /> Submit Application</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ─── Lamar (popup) ─── */}
+      <FormPopup open={showApplyDialog} onClose={() => setShowApplyDialog(false)} ukuran="pendek" onSimpan={handleApply}
+        judul="Lamar posisi" labelSimpan="Kirim lamaran" testId="job-board-apply-form"
+        keterangan={jobs.find((j) => j.id === applyForm.job_id)?.title || selectedJob?.title}>
+        <Isian label="Surat lamaran" wajib htmlFor="job-surat">
+          <Textarea id="job-surat" value={applyForm.cover_letter} rows={5}
+            onChange={e => setApplyForm({ ...applyForm, cover_letter: e.target.value })}
+            placeholder="Jelaskan mengapa Anda cocok untuk posisi ini" />
+        </Isian>
+        <Isian label="Informasi tambahan (opsional)" htmlFor="job-info">
+          <Textarea id="job-info" value={applyForm.additional_info} rows={2}
+            onChange={e => setApplyForm({ ...applyForm, additional_info: e.target.value })} />
+        </Isian>
+        <Isian label="Tautan CV (opsional)" htmlFor="job-cv">
+          <Input id="job-cv" value={applyForm.resume_url} onChange={e => setApplyForm({ ...applyForm, resume_url: e.target.value })} placeholder="https://…" />
+        </Isian>
+      </FormPopup>
     </div>
   );
 }

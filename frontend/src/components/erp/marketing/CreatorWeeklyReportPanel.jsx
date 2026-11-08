@@ -11,16 +11,21 @@
  *   · Nominal insentif dibaca dari layar Insentif (satu sumber), bukan dihitung ulang.
  *   · Pengiriman idempoten per (kreator, pekan) — tombol berubah jadi "Kirim ulang".
  *   · Kalau SMTP belum diisi, rapor tetap tersimpan & bisa dibaca kreator di portalnya.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tampil di dalam Kelola KOL (tanpa kepala sendiri); pekan = DatePicker (dulu input
+ * tanggal bawaan), 4 StatTile (dulu 6 kartu), tabel + unduh, label Indonesia. Panggilan API tidak berubah.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Loader2, RefreshCw, Send, Info, Mail, AlertTriangle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { GlassCard } from '@/components/ui/glass';
 import { toast } from 'sonner';
-import { formatRupiah } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import DatePicker from '@/components/ui/date-picker';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { formatRupiah, formatDateID } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
@@ -28,7 +33,7 @@ const rp = formatRupiah;
 
 const STATUS_LABEL = {
   sent: 'Terkirim', failed: 'Gagal kirim', no_email: 'Belum punya email',
-  skipped_no_smtp: 'SMTP belum diisi', already_sent: 'Sudah dikirim',
+  skipped_no_smtp: 'Email pengirim belum diatur', already_sent: 'Sudah dikirim',
 };
 
 export default function CreatorWeeklyReportPanel({ token }) {
@@ -80,139 +85,88 @@ export default function CreatorWeeklyReportPanel({ token }) {
   const rows = data?.rows || [];
   const period = data?.period || {};
 
+  const TIPE = { new: 'Baru', kontrak: 'Kontrak', continue: 'Lanjutan' };
+  const tgl = (v) => (v ? formatDateID(v) : '—');
+  const pct = (n) => `${Number(n || 0).toFixed(2).replace('.', ',')}%`;
+  const statusKirim = (last) => (last
+    ? <span title={last.error || ''}><StatusBadge status={last.status} label={STATUS_LABEL[last.status] || 'Lainnya'} tone={last.status === 'sent' ? 'success' : 'warning'} /></span>
+    : <span className="text-muted-foreground">Belum dikirim</span>);
+  const kolom = [
+    { kunci: 'kreator', label: 'Kreator', hp: 'judul', isi: (r) => (
+      <div data-testid={`weekly-row-${r.creator_id}`}>
+        <p className="font-medium">{r.creator_name}</p>
+        <p className="text-xs text-muted-foreground">{r.creator_code} · {TIPE[r.creator_type] || r.creator_type}{r.domicile ? ` · ${r.domicile}` : ''}</p>
+        {!r.login_email && <p className="inline-flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]"><AlertTriangle className="h-3 w-3" />belum ada email portal</p>}
+      </div>) },
+    { kunci: 'konten', label: 'Konten / tayang', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.contents)} / {fmtNum(r.posted)}</span> },
+    { kunci: 'views', label: 'Tayangan', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums">{fmtNum(r.views)}<span className="block text-xs text-muted-foreground">interaksi {fmtNum(r.engagement)} · {pct(r.engagement_rate)}</span></span>) },
+    { kunci: 'gmv', label: 'GMV (KPI)', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums font-medium md:whitespace-nowrap">{rp(r.gmv_kpi)}<span className="block text-xs font-normal text-muted-foreground">{fmtNum(r.orders_kpi)} pesanan KPI</span></span>) },
+    { kunci: 'omzet', label: 'Omzet pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{rp(r.order_revenue)}</span> },
+    { kunci: 'pcs', label: 'Pcs pekan / target', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums md:whitespace-nowrap">{fmtNum(r.pcs_week)}<span className="block text-xs text-muted-foreground">
+        {r.target_pcs ? `periode ${fmtNum(r.pcs_period)} / ${fmtNum(r.target_pcs)} (${r.target_progress_pct}%)` : 'tanpa target'}</span></span>) },
+    { kunci: 'insentif', label: 'Insentif', rata: 'kanan', isi: (r) => (r.incentive_eligible
+      ? <span className="tabular-nums md:whitespace-nowrap">{rp(r.incentive_total)}</span> : <span className="text-muted-foreground">tipe baru</span>) },
+    { kunci: 'status', label: 'Status kirim', isi: (r) => statusKirim(r.last_sent) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button size="sm" variant="outline" onClick={() => send(r.creator_id, !!r.last_sent)} disabled={sending === r.creator_id}
+        data-testid={`weekly-send-${r.creator_id}`}>
+        {sending === r.creator_id ? <Loader2 className="animate-spin" /> : <Mail />}{r.last_sent ? 'Kirim ulang' : 'Kirim'}
+      </Button>) },
+  ];
+
   return (
     <div className="space-y-4" data-testid="creator-weekly-report-panel">
-      <div className="flex flex-wrap items-end gap-2">
-        <div>
-          <label className="text-[11px] text-muted-foreground block">Pekan berakhir</label>
-          <input type="date" value={weekEnd} max={todayStr}
-            onChange={(e) => setWeek(e.target.value)}
-            data-testid="weekly-week-end"
-            className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="w-48">
+          <DatePicker value={weekEnd} onChange={(v) => setWeek(v)} max={todayStr} bolehKosong={false} testId="weekly-week-end" />
         </div>
-        <p className="text-[11px] text-muted-foreground pb-1.5">
-          7 hari bergulir: <span className="font-semibold text-foreground">
-            {period.start || '—'} s/d {period.end || '—'}</span>
-        </p>
-        <div className="ml-auto flex gap-2">
-          <Button size="sm" variant="outline" className="h-8" onClick={load} disabled={loading}
-            data-testid="weekly-refresh">
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+        <p className="text-sm text-muted-foreground">Pekan berakhir · 7 hari: <span className="font-medium text-foreground">{tgl(period.start)} – {tgl(period.end)}</span></p>
+        <div className="ml-auto flex items-center gap-2">
+          <TombolUnduh namaBerkas={`rapor-kreator-${weekEnd}`} namaLembar="Rapor" baris={rows} testId="weekly-unduh"
+            kolom={[
+              { label: 'Kreator', nilai: (r) => r.creator_name }, { label: 'Kode', nilai: (r) => r.creator_code || '' },
+              { label: 'Tipe', nilai: (r) => TIPE[r.creator_type] || r.creator_type || '' },
+              { label: 'Konten', nilai: (r) => Number(r.contents) || 0 }, { label: 'Tayang', nilai: (r) => Number(r.posted) || 0 },
+              { label: 'Tayangan', nilai: (r) => Number(r.views) || 0 }, { label: 'Interaksi', nilai: (r) => Number(r.engagement) || 0 },
+              { label: 'Pesanan (KPI)', nilai: (r) => Number(r.orders_kpi) || 0 }, { label: 'GMV (KPI)', nilai: (r) => Number(r.gmv_kpi) || 0 },
+              { label: 'Omzet pesanan', nilai: (r) => Number(r.order_revenue) || 0 }, { label: 'Pcs pekan', nilai: (r) => Number(r.pcs_week) || 0 },
+              { label: 'Pcs periode', nilai: (r) => Number(r.pcs_period) || 0 }, { label: 'Target pcs', nilai: (r) => r.target_pcs || '' },
+              { label: 'Insentif', nilai: (r) => (r.incentive_eligible ? Number(r.incentive_total) || 0 : '') },
+              { label: 'Status kirim', nilai: (r) => (r.last_sent ? STATUS_LABEL[r.last_sent.status] || '' : 'Belum dikirim') },
+            ]} />
+          <Button size="icon" variant="outline" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="weekly-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-          <Button size="sm" className="h-8" onClick={() => send(null, false)}
-            disabled={!!sending || !rows.length} data-testid="weekly-send-all">
-            {sending === 'all' ? <Loader2 size={13} className="animate-spin mr-1" />
-              : <Send size={13} className="mr-1" />} Kirim semua
+          <Button onClick={() => send(null, false)} disabled={!!sending || !rows.length} data-testid="weekly-send-all">
+            {sending === 'all' ? <Loader2 className="animate-spin" /> : <Send />}Kirim semua
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="weekly-kpi">
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Kreator</p>
-          <p className="text-base font-bold">{fmtNum(t.creators)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.creators_active)} aktif berkonten</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Konten pekan ini</p>
-          <p className="text-base font-bold">{fmtNum(t.contents)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.posted)} tayang</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Views</p>
-          <p className="text-base font-bold">{fmtNum(t.views)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">GMV (KPI platform)</p>
-          <p className="text-base font-bold">{rp(t.gmv_kpi)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Omzet pesanan</p>
-          <p className="text-base font-bold">{rp(t.order_revenue)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Insentif periode</p>
-          <p className="text-base font-bold">{rp(t.incentive_total)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.pcs_week)} pcs pekan ini</p></GlassCard>
-      </div>
-
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
-          <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Menyusun rapor mingguan…
-        </div>
-      ) : !rows.length ? (
-        <div className="py-10 text-center text-muted-foreground text-sm" data-testid="weekly-empty">
-          Belum ada kreator yang bisa dilaporkan.
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border overflow-x-auto bg-background">
-          <table className="w-full text-xs" data-testid="weekly-table">
-            <thead className="bg-muted/60"><tr>
-              {['Kreator', 'Tipe', 'Konten', 'Views', 'Engagement', 'Order (KPI)', 'GMV (KPI)',
-                'Omzet pesanan', 'Pcs pekan', 'Target periode', 'Insentif', 'Status kirim', ''].map((h, i) => (
-                  <th key={`${h}-${i}`} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                ))}
-            </tr></thead>
-            <tbody className="divide-y">
-              {rows.map((r) => {
-                const last = r.last_sent;
-                return (
-                  <tr key={r.creator_id} className="hover:bg-muted/30"
-                    data-testid={`weekly-row-${r.creator_id}`}>
-                    <td className="px-2.5 py-2">
-                      <div className="font-semibold text-foreground">{r.creator_name}</div>
-                      <div className="text-[10px] text-muted-foreground">
-                        {r.creator_code}{r.domicile ? ` · ${r.domicile}` : ''}
-                      </div>
-                      {!r.login_email && (
-                        <div className="text-[10px] text-amber-600 inline-flex items-center gap-0.5">
-                          <AlertTriangle size={9} /> belum ada email portal
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-2.5 py-2">
-                      <Badge variant="outline" className="text-[9px]">{r.creator_type}</Badge>
-                    </td>
-                    <td className="px-2.5 py-2">{fmtNum(r.contents)} / {fmtNum(r.posted)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.views)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.engagement)} · {Number(r.engagement_rate || 0).toFixed(2)}%</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.orders_kpi)}</td>
-                    <td className="px-2.5 py-2 font-semibold whitespace-nowrap">{rp(r.gmv_kpi)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{rp(r.order_revenue)}</td>
-                    <td className="px-2.5 py-2">{fmtNum(r.pcs_week)}</td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      {r.target_pcs ? `${fmtNum(r.pcs_period)} / ${fmtNum(r.target_pcs)} (${r.target_progress_pct}%)`
-                        : <span className="text-muted-foreground">tanpa target</span>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      {r.incentive_eligible ? rp(r.incentive_total)
-                        : <span className="text-muted-foreground">tipe new</span>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      {last ? (
-                        <span className={last.status === 'sent' ? 'text-emerald-600' : 'text-amber-600'}
-                          title={last.error || ''}>
-                          {STATUS_LABEL[last.status] || last.status}
-                        </span>
-                      ) : <span className="text-muted-foreground">belum dikirim</span>}
-                    </td>
-                    <td className="px-2.5 py-2">
-                      <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]"
-                        onClick={() => send(r.creator_id, !!last)}
-                        disabled={sending === r.creator_id}
-                        data-testid={`weekly-send-${r.creator_id}`}>
-                        {sending === r.creator_id
-                          ? <Loader2 size={10} className="animate-spin mr-1" />
-                          : <Mail size={10} className="mr-1" />}
-                        {last ? 'Kirim ulang' : 'Kirim'}
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      {data && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="weekly-kpi">
+          <StatTile label="Kreator" value={fmtNum(t.creators)} sub={`${fmtNum(t.creators_active)} aktif berkonten`} hint="Kreator yang dilaporkan pekan ini." />
+          <StatTile label="Konten pekan ini" value={fmtNum(t.contents)} sub={`${fmtNum(t.posted)} tayang · ${fmtNum(t.views)} tayangan`} />
+          <StatTile label="GMV (KPI platform)" value={rp(t.gmv_kpi)} sub={`Omzet pesanan ${rp(t.order_revenue)}`}
+            hint="Dua sumber berbeda — berdampingan, tidak dijumlah." />
+          <StatTile label="Insentif periode" value={rp(t.incentive_total)} sub={`${fmtNum(t.pcs_week)} pcs pekan ini`} hint="Dibaca dari layar Insentif (satu sumber)." />
         </div>
       )}
 
+      {loading && !data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Menyusun rapor mingguan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={rows} kunci={(r) => r.creator_id} testId="weekly-table"
+          kosong={<EmptyState testId="weekly-empty" title="Belum ada kreator yang bisa dilaporkan" />} />
+      )}
+
       {(data?.data_notes || []).length > 0 && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="weekly-notes">
-          <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
-            <Info size={12} /> Catatan kejujuran data
-          </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
-            {data.data_notes.map((n, i) => <li key={i}>{n}</li>)}
-          </ul>
-        </div>
+        <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="weekly-notes">
+          <ul className="list-disc space-y-0.5 pl-4">{(data.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}</ul>
+        </Notice>
       )}
     </div>
   );

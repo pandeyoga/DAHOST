@@ -1,0 +1,84 @@
+/**
+ * TabelData — standar daftar data (Standar UI/UX v2, keputusan owner 8 Nov 2026 #5 & #11).
+ *  • Layar lebar (≥ 768 px): tabel. Kolom pengenal di kiri, angka rata kanan, aksi di kanan.
+ *  • HP: kartu ringkas per baris (judul, keterangan, pasangan label–nilai, aksi) — tanpa geser samping.
+ *  • Klik baris → `onKlikBaris(baris)` (mis. membuka DetailPopup). Tombol aksi tidak ikut memicu klik baris.
+ *
+ * kolom: [{ kunci, label, isi?: (baris) => node, rata?: 'kanan'|'tengah', lebar?: 'w-32',
+ *           hp?: 'judul' | 'keterangan' | 'nilai' | 'aksi' | false }]
+ *   hp='judul'      → baris tebal di kartu HP      hp='keterangan' → baris kecil di bawah judul
+ *   hp='nilai'      → pasangan "label: nilai"       hp='aksi'       → tombol di kaki kartu
+ *   hp=false        → disembunyikan di HP           (bawaan: 'nilai')
+ */
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
+
+const RATA = { kanan: 'text-right', tengah: 'text-center' };
+const hentikan = (e) => e.stopPropagation();
+
+export default function TabelData({ kolom, baris, kunci = (b) => b.id, onKlikBaris, kosong, testId = 'tabel-data' }) {
+  if (!baris || baris.length === 0) return kosong || null;
+  const isi = (k, b) => (k.isi ? k.isi(b) : b[k.kunci]);
+  const peran = (k) => (k.hp === undefined ? 'nilai' : k.hp);
+  return (
+    <div data-testid={testId}>
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {kolom.map((k) => (
+                <TableHead key={k.kunci} className={cn(RATA[k.rata], k.lebar)}>{k.label}</TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {baris.map((b) => (
+              <TableRow key={kunci(b)} data-testid={`${testId}-baris`}
+                onClick={onKlikBaris ? () => onKlikBaris(b) : undefined}
+                className={cn(onKlikBaris && 'cursor-pointer')}>
+                {kolom.map((k) => (
+                  <TableCell key={k.kunci} className={cn('align-middle', RATA[k.rata], k.lebar)}
+                    onClick={peran(k) === 'aksi' ? hentikan : undefined}>
+                    {isi(k, b)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="space-y-2 md:hidden">
+        {baris.map((b) => {
+          const judul = kolom.filter((k) => peran(k) === 'judul');
+          const ket = kolom.filter((k) => peran(k) === 'keterangan');
+          const nilai = kolom.filter((k) => peran(k) === 'nilai');
+          const aksi = kolom.filter((k) => peran(k) === 'aksi');
+          return (
+            <div key={kunci(b)} data-testid={`${testId}-kartu`}
+              onClick={onKlikBaris ? () => onKlikBaris(b) : undefined}
+              className={cn('rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] p-3',
+                onKlikBaris && 'cursor-pointer')}>
+              {judul.map((k) => <div key={k.kunci} className="text-sm font-medium text-foreground">{isi(k, b)}</div>)}
+              {ket.map((k) => <div key={k.kunci} className="mt-0.5 text-xs text-muted-foreground">{isi(k, b)}</div>)}
+              {nilai.length > 0 && (
+                <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1">
+                  {nilai.map((k) => (
+                    <div key={k.kunci} className="min-w-0">
+                      <dt className="text-xs text-muted-foreground">{k.label}</dt>
+                      <dd className="text-sm text-foreground">{isi(k, b)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {aksi.length > 0 && (
+                <div className="mt-2 flex flex-wrap justify-end gap-2" onClick={hentikan}>
+                  {aksi.map((k) => <div key={k.kunci}>{isi(k, b)}</div>)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

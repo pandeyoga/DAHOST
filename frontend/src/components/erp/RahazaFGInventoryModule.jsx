@@ -1,38 +1,55 @@
+/**
+ * Produk jadi (Portal Gudang › Master Item › tab "Produk jadi") — stok barang jadi + pengeluaran manual.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul tersembunyi di dalam hub), kartu angka = StatTile berketerangan,
+ * tampilan Stok / Matriks / Pengeluaran / Riwayat = tab Radix (di dalam hub otomatis berupa pil), tabel → kartu
+ * ringkas di HP, unduh Excel/CSV per tampilan, form "Keluarkan stok" = FormPopup panjang (dulu panel merah yang
+ * terbuka di atas halaman). Field, validasi, dan API tidak berubah.
+ *
+ * Angka (diverifikasi 8 Nov 2026 di DB uji):
+ *  • Produk jadi = jumlah baris /api/rahaza/materials?type=fg (615 aktif = pagination.total tab hub), ikut pencarian.
+ *  • Stok di gudang = Σ qty /api/rahaza/material-stock untuk produk jadi itu (DB uji: −1 pcs, satu baris minus).
+ *  • Masuk/keluar hari ini = dari 100 pergerakan terakhir /api/rahaza/fg-movements (sumber sama dengan tab Riwayat)
+ *    — keterangannya kini menyebut batas itu; dulu "+0"/"−0" tanpa keterangan.
+ *  • Hitungan di label tab Pengeluaran/Riwayat dihapus: itu panjang halaman API (maks 50/100), bukan total.
+ */
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Archive, Search, TrendingUp, TrendingDown, RefreshCw,
-  ArrowDownCircle, ArrowUpCircle, Activity, Info,
-  MinusCircle, CheckCircle2, AlertCircle, ChevronDown, X,
-  Grid3X3, Table as TableIcon,
-} from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { MinusCircle, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import FilterChips from '@/components/ui/filter-chips';
 import { useToast } from '@/hooks/use-toast';
-import FGStockMatrixView from './FGStockMatrixView';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { formatDateID, formatDateTimeID } from '@/lib/format';
+import FGStockMatrixView from './FGStockMatrixView';
+import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 const REASON_OPTIONS = [
-  { value: 'surat_jalan_internal', label: 'Surat Jalan Internal',  color: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
-  { value: 'sample',               label: 'Sample / Contoh',       color: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
-  { value: 'koreksi_stok',         label: 'Koreksi Stok (Adjustment)', color: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)]' },
-  { value: 'retur',                label: 'Retur / Rusak',          color: 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.1)]' },
-  { value: 'lainnya',              label: 'Lainnya',                color: 'text-muted-foreground border-[var(--glass-border)] bg-[var(--glass-bg)]' },
+  { value: 'surat_jalan_internal', label: 'Surat jalan internal', tone: 'info' },
+  { value: 'sample',               label: 'Sampel / contoh',      tone: 'info' },
+  { value: 'koreksi_stok',         label: 'Koreksi stok',         tone: 'warning' },
+  { value: 'retur',                label: 'Retur / rusak',        tone: 'danger' },
+  { value: 'lainnya',              label: 'Lainnya',              tone: 'muted' },
 ];
+const alasanDari = (v) => REASON_OPTIONS.find((r) => r.value === v) || { label: v || '—', tone: 'muted' };
 
 const SOURCE_LABEL = {
-  production_internal:    { label: 'Produksi Internal',  cls: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
-  production_customer_po: { label: 'Customer PO',        cls: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)]' },
-  production_packing_event: { label: 'Output Packing',  cls: 'text-[hsl(var(--success))] border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success)/0.1)]' },
-  shipment_dispatch:      { label: 'Surat Jalan',        cls: 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.1)]' },
-  manual_issue:           { label: 'Issue Manual',       cls: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)]' },
+  production_internal:      { label: 'Produksi internal', tone: 'info' },
+  production_customer_po:   { label: 'Customer PO',       tone: 'warning' },
+  production_packing_event: { label: 'Hasil packing',     tone: 'success' },
+  shipment_dispatch:        { label: 'Surat jalan',       tone: 'danger' },
+  manual_issue:             { label: 'Pengeluaran manual', tone: 'warning' },
 };
+const sumberDari = (v) => SOURCE_LABEL[v] || { label: v ? 'Lainnya' : '—', tone: 'muted' };
 
 const EMPTY_FORM = { material_id: '', location_id: '', qty: '', reason: 'surat_jalan_internal', customer_id: undefined, reference_number: '', notes: '' };
+const pcs = (n) => Number(n || 0).toLocaleString('id-ID');
 
 export default function RahazaFGInventoryModule({ token }) {
   const { toast } = useToast();
@@ -44,6 +61,7 @@ export default function RahazaFGInventoryModule({ token }) {
   const [customers, setCustomers] = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [search,    setSearch]    = useState('');
+  const [cari,      setCari]      = useState('');
   const [activeTab, setActiveTab] = useState('stock');
   const [showIssueForm, setShowIssueForm] = useState(false);
   const [form,      setForm]      = useState(EMPTY_FORM);
@@ -52,9 +70,13 @@ export default function RahazaFGInventoryModule({ token }) {
                                        localStorage.getItem('erp_token'));
   const [issueNo, setIssueNo] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [updatedAt, setUpdatedAt] = useState('');
 
   const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(cari.trim()), 300);
+    return () => clearTimeout(t);
+  }, [cari]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -82,7 +104,6 @@ export default function RahazaFGInventoryModule({ token }) {
         setStocks(map);
         setStockRows(rows);
       }
-      setUpdatedAt(new Date().toLocaleTimeString('id-ID'));
     } finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, search]);
@@ -91,7 +112,6 @@ export default function RahazaFGInventoryModule({ token }) {
 
   // KPIs
   const totalQty     = items.reduce((a, m) => a + (stocks[m.id] || 0), 0);
-  const totalStocked = items.filter(m => (stocks[m.id] || 0) > 0).length;
   const today        = new Date().toDateString();
   const inToday  = movements.filter(m => m.direction === 'in'  && new Date(m.timestamp).toDateString() === today).reduce((a,m)=>a+m.qty,0);
   const outToday = movements.filter(m => m.direction === 'out' && new Date(m.timestamp).toDateString() === today).reduce((a,m)=>a+m.qty,0);
@@ -121,8 +141,8 @@ export default function RahazaFGInventoryModule({ token }) {
                                ...docNumberPayload(numPolicy, 'issue_number', issueNo) }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Gagal membuat issue');
-      toast({ title: `✅ FG Issue ${data.issue_number} berhasil — ${form.qty} pcs dikurangi dari stok` });
+      if (!res.ok) throw new Error(data.detail || 'Gagal membuat pengeluaran');
+      toast({ title: `Pengeluaran ${data.issue_number} tercatat — ${form.qty} pcs dikurangi dari stok` });
       setForm(EMPTY_FORM);
       setShowIssueForm(false);
       fetchData();
@@ -131,482 +151,235 @@ export default function RahazaFGInventoryModule({ token }) {
     } finally { setSubmitting(false); }
   };
 
-  // RC-UI-03: client-side pagination (10/page) for the 3 tables (top-level hooks)
-  const itemsPg     = useClientPagination(items, 10);
-  const issuesPg    = useClientPagination(issues, 10);
-  const movementsPg = useClientPagination(movements, 10);
+  const bukaForm = (materialId) => {
+    if (materialId) setForm(f => ({ ...f, material_id: materialId, location_id: '', qty: '' }));
+    setShowIssueForm(true);
+  };
+
+  // RC-UI-03: client-side pagination (25/halaman) untuk 3 tabel (hook di tingkat atas)
+  const itemsPg     = useClientPagination(items, 25);
+  const issuesPg    = useClientPagination(issues, 25);
+  const movementsPg = useClientPagination(movements, 25);
+  const pgAktif = activeTab === 'stock' ? itemsPg : activeTab === 'issues' ? issuesPg : activeTab === 'movements' ? movementsPg : null;
+
+  const statusStok = (qty) => (qty > 0 ? <StatusBadge status="ada" label="Ada stok" tone="success" />
+    : qty < 0 ? <StatusBadge status="minus" label="Minus" tone="danger" />
+      : <StatusBadge status="kosong" label="Kosong" tone="muted" />);
+
+  const kolomStok = [
+    { kunci: 'code', label: 'Kode', hp: 'judul', isi: (m) => <span className="tabular-nums">{m.code}</span> },
+    { kunci: 'name', label: 'Nama produk', hp: 'keterangan', isi: (m) => <span className="text-foreground">{m.name}</span> },
+    { kunci: 'qty', label: 'Stok (pcs)', rata: 'kanan', isi: (m) => <span className="tabular-nums font-medium">{pcs(stocks[m.id] || 0)}</span> },
+    { kunci: 'status', label: 'Status', hp: false, isi: (m) => statusStok(stocks[m.id] || 0) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => ((stocks[m.id] || 0) > 0 ? (
+      <Button size="sm" variant="outline" onClick={() => bukaForm(m.id)} data-testid={`fg-issue-quick-${m.code}`}>
+        <MinusCircle />Keluarkan
+      </Button>
+    ) : null) },
+  ];
+  const kolomPengeluaran = [
+    { kunci: 'issue_number', label: 'No. pengeluaran', hp: 'judul', isi: (i) => <span className="tabular-nums">{i.issue_number}</span> },
+    { kunci: 'fg', label: 'Produk', hp: false, isi: (i) => (
+      <div className="min-w-0"><div className="tabular-nums text-xs text-muted-foreground">{i.fg_code}</div><div className="truncate">{i.fg_name}</div></div>) },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (i) => [i.fg_code, i.fg_name].filter(Boolean).join(' · ') },
+    { kunci: 'qty', label: 'Qty (pcs)', rata: 'kanan', isi: (i) => <span className="tabular-nums font-medium">{pcs(i.qty)}</span> },
+    { kunci: 'reason', label: 'Alasan', hp: false, isi: (i) => { const a = alasanDari(i.reason); return <StatusBadge status={i.reason} label={a.label} tone={a.tone} />; } },
+    { kunci: 'customer', label: 'Tujuan', hp: false, isi: (i) => i.customer_name || '—' },
+    { kunci: 'ref', label: 'Referensi', hp: false, isi: (i) => i.reference_number || '—' },
+    { kunci: 'by', label: 'Diproses oleh', hp: false, isi: (i) => i.issued_by || '—' },
+    { kunci: 'tgl', label: 'Tanggal', isi: (i) => <span className="whitespace-nowrap">{formatDateID(i.issued_at)}</span> },
+  ];
+  const kolomRiwayat = [
+    { kunci: 'waktu', label: 'Waktu', hp: false, isi: (mv) => <span className="whitespace-nowrap">{formatDateTimeID(mv.timestamp)}</span> },
+    { kunci: 'fg_code', label: 'Kode', hp: 'judul', isi: (mv) => <span className="tabular-nums">{mv.fg_code}</span> },
+    { kunci: 'hp-ket', label: '', hp: 'keterangan', lebar: 'hidden', isi: (mv) => `${formatDateTimeID(mv.timestamp)} · ${sumberDari(mv.source).label}` },
+    { kunci: 'arah', label: 'Arah', hp: false, isi: (mv) => (mv.direction === 'in'
+      ? <StatusBadge status="masuk" label="Masuk" tone="success" /> : <StatusBadge status="keluar" label="Keluar" tone="danger" />) },
+    { kunci: 'qty', label: 'Qty (pcs)', rata: 'kanan', isi: (mv) => <span className="tabular-nums font-medium">{mv.direction === 'in' ? '' : '−'}{pcs(mv.qty)}</span> },
+    { kunci: 'sumber', label: 'Sumber', hp: false, isi: (mv) => { const s = sumberDari(mv.source); return <StatusBadge status={mv.source} label={s.label} tone={s.tone} />; } },
+    { kunci: 'ref', label: 'WO / SJ / referensi', hp: false, isi: (mv) => mv.wo_number || mv.shipment_number || mv.reference_number || '—' },
+    { kunci: 'notes', label: 'Keterangan', hp: false, isi: (mv) => <span className="line-clamp-1 text-muted-foreground">{mv.notes || '—'}</span> },
+  ];
+
+  const unduh = activeTab === 'stock' ? (
+    <TombolUnduh namaBerkas="stok-produk-jadi" namaLembar="Stok produk jadi" baris={items} testId="fg-unduh-stok"
+      kolom={[
+        { label: 'Kode', nilai: (m) => m.code },
+        { label: 'Nama produk', nilai: (m) => m.name },
+        { label: 'Stok (pcs)', nilai: (m) => Number(stocks[m.id] || 0) },
+        { label: 'Status', nilai: (m) => ((stocks[m.id] || 0) > 0 ? 'Ada stok' : (stocks[m.id] || 0) < 0 ? 'Minus' : 'Kosong') },
+      ]} />
+  ) : activeTab === 'issues' ? (
+    <TombolUnduh namaBerkas="pengeluaran-produk-jadi" namaLembar="Pengeluaran" baris={issues} testId="fg-unduh-pengeluaran"
+      kolom={[
+        { label: 'No. pengeluaran', nilai: (i) => i.issue_number },
+        { label: 'Kode produk', nilai: (i) => i.fg_code },
+        { label: 'Nama produk', nilai: (i) => i.fg_name },
+        { label: 'Qty (pcs)', nilai: (i) => Number(i.qty || 0) },
+        { label: 'Alasan', nilai: (i) => alasanDari(i.reason).label },
+        { label: 'Tujuan', nilai: (i) => i.customer_name || '' },
+        { label: 'Referensi', nilai: (i) => i.reference_number || '' },
+        { label: 'Diproses oleh', nilai: (i) => i.issued_by || '' },
+        { label: 'Tanggal', nilai: (i) => formatDateID(i.issued_at, { fallback: '' }) },
+      ]} />
+  ) : activeTab === 'movements' ? (
+    <TombolUnduh namaBerkas="riwayat-produk-jadi" namaLembar="Riwayat" baris={movements} testId="fg-unduh-riwayat"
+      kolom={[
+        { label: 'Waktu', nilai: (mv) => formatDateTimeID(mv.timestamp, { fallback: '' }) },
+        { label: 'Kode produk', nilai: (mv) => mv.fg_code },
+        { label: 'Arah', nilai: (mv) => (mv.direction === 'in' ? 'Masuk' : 'Keluar') },
+        { label: 'Qty (pcs)', nilai: (mv) => Number(mv.qty || 0) * (mv.direction === 'in' ? 1 : -1) },
+        { label: 'Sumber', nilai: (mv) => sumberDari(mv.source).label },
+        { label: 'WO / SJ / referensi', nilai: (mv) => mv.wo_number || mv.shipment_number || mv.reference_number || '' },
+        { label: 'Keterangan', nilai: (mv) => mv.notes || '' },
+      ]} />
+  ) : null;
 
   return (
-    <div className="space-y-5" data-testid="fg-inventory-page">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Archive className="w-6 h-6 text-[hsl(var(--success))]" />
-            Inventory Produk Jadi
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Stok barang jadi (FG) dari produksi Internal &amp; Customer PO.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={() => { setShowIssueForm(v => !v); setActiveTab('stock'); }}
-            className="gap-1.5 text-xs bg-[hsl(var(--destructive)/0.8)] hover:bg-[hsl(var(--destructive)/0.9)]"
-            data-testid="fg-issue-btn"
-          >
-            <MinusCircle className="w-3.5 h-3.5" />
-            Keluarkan Stok FG
+      <PageLayout testId="fg-inventory-page" title="Produk jadi"
+        subtitle="Stok barang jadi dari produksi internal dan Customer PO, beserta pengeluarannya."
+        actions={<Button onClick={() => bukaForm()} data-testid="fg-issue-btn"><MinusCircle />Keluarkan stok</Button>}
+        filters={<>
+          <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="fg-tab" ariaLabel="Tampilan" className="w-full sm:w-auto"
+            options={[
+              { key: 'stock', label: 'Stok' },
+              { key: 'matrix', label: 'Matriks ukuran × warna' },
+              { key: 'issues', label: 'Pengeluaran' },
+              { key: 'movements', label: 'Riwayat' },
+            ]} />
+          {activeTab === 'stock' && (
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Cari produk jadi" className="pl-8" value={cari} onChange={e => setCari(e.target.value)}
+                data-testid="fg-search" />
+            </div>
+          )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+          {unduh}
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} disabled={loading}>
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={fetchData} className="gap-1.5 text-xs">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <GlassPanel className="p-4 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Total SKU</div>
-          <div className="text-2xl font-bold text-foreground">{items.length}</div>
-        </GlassPanel>
-        <GlassPanel className="p-4 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1">Total On Hand</div>
-          <div className="text-2xl font-bold text-primary">{totalQty.toLocaleString('id-ID')}</div>
-          <div className="text-[10px] text-muted-foreground">pcs</div>
-        </GlassPanel>
-        <GlassPanel className="p-4 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-1">
-            <ArrowDownCircle className="w-3 h-3 text-[hsl(var(--success))]" /> Masuk Hari Ini
           </div>
-          <div className="text-2xl font-bold text-[hsl(var(--success))]">+{inToday.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">pcs dari produksi</div>
-        </GlassPanel>
-        <GlassPanel className="p-4 text-center">
-          <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-1">
-            <ArrowUpCircle className="w-3 h-3 text-[hsl(var(--destructive))]" /> Keluar Hari Ini
+        </>}
+        summary={activeTab !== 'matrix' ? (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile label="Produk jadi" value={pcs(items.length)} sub={search ? 'sesuai pencarian' : 'barang jadi aktif di master'} />
+            <StatTile label="Stok di gudang" value={pcs(totalQty)} suffix="pcs" accent={totalQty < 0 ? 'danger' : 'default'}
+              sub="jumlah stok semua lokasi" />
+            <StatTile label="Masuk hari ini" value={pcs(inToday)} suffix="pcs" sub="dari 100 pergerakan terakhir" />
+            <StatTile label="Keluar hari ini" value={pcs(outToday)} suffix="pcs" sub="dari 100 pergerakan terakhir" />
           </div>
-          <div className="text-2xl font-bold text-[hsl(var(--destructive))]">-{outToday.toLocaleString()}</div>
-          <div className="text-[10px] text-muted-foreground">pcs dikirim/dikeluarkan</div>
-        </GlassPanel>
-      </div>
+        ) : null}
+        footer={pgAktif && pgAktif.total > pgAktif.pageSize ? (
+          <PaginationLite page={pgAktif.page} totalPages={pgAktif.totalPages} total={pgAktif.total} pageSize={pgAktif.pageSize} onPageChange={pgAktif.setPage} />
+        ) : null}>
 
-      {/* ── ISSUE FORM (slide-in panel) ─────────────────────────────────── */}
-      {showIssueForm && (
-        <GlassCard className="p-5 border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.05)]">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-foreground flex items-center gap-2">
-              <MinusCircle className="w-4 h-4 text-[hsl(var(--destructive))]" />
-              Pengeluaran Stok Produk Jadi
-            </h3>
-            <button onClick={() => setShowIssueForm(false)} className="text-muted-foreground hover:text-foreground">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+        {/* ── STOK ── */}
+        {activeTab === 'stock' && (<>
+          {loading && items.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat produk jadi…</p>
+          ) : (
+            <TabelData kolom={kolomStok} baris={itemsPg.paged} testId="fg-stock-table"
+              kosong={<EmptyState title={search ? 'Tidak ada produk jadi yang cocok' : 'Belum ada produk jadi'}
+                description={search ? 'Ubah kata pencarian.' : 'Otomatis muncul saat WO selesai atau hasil packing dicatat.'} />} />
+          )}
+        </>)}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Pilih FG */}
-            <div className="md:col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Produk Jadi *</label>
-              <Select value={form.material_id} onValueChange={v => setForm(f=>({...f, material_id: v, location_id: '', qty: ''}))}>
-                <SelectTrigger data-testid="fg-issue-material">
-                  <SelectValue placeholder="— Pilih Produk Jadi —" />
-                </SelectTrigger>
-                <SelectContent>
-                  {items.map(m => (
-                    <SelectItem key={m.id} value={m.id} disabled={(stocks[m.id]||0) <= 0}>
-                      {m.code} — {m.name}
-                      <span className={`ml-2 text-xs ${(stocks[m.id]||0) > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'}`}>
-                        ({(stocks[m.id]||0)} pcs tersedia)
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Lokasi asal — wajib dipilih (No.18a) */}
-            <div className="md:col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Lokasi Asal *</label>
-              <SmartNativeSelect
-                value={form.location_id}
-                onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
-                disabled={!form.material_id}
-                required
-                data-testid="fg-issue-location"
-                className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              >
-                <option value="">{form.material_id ? '— Pilih lokasi —' : 'Pilih produk jadi dulu'}</option>
-                {locOptions.map(r => (
-                  <option key={r.location_id} value={r.location_id}>
-                    {(r.location_code ? `${r.location_code} · ` : '') + (r.location_name || r.location_id)} — {r.qty} pcs
-                  </option>
-                ))}
-              </SmartNativeSelect>
-              {form.material_id && locOptions.length === 0 && (
-                <div className="mt-1 text-xs text-[hsl(var(--destructive))]">Produk ini tidak punya stok di lokasi mana pun.</div>
-              )}
-              {form.location_id && (
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Stok di lokasi ini: <span className="font-semibold text-foreground">{availableStock} pcs</span>
-                </div>
-              )}
-            </div>
-
-            {/* Qty */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Qty Dikeluarkan (pcs) *</label>
-              <GlassInput
-                type="number" min="1" max={availableStock}
-                value={form.qty}
-                onChange={e => setForm(f=>({...f, qty: e.target.value}))}
-                placeholder={`max ${availableStock}`}
-                data-testid="fg-issue-qty"
-              />
-              {form.qty && parseFloat(form.qty) > availableStock && (
-                <div className="mt-1 text-xs text-[hsl(var(--destructive))] flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> Melebihi stok tersedia
-                </div>
-              )}
-            </div>
-
-            {/* Alasan */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Alasan Pengeluaran *</label>
-              <Select value={form.reason} onValueChange={v => setForm(f=>({...f, reason: v}))}>
-                <SelectTrigger data-testid="fg-issue-reason">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {REASON_OPTIONS.map(r => (
-                    <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Customer (opsional) */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Tujuan / Customer
-                <span className="ml-1 text-[10px] opacity-60">(opsional)</span>
-              </label>
-              <Select value={form.customer_id || undefined} onValueChange={v => setForm(f=>({...f, customer_id: v}))}>
-                <SelectTrigger data-testid="fg-issue-customer">
-                  <SelectValue placeholder="— Tidak ada —" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.code} — {c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Nomor Referensi */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                No. Referensi / SJ Manual
-                <span className="ml-1 text-[10px] opacity-60">(opsional)</span>
-              </label>
-              <GlassInput
-                value={form.reference_number}
-                onChange={e => setForm(f=>({...f, reference_number: e.target.value}))}
-                placeholder="Contoh: SJ-2026-001"
-                data-testid="fg-issue-reference"
-              />
-            </div>
-
-            {/* Catatan */}
-            <div className="md:col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan</label>
-              <GlassInput
-                value={form.notes}
-                onChange={e => setForm(f=>({...f, notes: e.target.value}))}
-                placeholder="Catatan tambahan…"
-                data-testid="fg-issue-notes"
-              />
-            </div>
-
-            {/* SESI #27 — nomor dokumen (otomatis/manual sesuai setelan owner) */}
-            <div className="md:col-span-2">
-              <DocNumberField
-                policy={numPolicy} value={issueNo} onChange={setIssueNo}
-                testId="fg-issue-docnum" label="Nomor Pengeluaran Barang Jadi" />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-3 mt-5 pt-4 border-t border-[var(--glass-border)]">
-            <Button variant="ghost" onClick={() => { setShowIssueForm(false); setForm(EMPTY_FORM); }}>
-              Batal
-            </Button>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
-              onClick={handleSubmitIssue}
-              disabled={submitting || !form.material_id || !form.qty || parseFloat(form.qty) > availableStock}
-              className="bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] gap-2"
-              data-testid="fg-issue-submit"
-            >
-              {submitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-              Konfirmasi Pengeluaran
-            </Button>
-          </div>
-        </GlassCard>
-      )}
-
-      {/* Flow Info Banner */}
-      <GlassPanel className="p-3 flex items-start gap-3 border border-[hsl(var(--primary)/0.2)] bg-[hsl(var(--primary)/0.05)]">
-        <Info className="w-4 h-4 text-[hsl(var(--primary))] mt-0.5 flex-shrink-0" />
-        <div className="text-xs text-muted-foreground leading-relaxed">
-          <span className="font-semibold text-foreground mr-1">Alur Stok FG:</span>
-          <span className="text-[hsl(var(--primary))]">Produksi Internal</span> → WO selesai → FG +qty → <b>Keluarkan Stok</b> manual
-          <span className="mx-2">|</span>
-          <span className="text-[hsl(var(--warning))]">Customer PO</span> → WO selesai → FG +qty → Surat Jalan dispatch → FG −qty otomatis
-        </div>
-      </GlassPanel>
-
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="stock" data-testid="fg-tab-stock">
-            <Archive className="w-3.5 h-3.5 mr-1.5" /> Stok ({totalStocked}/{items.length} SKU)
-          </TabsTrigger>
-          <TabsTrigger value="matrix" data-testid="fg-tab-matrix">
-            <Grid3X3 className="w-3.5 h-3.5 mr-1.5" /> Matrix Size × Color
-          </TabsTrigger>
-          <TabsTrigger value="issues" data-testid="fg-tab-issues">
-            <MinusCircle className="w-3.5 h-3.5 mr-1.5" /> Pengeluaran ({issues.length})
-          </TabsTrigger>
-          <TabsTrigger value="movements" data-testid="fg-tab-movements">
-            <Activity className="w-3.5 h-3.5 mr-1.5" /> Riwayat ({movements.length})
-          </TabsTrigger>
-        </TabsList>
-
-        {/* ── STOCK TAB ── */}
-        <TabsContent value="stock">
-          <GlassCard className="p-0 overflow-hidden">
-            <div className="flex items-center gap-3 p-4 border-b border-[var(--glass-border)]">
-              <div className="relative flex-1 max-w-xs">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <GlassInput placeholder="Cari produk jadi…" className="pl-8 h-8 text-sm"
-                  value={search} onChange={e => setSearch(e.target.value)} />
-              </div>
-            </div>
-            {loading ? (
-              <div className="flex items-center justify-center h-48">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-              </div>
-            ) : items.length === 0 ? (
-              <div className="text-center py-16 space-y-2">
-                <Archive className="w-10 h-10 mx-auto text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">Belum ada produk jadi.</p>
-                <p className="text-xs text-muted-foreground/70">
-                  Otomatis muncul saat WO selesai atau output Packing dicatat.
-                </p>
-              </div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-[11px] text-muted-foreground border-b border-[var(--glass-border)] bg-[var(--glass-bg)]">
-                    <th className="px-4 py-2.5 text-left font-medium">Kode FG</th>
-                    <th className="px-4 py-2.5 text-left font-medium">Nama Produk</th>
-                    <th className="px-4 py-2.5 text-center font-medium">Stok (pcs)</th>
-                    <th className="px-4 py-2.5 text-center font-medium">Status</th>
-                    <th className="px-4 py-2.5 text-center font-medium">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {itemsPg.paged.map(m => {
-                    const qty = stocks[m.id] || 0;
-                    return (
-                      <tr key={m.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]">
-                        <td className="px-4 py-2.5">
-                          <span className="tabular-nums text-xs bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.2)] text-[hsl(var(--success))] px-2 py-0.5 rounded">
-                            {m.code}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <div className="font-medium text-foreground">{m.name}</div>
-                        </td>
-                        <td className="px-4 py-2.5 text-center">
-                          <span className={`text-lg font-bold ${qty > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground/50'}`}>
-                            {qty.toLocaleString('id-ID')}
-                          </span>
-                          <span className="text-xs text-muted-foreground ml-1">pcs</span>
-                        </td>
-                        <td className="px-4 py-2.5 text-center">
-                          {qty > 0 ? (
-                            <Badge variant="outline" className="text-[hsl(var(--success))] border-[hsl(var(--success)/0.3)] text-[10px]">
-                              <TrendingUp className="w-3 h-3 mr-1" /> Ada Stok
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-muted-foreground text-[10px]">
-                              <TrendingDown className="w-3 h-3 mr-1" /> Kosong
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 text-center">
-                          {qty > 0 && (
-                            <button
-                              onClick={() => {
-                                setForm(f => ({...f, material_id: m.id}));
-                                setShowIssueForm(true);
-                                window.scrollTo({ top: 0, behavior: 'smooth' });
-                              }}
-                              className="text-xs text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))] underline"
-                              data-testid={`fg-issue-quick-${m.code}`}
-                            >
-                              Keluarkan
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-            {itemsPg.total > 0 && <PaginationLite page={itemsPg.page} totalPages={itemsPg.totalPages} total={itemsPg.total} pageSize={itemsPg.pageSize} onPageChange={itemsPg.setPage} />}
-          </GlassCard>
-        </TabsContent>
-
-        {/* ── MATRIX TAB (P1-WH-3) ── */}
-        <TabsContent value="matrix">
+        {/* ── MATRIKS (P1-WH-3) ── */}
+        {activeTab === 'matrix' && (<>
           <FGStockMatrixView
             token={token}
             onCellAction={(action, cell) => {
               if (action === 'issue') {
-                setForm(f => ({ ...f, material_id: cell.material_id, qty: '' }));
+                setForm(f => ({ ...f, material_id: cell.material_id, location_id: '', qty: '' }));
                 setShowIssueForm(true);
-                setActiveTab('stock');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
               }
             }}
           />
-        </TabsContent>
+        </>)}
 
-        {/* ── ISSUES TAB ── */}
-        <TabsContent value="issues">
-          <GlassCard className="p-0 overflow-hidden">
-            {issues.length === 0 ? (
-              <div className="text-center py-16 space-y-2">
-                <MinusCircle className="w-10 h-10 mx-auto text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">Belum ada pengeluaran stok FG.</p>
-                <Button size="sm" variant="outline" onClick={() => setShowIssueForm(true)} className="mt-2">
-                  + Buat Pengeluaran
-                </Button>
-              </div>
-            ) : (
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-[11px] text-muted-foreground border-b border-[var(--glass-border)] bg-[var(--glass-bg)]">
-                    <th className="px-4 py-2 text-left">No. Issue</th>
-                    <th className="px-4 py-2 text-left">Produk</th>
-                    <th className="px-4 py-2 text-right">Qty</th>
-                    <th className="px-4 py-2 text-left">Alasan</th>
-                    <th className="px-4 py-2 text-left">Tujuan</th>
-                    <th className="px-4 py-2 text-left">Ref</th>
-                    <th className="px-4 py-2 text-left">Diproses</th>
-                    <th className="px-4 py-2 text-left">Tgl</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {issuesPg.paged.map(iss => {
-                    const reason = REASON_OPTIONS.find(r => r.value === iss.reason);
-                    return (
-                      <tr key={iss.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]">
-                        <td className="px-4 py-2 tabular-nums text-primary">{iss.issue_number}</td>
-                        <td className="px-4 py-2">
-                          <div className="tabular-nums text-xs text-[hsl(var(--success))]">{iss.fg_code}</div>
-                          <div className="text-muted-foreground truncate max-w-[120px]">{iss.fg_name}</div>
-                        </td>
-                        <td className="px-4 py-2 text-right font-bold text-[hsl(var(--destructive))]">
-                          -{iss.qty} pcs
-                        </td>
-                        <td className="px-4 py-2">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${reason?.color || ''}`}>
-                            {reason?.label || iss.reason}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground">{iss.customer_name || '—'}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{iss.reference_number || '—'}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{iss.issued_by || '—'}</td>
-                        <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                          {new Date(iss.issued_at).toLocaleDateString('id-ID', { day:'2-digit', month:'short' })}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-            {issuesPg.total > 0 && <PaginationLite page={issuesPg.page} totalPages={issuesPg.totalPages} total={issuesPg.total} pageSize={issuesPg.pageSize} onPageChange={issuesPg.setPage} />}
-          </GlassCard>
-        </TabsContent>
+        {/* ── PENGELUARAN ── */}
+        {activeTab === 'issues' && (<div className="space-y-2">
+          {issues.length > 0 && <p className="text-xs text-muted-foreground">Menampilkan 50 pengeluaran terakhir.</p>}
+          <TabelData kolom={kolomPengeluaran} baris={issuesPg.paged} testId="fg-issues-table"
+            kosong={<EmptyState title="Belum ada pengeluaran stok produk jadi"
+              action={<Button variant="outline" onClick={() => bukaForm()}><MinusCircle />Keluarkan stok</Button>} />} />
+        </div>)}
 
-        {/* ── MOVEMENTS TAB ── */}
-        <TabsContent value="movements">
-          <GlassCard className="p-0 overflow-hidden">
-            {movements.length === 0 ? (
-              <div className="text-center py-16">
-                <Activity className="w-10 h-10 mx-auto text-muted-foreground/30 mb-2" />
-                <p className="text-sm text-muted-foreground">Belum ada pergerakan stok FG.</p>
-              </div>
-            ) : (
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-[11px] text-muted-foreground border-b border-[var(--glass-border)] bg-[var(--glass-bg)]">
-                    <th className="px-4 py-2 text-left">Waktu</th>
-                    <th className="px-4 py-2 text-left">Kode FG</th>
-                    <th className="px-4 py-2 text-left">Arah</th>
-                    <th className="px-4 py-2 text-right">Qty</th>
-                    <th className="px-4 py-2 text-left">Sumber</th>
-                    <th className="px-4 py-2 text-left">WO / SJ / Ref</th>
-                    <th className="px-4 py-2 text-left">Keterangan</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {movementsPg.paged.map(mv => {
-                    const src = SOURCE_LABEL[mv.source] || { label: mv.source, cls: 'text-muted-foreground border-[var(--glass-border)]' };
-                    return (
-                      <tr key={mv.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]">
-                        <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
-                          {new Date(mv.timestamp).toLocaleString('id-ID', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}
-                        </td>
-                        <td className="px-4 py-2 tabular-nums text-[hsl(var(--success))]">{mv.fg_code}</td>
-                        <td className="px-4 py-2">
-                          {mv.direction === 'in' ? (
-                            <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]">
-                              <ArrowDownCircle className="w-3 h-3" /> Masuk
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[hsl(var(--destructive))]">
-                              <ArrowUpCircle className="w-3 h-3" /> Keluar
-                            </span>
-                          )}
-                        </td>
-                        <td className={`px-4 py-2 text-right font-bold ${mv.direction==='in' ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}`}>
-                          {mv.direction==='in' ? '+' : '-'}{mv.qty}
-                        </td>
-                        <td className="px-4 py-2">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border ${src.cls}`}>
-                            {src.label}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground">
-                          {mv.wo_number || mv.shipment_number || mv.reference_number || '—'}
-                        </td>
-                        <td className="px-4 py-2 text-muted-foreground truncate max-w-[160px]">
-                          {mv.notes || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-            {movementsPg.total > 0 && <PaginationLite page={movementsPg.page} totalPages={movementsPg.totalPages} total={movementsPg.total} pageSize={movementsPg.pageSize} onPageChange={movementsPg.setPage} />}
-          </GlassCard>
-        </TabsContent>
-      </Tabs>
-    </div>
+        {/* ── RIWAYAT ── */}
+        {activeTab === 'movements' && (<div className="space-y-2">
+          {movements.length > 0 && <p className="text-xs text-muted-foreground">Menampilkan 100 pergerakan terakhir.</p>}
+          <TabelData kolom={kolomRiwayat} baris={movementsPg.paged} testId="fg-movements-table"
+            kosong={<EmptyState title="Belum ada pergerakan stok produk jadi" />} />
+        </div>)}
+
+        {/* ── FORM KELUARKAN STOK (popup) ── */}
+        <FormPopup open={showIssueForm} onClose={() => { setShowIssueForm(false); setForm(EMPTY_FORM); }} ukuran="panjang"
+          judul="Keluarkan stok produk jadi" testId="fg-issue-form"
+          keterangan="Produksi internal: WO selesai menambah stok, pengeluaran dicatat manual di sini. Customer PO: stok berkurang otomatis saat surat jalan dikirim."
+          onSimpan={handleSubmitIssue} menyimpan={submitting} labelSimpan="Keluarkan stok"
+          bisaSimpan={!!form.material_id && !!form.qty && parseFloat(form.qty) <= availableStock}>
+          <Isian label="Produk jadi" wajib>
+            <SmartNativeSelect value={form.material_id} className="w-full" data-testid="fg-issue-material"
+              onChange={e => setForm(f => ({ ...f, material_id: e.target.value, location_id: '', qty: '' }))}>
+              <option value="">Pilih produk jadi</option>
+              {items.map(m => (
+                <option key={m.id} value={m.id} disabled={(stocks[m.id] || 0) <= 0}>
+                  {`${m.code} — ${m.name} (${stocks[m.id] || 0} pcs tersedia)`}
+                </option>
+              ))}
+            </SmartNativeSelect>
+          </Isian>
+
+          {/* Lokasi asal — wajib dipilih (No.18a) */}
+          <Isian label="Lokasi asal" wajib
+            galat={form.material_id && locOptions.length === 0 ? 'Produk ini tidak punya stok di lokasi mana pun.' : undefined}
+            petunjuk={form.location_id ? `Stok di lokasi ini: ${availableStock} pcs` : undefined}>
+            <SmartNativeSelect value={form.location_id} className="w-full" disabled={!form.material_id} required
+              onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} data-testid="fg-issue-location">
+              <option value="">{form.material_id ? 'Pilih lokasi' : 'Pilih produk jadi dulu'}</option>
+              {locOptions.map(r => (
+                <option key={r.location_id} value={r.location_id}>
+                  {`${(r.location_code ? `${r.location_code} · ` : '') + (r.location_name || r.location_id)} — ${r.qty} pcs`}
+                </option>
+              ))}
+            </SmartNativeSelect>
+          </Isian>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Qty dikeluarkan (pcs)" wajib htmlFor="fg-issue-qty-in"
+              galat={form.qty && parseFloat(form.qty) > availableStock ? 'Melebihi stok tersedia' : undefined}>
+              <Input id="fg-issue-qty-in" type="number" min="1" max={availableStock} value={form.qty}
+                onChange={e => setForm(f => ({ ...f, qty: e.target.value }))}
+                placeholder={`maks ${availableStock}`} data-testid="fg-issue-qty" />
+            </Isian>
+            <Isian label="Alasan pengeluaran" wajib>
+              <SmartNativeSelect value={form.reason} searchable={false} className="w-full" data-testid="fg-issue-reason"
+                onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}>
+                {REASON_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+            <Isian label="Tujuan / customer" petunjuk="Opsional">
+              <SmartNativeSelect value={form.customer_id || ''} className="w-full" data-testid="fg-issue-customer"
+                onChange={e => setForm(f => ({ ...f, customer_id: e.target.value || undefined }))}>
+                <option value="">Tidak ada</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{`${c.code} — ${c.name}`}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+            <Isian label="No. referensi / SJ manual" petunjuk="Opsional" htmlFor="fg-issue-ref">
+              <Input id="fg-issue-ref" value={form.reference_number}
+                onChange={e => setForm(f => ({ ...f, reference_number: e.target.value }))}
+                placeholder="Contoh: SJ-2026-001" data-testid="fg-issue-reference" />
+            </Isian>
+          </div>
+          <Isian label="Catatan" htmlFor="fg-issue-notes-in">
+            <Input id="fg-issue-notes-in" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Catatan tambahan" data-testid="fg-issue-notes" />
+          </Isian>
+          {/* SESI #27 — nomor dokumen (otomatis/manual sesuai setelan owner) */}
+          <DocNumberField policy={numPolicy} value={issueNo} onChange={setIssueNo}
+            testId="fg-issue-docnum" label="Nomor pengeluaran barang jadi" />
+        </FormPopup>
+      </PageLayout>
   );
 }

@@ -1,26 +1,21 @@
 /**
- * Asset Management Portal — CV. Dewi Aditya ERP
- * Manajemen aset perusahaan + Procurement Request (Request Pengadaan)
- * Terintegrasi dengan Finance (journal entries otomatis)
+ * Manajemen Aset — CV. Dewi Aditya ERP
+ * Aset perusahaan, pemakaian, pemeliharaan, pengadaan, pelepasan, dan peminjaman (satu pintu, 8 tab).
  *
- * Phase 4 refactor (2026-05-23):
- * - All 7 tabs extracted to ./asset/tabs/*
- * - This file is now a slim orchestrator (state + data loaders + composition).
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout + tab hub bersama (HubTabs). Kepala halaman tipis;
+ * tombol tiap tab pindah ke baris tab (dulu 6 tombol menumpuk di kepala, di HP memakan 200 px);
+ * nama tab berbahasa Indonesia tanpa emoji; detail = popup, form = popup standar.
+ * Fitur, panggilan API, dan aturan tidak berubah — hanya tampilan.
+ *
+ * File ini = pengatur (state + pemuat data + susunan). Isi tiap tab di ./asset/tabs/*.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
 import AssetScannerModal from './AssetScannerModal';
-import {
-  Package, Plus, RefreshCw,
-  ShoppingCart, TrendingDown,
-  Upload, Scan,
-  Gauge, ShieldAlert, RotateCcw,
-} from 'lucide-react';
 
-// Phase 1-3 refactor — extracted helpers/dialogs/drawers/sections
 import { apicall } from './asset/utils';
 import { thisMonthWIB } from '@/lib/waktu';
 import { EditCategoryDialog } from './asset/dialogs/EditCategoryDialog';
@@ -33,7 +28,6 @@ import { DisposalApprovalInbox } from './asset/sections/DisposalApprovalInbox';
 import { AssetDetailDrawer } from './asset/drawers/AssetDetailDrawer';
 import { PRDetailDrawer } from './asset/drawers/PRDetailDrawer';
 
-// Phase 4 refactor — extracted tabs
 import { DashboardTab } from './asset/tabs/DashboardTab';
 import { AssetsTab } from './asset/tabs/AssetsTab';
 import { CategoriesTab } from './asset/tabs/CategoriesTab';
@@ -43,16 +37,21 @@ import { PredictiveMaintenanceTab } from './asset/tabs/PredictiveMaintenanceTab'
 // ACC-3 — Peminjaman Alat & Aset (relokasi dari Portal Aksesoris)
 import { LoansTab } from './asset/tabs/LoansTab';
 
-// ── Main Portal Component ───────────────────────────────────────────────────
+const PR_PER_HALAMAN = 50;
+
+const namaBulan = (ym) => new Date(`${ym}-01T00:00:00+07:00`)
+  .toLocaleDateString('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
+
 export default function AssetManagementPortal({ token, user, defaultTab }) {
-  // Fix menu-duplikat: 3 menu sidebar (dashboard/daftar/pengadaan) kini membuka tab berbeda
+  // Fix menu-duplikat: menu lama (dashboard/daftar/pengadaan/peminjaman) membuka tab berbeda
   const [mainTab, setMainTab] = useState(defaultTab || 'dashboard');
   const [dashData, setDashData] = useState(null);
   const [expiringAlerts, setExpiringAlerts] = useState(null);
   const [assets, setAssets] = useState([]);
-  const [assetPagination, setAssetPagination] = useState({ total: 0, page: 1, total_pages: 1 });
+  const [assetPagination, setAssetPagination] = useState({ total: 0, page: 1, total_pages: 1, page_size: 20 });
   const [categories, setCategories] = useState([]);
   const [prData, setPrData] = useState([]);
+  const [prPagination, setPrPagination] = useState({ total: 0, page: 1, total_pages: 1, page_size: PR_PER_HALAMAN });
   const [prInbox, setPrInbox] = useState([]);
   const [prTab, setPrTab] = useState('all');
   const [inboxScope, setInboxScope] = useState('relevant'); // relevant | all | mine
@@ -72,14 +71,20 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
   const [assetSearch, setAssetSearch] = useState('');
   const [assetStatus, setAssetStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dashLoading, setDashLoading] = useState(false);
+  const [catLoading, setCatLoading] = useState(false);
+  const [prLoading, setPrLoading] = useState(false);
   const [prSearch, setPrSearch] = useState('');
 
   // Load dashboard
   const loadDashboard = useCallback(async () => {
+    setDashLoading(true);
     try {
       const d = await apicall('GET', '/api/assets/dashboard', token);
       setDashData(d);
-    } catch {}
+    } catch {
+      setDashData((p) => p || { gagal: true });
+    } finally { setDashLoading(false); }
   }, [token]);
 
   // Load expiring alerts (warranty + insurance)
@@ -106,20 +111,30 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
     finally { setLoading(false); }
   }, [token, assetSearch, assetStatus]);
 
+  /** Semua aset hasil saringan (untuk unduhan) — halaman demi halaman, 100 per halaman (batas API). */
+  const fetchAssetPage = useCallback((page) => {
+    const params = new URLSearchParams({ page, limit: 100 });
+    if (assetSearch) params.set('search', assetSearch);
+    if (assetStatus) params.set('status', assetStatus);
+    return apicall('GET', `/api/assets?${params}`, token);
+  }, [token, assetSearch, assetStatus]);
+
   // Load categories
   const loadCategories = useCallback(async () => {
+    setCatLoading(true);
     try {
       const d = await apicall('GET', '/api/assets/categories', token);
       if (Array.isArray(d)) setCategories(d);
     } catch (e) {
       console.warn('loadCategories error:', e.message);
-    }
+    } finally { setCatLoading(false); }
   }, [token]);
 
   // Load PRs
-  const loadPRs = useCallback(async () => {
+  const loadPRs = useCallback(async (page = 1) => {
+    setPrLoading(true);
     try {
-      const params = new URLSearchParams({ limit: 50 });
+      const params = new URLSearchParams({ limit: PR_PER_HALAMAN, page });
       if (prSearch) params.set('search', prSearch);
       const inboxParams = new URLSearchParams({ scope: inboxScope });
       if (inboxDept) inboxParams.set('department', inboxDept);
@@ -128,11 +143,18 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
         apicall('GET', `/api/procurement/inbox?${inboxParams}`, token),
       ]);
       if (all.items) setPrData(all.items);
+      if (all.pagination) setPrPagination(all.pagination);
       if (Array.isArray(inbox)) setPrInbox(inbox);
     } catch (e) {
       console.warn('loadPRs error:', e.message);
-    }
+    } finally { setPrLoading(false); }
   }, [token, prSearch, inboxScope, inboxDept]);
+
+  const fetchPRPage = useCallback((page) => {
+    const params = new URLSearchParams({ limit: 100, page });
+    if (prSearch) params.set('search', prSearch);
+    return apicall('GET', `/api/procurement/requests?${params}`, token);
+  }, [token, prSearch]);
 
   useEffect(() => { loadDashboard(); loadCategories(); loadExpiringAlerts(); }, [loadDashboard, loadCategories, loadExpiringAlerts]);
   useEffect(() => { if (mainTab === 'assets') loadAssets(); }, [mainTab, loadAssets]);
@@ -147,141 +169,79 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
       .filter(Boolean)
   )).sort();
 
+  // K18: endpoint menolak (410) dengan pesan arahan ke Keuangan › Aset Tetap — pesan server ditampilkan apa adanya.
+  const depresiasiMassal = async () => {
+    const period = thisMonthWIB();
+    const ok = await confirmDialog({
+      title: 'Posting penyusutan massal?',
+      body: `Penyusutan semua aset untuk ${namaBulan(period)} akan diposting.`,
+      confirmLabel: 'Posting',
+    });
+    if (!ok) return;
+    try {
+      const d = await apicall('POST', `/api/assets/batch-depreciate/${period}`, token, {});
+      toast.success(`Penyusutan massal: ${d.total_posted} aset diposting, ${d.total_skipped} dilewati`);
+      loadDashboard();
+    } catch (e) { toast.error(e.message || 'Gagal posting penyusutan massal'); }
+  };
+
+  const aksiAset = {
+    onTambahAset: () => setShowCreateAsset(true),
+    onScan: () => setShowAssetScanner(true),
+    onImpor: () => setShowBulkImport(true),
+    onDepresiasiMassal: depresiasiMassal,
+  };
+  const bukaAset = (a) => setSelectedAsset(a);
+
+  const tabs = [
+    {
+      key: 'dashboard', label: 'Dashboard', Component: DashboardTab,
+      props: {
+        dashData, expiringAlerts, memuat: dashLoading, onAssetClick: bukaAset,
+        onMuatUlang: () => { loadDashboard(); loadExpiringAlerts(); },
+        ...aksiAset, onBuatPR: () => setShowCreatePR(true),
+      },
+    },
+    {
+      key: 'assets', label: 'Aset', Component: AssetsTab,
+      props: {
+        assetSearch, setAssetSearch, assetStatus, setAssetStatus,
+        assets, loading, assetPagination, loadAssets, fetchAssetPage,
+        onAssetClick: bukaAset, ...aksiAset,
+      },
+    },
+    {
+      key: 'categories', label: 'Kategori', Component: CategoriesTab,
+      props: {
+        categories, loading: catLoading, onMuatUlang: loadCategories,
+        onEditCategory: (c) => { setSelectedCategory(c); setShowEditCategory(true); },
+      },
+    },
+    {
+      key: 'procurement', label: prInbox.length > 0 ? `Pengadaan (${prInbox.length})` : 'Pengadaan',
+      Component: ProcurementTab,
+      props: {
+        prTab, setPrTab, prData, prInbox, prPagination, loading: prLoading,
+        prSearch, setPrSearch, loadPRs, fetchPRPage,
+        onSelectPR: (pr) => setSelectedPR(pr), onBuatPR: () => setShowCreatePR(true),
+        isAdminLike, inboxScope, setInboxScope, inboxDept, setInboxDept, uniqueDepartments,
+      },
+    },
+    {
+      key: 'disposal-requests', label: 'Pelepasan', Component: DisposalApprovalInbox,
+      props: { token, userRole: user?.role, onRefresh: () => { loadAssets(); loadDashboard(); } },
+    },
+    { key: 'utilization', label: 'Pemakaian', Component: UtilizationReportTab, props: { token, categories } },
+    { key: 'pm-alerts', label: 'Peringatan pemeliharaan', Component: PredictiveMaintenanceTab, props: { token, categories } },
+    { key: 'loans', label: 'Peminjaman', Component: LoansTab, props: { token } },
+  ];
+
   return (
-    <div className="p-4 space-y-4" data-testid="asset-mgmt-portal">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Package size={20} className="text-primary" />
-            Manajemen Aset
-          </h1>
-          <p className="text-sm text-muted-foreground">Aset perusahaan, depresiasi, dan pengadaan</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => { loadDashboard(); loadAssets(); loadPRs(); loadExpiringAlerts(); }}>
-            <RefreshCw size={14} className="mr-1" /> Refresh
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowAssetScanner(true)} data-testid="scan-asset-btn">
-            <Scan size={14} className="mr-1" /> Scan Asset
-          </Button>
-          <Button size="sm" onClick={() => setShowCreateAsset(true)} data-testid="add-asset-btn">
-            <Plus size={14} className="mr-1" /> Aset Baru
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowBulkImport(true)} data-testid="bulk-import-btn">
-            <Upload size={14} className="mr-1" /> Import CSV/Excel
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowCreatePR(true)} data-testid="add-pr-btn">
-            <ShoppingCart size={14} className="mr-1" /> Request Pengadaan
-          </Button>
-          <Button size="sm" variant="outline" onClick={async () => {
-            const period = thisMonthWIB();
-            if (!window.confirm(`Posting depresiasi massal untuk periode ${period}?`)) return;
-            try {
-              const d = await apicall('POST', `/api/assets/batch-depreciate/${period}`, token, {});
-              toast.success(`Depresiasi massal: ${d.total_posted} aset diposting, ${d.total_skipped} dilewati`);
-              loadDashboard();
-            } catch { toast.error('Gagal batch depresiasi'); }
-          }} data-testid="batch-depr-btn">
-            <TrendingDown size={14} className="mr-1" /> Depresiasi Massal
-          </Button>
-        </div>
-      </div>
+    <PageLayout testId="asset-mgmt-portal" title="Manajemen aset"
+      subtitle="Aset perusahaan, pemakaian, pemeliharaan, pengadaan, pelepasan, dan peminjaman.">
+      <HubTabs hubId="asset-mgmt" tabs={tabs} value={mainTab} onValueChange={setMainTab} />
 
-      <Tabs value={mainTab} onValueChange={setMainTab}>
-        <TabsList>
-          <TabsTrigger value="dashboard" data-testid="tab-dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="assets" data-testid="tab-assets">Aset</TabsTrigger>
-          <TabsTrigger value="categories" data-testid="tab-categories">Kategori</TabsTrigger>
-          <TabsTrigger value="procurement" data-testid="tab-procurement">
-            Pengadaan
-            {prInbox.length > 0 && (
-              <Badge className="ml-1.5 text-[10px] h-4 px-1.5 bg-amber-500 text-foreground">{prInbox.length}</Badge>
-            )}
-          </TabsTrigger>
-          <TabsTrigger value="disposal-requests" data-testid="tab-disposal">
-            ⚠️ Disposal
-          </TabsTrigger>
-          <TabsTrigger value="utilization" data-testid="tab-utilization">
-            <Gauge size={13} className="mr-1" /> Utilization
-          </TabsTrigger>
-          <TabsTrigger value="pm-alerts" data-testid="tab-pm-alerts">
-            <ShieldAlert size={13} className="mr-1" /> Maintenance Alerts
-          </TabsTrigger>
-          <TabsTrigger value="loans" data-testid="tab-loans">
-            <RotateCcw size={13} className="mr-1" /> Peminjaman
-          </TabsTrigger>
-        </TabsList>
-
-        {/* DASHBOARD TAB */}
-        <TabsContent value="dashboard" className="mt-4">
-          <DashboardTab
-            dashData={dashData}
-            expiringAlerts={expiringAlerts}
-            onAssetClick={(a) => setSelectedAsset(a)}
-          />
-        </TabsContent>
-
-        {/* ASSETS TAB */}
-        <TabsContent value="assets" className="mt-4">
-          <AssetsTab
-            assetSearch={assetSearch} setAssetSearch={setAssetSearch}
-            assetStatus={assetStatus} setAssetStatus={setAssetStatus}
-            assets={assets} loading={loading} assetPagination={assetPagination}
-            loadAssets={loadAssets}
-            onAssetClick={(a) => setSelectedAsset(a)}
-          />
-        </TabsContent>
-
-        {/* CATEGORIES TAB */}
-        <TabsContent value="categories" className="mt-4">
-          <CategoriesTab
-            categories={categories}
-            onEditCategory={(c) => { setSelectedCategory(c); setShowEditCategory(true); }}
-          />
-        </TabsContent>
-
-        {/* PROCUREMENT TAB */}
-        <TabsContent value="procurement" className="mt-4">
-          <ProcurementTab
-            prTab={prTab} setPrTab={setPrTab}
-            prData={prData} prInbox={prInbox}
-            prSearch={prSearch} setPrSearch={setPrSearch}
-            loadPRs={loadPRs}
-            onSelectPR={(pr) => setSelectedPR(pr)}
-            isAdminLike={isAdminLike}
-            inboxScope={inboxScope} setInboxScope={setInboxScope}
-            inboxDept={inboxDept} setInboxDept={setInboxDept}
-            uniqueDepartments={uniqueDepartments}
-          />
-        </TabsContent>
-
-        {/* ── DISPOSAL REQUESTS TAB ─────────────────────────────────────── */}
-        <TabsContent value="disposal-requests" className="mt-4" data-testid="disposal-requests-tab">
-          <DisposalApprovalInbox
-            token={token}
-            userRole={user?.role}
-            onRefresh={() => { loadAssets(); loadDashboard(); }}
-          />
-        </TabsContent>
-
-        {/* ── UTILIZATION REPORT TAB (Session 28) ───────────────────────── */}
-        <TabsContent value="utilization" className="mt-4">
-          <UtilizationReportTab token={token} categories={categories} />
-        </TabsContent>
-
-        {/* ── PREDICTIVE MAINTENANCE ALERTS TAB (Session 28) ────────────── */}
-        <TabsContent value="pm-alerts" className="mt-4">
-          <PredictiveMaintenanceTab token={token} categories={categories} />
-        </TabsContent>
-
-        {/* ── PEMINJAMAN ALAT & ASET TAB (ACC-3) ────────────────────────── */}
-        <TabsContent value="loans" className="mt-4">
-          <LoansTab token={token} />
-        </TabsContent>
-      </Tabs>
-
-      {/* Modals & Drawers */}
+      {/* Popup form & detail */}
       <CreateAssetDialog
         open={showCreateAsset}
         onClose={() => setShowCreateAsset(false)}
@@ -323,7 +283,7 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
         token={token}
         open={!!selectedPR}
         onClose={() => setSelectedPR(null)}
-        onRefresh={loadPRs}
+        onRefresh={() => loadPRs(prPagination.page || 1)}
         currentUser={user}
       />
       <EditCategoryDialog
@@ -338,8 +298,8 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
           token={token}
           onScanned={(asset, details) => {
             setShowAssetScanner(false);
-            toast.success(`Asset ${asset.asset_number} berhasil di-scan!`, {
-              description: `Lokasi: ${details.location || asset.location || '-'}`,
+            toast.success(`Aset ${asset.asset_number} berhasil dipindai`, {
+              description: `Lokasi: ${details.location || asset.location || '—'}`,
             });
             loadAssets();
             loadDashboard();
@@ -354,6 +314,6 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
         asset={assetToTransfer}
         onTransferred={() => { loadAssets(); loadDashboard(); }}
       />
-    </div>
+    </PageLayout>
   );
 }

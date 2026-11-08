@@ -26,8 +26,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
-import FormDialog, { Field } from './FormDialog';
+import { Field } from './FormDialog';
+import FormPopup from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
 import { apiGet, apiPost } from '../../../lib/api';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
 import { poStatusLabel, poStatusTone } from '@/lib/poStatus';
@@ -109,15 +113,15 @@ export default function POClosureModule({ portalId }) {
   };
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="po-closure-module"
       title="Tutup PO"
       subtitle="Pemenuhan PO per ukuran. PO yang ditutup terkunci dari kiriman, penerimaan, dan perubahan."
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari no. PO / klien…"
-            data-testid="po-closure-search" className="pl-9 h-9" />
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari no. PO atau klien"
+            data-testid="po-closure-search" className="pl-8" />
         </div>
         <div data-testid="po-closure-tabs">
           <FilterChips value={tab} onChange={setTab} testId="po-closure-tab" ariaLabel="Penyaring status PO" hideWhenEmpty={false}
@@ -126,15 +130,27 @@ export default function POClosureModule({ portalId }) {
               { key: 'all', label: 'Semua', count: counts.all }]} />
         </div>
       </>}
-      tools={<Button variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="po-closure-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
-      summary={<Notice tone="info" icon={Info} title="Aturan penutupan">
+      tools={<>
+        <TombolUnduh namaBerkas="tutup-po" namaLembar="Tutup PO" baris={filtered} testId="po-closure-unduh" kolom={[
+          { label: 'No. PO', nilai: (x) => x.po.po_number }, { label: 'Klien', nilai: (x) => x.po.customer_name || '' },
+          { label: 'Dipesan', nilai: (x) => (x.fulfillment ? Number(x.fulfillment.total_ordered) || 0 : '') },
+          { label: 'Lolos QC', nilai: (x) => (x.fulfillment?.qc ? Number(x.fulfillment.qc.accepted) || 0 : '') },
+          { label: 'Ditolak', nilai: (x) => (x.fulfillment?.qc ? Number(x.fulfillment.qc.reject) || 0 : '') },
+          { label: 'Dikirim', nilai: (x) => (x.fulfillment ? Number(x.fulfillment.total_received) || 0 : '') },
+          { label: 'Kurang', nilai: (x) => Number(x.fulfillment?.qty_short) || 0 },
+          { label: 'Status', nilai: (x) => poStatusLabel(x.po.status) },
+          { label: 'Alasan tutup', nilai: (x) => REASON_LABELS[x.po.closed_reason] || '' },
+        ]} />
+        <Button type="button" variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="po-closure-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
+      summary={<p className="text-sm text-muted-foreground">
         Kekurangan dihitung per ukuran. PO selesai otomatis bila setiap ukuran terpenuhi dan qty diterima klien sudah
         dicatat. Ada ukuran yang kurang ⇒ tutup kurang dengan alasan; jadwal piutang klien menyusut ke qty yang dikirim.
-      </Notice>}
+      </p>}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Memuat…</div>
         ) : filtered.length === 0 ? (
@@ -164,29 +180,29 @@ export default function POClosureModule({ portalId }) {
                       <TableCell className="text-right tabular-nums">{f?.qc ? fmtNum(f.qc.accepted) : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {f?.qc && Number(f.qc.reject || 0) > 0
-                          ? <span className="text-[hsl(var(--destructive))]">{fmtNum(f.qc.reject)} ({String(f.qc.reject_rate_pct).replace('.', ',')}%)</span>
+                          ? <span className="text-[hsl(var(--danger-text))]">{fmtNum(f.qc.reject)} ({String(f.qc.reject_rate_pct).replace('.', ',')}%)</span>
                           : fmtNum(0)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{f ? fmtNum(f.total_received) : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {s > 0 ? <span className="text-[hsl(var(--warning))] font-medium">{fmtNum(s)}</span> : fmtNum(0)}
-                        {s > 0 && <div className="text-[11px] text-muted-foreground">{shortText(f.lines)}</div>}
+                        {s > 0 ? <span className="text-[hsl(var(--warning-text))] font-medium">{fmtNum(s)}</span> : fmtNum(0)}
+                        {s > 0 && <div className="text-xs text-muted-foreground">{shortText(f.lines)}</div>}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={po.status} label={poStatusLabel(po.status)} tone={poStatusTone(po.status)} />
                         {po.closed_reason && REASON_LABELS[po.closed_reason] && (
-                          <div className="text-[11px] text-muted-foreground">{REASON_LABELS[po.closed_reason]}</div>
+                          <div className="text-xs text-muted-foreground">{REASON_LABELS[po.closed_reason]}</div>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
                         {isTerminal ? (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Lock className="w-3.5 h-3.5" />Terkunci</span>
                         ) : f?.can_close_short ? (
-                          <Button variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-short-btn-${po.id}`}>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-short-btn-${po.id}`}>
                             <Scissors className="w-3.5 h-3.5" />Tutup kurang
                           </Button>
                         ) : f?.can_close && s === 0 ? (
-                          <Button variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-btn-${po.id}`}>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openClose({ po, fulfillment: f })} data-testid={`po-close-btn-${po.id}`}>
                             <Lock className="w-3.5 h-3.5" />Tutup PO
                           </Button>
                         ) : <span className="text-xs text-muted-foreground">—</span>}
@@ -197,22 +213,23 @@ export default function POClosureModule({ portalId }) {
                         {(f?.lines || []).length === 0 ? (
                           <p className="text-sm text-muted-foreground">Rincian per ukuran tidak tersedia.</p>
                         ) : (
-                          <div className="grid gap-1 text-sm">
-                            <div className="grid grid-cols-6 gap-2 text-[11px] uppercase text-muted-foreground">
-                              <span>Ukuran / barang</span><span className="text-right">Dipesan</span><span className="text-right">Lolos QC</span>
-                              <span className="text-right">Terpenuhi</span><span className="text-right">Kurang</span><span className="text-right">Lebih</span>
-                            </div>
-                            {f.lines.map((ln) => (
-                              <div key={ln.po_item_id} className="grid grid-cols-6 gap-2 tabular-nums">
-                                <span>{ln.size || '—'} <span className="text-muted-foreground">{ln.sku}</span></span>
-                                <span className="text-right">{fmtNum(ln.ordered)}</span>
-                                <span className="text-right">{fmtNum(ln.accepted)}</span>
-                                <span className="text-right">{fmtNum(ln.fulfilled)}</span>
-                                <span className={`text-right ${ln.short > 0 ? 'text-[hsl(var(--warning))] font-medium' : ''}`}>{fmtNum(ln.short)}</span>
-                                <span className="text-right">{fmtNum(ln.over)}</span>
-                              </div>
-                            ))}
-                          </div>
+                          <Table>
+                            <TableHeader><TableRow>
+                              <TableHead>Ukuran / barang</TableHead><TableHead className="text-right">Dipesan</TableHead>
+                              <TableHead className="text-right">Lolos QC</TableHead><TableHead className="text-right">Terpenuhi</TableHead>
+                              <TableHead className="text-right">Kurang</TableHead><TableHead className="text-right">Lebih</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>{f.lines.map((ln) => (
+                              <TableRow key={ln.po_item_id}>
+                                <TableCell>{ln.size || '—'} <span className="text-muted-foreground">{ln.sku}</span></TableCell>
+                                <TableCell className="text-right tabular-nums">{fmtNum(ln.ordered)}</TableCell>
+                                <TableCell className="text-right tabular-nums">{fmtNum(ln.accepted)}</TableCell>
+                                <TableCell className="text-right tabular-nums">{fmtNum(ln.fulfilled)}</TableCell>
+                                <TableCell className={`text-right tabular-nums ${ln.short > 0 ? 'text-[hsl(var(--warning-text))] font-medium' : ''}`}>{fmtNum(ln.short)}</TableCell>
+                                <TableCell className="text-right tabular-nums">{fmtNum(ln.over)}</TableCell>
+                              </TableRow>
+                            ))}</TableBody>
+                          </Table>
                         )}
                       </RowDetail>
                     )}
@@ -225,14 +242,9 @@ export default function POClosureModule({ portalId }) {
       </GlassCard>
 
       {closing && (
-        <FormDialog onClose={() => setClosing(null)} testId="po-close-short-modal" title={short > 0 ? 'Tutup kurang' : 'Tutup PO'}
-          description={`${closing.po.po_number} · ${closing.po.customer_name || ''} · dipesan ${fmtNum(closing.fulfillment.total_ordered)} · terpenuhi ${fmtNum(closing.fulfillment.total_fulfilled)}`}
-          footer={<>
-            <Button variant="outline" onClick={() => setClosing(null)}>Batal</Button>
-            <Button onClick={submitClose} disabled={submitting || (short > 0 && !reason)} data-testid="po-close-short-submit">
-              {submitting && <Loader2 className="w-4 h-4 animate-spin" />}{short > 0 ? 'Tutup kurang' : 'Tutup PO'}
-            </Button>
-          </>}>
+        <FormPopup open onClose={() => setClosing(null)} ukuran="pendek" testId="po-close-short-modal" judul={short > 0 ? 'Tutup kurang' : 'Tutup PO'}
+          keterangan={`${closing.po.po_number} · ${closing.po.customer_name || ''} · dipesan ${fmtNum(closing.fulfillment.total_ordered)} · terpenuhi ${fmtNum(closing.fulfillment.total_fulfilled)}`}
+          onSimpan={submitClose} menyimpan={submitting} bisaSimpan={!(short > 0 && !reason)} labelSimpan={short > 0 ? 'Tutup kurang' : 'Tutup PO'}>
           {short > 0 ? (
             <Notice tone="warning" icon={AlertTriangle}>
               Kurang {fmtNum(short)} pcs: {shortText(closing.fulfillment.lines)}. PO menjadi <b>Ditutup kurang</b> dan terkunci;
@@ -255,8 +267,8 @@ export default function POClosureModule({ portalId }) {
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} data-testid="po-close-short-notes"
               placeholder="mis. klien membatalkan sisa pesanan karena musim berakhir" />
           </Field>
-        </FormDialog>
+        </FormPopup>
       )}
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }

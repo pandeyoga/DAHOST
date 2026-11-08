@@ -15,7 +15,7 @@ const SEGMENTS = [
   { key: 'qty_dispatched', label: 'Terkirim', cls: 'bg-[hsl(var(--primary))]', dot: 'bg-[hsl(var(--primary))]' },
   { key: 'qty_good_ready', label: 'Barang jadi (siap)', cls: 'bg-[hsl(var(--success))]', dot: 'bg-[hsl(var(--success))]' },
   { key: 'qty_rework_open', label: 'Sedang permak', cls: 'bg-[hsl(var(--warning))]', dot: 'bg-[hsl(var(--warning))]' },
-  { key: 'qty_scrap', label: 'Dibuang', cls: 'bg-zinc-500', dot: 'bg-zinc-500' },
+  { key: 'qty_scrap', label: 'Dibuang', cls: 'bg-muted-foreground', dot: 'bg-muted-foreground' },
 ];
 
 export default function ProgressBreakdownBar({ breakdown, compact = false }) {

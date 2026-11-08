@@ -61,11 +61,11 @@ export const VersionRail = ({
       <GlassPanel className="p-0 h-full flex flex-col" data-testid="version-rail">
         <div className="p-4 border-b border-[var(--glass-border)]">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-foreground">Versi BOM</h3>
+            <p className="text-sm font-semibold text-foreground">Versi BOM</p>
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button
+                  <Button type="button"
                     size="sm"
                     variant="outline"
                     className="h-8 px-2"
@@ -119,7 +119,7 @@ export const VersionRail = ({
                           {isActive && (
                             <Badge
                               variant="default"
-                              className="text-[10px] px-1.5 py-0 h-5"
+                              className="text-xs px-1.5 py-0 h-5"
                               data-testid={`version-${version.id}-active-badge`}
                             >
                               <CheckCircle2 className="w-3 h-3 mr-1" />
@@ -146,7 +146,7 @@ export const VersionRail = ({
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button
+                              <Button type="button"
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 w-7 p-0"

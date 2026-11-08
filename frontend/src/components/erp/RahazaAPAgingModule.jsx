@@ -11,10 +11,11 @@
  * (abu = belum jatuh tempo, kuning = perhatian, merah = masalah).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { RefreshCw, Download, FileBarChart, AlertTriangle } from 'lucide-react';
+import { RefreshCw, FileBarChart, AlertTriangle } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { StatTile, EmptyState, Notice } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
@@ -72,17 +73,6 @@ export default function RahazaAPAgingModule({ token }) {
   const { page, setPage, totalPages, paged } = useClientPagination(list, 25);
   const total = data?.total || 0;
 
-  const exportCSV = () => {
-    const esc = (c) => { const v = String(c ?? ''); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
-    const rows = details.map(r => [KIND[r.kind] || r.kind, r.number, r.vendor_name, r.issue_date, r.due_date,
-      lateText(r.days_overdue), r.total, r.paid, r.balance]);
-    const csv = [['Jenis', 'No. tagihan', 'Pemasok', 'Tanggal', 'Jatuh tempo', 'Keterlambatan', 'Total', 'Dibayar', 'Sisa'], ...rows]
-      .map(r => r.map(esc).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a'); link.href = url; link.download = `umur-hutang-${todayWIB()}.csv`; link.click();
-    URL.revokeObjectURL(url);
-  };
-
   const filters = (
     <>
       <FilterChips value={view} onChange={(k) => { setView(k); setPage(1); }} testId="apa-view" ariaLabel="Tampilan" hideWhenEmpty={false}
@@ -104,14 +94,36 @@ export default function RahazaAPAgingModule({ token }) {
       filters={filters}
       tools={<>
         <Button size="icon" variant="outline" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="apa-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportCSV} disabled={!details.length} data-testid="apa-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+        {view === 'vendors' ? (
+          <TombolUnduh namaBerkas={`umur-hutang-per-pemasok-${todayWIB()}`} namaLembar="Per pemasok" baris={byVendor} testId="apa-export"
+            kolom={[
+              { label: 'Pemasok', nilai: (v) => v.vendor_name },
+              { label: 'Tagihan', nilai: (v) => v.count },
+              { label: 'Paling lama', nilai: (v) => lateText(v.oldest) },
+              { label: 'Lewat jatuh tempo', nilai: (v) => Number(v.overdue) || 0 },
+              { label: 'Sisa', nilai: (v) => Number(v.balance) || 0 },
+            ]} />
+        ) : (
+          <TombolUnduh namaBerkas={`umur-hutang-${todayWIB()}`} namaLembar="Umur hutang" baris={details} testId="apa-export"
+            kolom={[
+              { label: 'Jenis', nilai: (r) => KIND[r.kind] || r.kind },
+              { label: 'No. tagihan', nilai: (r) => r.number },
+              { label: 'Pemasok', nilai: (r) => r.vendor_name },
+              { label: 'Tanggal', nilai: (r) => formatDateID(r.issue_date) },
+              { label: 'Jatuh tempo', nilai: (r) => formatDateID(r.due_date) },
+              { label: 'Keterlambatan', nilai: (r) => lateText(r.days_overdue) },
+              { label: 'Total', nilai: (r) => Number(r.total) || 0 },
+              { label: 'Dibayar', nilai: (r) => Number(r.paid) || 0 },
+              { label: 'Sisa', nilai: (r) => Number(r.balance) || 0 },
+            ]} />
+        )}
       </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertTriangle} testId="apa-error">{error}</Notice>}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <StatTile label="Hutang tercatat · hari ini" value={formatRupiah(total)} testId="apa-total" />
-          <StatTile label="Lewat jatuh tempo" value={formatRupiah(data?.overdue || 0)} accent={(data?.overdue || 0) > 0 ? 'danger' : 'default'} testId="apa-overdue" />
-          <StatTile label="Jumlah tagihan terbuka" value={formatNumber((data?.details || []).length)} testId="apa-count" />
+          <StatTile label="Hutang tercatat · hari ini" value={formatRupiah(total)} testId="apa-total" sub="Pemasok + CMT terjurnal · sama dengan Beranda" />
+          <StatTile label="Lewat jatuh tempo" value={formatRupiah(data?.overdue || 0)} accent={(data?.overdue || 0) > 0 ? 'danger' : 'default'} testId="apa-overdue" sub="Sisa tagihan yang sudah lewat jatuh tempo" />
+          <StatTile label="Jumlah tagihan terbuka" value={formatNumber((data?.details || []).length)} testId="apa-count" sub="Semua jenis (tidak ikut pilihan jenis)" />
         </div>
         {(data?.unposted || []).length > 0 && (
           <Notice tone="warning" icon={AlertTriangle} testId="apa-unposted">
@@ -119,7 +131,7 @@ export default function RahazaAPAgingModule({ token }) {
           </Notice>
         )}
         {total > 0 && (
-          <GlassCard className="p-4 space-y-2" data-testid="apa-bar">
+          <GlassCard className="p-4 space-y-2 hidden sm:block" data-testid="apa-bar">
             <div className="flex h-3.5 rounded overflow-hidden bg-foreground/10" role="img"
                  aria-label={BUCKETS.map(b => `${b.label} ${formatRupiah(data.buckets[b.key] || 0)}`).join(', ')}>
               {BUCKETS.map(b => (data.buckets[b.key] || 0) > 0 && (
@@ -147,19 +159,19 @@ export default function RahazaAPAgingModule({ token }) {
         ) : view === 'vendors' ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                <th className="py-2 px-3 font-medium">Pemasok</th><th className="py-2 px-3 font-medium text-right">Tagihan</th>
-                <th className="py-2 px-3 font-medium">Paling lama</th>
-                <th className="py-2 px-3 font-medium text-right">Lewat jatuh tempo (Rp)</th><th className="py-2 px-3 font-medium text-right">Sisa (Rp)</th>
+              <thead><tr className="text-left">
+                <th className="">Pemasok</th><th className=" text-right">Tagihan</th>
+                <th className="">Paling lama</th>
+                <th className=" text-right">Lewat jatuh tempo (Rp)</th><th className=" text-right">Sisa (Rp)</th>
               </tr></thead>
               <tbody>
                 {paged.map(v => (
                   <tr key={v.vendor_name} className="border-b border-[var(--glass-border)]" data-testid={`apa-vendor-${v.vendor_name}`}>
-                    <td className="py-2 px-3">{v.vendor_name}</td>
-                    <td className="py-2 px-3 text-right tabular-nums">{v.count}</td>
-                    <td className={`py-2 px-3 text-xs whitespace-nowrap ${v.oldest > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{lateText(v.oldest)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums whitespace-nowrap text-xs">{formatNumber(v.overdue)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums whitespace-nowrap text-xs font-semibold">{formatNumber(v.balance)}</td>
+                    <td>{v.vendor_name}</td>
+                    <td className="text-right tabular-nums">{v.count}</td>
+                    <td className={`whitespace-nowrap ${v.oldest > 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>{lateText(v.oldest)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{formatNumber(v.overdue)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap font-semibold">{formatNumber(v.balance)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -169,28 +181,28 @@ export default function RahazaAPAgingModule({ token }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="py-2 px-3 font-medium">No. tagihan</th>
-                  <th className="py-2 px-3 font-medium">Jenis</th>
-                  <th className="py-2 px-3 font-medium">Pemasok</th>
-                  <th className="py-2 px-3 font-medium">Jatuh tempo</th>
-                  <th className="py-2 px-3 font-medium">Keterlambatan</th>
-                  <th className="py-2 px-3 font-medium text-right">Total (Rp)</th>
-                  <th className="py-2 px-3 font-medium text-right">Dibayar (Rp)</th>
-                  <th className="py-2 px-3 font-medium text-right">Sisa (Rp)</th>
+                <tr className="text-left">
+                  <th className="">No. tagihan</th>
+                  <th className="">Jenis</th>
+                  <th className="">Pemasok</th>
+                  <th className="">Jatuh tempo</th>
+                  <th className="">Keterlambatan</th>
+                  <th className=" text-right">Total (Rp)</th>
+                  <th className=" text-right">Dibayar (Rp)</th>
+                  <th className=" text-right">Sisa (Rp)</th>
                 </tr>
               </thead>
               <tbody>
                 {paged.map(r => (
                   <tr key={`${r.kind}-${r.id}`} className="border-b border-[var(--glass-border)] hover:bg-foreground/5" data-testid={`apa-row-${r.number}`}>
-                    <td className="py-2 px-3 text-xs whitespace-nowrap">{r.number}</td>
-                    <td className="py-2 px-3 text-xs whitespace-nowrap">{KIND[r.kind] || r.kind}</td>
-                    <td className="py-2 px-3">{r.vendor_name}</td>
-                    <td className="py-2 px-3 text-xs whitespace-nowrap">{formatDateID(r.due_date)}</td>
-                    <td className={`py-2 px-3 text-xs whitespace-nowrap ${r.days_overdue > 0 ? 'text-[hsl(var(--destructive))] font-medium' : 'text-muted-foreground'}`}>{lateText(r.days_overdue)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums whitespace-nowrap text-xs">{formatNumber(r.total)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums whitespace-nowrap text-xs">{formatNumber(r.paid)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums whitespace-nowrap text-xs font-semibold">{formatNumber(r.balance)}</td>
+                    <td className="whitespace-nowrap">{r.number}</td>
+                    <td className="whitespace-nowrap">{KIND[r.kind] || r.kind}</td>
+                    <td>{r.vendor_name}</td>
+                    <td className="whitespace-nowrap">{formatDateID(r.due_date)}</td>
+                    <td className={`whitespace-nowrap ${r.days_overdue > 0 ? 'text-[hsl(var(--danger-text))] font-medium' : 'text-muted-foreground'}`}>{lateText(r.days_overdue)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{formatNumber(r.total)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{formatNumber(r.paid)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap font-semibold">{formatNumber(r.balance)}</td>
                   </tr>
                 ))}
               </tbody>

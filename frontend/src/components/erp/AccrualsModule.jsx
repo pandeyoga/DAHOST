@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Edit2, Trash2, FileText, RotateCcw, BookCheck } from 'lucide-react';
+import { Plus, RefreshCw, Edit2, Trash2, FileText, RotateCcw, BookCheck, MoreHorizontal } from 'lucide-react';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Textarea } from '@/components/ui/textarea';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatTile, StatusBadge, EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
-import Modal from './Modal';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
@@ -58,6 +61,8 @@ export function accrualPayload(s) {
  * Akrual (menu Akuntansi › Akrual & Tutup Buku).
  * 2026-11-05 (PANDUAN_UI G1): memakai cetakan PageLayout — pilihan bulan & jenis di toolbar kiri, muat ulang di
  * kanan; formulir memakai dialog aplikasi (dulu lapisan buatan sendiri, kotak bulan kosong, dan isian "UUID akun").
+ * 2026-11-08 (Standar UI/UX v2): FormPopup standar; daftar bisa diunduh Excel/CSV; aksi baris paling banyak 2 terlihat
+ * (Posting hijau + menu "Lainnya" berisi Ubah/Hapus); kartu angka berketerangan.
  */
 export default function AccrualsModule({ token }) {
   const [accruals, setAccruals] = useState([]);
@@ -173,15 +178,25 @@ export default function AccrualsModule({ token }) {
           {ACCRUAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </SmartNativeSelect>
       </>}
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas="akrual" namaLembar="Akrual" baris={accruals} testId="accrual-unduh"
+          kolom={[
+            { label: 'Periode', nilai: (a) => periodLabel(a.period) },
+            { label: 'Jenis', nilai: (a) => typeLabel(a.accrual_type) },
+            { label: 'Keterangan', nilai: (a) => a.description || '' },
+            { label: 'Jumlah', nilai: (a) => Number(a.amount) || 0 },
+            { label: 'Status', nilai: (a) => (STATUS_META[a.status] || { label: a.status || '' }).label },
+            { label: 'Jurnal', nilai: (a) => a.je_number || '' },
+            { label: 'Jurnal pembalik', nilai: (a) => a.reversal_je_number || '' },
+          ]} />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAccruals} data-testid="accrual-refresh">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      }
+      </>}
       summary={accruals.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <StatTile label="Draf belum dijurnal" value={fmt(sumBy('draft'))} />
-          <StatTile label="Terjurnal (belum dibalik)" value={fmt(sumBy('posted'))} />
+          <StatTile label="Draf belum dijurnal" value={fmt(sumBy('draft'))} sub="Jumlah akrual berstatus Draf di daftar (sesuai saringan)" />
+          <StatTile label="Terjurnal (belum dibalik)" value={fmt(sumBy('posted'))} sub="Jumlah akrual berstatus Terjurnal di daftar (sesuai saringan)" />
         </div>
       )}
       footer={!loading && accruals.length > 0 && (
@@ -214,7 +229,7 @@ export default function AccrualsModule({ token }) {
                       <td className="whitespace-nowrap">{periodLabel(a.period)}</td>
                       <td>{typeLabel(a.accrual_type)}</td>
                       <td>{a.description}{(a.je_number || a.reversal_je_number) && (
-                        <div className="text-[11px] text-muted-foreground">{[a.je_number, a.reversal_je_number && `pembalik ${a.reversal_je_number}`].filter(Boolean).join(' · ')}</div>
+                        <div className="text-xs text-muted-foreground">{[a.je_number, a.reversal_je_number && `pembalik ${a.reversal_je_number}`].filter(Boolean).join(' · ')}</div>
                       )}</td>
                       <td className="text-right tabular-nums">{fmt(a.amount)}</td>
                       <td><StatusBadge status={a.status} tone={st.tone} label={st.label} /></td>
@@ -222,15 +237,18 @@ export default function AccrualsModule({ token }) {
                         <div className="flex gap-1 justify-end">
                           {a.status === 'draft' && (
                             <>
-                              <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ ...a })} title="Ubah" aria-label="Ubah" data-testid={`accrual-edit-${a.id}`}>
-                                <Edit2 className="w-4 h-4" />
-                              </Button>
-                              <Button variant="outline" size="sm" onClick={() => post(a)} data-testid={`accrual-post-${a.id}`}>
+                              <Button variant="success" size="sm" onClick={() => post(a)} data-testid={`accrual-post-${a.id}`}>
                                 <BookCheck className="w-4 h-4" />Posting
                               </Button>
-                              <Button variant="ghost" size="icon-sm" onClick={() => del(a.id)} title="Hapus" aria-label="Hapus" className="text-[hsl(var(--destructive))]" data-testid={`accrual-delete-${a.id}`}>
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`accrual-more-${a.id}`}><MoreHorizontal className="w-4 h-4" /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => setEditing({ ...a })} data-testid={`accrual-edit-${a.id}`}><Edit2 className="w-4 h-4 mr-2" />Ubah</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => del(a.id)} className="text-[hsl(var(--danger-text))]" data-testid={`accrual-delete-${a.id}`}><Trash2 className="w-4 h-4 mr-2" />Hapus</DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </>
                           )}
                           {a.status === 'posted' && !a.reversed_at && (
@@ -272,70 +290,48 @@ function AccrualEditor({ value, headers, saving, onClose, onSave }) {
   // server tidak mengubah periode & jenis draf yang sudah ada (PUT hanya keterangan, jumlah, akun)
   const locked = !!s.id;
   const missing = !s.period ? 'Pilih periode.' : !(Number(s.amount) > 0) ? 'Isi jumlah lebih dari 0.' : '';
+  // 2026-11-08 (Standar UI/UX v2): popup form standar (FormPopup pendek, Isian, Simpan hijau).
   return (
-    <Modal title={s.id ? 'Ubah akrual' : 'Akrual baru'} onClose={onClose} size="md" data-testid="accrual-editor">
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Periode *</label>
-            <SmartNativeSelect value={s.period} onChange={e => upd('period', e.target.value)} disabled={locked} className="h-9 w-full" data-testid="accrual-period">
-              <option value="">Pilih bulan</option>
-              {periodOpts.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Jenis</label>
-            <SmartNativeSelect value={s.accrual_type || 'other'} onChange={e => upd('accrual_type', e.target.value)} disabled={locked} searchable={false} className="h-9 w-full" data-testid="accrual-type">
-              {ACCRUAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-        </div>
-        {locked && <p className="text-[11px] text-muted-foreground">Periode dan jenis draf tidak bisa diubah — hapus lalu buat ulang bila salah.</p>}
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1" htmlFor="accrual-description">Keterangan</label>
-          <textarea
-            id="accrual-description"
-            value={s.description}
-            onChange={e => upd('description', e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-            rows={3}
-            data-testid="accrual-description"
-          />
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Jumlah (Rp) *</label>
-          <MoneyInput
-            glass
-            value={s.amount || 0}
-            onChange={e => upd('amount', Number(e.target.value))}
-            data-testid="accrual-amount"
-          />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Akun beban (debit)</label>
-            <SmartNativeSelect value={s.expense_account || ''} onChange={e => upd('expense_account', e.target.value)} className="h-9 w-full"
-              searchPlaceholder="Cari kode atau nama akun…" data-testid="accrual-expense-account">
-              <option value="">Bawaan sesuai jenis</option>
-              {accOpts(EXPENSE_TYPES, s.expense_account).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Akun beban yang masih harus dibayar (kredit)</label>
-            <SmartNativeSelect value={s.accrued_account || ''} onChange={e => upd('accrued_account', e.target.value)} className="h-9 w-full"
-              searchPlaceholder="Cari kode atau nama akun…" data-testid="accrual-accrued-account">
-              <option value="">Bawaan sesuai jenis</option>
-              {accOpts(ACCRUED_TYPES, s.accrued_account).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
-            </SmartNativeSelect>
-          </div>
-        </div>
-        <p className="text-[11px] text-muted-foreground">Akun yang dikosongkan diambil dari Pengaturan Keuangan › Pemetaan akun otomatis (Akrual).</p>
-        {missing && <p className="text-[11px] text-muted-foreground" data-testid="accrual-missing">{missing}</p>}
-        <div className="flex gap-2 pt-2 justify-end">
-          <Button variant="outline" onClick={onClose} data-testid="accrual-cancel">Batal</Button>
-          <Button onClick={() => onSave(s)} disabled={!!missing || saving} data-testid="accrual-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="accrual-editor"
+      judul={s.id ? 'Ubah akrual' : 'Akrual baru'}
+      keterangan="Akun yang dikosongkan diambil dari Pengaturan Keuangan › Pemetaan akun otomatis (Akrual)."
+      onSimpan={() => onSave(s)} menyimpan={saving} bisaSimpan={!missing}
+      galat={missing && (s.period || Number(s.amount) > 0) ? missing : undefined}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Periode" wajib petunjuk={locked ? 'Tidak bisa diubah — hapus lalu buat ulang bila salah.' : undefined}>
+          <SmartNativeSelect value={s.period} onChange={e => upd('period', e.target.value)} disabled={locked} className="h-9 w-full" data-testid="accrual-period">
+            <option value="">Pilih bulan</option>
+            {periodOpts.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Jenis">
+          <SmartNativeSelect value={s.accrual_type || 'other'} onChange={e => upd('accrual_type', e.target.value)} disabled={locked} searchable={false} className="h-9 w-full" data-testid="accrual-type">
+            {ACCRUAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
       </div>
-    </Modal>
+      <Isian label="Keterangan" htmlFor="accrual-description">
+        <Textarea id="accrual-description" value={s.description} onChange={e => upd('description', e.target.value)} rows={3} data-testid="accrual-description" />
+      </Isian>
+      <Isian label="Jumlah (Rp)" wajib>
+        <MoneyInput glass value={s.amount || 0} onChange={e => upd('amount', Number(e.target.value))} data-testid="accrual-amount" />
+      </Isian>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Akun beban (debit)">
+          <SmartNativeSelect value={s.expense_account || ''} onChange={e => upd('expense_account', e.target.value)} className="h-9 w-full"
+            searchPlaceholder="Cari kode atau nama akun…" data-testid="accrual-expense-account">
+            <option value="">Bawaan sesuai jenis</option>
+            {accOpts(EXPENSE_TYPES, s.expense_account).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Akun beban yang masih harus dibayar (kredit)">
+          <SmartNativeSelect value={s.accrued_account || ''} onChange={e => upd('accrued_account', e.target.value)} className="h-9 w-full"
+            searchPlaceholder="Cari kode atau nama akun…" data-testid="accrual-accrued-account">
+            <option value="">Bawaan sesuai jenis</option>
+            {accOpts(ACCRUED_TYPES, s.accrued_account).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </div>
+    </FormPopup>
   );
 }

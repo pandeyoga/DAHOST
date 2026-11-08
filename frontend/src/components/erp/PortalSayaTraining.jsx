@@ -1,18 +1,29 @@
+/**
+ * Portal Saya › Training — kursus yang diikuti karyawan, progres, dan sertifikat.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu judul buatan + `p-6 max-w-3xl`), ringkasan = StatTile (dulu cincin
+ * SVG berwarna hex), daftar kursus = TabelData + unduh Excel/CSV, warna token. Angka kartu dihitung dari daftar yang
+ * sama (dulu "total" dari server dibandingkan dengan "selesai" dari daftar).
+ */
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, BookOpen, CheckCircle2, Clock, Award, AlertCircle, Download } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const STATUS_CFG = {
-  completed: { label: 'Selesai', color: 'bg-green-100 text-green-800', icon: CheckCircle2 },
-  enrolled:  { label: 'Sedang Belajar', color: 'bg-blue-100 text-blue-800', icon: Clock },
-  pending:   { label: 'Belum Mulai', color: 'bg-muted text-foreground', icon: BookOpen },
+  completed: { label: 'Selesai', tone: 'success' },
+  enrolled:  { label: 'Sedang belajar', tone: 'info' },
+  pending:   { label: 'Belum mulai', tone: 'muted' },
 };
+const cfg = (s) => STATUS_CFG[s] || STATUS_CFG.pending;
 
 export default function PortalSayaTraining({ user, headers }) {
   const { toast } = useToast();
@@ -55,131 +66,53 @@ export default function PortalSayaTraining({ user, headers }) {
     }
   };
 
-  if (loading) return (
-    <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
-  );
-
-  if (data?.error) return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <Card className="border-amber-200 bg-amber-50">
-        <CardContent className="pt-4 flex gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-800">{data.error}</p>
-        </CardContent>
-      </Card>
-    </div>
-  );
-
-  const total = data?.total || 0;
-  const completed = data?.items?.filter(i => i.status === 'completed').length || 0;
+  const items = data?.items || [];
+  const total = items.length;
+  const completed = items.filter(i => i.status === 'completed').length;
   const pct = total ? Math.round(completed / total * 100) : 0;
 
+  const kolom = [
+    { kunci: 'judul', label: 'Kursus', hp: 'judul', isi: (item) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="font-medium">{item.course_title || '(Kursus tidak ada)'}</p>
+        {item.course_category && <p className="text-xs text-muted-foreground">{item.course_category}</p>}
+      </div>) },
+    { kunci: 'status', label: 'Status', isi: (item) => <StatusBadge status={item.status} label={cfg(item.status).label} tone={cfg(item.status).tone} /> },
+    { kunci: 'progres', label: 'Progres', rata: 'kanan', isi: (item) => (
+      <span className="tabular-nums">{item.status === 'completed' ? '100%' : item.progress_pct !== undefined ? `${item.progress_pct || 0}%` : '—'}</span>) },
+    { kunci: 'selesai', label: 'Selesai pada', isi: (item) => <span className="whitespace-nowrap text-sm">{item.completed_at ? formatDateID(item.completed_at.slice(0, 10)) : '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (item) => (item.status === 'completed' ? (
+      <Button size="sm" variant="outline" onClick={() => downloadCertificate(item)} disabled={downloading[item.id]}
+        data-testid={`btn-cert-${items.indexOf(item)}`}>
+        {downloading[item.id] ? <Loader2 className="animate-spin" /> : <Download />}Sertifikat
+      </Button>) : null) },
+  ];
+
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-5">
-      <h2 className="text-lg font-bold">Training & LMS Saya</h2>
-
-      {/* Summary card */}
-      <Card className="bg-primary/5 border-primary/20">
-        <CardContent className="pt-5">
-          <div className="flex items-center gap-4">
-            <div className="relative w-16 h-16">
-              <svg className="w-16 h-16 -rotate-90" viewBox="0 0 40 40">
-                <circle cx="20" cy="20" r="15" fill="none" stroke="#e2e8f0" strokeWidth="4" />
-                <circle cx="20" cy="20" r="15" fill="none" stroke="#6366f1" strokeWidth="4"
-                  strokeDasharray={`${pct * 0.942} 94.2`} strokeLinecap="round" />
-              </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-sm font-bold">{pct}%</span>
-            </div>
-            <div>
-              <p className="font-bold text-lg">{completed} / {total} Kursus Selesai</p>
-              <p className="text-sm text-muted-foreground">{data?.employee}</p>
-              {completed > 0 && (
-                <p className="text-xs text-green-600 mt-0.5 flex items-center gap-1">
-                  <Award className="w-3 h-3" /> {completed} sertifikat tersedia untuk diunduh
-                </p>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {total === 0 && (
-        <div className="text-center py-10 text-muted-foreground">
-          <BookOpen className="w-10 h-10 mx-auto mb-2 opacity-30" />
-          <p>Belum ada enrollment training.</p>
-        </div>
+    <PageLayout testId="portal-training" title="Training"
+      subtitle={data?.employee ? `${data.employee} — kursus yang Anda ikuti, progres, dan sertifikat.` : 'Kursus yang Anda ikuti, progres, dan sertifikat.'}
+      tools={items.length > 0 && (
+        <TombolUnduh namaBerkas="training-saya" namaLembar="Training" baris={items} testId="training-unduh" kolom={[
+          { label: 'Kursus', nilai: (i) => i.course_title || '' }, { label: 'Kategori', nilai: (i) => i.course_category || '' },
+          { label: 'Status', nilai: (i) => cfg(i.status).label },
+          { label: 'Progres (%)', nilai: (i) => (i.status === 'completed' ? 100 : (i.progress_pct ?? '')) },
+          { label: 'Selesai pada', nilai: (i) => (i.completed_at ? formatDateID(i.completed_at.slice(0, 10)) : '') },
+        ]} />
       )}
-
-      <div className="grid gap-3">
-        {data?.items?.map((item, i) => {
-          const cfg = STATUS_CFG[item.status] || STATUS_CFG.pending;
-          const Icon = cfg.icon;
-          const isCompleted = item.status === 'completed';
-          return (
-            <Card key={i} className="hover:shadow-sm transition-shadow" data-testid={`training-card-${i}`}>
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-start gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    isCompleted ? 'bg-green-100' : 'bg-primary/10'
-                  }`}>
-                    {isCompleted
-                      ? <CheckCircle2 className="w-5 h-5 text-green-600" />
-                      : <BookOpen className="w-5 h-5 text-primary" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2 flex-wrap">
-                      <div className="flex-1">
-                        <p className="font-medium text-sm">{item.course_title || '(Kursus tidak ada)'}</p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.color}`}>
-                            <Icon className="w-3 h-3 inline mr-1" />{cfg.label}
-                          </span>
-                          {item.course_category && (
-                            <span className="text-xs text-muted-foreground">{item.course_category}</span>
-                          )}
-                        </div>
-                      </div>
-                      {isCompleted && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => downloadCertificate(item)}
-                          disabled={downloading[item.id]}
-                          data-testid={`btn-cert-${i}`}
-                          className="h-8 text-xs border-green-300 text-green-700 hover:bg-green-50 shrink-0"
-                        >
-                          {downloading[item.id]
-                            ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Loading...</>
-                            : <><Download className="w-3 h-3 mr-1" /> Sertifikat</>}
-                        </Button>
-                      )}
-                    </div>
-                    {item.progress_pct !== undefined && !isCompleted && (
-                      <div className="mt-2">
-                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                          <span>Progress</span>
-                          <span>{item.progress_pct || 0}%</span>
-                        </div>
-                        <div className="w-full bg-muted rounded-full h-1.5">
-                          <div
-                            className="bg-primary h-1.5 rounded-full transition-all"
-                            style={{ width: `${item.progress_pct || 0}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {item.completed_at && (
-                      <div className="flex items-center gap-1 mt-1 text-xs text-green-600">
-                        <Award className="w-3 h-3" /> Selesai: {item.completed_at?.slice(0, 10)}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-    </div>
+      summary={!loading && !data?.error && total > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatTile label="Kursus selesai" value={`${completed} dari ${total}`} sub={`${pct}% selesai`} testId="training-selesai" />
+          <StatTile label="Sertifikat tersedia" value={completed} sub="Bisa diunduh dari daftar" testId="training-sertifikat" />
+        </div>
+      )}>
+      {loading ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat training…</p>
+      ) : data?.error ? (
+        <Notice tone="warning" title="Training belum bisa ditampilkan">{data.error}</Notice>
+      ) : (
+        <TabelData kolom={kolom} baris={items} kunci={(i) => i.id || i.course_title} testId="training-table"
+          kosong={<EmptyState title="Belum terdaftar di training" description="Kursus yang didaftarkan HR untuk Anda akan muncul di sini." />} />
+      )}
+    </PageLayout>
   );
 }

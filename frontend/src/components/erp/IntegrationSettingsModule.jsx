@@ -1,19 +1,46 @@
+/**
+ * Pengaturan Sistem › Kunci API — kunci integrasi layanan luar (AI, notifikasi, penyimpanan, email).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul disembunyikan), satu tabel (kartu ringkas di HP) dengan
+ * penyaring kategori, unduh Excel/CSV TANPA nilai kunci, form tambah/ubah = FormPopup, hapus lewat confirmDialog.
+ * Keamanan tidak berubah: nilai kunci tidak pernah ditampilkan utuh (hanya `masked_value` dari server), isian nilai
+ * tetap bertipe sandi, izin tambah/ubah (admin) & hapus (superadmin) sama.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import {
-  Key, Plus, Trash2, TestTube2, CheckCircle, XCircle,
-  Eye, EyeOff, RefreshCw, Save, Brain, Bell, HardDrive, Mail, Settings2, AlertTriangle
-} from 'lucide-react';
+import { Eye, EyeOff, MoreHorizontal, Pencil, Plus, RefreshCw, TestTube2, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 const CATEGORY_META = {
-  ai: { label: 'AI & LLM', icon: Brain, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-950/30' },
-  notification: { label: 'Notifikasi', icon: Bell, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/30' },
-  storage: { label: 'Penyimpanan', icon: HardDrive, color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-950/30' },
-  email: { label: 'Email', icon: Mail, color: 'text-orange-500', bg: 'bg-orange-50 dark:bg-orange-950/30' },
-  custom: { label: 'Kustom', icon: Settings2, color: 'text-foreground/60', bg: 'bg-[var(--glass-bg)]' },
+  ai: { label: 'AI & LLM' },
+  notification: { label: 'Notifikasi' },
+  storage: { label: 'Penyimpanan' },
+  email: { label: 'Email' },
+  custom: { label: 'Kustom' },
 };
+const labelKategori = (c) => (CATEGORY_META[c] || CATEGORY_META.custom).label;
+// Keterangan bawaan dari server masih memuat kata Inggris; diterjemahkan untuk tampilan saja.
+const GANTI_KETERANGAN = [
+  [/\bobject storage\b/gi, 'penyimpanan berkas'], [/\bupload\b/gi, 'unggah'], [/^Secret key\b/i, 'Kunci rahasia'],
+  [/^Password\b/i, 'Sandi'], [/^Username\/email\b/i, 'Nama pengguna/email'], [/\balert produksi\b/gi, 'peringatan produksi'],
+];
+const keteranganKunci = (d) => GANTI_KETERANGAN.reduce((t, [re, ke]) => t.replace(re, ke), String(d || ''));
+const statusKunci = (k) => (k.is_configured
+  ? `Terpasang (${k.source === 'db' ? 'layar ini' : 'server'})` : 'Belum diisi');
+const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
 
 export default function IntegrationSettingsModule({ token, userRole }) {
   const [keys, setKeys] = useState([]);
@@ -26,7 +53,8 @@ export default function IntegrationSettingsModule({ token, userRole }) {
   const [testResults, setTestResults] = useState({});
   const [showValues, setShowValues] = useState({});
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [formError, setFormError] = useState('');
+  const [kategori, setKategori] = useState('');
 
   const canEdit = ['superadmin', 'admin'].includes(userRole);
   const canDelete = userRole === 'superadmin';
@@ -38,7 +66,7 @@ export default function IntegrationSettingsModule({ token, userRole }) {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      if (data.ok) setKeys(data.data || []);
+      if (data.ok) { setKeys(data.data || []); setError(''); }
       else setError(data.detail || 'Gagal memuat pengaturan.');
     } catch (e) {
       setError('Gagal terhubung ke server.');
@@ -49,15 +77,13 @@ export default function IntegrationSettingsModule({ token, userRole }) {
 
   useEffect(() => { fetchKeys(); }, [fetchKeys]);
 
-  const handleSave = async (e) => {
-    e.preventDefault();
+  const handleSave = async () => {
     if (!form.key_name || !form.value) {
-      setError('Nama kunci dan nilai wajib diisi.');
+      setFormError('Nama kunci dan nilai wajib diisi.');
       return;
     }
     setSaving(true);
-    setError('');
-    setSuccess('');
+    setFormError('');
     try {
       const res = await fetch('/api/rahaza/integration-settings', {
         method: 'POST',
@@ -66,17 +92,17 @@ export default function IntegrationSettingsModule({ token, userRole }) {
       });
       const data = await res.json();
       if (data.ok) {
-        setSuccess(data.message || 'Berhasil disimpan.');
+        toast.success(data.message || 'Berhasil disimpan.');
         setAddOpen(false);
         setEditKey(null);
         setForm({ key_name: '', value: '', description: '', category: 'ai' });
+        setShowValues((s) => ({ ...s, _form: false }));
         fetchKeys();
-        setTimeout(() => setSuccess(''), 4000);
       } else {
-        setError(data.detail || 'Gagal menyimpan.');
+        setFormError(data.detail || 'Gagal menyimpan.');
       }
     } catch (e) {
-      setError('Gagal terhubung ke server.');
+      setFormError('Gagal terhubung ke server.');
     } finally {
       setSaving(false);
     }
@@ -84,7 +110,10 @@ export default function IntegrationSettingsModule({ token, userRole }) {
 
   const handleDelete = async (keyName) => {
     // 2026-11-02: tanpa istilah teknis "environment variable" di layar.
-    if (!(await confirmDialog(`Hapus kunci ${keyName} dari database? Bila kunci juga diatur di server, nilai server yang dipakai.`))) return;
+    if (!(await confirmDialog({
+      title: `Hapus kunci ${keyName}?`, danger: true, confirmLabel: 'Hapus',
+      body: 'Kunci dihapus dari database. Bila kunci juga diatur di server, nilai server yang dipakai.',
+    }))) return;
     try {
       const res = await fetch(`/api/rahaza/integration-settings/${keyName}`, {
         method: 'DELETE',
@@ -92,14 +121,13 @@ export default function IntegrationSettingsModule({ token, userRole }) {
       });
       const data = await res.json();
       if (data.ok) {
-        setSuccess(data.message);
+        toast.success(data.message || 'Kunci dihapus.');
         fetchKeys();
-        setTimeout(() => setSuccess(''), 4000);
       } else {
-        setError(data.detail || 'Gagal menghapus.');
+        toast.error(data.detail || 'Gagal menghapus.');
       }
     } catch (e) {
-      setError('Gagal terhubung ke server.');
+      toast.error('Gagal terhubung ke server.');
     }
   };
 
@@ -126,263 +154,152 @@ export default function IntegrationSettingsModule({ token, userRole }) {
       description: key.description || '',
       category: key.category || 'ai',
     });
+    setFormError('');
     setAddOpen(true);
   };
 
   const openAdd = () => {
     setEditKey(null);
     setForm({ key_name: '', value: '', description: '', category: 'ai' });
+    setFormError('');
     setAddOpen(true);
   };
 
-  // Group keys by category
-  const grouped = {};
-  keys.forEach(k => {
-    const cat = k.category || 'custom';
-    if (!grouped[cat]) grouped[cat] = [];
-    grouped[cat].push(k);
-  });
+  const tutupForm = () => { setAddOpen(false); setEditKey(null); setFormError(''); setShowValues((s) => ({ ...s, _form: false })); };
+
+  const hitung = (c) => keys.filter((k) => (k.category || 'custom') === c).length;
+  const opsiKategori = [
+    { key: '', label: 'Semua', count: keys.length },
+    ...Object.keys(CATEGORY_META).map((c) => ({ key: c, label: labelKategori(c), count: hitung(c) })).filter((o) => o.count > 0),
+  ];
+  const baris = keys.filter((k) => !kategori || (k.category || 'custom') === kategori);
+
+  const kolom = [
+    { kunci: 'nama', label: 'Kunci', hp: 'judul', isi: (k) => (
+      <div className="min-w-0 md:max-w-[22rem]" data-testid={`key-row-${k.key_name}`}>
+        <p className="break-all font-mono text-sm font-medium text-foreground">{k.key_name}</p>
+        {k.description && <p className="text-xs text-muted-foreground">{keteranganKunci(k.description)}</p>}
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (k) => <span className="text-sm">{labelKategori(k.category || 'custom')}</span> },
+    { kunci: 'status', label: 'Status', isi: (k) => (
+      <div className="space-y-1">
+        <div className="flex flex-wrap gap-1">
+          <StatusBadge status={k.is_configured ? 'ok' : 'kosong'} label={statusKunci(k)} tone={k.is_configured ? 'success' : 'muted'} />
+          {k.deprecated && <StatusBadge status="lama" label="Tidak dipakai lagi" tone="warning" />}
+        </div>
+        {testResults[k.key_name] && (
+          <p className={`text-xs ${testResults[k.key_name].ok ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}`}>
+            {testResults[k.key_name].message}
+          </p>
+        )}
+      </div>) },
+    { kunci: 'nilai', label: 'Nilai (disamarkan)', isi: (k) => (k.is_configured
+      ? <code className="break-all font-mono text-xs text-muted-foreground">{k.masked_value || '(server)'}</code>
+      : <span className="text-sm text-muted-foreground">—</span>) },
+    { kunci: 'diperbarui', label: 'Diperbarui', isi: (k) => (k.updated_at
+      ? <span className="text-sm">{formatDateID(instan(k.updated_at))}{k.updated_by && <span className="block text-xs text-muted-foreground">{k.updated_by}</span>}</span>
+      : <span className="text-sm text-muted-foreground">—</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (k) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="outline" size="sm" onClick={() => handleTest(k.key_name)} disabled={testing[k.key_name]}
+          title="Uji kunci" data-testid={`test-key-${k.key_name}`}>
+          <TestTube2 className={testing[k.key_name] ? 'animate-pulse' : ''} />Uji
+        </Button>
+        {(canEdit || (canDelete && k.source === 'db')) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`more-key-${k.key_name}`}>
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {canEdit && (
+                <DropdownMenuItem onSelect={() => openEdit(k)} data-testid={`edit-key-${k.key_name}`}>
+                  <Pencil className="mr-2 h-4 w-4" />Ganti nilai
+                </DropdownMenuItem>
+              )}
+              {canDelete && k.source === 'db' && (
+                <DropdownMenuItem onSelect={() => handleDelete(k.key_name)} className="text-[hsl(var(--danger-text))]"
+                  data-testid={`delete-key-${k.key_name}`}>
+                  <Trash2 className="mr-2 h-4 w-4" />Hapus dari database
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Integrasi & API Keys</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Kelola kunci API dan konfigurasi integrasi layanan eksternal. Nilai kunci tidak pernah ditampilkan utuh.
-            {' '}Fitur AI hanya memakai <span className="font-mono">ANTHROPIC_API_KEY</span>.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={fetchKeys} disabled={loading}>
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-          {canEdit && (
-            <Button size="sm" onClick={openAdd} className="bg-primary text-foreground">
-              <Plus className="w-4 h-4 mr-1.5" /> Tambah Kunci
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Alerts */}
-      {error && (
-        <div className="flex items-center gap-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 text-sm text-red-700 dark:text-red-400">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
-        </div>
+    <PageLayout testId="integration-settings-module" title="Kunci API"
+      subtitle="Kunci layanan luar (AI, notifikasi, penyimpanan, email). Nilai kunci tidak pernah ditampilkan utuh."
+      actions={canEdit && <Button onClick={openAdd} data-testid="add-key-btn"><Plus />Tambah kunci</Button>}
+      filters={keys.length > 0 && (
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={opsiKategori} value={kategori} onChange={setKategori} hideWhenEmpty={false} testId="key-category-filter" />
       )}
-      {success && (
-        <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg px-4 py-3 text-sm text-emerald-700 dark:text-emerald-400">
-          <CheckCircle className="w-4 h-4 shrink-0" /> {success}
-        </div>
-      )}
+      tools={<>
+        {/* Unduhan TIDAK memuat nilai kunci (juga tidak versi tersamar). */}
+        <TombolUnduh namaBerkas="kunci-api" namaLembar="Kunci API" baris={baris} testId="key-unduh" kolom={[
+          { label: 'Kunci', nilai: (k) => k.key_name }, { label: 'Kategori', nilai: (k) => labelKategori(k.category || 'custom') },
+          { label: 'Keterangan', nilai: (k) => keteranganKunci(k.description) }, { label: 'Status', nilai: (k) => statusKunci(k) },
+          { label: 'Tidak dipakai lagi', nilai: (k) => (k.deprecated ? 'Ya' : '') },
+          { label: 'Diperbarui', nilai: (k) => (k.updated_at ? formatDateID(instan(k.updated_at)) : '') },
+          { label: 'Oleh', nilai: (k) => k.updated_by || '' },
+        ]} />
+        <Button variant="outline" size="icon" onClick={fetchKeys} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      <Notice tone="info" title="Urutan pemakaian kunci">
+        1) Nilai yang disimpan di layar ini diutamakan; 2) pengaturan server dipakai bila belum diisi di sini.
+        Fitur AI hanya memakai <span className="font-mono">ANTHROPIC_API_KEY</span>.
+      </Notice>
+      {error && <Notice tone="danger">{error}</Notice>}
 
-      {/* Info banner */}
-      <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3">
-        <div className="flex items-start gap-2">
-          <Key className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-          <div className="text-sm text-blue-700 dark:text-blue-300">
-            <p className="font-medium">Prioritas penggunaan kunci:</p>
-            <p className="text-xs mt-1 text-blue-600 dark:text-blue-400">
-              1. Nilai yang disimpan di layar ini — diutamakan<br />
-              2. Pengaturan server — dipakai bila belum diisi di sini
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
-        </div>
+      {loading && keys.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat kunci…</p>
       ) : (
-        <div className="space-y-6">
-          {Object.entries(grouped).map(([cat, catKeys]) => {
-            const meta = CATEGORY_META[cat] || CATEGORY_META.custom;
-            const CatIcon = meta.icon;
-            return (
-              <div key={cat} className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm">
-                <div className={`flex items-center gap-2 px-5 py-3 border-b border-border ${meta.bg} rounded-t-xl`}>
-                  <CatIcon className={`w-4 h-4 ${meta.color}`} />
-                  <h3 className="font-semibold text-sm text-foreground">{meta.label}</h3>
-                  <span className="text-xs text-muted-foreground ml-auto">{catKeys.length} kunci</span>
-                </div>
-                <div className="divide-y divide-border">
-                  {catKeys.map(key => (
-                    <div key={key.key_name} className="px-5 py-4" data-testid={`key-row-${key.key_name}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-sm font-semibold text-foreground">{key.key_name}</span>
-                            {key.deprecated && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                                Tidak dipakai lagi
-                              </span>
-                            )}
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              key.is_configured
-                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                                : 'bg-[var(--glass-bg)] text-muted-foreground'
-                            }`}>
-                              {key.is_configured ? <CheckCircle className="w-2.5 h-2.5" /> : <XCircle className="w-2.5 h-2.5" />}
-                              {key.is_configured ? `Dikonfigurasi (${key.source === 'db' ? 'layar ini' : 'server'})` : 'Belum dikonfigurasi'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">{key.description}</p>
-                          {key.is_configured && (
-                            <div className="flex items-center gap-2 mt-2">
-                              <code className="text-xs font-mono bg-[var(--glass-bg)] px-2 py-0.5 rounded border border-border">
-                                {key.masked_value || '(server)'}
-                              </code>
-                              {key.updated_at && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  Diperbarui: {new Date(key.updated_at).toLocaleDateString('id-ID')}
-                                  {key.updated_by && ` oleh ${key.updated_by}`}
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {testResults[key.key_name] && (
-                            <div className={`flex items-center gap-1.5 mt-2 text-xs ${
-                              testResults[key.key_name].ok ? 'text-emerald-600' : 'text-red-600'
-                            }`}>
-                              {testResults[key.key_name].ok
-                                ? <CheckCircle className="w-3.5 h-3.5" />
-                                : <XCircle className="w-3.5 h-3.5" />}
-                              {testResults[key.key_name].message}
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            variant="ghost" size="sm"
-                            onClick={() => handleTest(key.key_name)}
-                            disabled={testing[key.key_name]}
-                            title="Uji kunci"
-                            data-testid={`test-key-${key.key_name}`}
-                          >
-                            <TestTube2 className={`w-3.5 h-3.5 ${testing[key.key_name] ? 'animate-pulse' : ''}`} />
-                          </Button>
-                          {canEdit && (
-                            <Button
-                              variant="ghost" size="sm"
-                              onClick={() => openEdit(key)}
-                              title="Edit kunci"
-                              data-testid={`edit-key-${key.key_name}`}
-                            >
-                              <Key className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                          {canDelete && key.source === 'db' && (
-                            <Button
-                              variant="ghost" size="sm"
-                              onClick={() => handleDelete(key.key_name)}
-                              className="text-red-700 dark:text-red-500 hover:text-red-600"
-                              title="Hapus dari DB"
-                              data-testid={`delete-key-${key.key_name}`}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <TabelData kolom={kolom} baris={baris} kunci={(k) => k.key_name} testId="key-table"
+          kosong={<EmptyState title="Belum ada kunci" description="Tambahkan kunci layanan yang dipakai sistem."
+            action={canEdit ? { label: 'Tambah kunci', onClick: openAdd } : undefined} />} />
       )}
 
-      {/* Add/Edit Modal */}
-      {addOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-[var(--card-surface)] rounded-2xl border border-border shadow-2xl w-full max-w-md mx-4 p-6">
-            <h2 className="text-lg font-bold text-foreground mb-4">
-              {editKey ? `Edit Kunci: ${editKey}` : 'Tambah Kunci API'}
-            </h2>
-            <form onSubmit={handleSave} className="space-y-4">
-              {!editKey && (
-                <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">Nama Kunci *</label>
-                  <input
-                    type="text"
-                    required
-                    className="w-full border border-border rounded-lg px-3 py-2.5 text-sm font-mono uppercase"
-                    placeholder="CONTOH_API_KEY"
-                    value={form.key_name}
-                    onChange={e => setForm(f => ({ ...f, key_name: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') }))}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">Hanya huruf kapital, angka, dan underscore.</p>
-                </div>
-              )}
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">
-                  {editKey ? 'Nilai Baru *' : 'Nilai *'}
-                </label>
-                <div className="relative">
-                  <input
-                    type={showValues['_form'] ? 'text' : 'password'}
-                    required
-                    className="w-full border border-border rounded-lg px-3 py-2.5 text-sm font-mono pr-10"
-                    placeholder={editKey ? 'Masukkan nilai baru untuk mengganti...' : 'Masukkan nilai kunci...'}
-                    value={form.value}
-                    onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowValues(s => ({ ...s, _form: !s._form }))}
-                  >
-                    {showValues['_form'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Deskripsi (opsional)</label>
-                <input
-                  type="text"
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm"
-                  placeholder="Keterangan penggunaan kunci ini..."
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Kategori</label>
-                <SmartNativeSelect
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm bg-[var(--card-surface)]"
-                  value={form.category}
-                  onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                >
-                  {Object.entries(CATEGORY_META).map(([val, meta]) => (
-                    <option key={val} value={val}>{meta.label}</option>
-                  ))}
-                </SmartNativeSelect>
-              </div>
-              {error && (
-                <p className="text-sm text-red-600">{error}</p>
-              )}
-              <div className="flex gap-2 pt-2">
-                <Button type="submit" disabled={saving} className="flex-1 bg-primary text-foreground">
-                  <Save className="w-4 h-4 mr-1.5" />
-                  {saving ? 'Menyimpan...' : 'Simpan'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => { setAddOpen(false); setEditKey(null); setError(''); }}
-                >
-                  Batal
-                </Button>
-              </div>
-            </form>
+      <FormPopup open={addOpen} onClose={tutupForm} ukuran="pendek" testId="key-form"
+        judul={editKey ? `Ganti nilai ${editKey}` : 'Tambah kunci API'}
+        keterangan={editKey ? 'Nilai lama tidak ditampilkan. Isi nilai baru untuk menggantinya.' : 'Nilai disimpan tersamar dan tidak pernah ditampilkan utuh.'}
+        onSimpan={handleSave} menyimpan={saving} galat={formError}>
+        {!editKey && (
+          <Isian label="Nama kunci" wajib htmlFor="key-name" petunjuk="Hanya huruf kapital, angka, dan garis bawah.">
+            <Input id="key-name" required className="font-mono" placeholder="CONTOH_API_KEY" value={form.key_name}
+              onChange={e => setForm(f => ({ ...f, key_name: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') }))} />
+          </Isian>
+        )}
+        <Isian label={editKey ? 'Nilai baru' : 'Nilai'} wajib htmlFor="key-value">
+          <div className="relative">
+            <Input id="key-value" type={showValues['_form'] ? 'text' : 'password'} required autoComplete="off"
+              className="pr-10 font-mono" value={form.value}
+              placeholder={editKey ? 'Masukkan nilai baru untuk mengganti…' : 'Masukkan nilai kunci…'}
+              onChange={e => setForm(f => ({ ...f, value: e.target.value }))} />
+            <Button type="button" variant="ghost" size="icon-sm" className="absolute right-1 top-1/2 -translate-y-1/2"
+              onClick={() => setShowValues(s => ({ ...s, _form: !s._form }))}
+              title={showValues['_form'] ? 'Sembunyikan nilai' : 'Tampilkan nilai yang diketik'}
+              aria-label={showValues['_form'] ? 'Sembunyikan nilai' : 'Tampilkan nilai yang diketik'}>
+              {showValues['_form'] ? <EyeOff /> : <Eye />}
+            </Button>
           </div>
-        </div>
-      )}
-    </div>
+        </Isian>
+        <Isian label="Keterangan (opsional)" htmlFor="key-desc">
+          <Input id="key-desc" placeholder="Keterangan penggunaan kunci ini…" value={form.description}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+        </Isian>
+        <Isian label="Kategori" htmlFor="key-category">
+          <SmartNativeSelect id="key-category" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+            {Object.entries(CATEGORY_META).map(([val, meta]) => (
+              <option key={val} value={val}>{meta.label}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }

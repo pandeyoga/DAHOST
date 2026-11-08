@@ -73,7 +73,7 @@ export const downloadBackup = async (backupId, token) => {
     const response = await fetch(`${API}/download/${encodeURIComponent(backupId)}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!response.ok) throw new Error(await readError(response, 'Download gagal'));
+    if (!response.ok) throw new Error(await readError(response, 'Unduhan gagal'));
 
     const blob = await response.blob();
     if (!blob || blob.size === 0) throw new Error('Berkas backup kosong (0 byte)');
@@ -110,7 +110,7 @@ const xhrPost = (path, formData, token, onProgress) =>
       let body = null;
       try { body = JSON.parse(xhr.responseText); } catch { /* biarkan null */ }
       if (xhr.status >= 200 && xhr.status < 300) resolve(body || {});
-      else reject(new Error(describeError(body?.detail ?? body, `Gagal (HTTP ${xhr.status})`)));
+      else reject(new Error(describeError(body?.detail ?? body, `Gagal (kode ${xhr.status})`)));
     };
     xhr.onerror = () => reject(new Error('Koneksi terputus saat mengunggah'));
     xhr.ontimeout = () => reject(new Error('Unggahan melewati batas waktu'));
@@ -201,9 +201,71 @@ export const restoreSelective = async (backupId, collections, mode, token) => {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ backup_id: backupId, collections, mode, confirm: true }),
     });
-    if (!response.ok) throw new Error(await readError(response, 'Restore gagal'));
+    if (!response.ok) throw new Error(await readError(response, 'Pemulihan gagal'));
     return await response.json();
   } catch (e) {
     return { ok: false, error: e.message };
   }
 };
+
+// ── Nama tampilan koleksi (Standar UI/UX v2, 8 Nov 2026) ─────────────────────
+// Nama koleksi (`rahaza_employees`) adalah istilah program; layar menampilkan terjemahan kata per kata
+// ("Karyawan"). Nama asli tetap dipakai untuk memilih/mengosongkan dan ikut di berkas unduhan & keterangan arah kursor.
+const KATA_KOLEKSI = {
+  acc: 'aksesoris', accessories: 'aksesoris', accessory: 'aksesoris', account: 'akun', accounts: 'akun', accruals: 'akrual',
+  activity: 'aktivitas', adjustments: 'penyesuaian', ads: 'iklan', advance: 'uang muka', ai: 'AI', alert: 'peringatan',
+  allowances: 'tunjangan', announcements: 'pengumuman', ap: 'utang', ar: 'piutang', asset: 'aset', assets: 'aset',
+  assignments: 'penugasan', assistant: 'asisten', attachments: 'lampiran', attempts: 'percobaan', attendance: 'absensi',
+  audit: 'audit', auto: 'otomatis', bank: 'bank', barcode: 'barcode', batches: 'batch', bom: 'BOM', boms: 'BOM',
+  bridge: 'jembatan', buckets: 'kelompok', budgets: 'anggaran', buildings: 'gedung', buyer: 'pembeli', calendar: 'kalender',
+  candidates: 'kandidat', cash: 'kas', catalog: 'katalog', catalogs: 'katalog', categories: 'kategori', category: 'kategori',
+  centers: 'pusat', challenges: 'tantangan', change: 'perubahan', changes: 'perubahan', channel: 'kanal', channels: 'kanal',
+  chat: 'obrolan', checklists: 'daftar periksa', checks: 'pemeriksaan', claims: 'klaim', client: 'klien', clients: 'klien',
+  cmt: 'CMT', coa: 'COA', colors: 'warna', comm: 'komisi', company: 'perusahaan', complaints: 'keluhan', component: 'komponen',
+  config: 'pengaturan', configs: 'pengaturan', consumptions: 'pemakaian', content: 'konten', controls: 'kontrol',
+  conversations: 'percakapan', conversions: 'konversi', cost: 'biaya', costing: 'kalkulasi biaya', counters: 'penghitung',
+  courses: 'kursus', creator: 'kreator', creators: 'kreator', credentials: 'kredensial', customers: 'pelanggan', cutting: 'potong',
+  da: '', data: 'data', delivery: 'pengiriman', depr: 'penyusutan', devices: 'perangkat', dewi: '', discounts: 'diskon',
+  dispatches: 'pengiriman', doc: 'dokumen', documents: 'dokumen', downtime: 'waktu henti', employee: 'karyawan',
+  employees: 'karyawan', enrollments: 'pendaftaran', entries: 'entri', events: 'peristiwa', expense: 'biaya', expenses: 'biaya',
+  fabric: 'kain', fg: 'barang jadi', fixed: 'tetap', flashsales: 'flash sale', formats: 'format', funds: 'dana', fx: 'kurs',
+  gl: 'buku besar', grn: 'penerimaan', groups: 'grup', handover: 'serah terima', handovers: 'serah terima', health: 'kesehatan',
+  history: 'riwayat', hpp: 'HPP', import: 'impor', incentive: 'insentif', inspection: 'inspeksi', inspections: 'inspeksi',
+  inventory: 'persediaan', invoices: 'faktur', issues: 'pengeluaran', item: 'item', items: 'item', job: 'pekerjaan',
+  jobs: 'pekerjaan', journal: 'jurnal', kasbon: 'kasbon', key: 'kunci', kol: 'KOL', kpi: 'KPI', kreator: 'kreator',
+  launches: 'peluncuran', layers: 'lapisan', leave: 'cuti', ledger: 'buku', limit: 'batas', lines: 'baris', links: 'tautan',
+  lists: 'daftar', live: 'live', livehost: 'live host', livehosts: 'live host', lms: 'LMS', locations: 'lokasi', locks: 'kunci',
+  log: 'log', login: 'masuk', logs: 'log', machine: 'mesin', machines: 'mesin', maklon: 'maklon', mapping: 'pemetaan',
+  marketing: 'marketing', master: 'induk', material: 'material', materials: 'material', messages: 'pesan', model: 'model',
+  models: 'model', movements: 'mutasi', notes: 'catatan', notif: 'notifikasi', notifications: 'notifikasi', number: 'nomor',
+  objectives: 'sasaran', okr: 'OKR', onboarding: 'orientasi', opname3: 'opname', options: 'opsi', orders: 'pesanan',
+  org: 'organisasi', out: 'keluar', overtime: 'lembur', pack: 'paket', packs: 'paket', partners: 'mitra', payments: 'pembayaran',
+  payroll: 'penggajian', payslips: 'slip gaji', pdf: 'PDF', pending: 'tertunda', perform: 'kinerja', period: 'periode',
+  periods: 'periode', permak: 'permak', permissions: 'izin', petty: 'kas kecil', platform: 'platform', po: 'PO', portal: 'portal',
+  pos: 'POS', positions: 'jabatan', posting: 'posting', price: 'harga', print: 'cetak', process: 'proses', processes: 'proses',
+  procurement: 'pengadaan', product: 'produk', production: 'produksi', products: 'produk', profiles: 'profil', progress: 'progres',
+  purchase: 'pembelian', push: 'push', qc: 'QC', quarantine: 'karantina', questions: 'pertanyaan', quick: 'cepat', racks: 'rak',
+  rahaza: '', rate: 'tarif', rates: 'tarif', read: 'dibaca', receipt: 'penerimaan', receipts: 'penerimaan', receive: 'terima',
+  receiving: 'penerimaan', records: 'catatan', recruitment: 'rekrutmen', rejects: 'tolakan', reminders: 'pengingat',
+  reports: 'laporan', requests: 'permintaan', results: 'hasil', return: 'retur', returns: 'retur', revaluation: 'revaluasi',
+  reviews: 'tinjauan', revisions: 'revisi', rnd: 'R&D', role: 'peran', roles: 'peran', roll: 'roll', rolls: 'roll', runs: 'proses',
+  salary: 'gaji', sales: 'penjualan', sample: 'sampel', samples: 'sampel', scan: 'pindai', scheduler: 'penjadwal',
+  schedules: 'jadwal', scripts: 'naskah', session: 'sesi', sessions: 'sesi', settings: 'pengaturan', settlements: 'penyelesaian',
+  sheets: 'lembar', shift: 'shift', shifts: 'shift', shipment: 'pengiriman', shipments: 'pengiriman', short: 'kurang',
+  sku: 'SKU', snapshots: 'potret', sop: 'SOP', stock: 'stok', study: 'studi', styles: 'gaya', submissions: 'kiriman',
+  subscriptions: 'langganan', supplier: 'pemasok', suppliers: 'pemasok', syncs: 'sinkronisasi', system: 'sistem',
+  targets: 'target', task: 'tugas', tasks: 'tugas', tech: 'teknis', templates: 'templat', toko: 'toko', training: 'pelatihan',
+  transfers: 'transfer', travel: 'perjalanan dinas', txns: 'transaksi', types: 'jenis', undo: 'urungkan', unit: 'satuan',
+  units: 'satuan', usage: 'pemakaian', users: 'pengguna', variances: 'selisih', variant: 'varian', variants: 'varian',
+  vendor: 'vendor', warehouse: 'gudang', webauthn: 'sidik jari', webhook: 'webhook', weekly: 'mingguan', wh: 'gudang',
+  wip: 'WIP', withdrawals: 'penarikan', work: 'kerja', zkteco: 'mesin absen', zones: 'zona',
+};
+
+export function labelKoleksi(nama) {
+  const kata = String(nama || '').toLowerCase().split(/[_.-]+/).filter(Boolean)
+    .map((w) => (w in KATA_KOLEKSI ? KATA_KOLEKSI[w] : w)).filter(Boolean);
+  // kata yang sama berurutan (mis. "aksesoris aksesoris") cukup sekali
+  const unik = kata.filter((w, i) => w !== kata[i - 1]);
+  const s = unik.join(' ').trim() || String(nama || '');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}

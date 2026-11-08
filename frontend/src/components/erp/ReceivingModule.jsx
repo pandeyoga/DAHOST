@@ -1,22 +1,34 @@
+/**
+ * Penerimaan Barang (GR) — pintu masuk seluruh stok gudang.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu kepala buatan "Goods Receiving" + dua spanduk +
+ * kotak "Langkah berikutnya" yang mendorong tabel ke bawah); daftar = TabelData (kartu ringkas di HP; tampilan
+ * "Kartu" besar di layar lebar dihapus) dengan pilihan urutan; unduhan Excel + CSV; form penerimaan = FormPopup
+ * panjang; detail/konfirmasi = DetailPopup; hapus lewat confirmDialog; tanggal kedaluwarsa = DatePicker.
+ * Isian, aturan validasi, dan API tidak berubah.
+ */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
-import Modal from '@/components/erp/Modal';
-import ConfirmDialog from '@/components/erp/ConfirmDialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  ArrowDownToLine, Plus, Eye, CheckCircle, XCircle, Trash2,
-  Package, Truck, Search, RefreshCw, FileText, Link2, AlertCircle, MapPin, Warehouse,
-  Table2, LayoutGrid, ArrowUpDown, ScanLine, Loader2,
+  ArrowDownToLine, Plus, Eye, CheckCircle, Trash2,
+  Search, RefreshCw, AlertCircle, MapPin, Warehouse, ScanLine, Loader2,
 } from 'lucide-react';
-import { IconButton } from './IconButton';
 import { Combobox } from './Combobox';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 // Sprint A.1: UniversalScanner SSOT
 import UniversalScanner from './scanner/UniversalScanner';
 import ScanResult from './scanner/ScanResult';
 import { sameScanCode, scanFeedback } from './scanner/scanCode';
-import OnwardCTA from './OnwardCTA';
-import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 // FASE H-5 — rincian gulungan kain diisi DI SINI (pintu masuk kain), nomor roll otomatis.
 import RollLinesEditor from './warehouse/RollLinesEditor';
@@ -25,19 +37,27 @@ import { toast } from 'sonner';
 // 2026-11-06 (Tahap 2): harga GR tanpa PO hanya diisi Keuangan (cermin core/roles.FINANCE_ROLES)
 import { isCurrentUserFinance } from '../../lib/financeRoles';
 
-const RECEIVING_VIEW_KEY = 'wh_receiving_view';
-const CSV_HEAD = ['No. Penerimaan', 'Supplier / Sumber', 'Jenis', 'No. PO', 'Status',
-  'Jml item', 'Qty diharap', 'Qty diterima', 'Qty ditolak', 'Lokasi', 'Tanggal',
-  'Diterima oleh'];
-
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
 
-const STATUS_STYLES = {
-  draft:      'bg-secondary text-muted-foreground border border-border',
-  inspecting: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.35)] ',
-  received:   'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.35)] ',
-  failed:     'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.35)] ',
+// Status GR dalam bahasa staf (dulu kode mentah "draft/received" tampil di layar)
+const STATUS_GR = {
+  draft:      { label: 'Draf', tone: 'muted' },
+  inspecting: { label: 'Diperiksa', tone: 'warning' },
+  received:   { label: 'Diterima', tone: 'success' },
+  failed:     { label: 'Gagal', tone: 'danger' },
 };
+const statusGRLabel = (s) => (STATUS_GR[s] || {}).label || s || '—';
+function StatusGR({ status }) {
+  const m = STATUS_GR[status] || { label: status || '—', tone: 'default' };
+  return <StatusBadge status={status} label={m.label} tone={m.tone} />;
+}
+// Pilihan urutan daftar (dulu tombol di kepala kolom): kunci:arah
+const URUTAN = [
+  ['created_at:desc', 'Tanggal terbaru'], ['created_at:asc', 'Tanggal terlama'],
+  ['receipt_number:asc', 'No. penerimaan'], ['source_label:asc', 'Supplier A–Z'],
+  ['status:asc', 'Status'], ['item_count:desc', 'Jumlah item terbanyak'],
+  ['received_total:desc', 'Qty diterima terbanyak'], ['rejected_total:desc', 'Qty ditolak terbanyak'],
+];
 
 const EMPTY_ITEM = () => ({
   product_name: '', sku: '',
@@ -55,9 +75,9 @@ const EMPTY_ITEM = () => ({
 function rejectHint(cats, code, qty, unit) {
   const kind = (cats.find((c) => c.code === code) || {}).kind;
   if (kind === 'dokumen') {
-    return <>Alasan Reject — {qty} {unit} <strong>tidak masuk stok</strong> (catatan di GR saja; sisa PO tetap terbuka)</>;
+    return <>Qty ditolak {qty} {unit} <strong>tidak masuk stok</strong> (catatan di GR saja; sisa PO tetap terbuka)</>;
   }
-  return <>Alasan Reject — {qty} {unit} akan masuk <strong>Karantina QC</strong></>;
+  return <>Qty ditolak {qty} {unit} akan masuk <strong>Karantina QC</strong></>;
 }
 const rejectOptLabel = (rc) => `${rc.label}${rc.kind === 'dokumen' ? ' · catatan saja' : ' · karantina'}`;
 const priceOf = (it) => parseFloat(it?.unit_price) || parseFloat(it?.unit_cost) || 0;
@@ -75,7 +95,6 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const [loading, setLoading]     = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(null);
   const [search, setSearch] = useState('');
   // FASE 6: kategori alasan reject (dipakai saat qty rejected > 0 → masuk Karantina QC)
   const [rejectCats, setRejectCats] = useState([]);
@@ -89,6 +108,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const [detailLocationId, setDetailLocationId] = useState('');
   const [receiveResult, setReceiveResult] = useState(null);
   const [missingRolls, setMissingRolls] = useState([]);
+  // Jumlah SEMUA baris kain tanpa gulungan (field `total` server) — daftar hanya memuat 50 contoh.
+  const [missingRollsTotal, setMissingRollsTotal] = useState(0);
   // 2026-11-06 (audit layar scan Gudang): scan SKU per baris → bunyi + ScanResult singkat di bawah barisnya.
   const [skuScanIdx, setSkuScanIdx] = useState(null);   // baris yang sedang di-scan (kamera terbuka)
   const [skuScan, setSkuScan] = useState(null);         // { idx, tone, title, detail }
@@ -177,7 +198,11 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       try {
         const mr = await fetch('/api/wms/fabric-rolls/missing-from-receipts?limit=50',
           { headers: { Authorization: `Bearer ${token}` } });
-        if (mr.ok) setMissingRolls((await mr.json()).items || []);
+        if (mr.ok) {
+          const d = await mr.json();
+          setMissingRolls(d.items || []);
+          setMissingRollsTotal(Number(d.total ?? (d.items || []).length) || 0);
+        }
       } catch { /* noop */ }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -492,7 +517,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         const d = await r.json().catch(() => ({}));
         throw new Error(typeof d.detail === 'string' ? d.detail : 'Gagal menghapus penerimaan');
       }
-      setConfirmDelete(null); fetchData();
+      toast.success('Penerimaan draf dihapus.');
+      fetchData();
     } catch (e) { toast.error('Error: ' + e.message); }
   };
 
@@ -542,12 +568,6 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   //   · "berapa yang DITOLAK, dan dari penerimaan yang mana?"  ← qty ditolak
   //     adalah dasar klaim ke supplier; kalau harus dihitung dengan mata,
   //     klaimnya tidak pernah diajukan.
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem(RECEIVING_VIEW_KEY) || 'table'; } catch { return 'table'; }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(RECEIVING_VIEW_KEY, view); } catch { /* penyimpanan diblokir */ }
-  }, [view]);
   const [sort, setSort] = useState({ key: 'created_at', dir: 'desc' });
 
   // Ringkasan per penerimaan dihitung SEKALI di sini supaya tabel, kartu, dan
@@ -577,860 +597,607 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
     });
     return list;
   }, [enriched, sort]);
-  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 12);
-  const toggleSort = (key) => setSort((s) => (
-    s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
-  const csvRows = rows.map((r) => [
-    r.receipt_number, r.source_label, sourceLabel(r.source_type), r.po_number || '',
-    r.status, r.item_count, r.expected_total, r.received_total, r.rejected_total,
-    r.location_name || r.location_code || '', String(r.created_at || '').slice(0, 10),
-    r.received_by_name || r.created_by || '',
-  ]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>;
 
+  const detailList = showDetail ? (detailItems.length ? detailItems : (showDetail.items || [])) : [];
+  const isDraft = showDetail?.status === 'draft';
+
+  const kolom = [
+    { kunci: 'no', label: 'No. penerimaan', hp: 'judul', isi: (r) => (
+      <span className="font-medium tabular-nums" data-testid={`receipt-row-${r.receipt_number}`}>{r.receipt_number}</span>) },
+    { kunci: 'sumber', label: 'Supplier / sumber', hp: 'keterangan', isi: (r) => r.source_label },
+    { kunci: 'po', label: 'No. PO', hp: false, isi: (r) => <span className="tabular-nums">{r.po_number || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => (
+      <span className="inline-flex flex-wrap gap-1">
+        <StatusGR status={r.status} />
+        {r.awaiting_finance_price && r.status !== 'received' && (
+          <span data-testid={`receipt-price-pending-${r.receipt_number}`}>
+            <StatusBadge tone="warning" label="Menunggu harga dari Keuangan" />
+          </span>
+        )}
+      </span>) },
+    { kunci: 'item', label: 'Item', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.item_count}</span> },
+    { kunci: 'diharap', label: 'Qty diharap', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.expected_total.toLocaleString('id-ID')}</span> },
+    { kunci: 'diterima', label: 'Qty diterima', rata: 'kanan', isi: (r) => <span className="font-medium tabular-nums">{r.received_total.toLocaleString('id-ID')}</span> },
+    // Qty ditolak diberi warna hanya kalau memang > 0 — angka nol yang diwarnai merah membuat orang berhenti memperhatikan.
+    { kunci: 'ditolak', label: 'Qty ditolak', rata: 'kanan', isi: (r) => (
+      <span className={`tabular-nums ${r.rejected_total > 0 ? 'font-medium text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>
+        {r.rejected_total.toLocaleString('id-ID')}
+      </span>) },
+    { kunci: 'tanggal', label: 'Tanggal', hp: false, isi: (r) => <span className="whitespace-nowrap">{fmtDate(r.created_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: false, isi: (r) => (
+      <Button size="sm" variant="outline" onClick={() => openDetail(r)} data-testid={`receipt-detail-btn-${r.receipt_number}`}>
+        <Eye />Detail
+      </Button>) },
+  ];
+
+  const hapusDraf = async (receipt) => {
+    const ok = await confirmDialog({
+      title: 'Hapus penerimaan?', body: `GR draf ${receipt.receipt_number} akan dihapus permanen.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
+    setShowDetail(null);
+    handleDelete(receipt.id);
+  };
+
   return (
-    <div className="space-y-5" data-testid="wh-receiving-module">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Goods Receiving</h1>
-          <p className="text-muted-foreground text-sm">Terima barang dari pemasok, dengan atau tanpa PO</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <IconButton label="Muat ulang penerimaan" onClick={fetchData} data-testid="receiving-refresh">
-            <RefreshCw className="w-4 h-4 text-muted-foreground" />
-          </IconButton>
-          <Button onClick={() => setShowCreate(true)} className="bg-primary text-primary-foreground hover:brightness-110 gap-1.5" data-testid="create-receipt-btn">
-            <Plus className="w-4 h-4" /> Penerimaan baru
+    <PageLayout
+      testId="wh-receiving-module"
+      title="Penerimaan Barang"
+      subtitle="Terima barang dari pemasok, dengan atau tanpa PO. Stok bertambah saat penerimaan dikonfirmasi."
+      actions={(
+        <Button onClick={() => setShowCreate(true)} data-testid="create-receipt-btn">
+          <Plus />Penerimaan baru
+        </Button>
+      )}
+      filters={<>
+        {(
+        <>
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Cari no. penerimaan / supplier" value={search}
+              onChange={e => setSearch(e.target.value)} className="pl-8"
+              data-testid="receiving-search" />
+          </div>
+          <SmartNativeSelect value={`${sort.key}:${sort.dir}`} aria-label="Urutkan"
+            onChange={(e) => { const [key, dir] = e.target.value.split(':'); setSort({ key, dir }); }}
+            className="w-full sm:w-52" wrapperClassName="w-full sm:w-52" data-testid="receiving-sort">
+            {URUTAN.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </SmartNativeSelect>
+        </>
+      )}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {(
+        <>
+          <TombolUnduh namaBerkas="penerimaan-barang" namaLembar="Penerimaan" baris={rows} testId="receiving-unduh"
+            kolom={[
+              { label: 'No. penerimaan', nilai: (r) => r.receipt_number },
+              { label: 'Supplier / sumber', nilai: (r) => r.source_label },
+              { label: 'Jenis', nilai: (r) => sourceLabel(r.source_type) },
+              { label: 'No. PO', nilai: (r) => r.po_number || '' },
+              { label: 'Status', nilai: (r) => statusGRLabel(r.status) },
+              { label: 'Jumlah item', nilai: (r) => r.item_count },
+              { label: 'Qty diharap', nilai: (r) => r.expected_total },
+              { label: 'Qty diterima', nilai: (r) => r.received_total },
+              { label: 'Qty ditolak', nilai: (r) => r.rejected_total },
+              { label: 'Lokasi', nilai: (r) => r.location_name || r.location_code || '' },
+              { label: 'Tanggal', nilai: (r) => fmtDate(r.created_at) },
+              { label: 'Diterima oleh', nilai: (r) => r.received_by_name || r.created_by || '' },
+            ]} />
+          <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang penerimaan" aria-label="Muat ulang penerimaan"
+            data-testid="receiving-refresh">
+            <RefreshCw />
           </Button>
+        </>
+      )}
         </div>
-      </div>
-
-      {/* Sprint 1.1 info banner */}
-      <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
-        <Link2 className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
-        <p className="text-xs text-[hsl(var(--primary))] ">
-          <strong>Setiap baris wajib tertaut ke Master Item</strong> — stok tercatat saat penerimaan dikonfirmasi.
-          Harga mengikuti PO dan tidak bisa diubah di sini; penerimaan tanpa PO diberi harga oleh Keuangan.
-        </p>
-      </div>
-
-      {/* ── FASE H-5: peringatan kain yang masuk stok tanpa gulungan ─────────── */}
-      {missingRolls.length > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] "
-          data-testid="gr-missing-rolls-banner">
-          <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-xs text-[hsl(var(--warning))] ">
-              <strong>{missingRolls.length} baris penerimaan kain belum punya gulungan.</strong>{' '}
-              Kain ini ada di stok tetapi tidak bisa dipotong di Cutting sampai gulungannya diterbitkan
-              ({missingRolls.slice(0, 3).map(m => m.material_code).join(', ')}
-              {missingRolls.length > 3 ? `, +${missingRolls.length - 3} lagi` : ''}).
-            </p>
-          </div>
-          {onNavigate && (
-            <button onClick={() => onNavigate('wms-fabric-rolls')}
-              className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-[hsl(var(--warning))] text-white hover:brightness-110"
-              data-testid="gr-banner-goto-rolls">
-              Terbitkan Roll →
-            </button>
+      </>}
+      summary={missingRollsTotal > 0 ? (
+        // FASE H-5: kain yang masuk stok tanpa gulungan — Cutting menolak memotongnya.
+        <Notice tone="warning" icon={AlertCircle} testId="gr-missing-rolls-banner"
+          title={`${missingRollsTotal} baris penerimaan kain belum punya gulungan`}
+          action={onNavigate && (
+            <Button size="sm" variant="outline" onClick={() => onNavigate('wms-fabric-rolls')} data-testid="gr-banner-goto-rolls">
+              Terbitkan roll
+            </Button>
+          )}>
+          Kain ini ada di stok tetapi tidak bisa dipotong di Cutting sampai gulungannya diterbitkan
+          ({missingRolls.slice(0, 3).map(m => m.material_code).join(', ')}
+          {missingRollsTotal > 3 ? `, +${missingRollsTotal - 3} lagi` : ''}).
+        </Notice>
+      ) : null}
+      footer={(
+        <>
+          {total > 0 && (
+            <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
           )}
-        </div>
-      )}
-
-      {/* RC-FLOW-UX Alur 1/2 — GRN → Put-Away → Stok */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Langkah Berikutnya"
-        actions={[
-          { module: 'wh-putaway', label: 'Put-Away Sekarang', icon: MapPin, primary: true, hint: 'Alokasikan barang yang sudah diterima ke lokasi/bin' },
-          { module: 'wms-stock-hub', label: 'Lihat Stok', icon: Warehouse, hint: 'Cek stok terkini setelah penerimaan' },
-        ]}
-      />
-
-      {/* Search + pengalih tampilan + unduh */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative max-w-sm flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <GlassInput placeholder="Cari no. penerimaan / supplier..." value={search}
-            onChange={e => setSearch(e.target.value)} className="pl-9"
-            data-testid="receiving-search" />
-        </div>
-        <div className="inline-flex rounded-lg border border-[var(--glass-border)] overflow-hidden">
-          <button type="button" onClick={() => setView('table')} data-testid="receiving-view-table"
-            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-              ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-            <Table2 size={12} /> Tabel
-          </button>
-          <button type="button" onClick={() => setView('grid')} data-testid="receiving-view-grid"
-            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-              ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-            <LayoutGrid size={12} /> Kartu
-          </button>
-        </div>
-        <ExportCsvButton filename="penerimaan-barang" testId="receiving-export-csv"
-          head={CSV_HEAD} rows={csvRows}
-          note={`${rows.reduce((s, r) => s + r.rejected_total, 0)} ditolak`} />
-      </div>
-
-      {/* Receipts List */}
-      {filtered.length === 0 ? (
-        <GlassCard hover={false} className="p-8 text-center">
-          <ArrowDownToLine className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">
-            {search ? 'Tidak ada penerimaan yang cocok dengan pencarian' : 'Belum ada goods receipt'}
-          </p>
-        </GlassCard>
-      ) : view === 'table' ? (
-        <div className="rounded-2xl border border-[var(--glass-border)] bg-[var(--card-surface)]">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs" data-testid="receiving-table">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr className="text-left">
-                  {[['receipt_number', 'No. Penerimaan'], ['source_label', 'Supplier / Sumber'],
-                    ['source_type', 'Jenis'], ['po_number', 'No. PO'],
-                    ['status', 'Status'], ['item_count', 'Jml item'],
-                    ['expected_total', 'Qty diharap'], ['received_total', 'Qty diterima'],
-                    ['rejected_total', 'Qty ditolak'],
-                    ['created_at', 'Tanggal']].map(([k, label]) => (
-                    <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
-                      <button type="button" onClick={() => toggleSort(k)}
-                        data-testid={`receiving-sort-${k}`}
-                        className="inline-flex items-center gap-1 hover:text-primary">
-                        {label}
-                        <ArrowUpDown size={10}
-                          className={sort.key === k ? 'text-primary' : 'opacity-30'} />
-                      </button>
-                    </th>
-                  ))}
-                  <th className="px-2.5 py-2 font-semibold text-right">Aksi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map((r) => (
-                  <tr key={r.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)] cursor-pointer"
-                      onClick={() => openDetail(r)}
-                      data-testid={`receipt-row-${r.receipt_number}`}>
-                    <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{r.receipt_number}</td>
-                    <td className="px-2.5 py-2">{r.source_label}</td>
-                    <td className="px-2.5 py-2 text-muted-foreground">{sourceLabel(r.source_type) || '—'}</td>
-                    <td className="px-2.5 py-2 tabular-nums">{r.po_number || '—'}</td>
-                    <td className="px-2.5 py-2">
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[r.status] || STATUS_STYLES.draft}`}>{r.status}</span>
-                      {r.awaiting_finance_price && r.status !== 'received' && (
-                        <span className={`ml-1 text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES.inspecting}`}
-                          data-testid={`receipt-price-pending-${r.receipt_number}`}>
-                          menunggu harga dari Keuangan
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2.5 py-2 text-right">{r.item_count}</td>
-                    <td className="px-2.5 py-2 text-right">{r.expected_total.toLocaleString('id-ID')}</td>
-                    <td className="px-2.5 py-2 text-right font-semibold">{r.received_total.toLocaleString('id-ID')}</td>
-                    {/* Qty ditolak diberi warna hanya kalau memang > 0 — angka nol
-                        yang diwarnai merah membuat orang berhenti memperhatikan. */}
-                    <td className={`px-2.5 py-2 text-right ${r.rejected_total > 0 ? 'text-[hsl(var(--destructive))]  font-semibold' : 'text-muted-foreground'}`}>
-                      {r.rejected_total.toLocaleString('id-ID')}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.created_at)}</td>
-                    <td className="px-2.5 py-2 text-right">
-                      <button onClick={(e) => { e.stopPropagation(); openDetail(r); }}
-                        className="h-7 px-2.5 rounded-lg border border-[var(--glass-border)] text-[11px] hover:bg-[var(--glass-bg)]">
-                        Detail
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <PaginationLite page={page} totalPages={totalPages} total={total}
-            pageSize={pageSize} onPageChange={setPage} className="px-3" />
-        </div>
-      ) : (
-      <div className="space-y-3">
-        {paged.map(r => (
-          <GlassCard key={r.id} className="p-4 cursor-pointer" onClick={() => openDetail(r)} data-testid={`receipt-${r.receipt_number}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/15 border border-primary/25 flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground tabular-nums">{r.receipt_number}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {r.supplier_name || sourceLabel(r.source_type)} &bull; {r.items?.length || 0} items
-                    {r.items?.some(i => i.material_id) && (
-                      <span className="ml-1.5 text-[hsl(var(--primary))] font-medium">
-                        <Link2 className="w-3 h-3 inline" /> synced
-                      </span>
-                    )}
-                    {/* P1.C: Show "From PO" badge if linked */}
-                    {r.po_number && (
-                      <span className="ml-1.5 text-[hsl(var(--success))] font-medium">
-                        &bull; <Truck className="w-3 h-3 inline" /> Dari PO {r.po_number}
-                        {r.enforce_po_qty && <span className="ml-1 text-[10px] opacity-70">(qty terbatas)</span>}
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_STYLES[r.status] || STATUS_STYLES.draft}`}>{r.status}</span>
-                <p className="text-xs text-muted-foreground">{fmtDate(r.created_at)}</p>
-              </div>
+          {/* RC-FLOW-UX Alur 1/2 — GRN → Put-Away → Stok (dulu di atas daftar, mendorong tabel ke bawah) */}
+          {/* Dulu OnwardCTA bersama (judul HURUF BESAR "LANGKAH BERIKUTNYA"); tujuan & tombolnya sama. */}
+          {onNavigate && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="onward-cta">
+              <span>Langkah berikutnya:</span>
+              <Button size="sm" variant="outline" onClick={() => onNavigate('wh-putaway')} title="Alokasikan barang yang sudah diterima ke lokasi/bin"
+                data-testid="onward-cta-wh-putaway"><MapPin />Simpan ke rak sekarang</Button>
+              <Button size="sm" variant="outline" onClick={() => onNavigate('wms-stock-hub')} title="Cek stok terkini setelah penerimaan"
+                data-testid="onward-cta-wms-stock-hub"><Warehouse />Lihat stok</Button>
             </div>
-          </GlassCard>
-        ))}
-        <PaginationLite page={page} totalPages={totalPages} total={total}
-          pageSize={pageSize} onPageChange={setPage} />
-      </div>
+          )}
+        </>
       )}
+    >
+      <TabelData kolom={kolom} baris={paged} onKlikBaris={openDetail} testId="receiving-table"
+        kosong={<EmptyState icon={ArrowDownToLine}
+          title={search ? 'Tidak ada penerimaan yang cocok' : 'Belum ada penerimaan barang'}
+          description={search ? 'Ubah kata pencarian.' : 'Penerimaan dari PO muncul di sini; penerimaan tanpa PO dibuat dengan tombol "Penerimaan baru".'}
+          action={!search && <Button onClick={() => setShowCreate(true)}><Plus />Penerimaan baru</Button>} />} />
 
-      {/* Create Modal */}
-      {showCreate && (
-        <Modal title="Penerimaan barang baru" onClose={() => setShowCreate(false)} size="xl">
-          <div className="space-y-4">
-            {/* Sprint 2.1: PO Selection */}
-            <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
-              <div className="flex items-start gap-2 mb-2">
-                <FileText className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <label className="text-xs font-semibold text-[hsl(var(--primary))] mb-1 block">Tautkan ke Purchase Order (opsional)</label>
+      {/* ── Form penerimaan baru (popup panjang) ───────────────────────────────── */}
+      <FormPopup open={showCreate} onClose={() => setShowCreate(false)} ukuran="panjang" testId="gr-create-form"
+        judul="Penerimaan barang baru"
+        keterangan="Setiap baris wajib tertaut ke master item — stok tercatat saat penerimaan dikonfirmasi. Harga mengikuti PO; penerimaan tanpa PO diberi harga oleh Keuangan."
+        onSimpan={() => runOnce(handleCreate)} menyimpan={posting} labelSimpan="Simpan penerimaan">
+        <Isian label="Tautkan ke purchase order (opsional)"
+          petunjuk={form.po_number ? `Barang diisi otomatis dari sisa PO ${form.po_number}.` : 'Pilih PO agar barang, qty sisa, dan harga terisi otomatis.'}>
+          <Combobox
+            value={form.po_id}
+            onChange={(v) => handlePOPick(v)}
+            options={[
+              { value: '', label: 'Manual (tanpa PO)' },
+              ...purchaseOrders.map(po => ({
+                value: po.id,
+                label: `${po.po_number} - ${po.supplier_name || po.vendor_name}`,
+                description: po.status === 'partially_received' ? `sisa · ${po.item_count} item` : `${po.item_count} item`,
+              }))
+            ]}
+            placeholder="Manual (tanpa PO)"
+            searchPlaceholder="Cari PO atau vendor..."
+            emptyMessage="PO tidak ditemukan"
+            data-testid="gr-po-select"
+          />
+        </Isian>
+
+        {/* 2026-11-07 (Tahap 6 PG3, keputusan owner): Penerimaan Barang manual hanya dari PEMASOK. Pilihan
+            sumber "Produksi" / "Pindahan gudang" dengan asal barang yang diketik dihapus — memindahkan stok lewat
+            menu Transfer (server juga menolak GR manual baru bersumber itu). */}
+        <p className="text-sm text-muted-foreground" data-testid="gr-transfer-hint">
+          Penerimaan Barang hanya untuk barang dari pemasok. Barang hasil produksi atau pindahan antar gudang
+          dipindahkan lewat menu <strong className="text-foreground">Transfer</strong> (Stok &amp; Akurasi › Stok &amp; Pergerakan › Transfer A↔B).
+          {onNavigate && (
+            <Button type="button" variant="link" size="sm" className="h-auto px-1 py-0" data-testid="gr-transfer-link"
+              onClick={() => { setShowCreate(false); onNavigate('wh-stock'); }}>
+              Buka Transfer
+            </Button>
+          )}
+        </p>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="No. referensi (surat jalan / dokumen)" htmlFor="gr-ref">
+            <Input id="gr-ref" value={form.source_ref} onChange={e => setForm(f => ({ ...f, source_ref: e.target.value }))} placeholder="SJ-001" />
+          </Isian>
+          <Isian label="Supplier" htmlFor="gr-supplier" petunjuk={form.po_id ? 'Mengikuti PO.' : undefined}>
+            {/* 2026-11-07 (Tahap 5): sumber pemasok dipilih dari Master Supplier (dulu teks bebas → nama beda
+                ejaan tidak tertaut saat faktur/penilaian supplier). Ber-PO: supplier dari PO (terkunci). */}
+            <SmartNativeSelect id="gr-supplier" value={form.supplier_name}
+              onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
+              disabled={!!form.po_id}
+              data-testid="gr-supplier-select">
+              <option value="">— pilih supplier —</option>
+              {form.supplier_name && !suppliers.some(s => s.name === form.supplier_name) && (
+                <option value={form.supplier_name}>{form.supplier_name}</option>
+              )}
+              {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Lokasi tujuan">
+            <Combobox
+              value={form.location_id}
+              onChange={(v) => setForm(f => ({ ...f, location_id: v }))}
+              options={locations.map(l => ({
+                value: l.id,
+                label: `${l.code} - ${l.name}`,
+                testId: `gr-location-option-${l.code}`,
+              }))}
+              placeholder="Pilih lokasi..."
+              searchPlaceholder="Cari lokasi..."
+              emptyMessage="Lokasi tidak ditemukan"
+              data-testid="gr-location-select"
+            />
+          </Isian>
+        </div>
+
+        {/* Baris barang — Enter di isian baris tidak menyimpan seluruh penerimaan */}
+        <div className="space-y-3" onKeyDown={(e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.preventDefault(); }}>
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-foreground">Barang</p>
+            <Button type="button" variant="link" size="sm" onClick={addItem} data-testid="gr-add-item"><Plus />Tambah barang</Button>
+          </div>
+          {form.items.map((item, idx) => (
+            <div key={idx} className="space-y-3 rounded-lg border border-[var(--glass-border)] p-3" data-testid={`gr-item-${idx}`}>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {/* 2026-11-06 (Tahap 2): tautan Master Item WAJIB — konfirmasi menolak baris tanpa tautan */}
+                <Isian label="Master item" wajib
+                  petunjuk={!item.material_id ? 'Pilih barangnya. Baris tanpa master item tidak bisa masuk stok dan ditolak saat penerimaan dikonfirmasi.' : undefined}>
                   <Combobox
-                    value={form.po_id}
-                    onChange={(v) => handlePOPick(v)}
+                    value={item.material_id || ''}
+                    onChange={(v) => handleMaterialPick(idx, v)}
                     options={[
-                      { value: '', label: 'Manual (tanpa PO)' },
-                      ...purchaseOrders.map(po => ({
-                        value: po.id,
-                        label: `${po.po_number} - ${po.supplier_name || po.vendor_name}`,
-                        description: po.status === 'partially_received' ? `sisa · ${po.item_count} item` : `${po.item_count} item`,
+                      { value: '', label: '— pilih barang —' },
+                      ...materials.map(m => ({
+                        value: m.id,
+                        label: `${m.code} — ${m.name}`,
+                        description: m.unit,
+                        testId: `item-material-option-${m.code}`,
                       }))
                     ]}
-                    placeholder="Manual (tanpa PO)"
-                    searchPlaceholder="Cari PO atau vendor..."
-                    emptyMessage="PO tidak ditemukan"
-                    className="border-[hsl(var(--primary)/0.35)] "
-                    data-testid="gr-po-select"
+                    placeholder="— pilih barang —"
+                    searchPlaceholder="Cari material..."
+                    emptyMessage="Material tidak ditemukan"
+                    data-testid={`item-material-select-${idx}`}
                   />
-                  {form.po_number && (
-                    <p className="text-xs text-[hsl(var(--primary))] mt-1">✓ Barang diisi otomatis dari sisa PO {form.po_number}</p>
-                  )}
-                </div>
+                  {!item.material_id && <span className="sr-only" data-testid={`item-material-hint-${idx}`}>Master item belum dipilih</span>}
+                </Isian>
+                <Isian label="Nama produk" htmlFor={`gr-nama-${idx}`}>
+                  <Input id={`gr-nama-${idx}`} value={item.product_name} onChange={e => updateItem(idx, 'product_name', e.target.value)}
+                    placeholder="Nama produk" />
+                </Isian>
               </div>
-            </div>
-
-            {/* 2026-11-07 (Tahap 6 PG3, keputusan owner): Penerimaan Barang manual hanya dari PEMASOK. Pilihan
-                sumber "Produksi" / "Pindahan gudang" dengan asal barang yang diketik dihapus — memindahkan stok lewat
-                menu Transfer (server juga menolak GR manual baru bersumber itu). */}
-            <div className="rounded-lg border border-[hsl(var(--primary)/0.25)] bg-[hsl(var(--primary)/0.06)] px-3 py-2 text-xs text-muted-foreground"
-              data-testid="gr-transfer-hint">
-              Penerimaan Barang hanya untuk barang dari pemasok. Barang hasil produksi atau pindahan antar gudang
-              dipindahkan lewat menu <strong className="text-foreground">Transfer</strong> (Stok &amp; Akurasi › Stok &amp; Pergerakan › Transfer A↔B).
-              {onNavigate && (
-                <Button variant="link" size="sm" className="h-auto px-1 py-0 text-xs" data-testid="gr-transfer-link"
-                  onClick={() => { setShowCreate(false); onNavigate('wh-stock'); }}>
-                  Buka Transfer
-                </Button>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <Isian label="SKU" htmlFor={`sku-input-${idx}`}>
+                  <div className="flex gap-1">
+                    <Input id={`sku-input-${idx}`} value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="SKU"
+                      className="min-w-0 flex-1" data-testid={`sku-input-${idx}`} />
+                    {/* Satu kamera untuk semua baris; hasilnya diumumkan di bawah baris. */}
+                    <Button type="button" variant="outline" size="icon" className="shrink-0"
+                      onClick={() => setSkuScanIdx(idx)} title="Scan SKU" aria-label="Scan SKU"
+                      data-testid={`scan-sku-${idx}`}>
+                      <ScanLine />
+                    </Button>
+                  </div>
+                </Isian>
+                <Isian label="Satuan" htmlFor={`item-unit-${idx}`}
+                  petunjuk={factorOf(item) !== 1
+                    ? <span data-testid={`item-unit-convert-${idx}`}>= {fmtQty((parseFloat(item.received_qty) || 0) * factorOf(item))} {baseUnitOf(item)}</span>
+                    : undefined}>
+                  {/* 2026-11-06 (Tahap 2): hanya satuan barang ini (kemasan + satuan sedimensi, sumber
+                      server yang sama dengan PO); server mengonversi qty & harga ke satuan dasar. */}
+                  <SmartNativeSelect id={`item-unit-${idx}`} value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)}
+                    data-testid={`item-unit-${idx}`}>
+                    {unitOptions(item).map(u => <option key={u.unit} value={u.unit}>{u.label}</option>)}
+                  </SmartNativeSelect>
+                </Isian>
+                {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP).
+                    2026-11-06 (Tahap 2): ber-PO = harga PO (terkunci); tanpa PO = hanya Keuangan. */}
+                <Isian label={form.po_id ? 'Harga dari PO' : finance ? `Harga per ${item.unit || 'satuan'} (Rp)` : 'Harga — diisi Keuangan'}
+                  wajib={!form.po_id && finance} htmlFor={`item-price-${idx}`}>
+                  <Input id={`item-price-${idx}`} type="number" min="0" step="any" value={form.po_id || finance ? (item.unit_price ?? '') : ''}
+                    onChange={e => updateItem(idx, 'unit_price', e.target.value)}
+                    disabled={!!form.po_id || !finance}
+                    placeholder={form.po_id ? 'dari PO' : finance ? 'wajib' : 'menunggu Keuangan'}
+                    data-testid={`item-price-${idx}`} />
+                </Isian>
+                <Isian label="Diharap" htmlFor={`item-expected-${idx}`}>
+                  <Input id={`item-expected-${idx}`} type="number" value={item.expected_qty} onChange={e => updateItem(idx, 'expected_qty', parseFloat(e.target.value) || 0)}
+                    data-testid={`item-expected-${idx}`} />
+                </Isian>
+                <Isian label="Diterima" htmlFor={`item-received-${idx}`}>
+                  <Input id={`item-received-${idx}`} type="number" value={item.received_qty} onChange={e => updateItem(idx, 'received_qty', parseFloat(e.target.value) || 0)}
+                    data-testid={`item-received-${idx}`} />
+                </Isian>
+                <Isian label="Ditolak" htmlFor={`item-rejected-${idx}`}>
+                  <Input id={`item-rejected-${idx}`} type="number" value={item.rejected_qty} onChange={e => updateItem(idx, 'rejected_qty', parseFloat(e.target.value) || 0)}
+                    data-testid={`item-rejected-${idx}`} />
+                </Isian>
+                {/* FASE 6: alasan reject — qty reject otomatis masuk Karantina QC */}
+                {(parseFloat(item.rejected_qty) || 0) > 0 && (
+                  <Isian label="Alasan ditolak" className="col-span-2 sm:col-span-3" htmlFor={`item-reject-reason-${idx}`}
+                    petunjuk={rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}>
+                    <SmartNativeSelect id={`item-reject-reason-${idx}`} value={item.reject_reason || ''}
+                      onChange={e => updateItem(idx, 'reject_reason', e.target.value)}
+                      data-testid={`item-reject-reason-${idx}`}>
+                      <option value="">— pilih alasan —</option>
+                      {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rejectOptLabel(rc)}</option>)}
+                    </SmartNativeSelect>
+                  </Isian>
+                )}
+                {/* U7 — Lot & Expiry */}
+                <Isian label="No. lot / batch" htmlFor={`receiving-lot-${idx}`}>
+                  <Input id={`receiving-lot-${idx}`} value={item.lot_number} onChange={e => updateItem(idx, 'lot_number', e.target.value)}
+                    placeholder="LOT-001" data-testid={`receiving-lot-${idx}`} />
+                </Isian>
+                <Isian label="Tanggal kedaluwarsa">
+                  <DatePicker value={item.expiry_date || ''} onChange={(v) => updateItem(idx, 'expiry_date', v)}
+                    placeholder="Tidak ada" testId={`receiving-expiry-${idx}`} />
+                </Isian>
+                {form.items.length > 1 && (
+                  <div className="flex items-end justify-end">
+                    <Button type="button" variant="outline" size="sm" onClick={() => removeItem(idx)}
+                      title="Hapus baris ini" aria-label={`Hapus baris barang ${idx + 1}`} data-testid={`gr-remove-item-${idx}`}>
+                      <Trash2 />Hapus baris
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {skuScan?.idx === idx && <ScanResult {...skuScan} testId={`scan-sku-result-${idx}`} />}
+              {/* ── FASE H-5: rincian gulungan untuk baris kain/benang ───────── */}
+              {/* 2026-11-06 (Tahap 2): gulungan selalu satuan dasar — baris bersatuan kemasan mengisinya di detail */}
+              {isRollUnit(item.unit) && factorOf(item) === 1 && (
+                <RollLinesEditor
+                  lines={item.rolls || []}
+                  accepted={acceptedOf(item)}
+                  unit={item.unit}
+                  onChange={(lines) => updateItem(idx, 'rolls', lines)}
+                  testPrefix={`gr-roll-lines-${idx}`}
+                  nextNumberHint={rollPolicy?.next_number || ''}
+                  subtitle={`Kain/benang dilacak per gulungan. Isi berat/panjang tiap gulungan — nomornya diterbitkan otomatis saat penerimaan dikonfirmasi. Total harus ${fmtQty(acceptedOf(item))} ${item.unit}.`}
+                />
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">No. referensi (surat jalan / dokumen)</label>
-                <GlassInput value={form.source_ref} onChange={e => setForm(f => ({ ...f, source_ref: e.target.value }))} placeholder="PO-001" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Supplier</label>
-                {/* 2026-11-07 (Tahap 5): sumber pemasok dipilih dari Master Supplier (dulu teks bebas → nama beda
-                    ejaan tidak tertaut saat faktur/penilaian supplier). Ber-PO: supplier dari PO (terkunci). */}
-                <SmartNativeSelect value={form.supplier_name}
-                  onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
-                  disabled={!!form.po_id}
-                  className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground"
-                  data-testid="gr-supplier-select">
-                  <option value="">— pilih supplier —</option>
-                  {form.supplier_name && !suppliers.some(s => s.name === form.supplier_name) && (
-                    <option value={form.supplier_name}>{form.supplier_name}</option>
-                  )}
-                  {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
-                </SmartNativeSelect>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Lokasi tujuan</label>
+          ))}
+        </div>
+
+        <Isian label="Catatan" htmlFor="gr-catatan">
+          <Textarea id="gr-catatan" rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Opsional" />
+        </Isian>
+      </FormPopup>
+      {/* Kamera scan SKU — di LUAR form popup: kirim form "ketik manual" kamera tidak boleh ikut menyimpan penerimaan. */}
+      <UniversalScanner
+        variant="modal"
+        open={skuScanIdx !== null}
+        onClose={() => setSkuScanIdx(null)}
+        onScan={(code) => { const i = skuScanIdx; setSkuScanIdx(null); if (i !== null) handleSkuScan(i, code); }}
+        title="Scan SKU"
+      />
+
+      {/* ── Detail penerimaan (popup) — konfirmasi qty, lokasi, harga, gulungan ───── */}
+      {showDetail && (
+        <DetailPopup open onClose={() => setShowDetail(null)} testId="gr-detail"
+          judul={`Penerimaan ${showDetail.receipt_number}`}
+          keterangan={[showDetail.supplier_name || sourceLabel(showDetail.source_type), showDetail.po_number ? `PO ${showDetail.po_number}` : null].filter(Boolean).join(' · ')}
+          status={<StatusGR status={showDetail.status} />}
+          aksi={isDraft ? (
+            <>
+              <Button size="sm" variant="destructive" onClick={() => hapusDraf(showDetail)} data-testid="gr-detail-delete">
+                <Trash2 />Hapus
+              </Button>
+              {finance && !showDetail.po_id && (
+                <Button size="sm" variant="outline" onClick={() => runOnce(() => saveDetailPrices(showDetail))}
+                  disabled={posting} data-testid="gr-detail-save-price">
+                  Simpan harga
+                </Button>
+              )}
+              <Button size="sm" variant="success" onClick={() => runOnce(() => handleStatusChange(showDetail, 'received'))}
+                disabled={detailTotals.touched <= 0 || posting} aria-busy={posting}
+                data-testid="confirm-receive-btn">
+                {posting ? <><Loader2 className="animate-spin" />Menyimpan…</> : <><CheckCircle />Konfirmasi diterima</>}
+              </Button>
+            </>
+          ) : null}>
+          <dl className="grid gap-x-6 sm:grid-cols-2">
+            <BarisDetail label="Sumber">{showDetail.supplier_name || sourceLabel(showDetail.source_type) || '—'}</BarisDetail>
+            <BarisDetail label="Referensi">{showDetail.source_ref || '—'}</BarisDetail>
+            <BarisDetail label="Lokasi">{showDetail.location_name || '—'}</BarisDetail>
+            <BarisDetail label="Tanggal">{fmtDate(showDetail.created_at)}</BarisDetail>
+          </dl>
+
+          {/* FASE 6: banner karantina bila ada qty reject yang ditahan */}
+          {showDetail.quarantine_summary?.total_qty > 0 && (
+            <Notice tone="warning" icon={AlertCircle} testId="gr-quarantine-banner"
+              title={`${showDetail.quarantine_summary.total_qty} unit ditolak ditahan di ${showDetail.quarantine_summary.location?.name || 'Karantina QC'}`}
+              action={onNavigate && (
+                <Button size="sm" variant="outline" onClick={() => { setShowDetail(null); onNavigate('wh-quarantine'); }}
+                  data-testid="gr-open-quarantine">
+                  Buka Karantina QC
+                </Button>
+              )}>
+              Stok diblokir sampai ada keputusan (lepas ke stok / retur pembelian / scrap).
+            </Notice>
+          )}
+
+          {isDraft && (
+            <div className="space-y-3 rounded-lg border border-[var(--glass-border)] p-3">
+              {/* LOKASI TUJUAN — GR yang lahir dari PO dibuat tanpa lokasi (`location_id: ""`); tanpa pemilih di sini
+                  stok mendarat di baris berlokasi KOSONG dan Put-Away tidak bisa menemukannya. */}
+              <Isian label="Lokasi tujuan" wajib
+                petunjuk={!(detailLocationId || showDetail.location_id) ? 'Wajib dipilih sebelum konfirmasi — stok harus mendarat di rak yang jelas.' : undefined}>
                 <Combobox
-                  value={form.location_id}
-                  onChange={(v) => setForm(f => ({ ...f, location_id: v }))}
+                  value={detailLocationId || showDetail.location_id || ''}
+                  onChange={setDetailLocationId}
                   options={locations.map(l => ({
                     value: l.id,
                     label: `${l.code} - ${l.name}`,
-                    testId: `gr-location-option-${l.code}`,
+                    testId: `gr-detail-location-option-${l.code}`,
                   }))}
-                  placeholder="Pilih lokasi..."
+                  placeholder="Pilih lokasi penyimpanan..."
                   searchPlaceholder="Cari lokasi..."
                   emptyMessage="Lokasi tidak ditemukan"
-                  data-testid="gr-location-select"
+                  data-testid="gr-detail-location-select"
                 />
+              </Isian>
+              {/* Jalan cepat untuk kasus paling umum: barang datang lengkap sesuai PO. */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline"
+                  onClick={() => setDetailItems(items => (items.length ? items : (showDetail.items || []))
+                    .map(it => ({ ...it, received_qty: Number(it.expected_qty || 0), rejected_qty: 0 })))}
+                  data-testid="gr-detail-receive-all">
+                  Terima semua sesuai PO
+                </Button>
+                <span className="text-sm text-muted-foreground" data-testid="gr-detail-total">
+                  Total diterima <strong className="text-foreground tabular-nums">{fmtQty(detailTotals.received)}</strong>
+                  {detailTotals.rejected > 0 && (
+                    <> · ditolak <strong className="tabular-nums text-[hsl(var(--danger-text))]">{fmtQty(detailTotals.rejected)}</strong></>
+                  )}
+                  {' '}dari {fmtQty(detailTotals.expected)} diharap
+                </span>
               </div>
+              {detailTotals.touched <= 0 && (
+                <Notice tone="warning" testId="gr-detail-zero-warning" title="Qty diterima masih 0">
+                  Isi dulu jumlah yang benar-benar datang — mengonfirmasi angka 0 berarti penerimaan tercatat tetapi
+                  stok tidak bertambah sama sekali.
+                </Notice>
+              )}
             </div>
+          )}
 
-            {/* Items */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium text-muted-foreground">Barang</label>
-                <Button variant="link" size="sm" onClick={addItem} data-testid="gr-add-item">+ Tambah barang</Button>
-              </div>
-              <div className="space-y-3">
-                {form.items.map((item, idx) => (
-                  <div key={idx} className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] space-y-2">
-                    {/* Row 1: Material picker */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        {/* 2026-11-06 (Tahap 2): tautan Master Item WAJIB — konfirmasi menolak baris tanpa tautan */}
-                        <label className="text-[10px] text-[hsl(var(--primary))] font-medium flex items-center gap-1">
-                          <Link2 className="w-3 h-3" /> Master Item (wajib)
-                        </label>
-                        <Combobox
-                          value={item.material_id || ''}
-                          onChange={(v) => handleMaterialPick(idx, v)}
-                          options={[
-                            { value: '', label: '— pilih barang —' },
-                            ...materials.map(m => ({
-                              value: m.id,
-                              label: `${m.code} — ${m.name}`,
-                              description: m.unit,
-                              testId: `item-material-option-${m.code}`,
-                            }))
-                          ]}
-                          placeholder="— pilih barang —"
-                          searchPlaceholder="Cari material..."
-                          emptyMessage="Material tidak ditemukan"
-                          size="sm"
-                          className="border-[hsl(var(--primary)/0.25)]"
-                          data-testid={`item-material-select-${idx}`}
-                        />
-                        {!item.material_id && (
-                          <p className="text-[10px] text-[hsl(var(--warning))] mt-0.5" data-testid={`item-material-hint-${idx}`}>
-                            Pilih barangnya. Baris tanpa Master Item tidak bisa masuk stok dan ditolak saat penerimaan dikonfirmasi.
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Nama produk</label>
-                        <GlassInput
-                          value={item.product_name}
-                          onChange={e => updateItem(idx, 'product_name', e.target.value)}
-                          placeholder="Nama produk"
-                          className="h-8 text-xs"
-                        />
-                      </div>
-                    </div>
-                    {/* Row 2: Qty fields */}
-                    <div className="grid grid-cols-5 gap-2 items-end">
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">SKU</label>
-                        {/* Sprint A.1: scan button next to SKU */}
-                        <div className="flex gap-1">
-                          <GlassInput value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="SKU" className="h-8 text-xs flex-1" data-testid={`sku-input-${idx}`} />
-                          {/* Tombol ikon 32 px (size icon-sm) membuka kamera bersama; hasilnya diumumkan di bawah baris. */}
-                          <Button type="button" variant="outline" size="icon-sm" className="shrink-0"
-                            onClick={() => setSkuScanIdx(idx)} title="Scan SKU" aria-label="Scan SKU"
-                            data-testid={`scan-sku-${idx}`}>
-                            <ScanLine className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Satuan</label>
-                        {/* 2026-11-06 (Tahap 2): hanya satuan barang ini (kemasan + satuan sedimensi, sumber
-                            server yang sama dengan PO); server mengonversi qty & harga ke satuan dasar. */}
-                        <SmartNativeSelect
-                          value={item.unit}
-                          onChange={e => updateItem(idx, 'unit', e.target.value)}
-                          className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-2 h-8 text-xs text-foreground"
-                          data-testid={`item-unit-${idx}`}
-                        >
-                          {unitOptions(item).map(u => <option key={u.unit} value={u.unit}>{u.label}</option>)}
-                        </SmartNativeSelect>
-                        {factorOf(item) !== 1 && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5" data-testid={`item-unit-convert-${idx}`}>
-                            = {fmtQty((parseFloat(item.received_qty) || 0) * factorOf(item))} {baseUnitOf(item)}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Diharap</label>
-                        <GlassInput type="number" value={item.expected_qty} onChange={e => updateItem(idx, 'expected_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-expected-${idx}`} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Diterima</label>
-                        <GlassInput type="number" value={item.received_qty} onChange={e => updateItem(idx, 'received_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-received-${idx}`} />
-                      </div>
-                      {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP).
-                          2026-11-06 (Tahap 2): ber-PO = harga PO (terkunci); tanpa PO = hanya Keuangan. */}
-                      <div>
-                        <label className={`text-[10px] ${form.po_id || !finance ? 'text-muted-foreground' : 'text-[hsl(var(--warning))]  font-semibold'}`}>
-                          {form.po_id ? 'Harga dari PO' : finance ? `Harga per ${item.unit || 'satuan'} (Rp) *` : 'Harga — diisi Keuangan'}
-                        </label>
-                        <GlassInput type="number" min="0" step="any" value={form.po_id || finance ? (item.unit_price ?? '') : ''}
-                          onChange={e => updateItem(idx, 'unit_price', e.target.value)}
-                          disabled={!!form.po_id || !finance}
-                          placeholder={form.po_id ? 'dari PO' : finance ? 'wajib' : 'menunggu Keuangan'} className="h-8 text-xs"
-                          data-testid={`item-price-${idx}`} />
-                      </div>
-                      <div className="flex gap-1">
-                        <div className="flex-1">
-                          <label className="text-[10px] text-muted-foreground">Ditolak</label>
-                          <GlassInput type="number" value={item.rejected_qty} onChange={e => updateItem(idx, 'rejected_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-rejected-${idx}`} />
-                        </div>
-                        {form.items.length > 1 && (
-                          <button onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]  mt-3.5">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                      {/* FASE 6: alasan reject — qty reject otomatis masuk Karantina QC */}
-                      {(parseFloat(item.rejected_qty) || 0) > 0 && (
-                        <div className="col-span-2">
-                          <label className="text-[10px] text-[hsl(var(--warning))] ">
-                            {rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}
-                          </label>
-                          <SmartNativeSelect
-                            value={item.reject_reason || ''}
-                            onChange={e => updateItem(idx, 'reject_reason', e.target.value)}
-                            className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-2 h-8 text-xs text-foreground"
-                            data-testid={`item-reject-reason-${idx}`}
-                          >
-                            <option value="">— pilih alasan —</option>
-                            {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rejectOptLabel(rc)}</option>)}
-                          </SmartNativeSelect>
-                        </div>
-                      )}
-                      {/* U7 — Lot & Expiry */}
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">No. Lot / Batch</label>
-                        <GlassInput
-                          value={item.lot_number}
-                          onChange={e => updateItem(idx, 'lot_number', e.target.value)}
-                          placeholder="LOT-001"
-                          className="h-8 text-xs"
-                          data-testid={`receiving-lot-${idx}`}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-muted-foreground">Tgl Kedaluwarsa</label>
-                        <GlassInput
-                          type="date"
-                          value={item.expiry_date}
-                          onChange={e => updateItem(idx, 'expiry_date', e.target.value)}
-                          className="h-8 text-xs"
-                          data-testid={`receiving-expiry-${idx}`}
-                        />
-                      </div>
-                    </div>
-                    {skuScan?.idx === idx && <ScanResult {...skuScan} testId={`scan-sku-result-${idx}`} />}
-                    {item.material_id && (
-                      <p className="text-[10px] text-[hsl(var(--primary))] flex items-center gap-1">
-                        <Link2 className="w-3 h-3" /> Stok akan disinkronkan ke modul Inventory saat GR confirmed
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground">Barang ({detailList.length})</p>
+            {detailList.map((item, idx) => (
+              <div key={idx} className="space-y-3 rounded-lg border border-[var(--glass-border)] p-3" data-testid={`gr-detail-item-${idx}`}>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">{item.product_name}</p>
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                      {item.sku}{item.material_id ? ' · tertaut ke master item' : ' · belum tertaut ke master item'}
+                    </p>
+                  </div>
+                  <div className="text-right text-sm">
+                    <p>Diterima <strong className="tabular-nums">{fmtQty(item.received_qty)}</strong> / {fmtQty(item.expected_qty)} {item.unit}</p>
+                    {item.rejected_qty > 0 && <p className="text-xs text-[hsl(var(--danger-text))]">Ditolak {fmtQty(item.rejected_qty)}</p>}
+                    {item.quarantined_qty > 0 && (
+                      <p className="text-xs text-[hsl(var(--warning-text))]">Ke Karantina QC {fmtQty(item.quarantined_qty)} {item.unit}</p>
+                    )}
+                    {item.material_id && showDetail.status === 'received' && (
+                      <p className="inline-flex items-center gap-1 text-xs text-[hsl(var(--success-text))]">
+                        <CheckCircle className="h-3 w-3" /> stok sudah masuk
                       </p>
                     )}
-                    {/* ── FASE H-5: rincian gulungan untuk baris kain/benang ───────── */}
-                    {/* 2026-11-06 (Tahap 2): gulungan selalu satuan dasar — baris bersatuan kemasan mengisinya di detail */}
-                    {isRollUnit(item.unit) && factorOf(item) === 1 && (
-                      <RollLinesEditor
-                        lines={item.rolls || []}
-                        accepted={acceptedOf(item)}
-                        unit={item.unit}
-                        onChange={(lines) => updateItem(idx, 'rolls', lines)}
-                        testPrefix={`gr-roll-lines-${idx}`}
-                        nextNumberHint={rollPolicy?.next_number || ''}
-                        subtitle={`Kain/benang dilacak per gulungan. Isi berat/panjang tiap gulungan — nomornya diterbitkan otomatis saat penerimaan dikonfirmasi. Total harus ${fmtQty(acceptedOf(item))} ${item.unit}.`}
-                      />
-                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan</label>
-              <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground h-16 resize-none placeholder:text-muted-foreground" placeholder="Opsional" />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setShowCreate(false)} className="border-[var(--glass-border)] text-muted-foreground hover:bg-[var(--glass-bg-hover)]">Batal</Button>
-              <Button onClick={() => runOnce(handleCreate)} disabled={posting} aria-busy={posting}
-                data-testid="submit-receipt-btn">
-                {posting ? <><Loader2 className="w-4 h-4 animate-spin" /> Menyimpan…</> : 'Simpan penerimaan'}
-              </Button>
-            </div>
-          </div>
-          {/* Satu kamera untuk semua baris (dulu satu tombol "Scan" per baris yang teksnya meluber dari kotak 32 px). */}
-          <UniversalScanner
-            variant="modal"
-            open={skuScanIdx !== null}
-            onClose={() => setSkuScanIdx(null)}
-            onScan={(code) => { const i = skuScanIdx; setSkuScanIdx(null); if (i !== null) handleSkuScan(i, code); }}
-            title="Scan SKU"
-          />
-        </Modal>
-      )}
-
-      {/* Detail Modal */}
-      {showDetail && (
-        <Modal title={`Receipt ${showDetail.receipt_number}`} onClose={() => setShowDetail(null)} size="lg">
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div><p className="text-xs text-muted-foreground">Source</p><p className="text-sm font-medium text-foreground">{showDetail.supplier_name || sourceLabel(showDetail.source_type)}</p></div>
-              <div><p className="text-xs text-muted-foreground">Reference</p><p className="text-sm font-medium text-foreground">{showDetail.source_ref || '-'}</p></div>
-              <div><p className="text-xs text-muted-foreground">Lokasi</p><p className="text-sm font-medium text-foreground">{showDetail.location_name || '-'}</p></div>
-              <div><p className="text-xs text-muted-foreground">Status</p><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_STYLES[showDetail.status]}`}>{showDetail.status}</span></div>
-            </div>
-
-            <div className="border-t border-[var(--glass-border)] pt-3">
-              <p className="text-xs font-medium text-muted-foreground mb-2">Items ({showDetail.items?.length || 0})</p>
-              {/* FASE 6: banner karantina bila ada qty reject yang ditahan */}
-              {showDetail.quarantine_summary?.total_qty > 0 && (
-                <div className="mb-3 rounded-xl border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  px-3 py-2 flex items-start justify-between gap-3"
-                  data-testid="gr-quarantine-banner">
-                  <div className="text-xs text-[hsl(var(--warning))] ">
-                    <strong>{showDetail.quarantine_summary.total_qty} unit reject</strong> ditahan di{' '}
-                    {showDetail.quarantine_summary.location?.name || 'Karantina QC'} — stok diblokir sampai ada keputusan
-                    (lepas ke stok / retur supplier / scrap).
-                  </div>
-                  {onNavigate && (
-                    <button onClick={() => { setShowDetail(null); onNavigate('wh-quarantine'); }}
-                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-[hsl(var(--warning))] text-white hover:brightness-110"
-                      data-testid="gr-open-quarantine">
-                      Buka Karantina QC →
-                    </button>
-                  )}
                 </div>
-              )}
-              <div className="space-y-2">
-                {(detailItems.length ? detailItems : (showDetail.items || [])).map((item, idx) => (
-                  <div key={idx} className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-medium text-foreground">{item.product_name}</p>
-                          {item.material_id && (
-                            <span className="text-[10px] text-[hsl(var(--primary))] flex items-center gap-0.5 bg-[hsl(var(--primary)/0.1)]  px-1.5 py-0.5 rounded-full border border-[hsl(var(--primary)/0.35)] ">
-                              <Link2 className="w-2.5 h-2.5" /> linked
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground tabular-nums">{item.sku}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm text-foreground">Received: <strong>{item.received_qty}</strong> / {item.expected_qty} {item.unit}</p>
-                        {item.rejected_qty > 0 && <p className="text-xs text-[hsl(var(--destructive))] ">Rejected: {item.rejected_qty}</p>}
-                        {item.quarantined_qty > 0 && (
-                          <p className="text-xs text-[hsl(var(--warning))] ">→ Karantina QC: {item.quarantined_qty} {item.unit}</p>
-                        )}
-                        {item.material_id && showDetail.status === 'received' && (
-                          <p className="text-xs text-[hsl(var(--success))] flex items-center justify-end gap-1">
-                            <CheckCircle className="w-3 h-3" /> stok ter-sync
-                          </p>
-                        )}
-                      </div>
+
+                {/* ── QTY DITERIMA / DITOLAK — HARUS BISA DIISI DI SINI ──────────
+                    GR yang lahir dari PO SELALU dibuat dengan `received_qty: 0.0`; satu-satunya layar untuk memprosesnya
+                    adalah popup ini, jadi qty harus bisa diisi di sini (dulu hanya teks → konfirmasi angka NOL). */}
+                {isDraft && (
+                  <div className="space-y-2" data-testid={`gr-detail-qty-${idx}`}>
+                    <div className="grid grid-cols-3 gap-3">
+                      <Isian label="Diharap (PO)">
+                        <p className="flex h-9 items-center text-sm font-medium tabular-nums">
+                          {fmtQty(item.expected_qty)} <span className="ml-1 text-xs font-normal text-muted-foreground">{item.unit}</span>
+                        </p>
+                      </Isian>
+                      <Isian label="Qty diterima" wajib htmlFor={`gr-detail-received-${idx}`}>
+                        <Input id={`gr-detail-received-${idx}`} type="number" min="0" step="any"
+                          value={item.received_qty ?? 0}
+                          onChange={e => updateDetailItem(idx, { received_qty: parseFloat(e.target.value) || 0 })}
+                          data-testid={`gr-detail-received-${idx}`} />
+                      </Isian>
+                      <Isian label="Qty ditolak" htmlFor={`gr-detail-rejected-${idx}`}>
+                        <Input id={`gr-detail-rejected-${idx}`} type="number" min="0" step="any"
+                          value={item.rejected_qty ?? 0}
+                          onChange={e => updateDetailItem(idx, { rejected_qty: parseFloat(e.target.value) || 0 })}
+                          data-testid={`gr-detail-rejected-${idx}`} />
+                      </Isian>
                     </div>
-
-                    {/* ── QTY DITERIMA / DITOLAK — HARUS BISA DIISI DI SINI ──────────
-                        Cacat yang ditutup blok ini (dilaporkan pemilik, terbukti pada
-                        GR-00001: `expected_qty=100` tetapi `received_qty=0` walau
-                        statusnya sudah `received`):
-
-                        GR yang lahir dari PO (`created_from='po'`) SELALU dibuat
-                        dengan `received_qty: 0.0` (rahaza_po.py) — memang benar,
-                        karena barangnya belum dihitung. Tetapi satu-satunya layar
-                        untuk memprosesnya adalah modal ini, dan di sini qty hanya
-                        DITAMPILKAN sebagai teks. Tidak ada kolom isian sama sekali.
-                        Akibatnya petugas gudang hanya bisa menekan "Confirm
-                        Received", yang mengkonfirmasi angka NOL ⇒ pembelian tidak
-                        pernah menambah stok. Form "New Receipt" punya kolomnya,
-                        tetapi GR dari PO tidak pernah melewati form itu.
-
-                        Backend sudah menerima item yang disunting di layar ini
-                        (`PUT /receiving/{id}` body `{status, items}`) — jadi yang
-                        hilang benar-benar hanya kolomnya. */}
-                    {showDetail.status === 'draft' && (
-                      <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] p-2.5"
-                        data-testid={`gr-detail-qty-${idx}`}>
-                        <div className="grid grid-cols-3 gap-2 items-end">
-                          <div>
-                            <label className="text-[10px] text-muted-foreground">Diharap (PO)</label>
-                            <p className="h-8 flex items-center text-sm font-semibold tabular-nums">
-                              {fmtQty(item.expected_qty)} <span className="ml-1 text-[10px] font-normal text-muted-foreground">{item.unit}</span>
-                            </p>
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-[hsl(var(--success))] font-semibold">
-                              Qty Diterima *
-                            </label>
-                            <GlassInput
-                              type="number" min="0" step="any"
-                              value={item.received_qty ?? 0}
-                              onChange={e => updateDetailItem(idx, { received_qty: parseFloat(e.target.value) || 0 })}
-                              className="h-8 text-xs"
-                              data-testid={`gr-detail-received-${idx}`}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[10px] text-muted-foreground">Qty Ditolak</label>
-                            <GlassInput
-                              type="number" min="0" step="any"
-                              value={item.rejected_qty ?? 0}
-                              onChange={e => updateDetailItem(idx, { rejected_qty: parseFloat(e.target.value) || 0 })}
-                              className="h-8 text-xs"
-                              data-testid={`gr-detail-rejected-${idx}`}
-                            />
-                          </div>
-                        </div>
-                        {/* Anti over-receive: backend menolaknya (HTTP 400); dikatakan
-                            di sini supaya penolakan bukan kejutan setelah diklik. */}
-                        {showDetail.enforce_po_qty
-                          && acceptedOf(item) - Number(item.expected_qty || 0) > 0.0001 && (
-                          <p className="text-[11px] text-[hsl(var(--destructive))] mt-1.5"
-                            data-testid={`gr-detail-over-${idx}`}>
-                            Netto diterima {fmtQty(acceptedOf(item))} {item.unit} melebihi sisa PO
-                            {' '}{fmtQty(item.expected_qty)} {item.unit} — penerimaan akan ditolak.
-                          </p>
-                        )}
-                        {(parseFloat(item.rejected_qty) || 0) > 0 && (
-                          <div className="mt-1.5">
-                            <label className="text-[10px] text-[hsl(var(--warning))] ">
-                              {rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}
-                            </label>
-                            <SmartNativeSelect
-                              value={item.reject_reason || ''}
-                              onChange={e => updateDetailItem(idx, { reject_reason: e.target.value })}
-                              className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-2 h-8 text-xs text-foreground"
-                              data-testid={`gr-detail-reject-reason-${idx}`}
-                            >
-                              <option value="">— pilih alasan —</option>
-                              {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rejectOptLabel(rc)}</option>)}
-                            </SmartNativeSelect>
-                          </div>
-                        )}
-                        {/* 2026-11-02 (K11): GR tanpa PO — harga satuan wajib sebelum dikonfirmasi.
-                            2026-11-06 (Tahap 2): hanya Keuangan yang mengisinya; ber-PO = harga PO (terkunci). */}
-                        {!showDetail.po_id && item.material_id && finance && (
-                          <div className="mt-1.5">
-                            <label className="text-[10px] text-[hsl(var(--warning))] font-semibold">
-                              Harga per {item.unit} (Rp) * — tanpa PO, diisi Keuangan
-                            </label>
-                            <GlassInput
-                              type="number" min="0" step="any"
-                              value={item.unit_price ?? item.unit_cost ?? ''}
-                              onChange={e => updateDetailItem(idx, { unit_price: e.target.value })}
-                              className="h-8 text-xs"
-                              data-testid={`gr-detail-price-${idx}`}
-                            />
-                          </div>
-                        )}
-                        {item.material_id && (showDetail.po_id || !finance) && (
-                          <p className={`mt-1.5 text-[11px] ${priceOf(item) > 0 ? 'text-muted-foreground' : 'text-[hsl(var(--warning))] font-semibold'}`}
-                            data-testid={`gr-detail-price-locked-${idx}`}>
-                            {priceOf(item) > 0
-                              ? `Harga ${showDetail.po_id ? 'dari PO' : 'dari Keuangan'}: Rp ${priceOf(item).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / ${item.unit}`
-                              : 'Menunggu harga dari Keuangan — penerimaan belum bisa dikonfirmasi.'}
-                          </p>
-                        )}
-                      </div>
+                    {/* Anti over-receive: backend menolaknya (HTTP 400); dikatakan di sini supaya bukan kejutan. */}
+                    {showDetail.enforce_po_qty
+                      && acceptedOf(item) - Number(item.expected_qty || 0) > 0.0001 && (
+                      <p className="text-xs text-[hsl(var(--danger-text))]" data-testid={`gr-detail-over-${idx}`}>
+                        Netto diterima {fmtQty(acceptedOf(item))} {item.unit} melebihi sisa PO
+                        {' '}{fmtQty(item.expected_qty)} {item.unit} — penerimaan akan ditolak.
+                      </p>
                     )}
-                    {/* ── FASE H-5: gulungan kain per baris ────────────────────────── */}
-                    {isRollUnit(item.unit) && showDetail.status !== 'received' && (
-                      <RollLinesEditor
-                        lines={item.rolls || []}
-                        accepted={acceptedOf(item)}
-                        unit={item.unit}
-                        onChange={(lines) => updateDetailItem(idx, { rolls: lines })}
-                        testPrefix={`gr-detail-roll-lines-${idx}`}
-                        nextNumberHint={rollPolicy?.next_number || ''}
-                        title="Rincian Gulungan (isi sebelum konfirmasi)"
-                        subtitle={`Timbang/ukur tiap gulungan sekarang. Nomor roll otomatis. Total harus ${fmtQty(acceptedOf(item))} ${item.unit} — kalau dilewati, kain masuk daftar "Penerimaan tanpa roll" dan Cutting akan menolak memotongnya.`}
-                      />
+                    {(parseFloat(item.rejected_qty) || 0) > 0 && (
+                      <Isian label="Alasan ditolak" htmlFor={`gr-detail-reject-reason-${idx}`}
+                        petunjuk={rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}>
+                        <SmartNativeSelect id={`gr-detail-reject-reason-${idx}`} value={item.reject_reason || ''}
+                          onChange={e => updateDetailItem(idx, { reject_reason: e.target.value })}
+                          data-testid={`gr-detail-reject-reason-${idx}`}>
+                          <option value="">— pilih alasan —</option>
+                          {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rejectOptLabel(rc)}</option>)}
+                        </SmartNativeSelect>
+                      </Isian>
                     )}
-                    {(item.roll_numbers || []).length > 0 && (
-                      <div className="rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)]  px-2.5 py-2"
-                        data-testid={`gr-item-rolls-${idx}`}>
-                        <p className="text-[11px] font-semibold text-[hsl(var(--primary))] mb-1">
-                          {item.roll_numbers.length} gulungan terbit dari baris ini
-                        </p>
-                        <div className="flex flex-wrap gap-1">
-                          {item.roll_numbers.map((no) => (
-                            <span key={no} className="tabular-nums text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--primary))] text-white">{no}</span>
-                          ))}
-                        </div>
-                      </div>
+                    {/* 2026-11-02 (K11): GR tanpa PO — harga satuan wajib sebelum dikonfirmasi.
+                        2026-11-06 (Tahap 2): hanya Keuangan yang mengisinya; ber-PO = harga PO (terkunci). */}
+                    {!showDetail.po_id && item.material_id && finance && (
+                      <Isian label={`Harga per ${item.unit} (Rp) — tanpa PO, diisi Keuangan`} wajib htmlFor={`gr-detail-price-${idx}`}>
+                        <Input id={`gr-detail-price-${idx}`} type="number" min="0" step="any"
+                          value={item.unit_price ?? item.unit_cost ?? ''}
+                          onChange={e => updateDetailItem(idx, { unit_price: e.target.value })}
+                          data-testid={`gr-detail-price-${idx}`} />
+                      </Isian>
                     )}
-                    {showDetail.status === 'received' && isRollUnit(item.unit)
-                      && !(item.roll_numbers || []).length && acceptedOf(item) > 0 && (
-                      <div className="rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  px-2.5 py-2 flex items-start justify-between gap-3"
-                        data-testid={`gr-item-rolls-missing-${idx}`}>
-                        <p className="text-[11px] text-[hsl(var(--warning))] ">
-                          <strong>{fmtQty(acceptedOf(item))} {item.unit} masuk stok tanpa gulungan.</strong> Cutting menolak
-                          memotong kain yang tidak punya gulungan — terbitkan gulungannya di Roll Kain.
-                        </p>
-                        {onNavigate && (
-                          <button onClick={() => { setShowDetail(null); onNavigate('wms-fabric-rolls'); }}
-                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-[hsl(var(--warning))] text-white hover:brightness-110"
-                            data-testid={`gr-open-fabric-rolls-${idx}`}>
-                            Terbitkan Roll →
-                          </button>
-                        )}
-                      </div>
+                    {item.material_id && (showDetail.po_id || !finance) && (
+                      <p className={`text-xs ${priceOf(item) > 0 ? 'text-muted-foreground' : 'font-medium text-[hsl(var(--warning-text))]'}`}
+                        data-testid={`gr-detail-price-locked-${idx}`}>
+                        {priceOf(item) > 0
+                          ? `Harga ${showDetail.po_id ? 'dari PO' : 'dari Keuangan'}: Rp ${priceOf(item).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / ${item.unit}`
+                          : 'Menunggu harga dari Keuangan — penerimaan belum bisa dikonfirmasi.'}
+                      </p>
                     )}
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {showDetail.status === 'draft' && (
-              <div className="pt-2 border-t border-[var(--glass-border)] space-y-2">
-                {/* LOKASI TUJUAN — GR yang lahir dari PO dibuat tanpa lokasi
-                    (`location_id: ""`), dan dulu modal ini tidak menyediakan
-                    pemilihnya. Akibatnya stok yang masuk mendarat di baris
-                    berlokasi KOSONG: barangnya ada di sistem tetapi tidak ada di
-                    rak mana pun, sehingga Put-Away & pencarian posisi tidak bisa
-                    menemukannya. Lokasi ditanyakan DI SINI karena inilah saat
-                    barangnya benar-benar diletakkan. */}
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                    Lokasi Tujuan {!(detailLocationId || showDetail.location_id) && (
-                      <span className="text-[hsl(var(--warning))] ">— wajib dipilih</span>
-                    )}
-                  </label>
-                  <Combobox
-                    value={detailLocationId || showDetail.location_id || ''}
-                    onChange={setDetailLocationId}
-                    options={locations.map(l => ({
-                      value: l.id,
-                      label: `${l.code} - ${l.name}`,
-                      testId: `gr-detail-location-option-${l.code}`,
-                    }))}
-                    placeholder="Pilih lokasi penyimpanan..."
-                    searchPlaceholder="Cari lokasi..."
-                    emptyMessage="Lokasi tidak ditemukan"
-                    data-testid="gr-detail-location-select"
-                  />
-                </div>
-                {/* Jalan cepat untuk kasus paling umum: barang datang lengkap
-                    sesuai PO. Tanpa ini petugas harus mengetik ulang tiap baris,
-                    dan yang paling sering terjadi adalah ia menekan Confirm tanpa
-                    mengisi apa pun (itulah cacat yang diperbaiki). */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" className="border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))] "
-                    onClick={() => setDetailItems(items => (items.length ? items : (showDetail.items || []))
-                      .map(it => ({ ...it, received_qty: Number(it.expected_qty || 0), rejected_qty: 0 })))}
-                    data-testid="gr-detail-receive-all">
-                    Terima semua sesuai PO
-                  </Button>
-                  <span className="text-xs text-muted-foreground" data-testid="gr-detail-total">
-                    Total diterima:{' '}
-                    <strong className="text-foreground tabular-nums">{fmtQty(detailTotals.received)}</strong>
-                    {detailTotals.rejected > 0 && (
-                      <> · ditolak <strong className="text-[hsl(var(--destructive))] tabular-nums">{fmtQty(detailTotals.rejected)}</strong></>
-                    )}
-                    {' '}dari {fmtQty(detailTotals.expected)} diharap
-                  </span>
-                </div>
-                {detailTotals.touched <= 0 && (
-                  <p className="text-xs text-[hsl(var(--warning))] rounded-lg border border-[hsl(var(--warning)/0.35)]  bg-[hsl(var(--warning)/0.1)]  px-2.5 py-2"
-                    data-testid="gr-detail-zero-warning">
-                    <strong>Qty diterima masih 0.</strong> Isi dulu jumlah yang benar-benar
-                    datang — mengkonfirmasi angka 0 berarti penerimaan tercatat tetapi
-                    <strong> stok tidak bertambah sama sekali</strong>.
-                  </p>
                 )}
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => { setConfirmDelete(showDetail.id); setShowDetail(null); }} className="border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.1)] ">
-                    <Trash2 className="w-4 h-4 mr-1" /> Hapus
-                  </Button>
-                  {finance && !showDetail.po_id && (
-                    <Button variant="outline" onClick={() => runOnce(() => saveDetailPrices(showDetail))}
-                      disabled={posting} data-testid="gr-detail-save-price">
-                      Simpan harga
-                    </Button>
-                  )}
-                  <Button onClick={() => runOnce(() => handleStatusChange(showDetail, 'received'))}
-                    disabled={detailTotals.touched <= 0 || posting} aria-busy={posting}
-                    className="bg-[hsl(var(--success))] text-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
-                    data-testid="confirm-receive-btn">
-                    {posting
-                      ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Menyimpan…</>
-                      : <><CheckCircle className="w-4 h-4 mr-1" /> Konfirmasi diterima</>}
-                  </Button>
-                </div>
+                {/* ── FASE H-5: gulungan kain per baris ────────────────────────── */}
+                {isRollUnit(item.unit) && showDetail.status !== 'received' && (
+                  <RollLinesEditor
+                    lines={item.rolls || []}
+                    accepted={acceptedOf(item)}
+                    unit={item.unit}
+                    onChange={(lines) => updateDetailItem(idx, { rolls: lines })}
+                    testPrefix={`gr-detail-roll-lines-${idx}`}
+                    nextNumberHint={rollPolicy?.next_number || ''}
+                    title="Rincian gulungan (isi sebelum konfirmasi)"
+                    subtitle={`Timbang/ukur tiap gulungan sekarang. Nomor roll otomatis. Total harus ${fmtQty(acceptedOf(item))} ${item.unit} — kalau dilewati, kain masuk daftar "Penerimaan tanpa roll" dan Cutting akan menolak memotongnya.`}
+                  />
+                )}
+                {(item.roll_numbers || []).length > 0 && (
+                  <div data-testid={`gr-item-rolls-${idx}`}>
+                    <p className="text-xs font-medium text-muted-foreground">{item.roll_numbers.length} gulungan terbit dari baris ini</p>
+                    <p className="mt-0.5 text-xs tabular-nums text-foreground">{item.roll_numbers.join(' · ')}</p>
+                  </div>
+                )}
+                {showDetail.status === 'received' && isRollUnit(item.unit)
+                  && !(item.roll_numbers || []).length && acceptedOf(item) > 0 && (
+                  <Notice tone="warning" testId={`gr-item-rolls-missing-${idx}`}
+                    title={`${fmtQty(acceptedOf(item))} ${item.unit} masuk stok tanpa gulungan`}
+                    action={onNavigate && (
+                      <Button size="sm" variant="outline" onClick={() => { setShowDetail(null); onNavigate('wms-fabric-rolls'); }}
+                        data-testid={`gr-open-fabric-rolls-${idx}`}>
+                        Terbitkan roll
+                      </Button>
+                    )}>
+                    Cutting menolak memotong kain yang tidak punya gulungan — terbitkan gulungannya di Roll Kain.
+                  </Notice>
+                )}
               </div>
-            )}
+            ))}
           </div>
-        </Modal>
-      )}
-
-      {confirmDelete && (
-        <ConfirmDialog title="Hapus penerimaan?" message="GR draft ini akan dihapus permanen." onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />
+        </DetailPopup>
       )}
 
       {/* ── FASE H-5: hasil penerbitan gulungan setelah GR dikonfirmasi ────────── */}
       {receiveResult && (
-        <Modal title={`Gulungan — ${receiveResult.receipt_number}`} onClose={() => setReceiveResult(null)} size="md">
-          <div className="space-y-3" data-testid="gr-roll-result">
-            {receiveResult.created.length > 0 && (
-              <div className="rounded-xl border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]  p-3">
-                <p className="text-sm font-semibold text-[hsl(var(--success))] mb-1.5">
-                  {receiveResult.created.length} gulungan diterbitkan otomatis
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {receiveResult.created.map((no) => (
-                    <span key={no} className="tabular-nums text-[11px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--success))] text-white">{no}</span>
-                  ))}
-                </div>
-                <p className="text-[11px] text-[hsl(var(--success)/0.8)] mt-2">
-                  Gulungan ini sudah bisa ditunjuk di Portal Cutting — sisa tiap gulungan berkurang saat kainnya dipotong.
-                </p>
-              </div>
-            )}
-            {receiveResult.pending.length > 0 && (
-              <div className="rounded-xl border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  p-3">
-                <p className="text-sm font-semibold text-[hsl(var(--warning))] mb-1.5">
-                  {receiveResult.pending.length} baris kain masuk stok TANPA gulungan
-                </p>
-                <ul className="text-xs text-[hsl(var(--warning))] space-y-1">
-                  {receiveResult.pending.map((p) => (
-                    <li key={p.item_id} className="tabular-nums">
-                      {p.material_code} — {fmtQty(p.accepted_qty)} {p.unit}
-                    </li>
-                  ))}
-                </ul>
-                <p className="text-[11px] text-[hsl(var(--warning)/0.8)] mt-2">
-                  Cutting akan MENOLAK memotong kain tanpa gulungan. Terbitkan gulungannya di
-                  Gudang → Roll Kain → tab “Penerimaan tanpa roll”.
-                </p>
-              </div>
-            )}
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={() => setReceiveResult(null)}
-                className="border-[var(--glass-border)] text-muted-foreground">Tutup</Button>
-              {onNavigate && receiveResult.pending.length > 0 && (
-                <Button onClick={() => { setReceiveResult(null); onNavigate('wms-fabric-rolls'); }}
-                  className="bg-[hsl(var(--warning))] text-white hover:brightness-110" data-testid="gr-result-goto-rolls">
-                  Buka Roll Kain →
-                </Button>
-              )}
-              {onNavigate && receiveResult.pending.length === 0 && receiveResult.created.length > 0 && (
-                <Button onClick={() => { setReceiveResult(null); onNavigate('wms-fabric-rolls'); }}
-                  className="bg-[hsl(var(--primary))] text-white hover:brightness-110" data-testid="gr-result-view-rolls">
-                  Lihat Roll Kain →
-                </Button>
-              )}
-            </div>
-          </div>
-        </Modal>
+        <DetailPopup open onClose={() => setReceiveResult(null)} testId="gr-roll-result"
+          judul={`Gulungan — ${receiveResult.receipt_number}`}
+          aksi={onNavigate && (receiveResult.pending.length > 0 || receiveResult.created.length > 0) ? (
+            <Button size="sm" onClick={() => { setReceiveResult(null); onNavigate('wms-fabric-rolls'); }}
+              data-testid={receiveResult.pending.length > 0 ? 'gr-result-goto-rolls' : 'gr-result-view-rolls'}>
+              {receiveResult.pending.length > 0 ? 'Buka Roll Kain' : 'Lihat Roll Kain'}
+            </Button>
+          ) : null}>
+          {receiveResult.created.length > 0 && (
+            <Notice tone="success" icon={CheckCircle} title={`${receiveResult.created.length} gulungan diterbitkan otomatis`}>
+              <span className="block tabular-nums">{receiveResult.created.join(' · ')}</span>
+              <span className="mt-1 block">Gulungan ini sudah bisa ditunjuk di Portal Cutting — sisa tiap gulungan berkurang saat kainnya dipotong.</span>
+            </Notice>
+          )}
+          {receiveResult.pending.length > 0 && (
+            <Notice tone="warning" icon={AlertCircle} title={`${receiveResult.pending.length} baris kain masuk stok tanpa gulungan`}>
+              <ul className="space-y-0.5 tabular-nums">
+                {receiveResult.pending.map((p) => (
+                  <li key={p.item_id}>{p.material_code} — {fmtQty(p.accepted_qty)} {p.unit}</li>
+                ))}
+              </ul>
+              <span className="mt-1 block">
+                Cutting akan menolak memotong kain tanpa gulungan. Terbitkan gulungannya di Gudang › Roll Kain › “Penerimaan tanpa roll”.
+              </span>
+            </Notice>
+          )}
+        </DetailPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }

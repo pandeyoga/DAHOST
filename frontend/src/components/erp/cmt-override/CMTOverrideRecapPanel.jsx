@@ -27,12 +27,11 @@
  * PageLayout, dan pilihan Harian · Mingguan memakai penyaring standar (FilterChips), bukan tombol buatan.
  */
 import { useCallback, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
 import PageLayout from '../layout/PageLayout';
 import CMTOverrideDailyRecap from './CMTOverrideDailyRecap';
 import CMTOverrideWeeklyRecap from './CMTOverrideWeeklyRecap';
-import { dayLabel, isoToday, shiftDay } from './recapDates';
+import { isoToday, shiftDay } from './recapDates';
 
 const VIEWS = [
   { key: 'harian', label: 'Harian' },
@@ -50,26 +49,20 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
     setTab('harian');
   }, []);
 
-  const isToday = day === isoToday();
+  const viewSwitch = (
+    <FilterChips value={tab} onChange={setTab} options={VIEWS} hideWhenEmpty={false}
+      testId="cmt-recap-tab" ariaLabel="Pilih tampilan rekap" />
+  );
 
   return (
     <PageLayout testId="cmt-recap-panel-wrap" title="Rekap pengisian"
       subtitle="Vendor mana yang belum diisi — per hari, atau yang sering bolong dalam 7 hari."
-      filters={<FilterChips value={tab} onChange={setTab} options={VIEWS} hideWhenEmpty={false}
-        testId="cmt-recap-tab" ariaLabel="Pilih tampilan rekap" />}
-      tools={<>
-        {/* Tanggal yang dipakai KEDUA tampilan — supaya jelas keduanya berbagi satu tanggal. */}
-        <span className="text-xs text-muted-foreground" data-testid="cmt-recap-shared-day">
-          {tab === 'mingguan' ? '7 hari s/d ' : ''}{dayLabel(day)}{isToday ? ' (hari ini)' : ''}
-        </span>
-        {!isToday && (
-          <Button type="button" variant="outline" onClick={() => setDay(isoToday())} data-testid="cmt-recap-panel-today">
-            Hari ini
-          </Button>
-        )}
-      </>}>
+      >
+      {/* Standar UI/UX v2 (8 Nov 2026): pil Harian/Mingguan masuk ke baris alat tiap tampilan (satu baris, bukan dua);
+          tanggal bersama tetap satu (`day`) dan tampil di pemilih tanggal masing-masing tampilan. */}
       {tab === 'harian' ? (
         <CMTOverrideDailyRecap
+          viewSwitch={viewSwitch}
           day={day}
           onDayChange={setDay}
           onOpenVendor={onOpenVendor}
@@ -77,6 +70,7 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
         />
       ) : (
         <CMTOverrideWeeklyRecap
+          viewSwitch={viewSwitch}
           endDay={day}
           onEndDayChange={setDay}
           onOpenDay={openDay}

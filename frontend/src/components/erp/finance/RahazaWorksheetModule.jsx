@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { RefreshCw, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import PeriodPicker, { periodFromPreset } from './PeriodPicker';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { StatTile, EmptyState } from '../moduleAtoms';
+import { EmptyState } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import { fmt, fmtCell, authHeaders, downloadXlsx } from './reportShared';
 
@@ -18,6 +20,8 @@ const sentence = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase() : s);
  * Buku Besar › Neraca lajur (kertas kerja 10 kolom seperti sheet N-Lajur).
  * 2026-11-05 (PANDUAN_UI G1/G7): cetakan PageLayout; angka tanpa huruf mesin ketik dan tanpa warna palet; tabel
  * tidak lagi bergulir di wadah setinggi 70% layar (baris total tertutup tombol chat).
+ * 2026-11-08 (Standar UI/UX v2): unduh Excel & CSV (isi = tabel ini termasuk baris jumlah); 4 kartu yang mengulang
+ * baris tabel diganti satu kalimat; kotak centang aplikasi.
  */
 export default function RahazaWorksheetModule({ token }) {
   // PANDUAN_UI G6 (2026-11-04): pemilih periode standar (dulu dua kotak tanggal)
@@ -37,9 +41,6 @@ export default function RahazaWorksheetModule({ token }) {
   }, [token, from, to, showZero]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const exportXlsx = () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=worksheet&from=${from}&to=${to}&show_zero=${showZero}`, token, `neraca-lajur-${from}-${to}.xlsx`)
-    .catch((e) => toast.error(`Unduhan gagal: ${e.message}`));
-
   const t = data?.totals || {};
   const b = data?.balancing || {};
   const g = data?.grand_totals || {};
@@ -54,26 +55,37 @@ export default function RahazaWorksheetModule({ token }) {
       filters={<>
         <PeriodPicker value={period} onChange={setPeriod} testId="ws-period" />
         <label className="inline-flex items-center gap-2 text-sm text-foreground/80">
-          <input type="checkbox" checked={showZero} onChange={(e) => setShowZero(e.target.checked)} data-testid="ws-show-zero" />
+          <Checkbox checked={showZero} onCheckedChange={(v) => setShowZero(!!v)} data-testid="ws-show-zero" />
           Tampilkan akun saldo 0
         </label>
       </>}
       tools={<>
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="ws-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="ws-export"><Download className="w-4 h-4" />Unduh Excel</Button>
+        <TombolUnduh namaBerkas={`neraca-lajur-${from}-${to}`} namaLembar="Neraca lajur" testId="ws-export"
+          aksiTambahan={[{ label: 'Excel format laporan (server)', onClick: () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=worksheet&from=${from}&to=${to}&show_zero=${showZero}`, token, `neraca-lajur-${from}-${to}.xlsx`).catch((e) => toast.error(e.message)) }]}
+          baris={hasRows ? [...data.rows,
+            { code: '', name: 'Jumlah', ...t },
+            { code: '', name: netLabel, pl_debit: b.pl_debit, pl_credit: b.pl_credit, bs_debit: b.bs_debit, bs_credit: b.bs_credit },
+            { code: '', name: 'Total', pl_debit: g.pl_debit, pl_credit: g.pl_credit, bs_debit: g.bs_debit, bs_credit: g.bs_credit }] : []}
+          kolom={[
+            { label: 'Kode', nilai: (r) => r.code },
+            { label: 'Akun', nilai: (r) => r.name },
+            { label: 'Laporan', nilai: (r) => (r.statement ? (r.statement === 'pl' ? 'Laba rugi' : 'Neraca') : '') },
+            ...[['opening', 'Saldo awal'], ['period', 'Mutasi'], ['end', 'Saldo akhir'], ['pl', 'Laba rugi'], ['bs', 'Neraca']].flatMap(([k, l]) => [
+              { label: `${l} debit`, nilai: (r) => (r[`${k}_debit`] === undefined ? '' : Number(r[`${k}_debit`]) || 0) },
+              { label: `${l} kredit`, nilai: (r) => (r[`${k}_credit`] === undefined ? '' : Number(r[`${k}_credit`]) || 0) },
+            ]),
+          ]} />
       </>}
       summary={hasRows && <>
-        <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="ws-balanced">
+        <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--danger-text))] font-medium'}`} data-testid="ws-balanced">
           {data.balanced
-            ? <><CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Seimbang: baris {netLabel.toLowerCase()} menyeimbangkan kolom laba rugi dan neraca</>
-            : <><AlertTriangle className="w-4 h-4" /> Tidak seimbang — periksa jurnal yang debit dan kreditnya berbeda</>}
+            ? <><CheckCircle2 className="w-4 h-4 shrink-0 text-[hsl(var(--success-text))]" />
+                <span>Seimbang: mutasi debit = kredit <b className="text-foreground tabular-nums" data-testid="ws-kpi-pd">{fmt(t.period_debit)}</b>
+                {' '}· {netLabel.toLowerCase()} <b className={`tabular-nums ${(b.net_income || 0) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="ws-kpi-net">{fmt(b.net_income)}</b>
+                <span className="hidden sm:inline">{' '}menyeimbangkan kolom laba rugi dan neraca · total neraca <b className="text-foreground tabular-nums" data-testid="ws-kpi-bs">{fmt(g.bs_debit)}</b></span></span></>
+            : <><AlertTriangle className="w-4 h-4 shrink-0" /> Tidak seimbang — periksa jurnal yang debit dan kreditnya berbeda</>}
         </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Mutasi debit" value={fmt(t.period_debit)} testId="ws-kpi-pd" />
-          <StatTile label="Mutasi kredit" value={fmt(t.period_credit)} testId="ws-kpi-pc" />
-          <StatTile label={netLabel} value={fmt(b.net_income)} accent={(b.net_income || 0) < 0 ? 'danger' : 'default'} testId="ws-kpi-net" />
-          <StatTile label="Total neraca (debit = kredit)" value={fmt(g.bs_debit)} testId="ws-kpi-bs" />
-        </div>
       </>}
     >
       <GlassCard className="p-0 overflow-hidden">
@@ -108,7 +120,7 @@ export default function RahazaWorksheetModule({ token }) {
                   {COLS.map((c, i) => <td key={c} className={`${tdN} ${i % 2 === 0 ? 'border-l border-[var(--glass-border)]' : ''}`}>{fmt(t[c])}</td>)}
                 </tr>
                 <tr data-testid="ws-balancing">
-                  <td colSpan={2} className={(b.net_income || 0) < 0 ? 'text-[hsl(var(--destructive))]' : ''}>{netLabel}</td>
+                  <td colSpan={2} className={(b.net_income || 0) < 0 ? 'text-[hsl(var(--danger-text))]' : ''}>{netLabel}</td>
                   {COLS.slice(0, 6).map((c, i) => <td key={c} className={`${tdN} ${i % 2 === 0 ? 'border-l border-[var(--glass-border)]' : ''}`} />)}
                   {['pl_debit', 'pl_credit', 'bs_debit', 'bs_credit'].map((c, i) => <td key={c} className={`${tdN} font-semibold ${i % 2 === 0 ? 'border-l border-[var(--glass-border)]' : ''}`}>{fmtCell(b[c])}</td>)}
                 </tr>

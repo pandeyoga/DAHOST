@@ -11,7 +11,8 @@
  * Briefing/Laporan mingguan di riwayat; TAUTAN LANGSUNG `?portal=management&module=asisten-ai&sesi=<id>` (dan klik
  * notifikasi → `deepLinkParams`) membuka percakapan itu, juga saat halaman ini sudah terbuka.
  *
- * Tata letak (PANDUAN_UI G1): cetakan PageLayout — judul, pilihan CV & periode di `filters`, isi = jendela chat:
+ * Tata letak (Standar UI/UX v2): cetakan PageLayout — kepala tipis, isi = jendela chat selebar layar; pilihan CV & periode di
+ * kepala percakapan (bukan baris penyaring sendiri); sambutan + saran di tengah utas:
  *   [riwayat percakapan | kepala utas · utas pesan · kotak tanya]. Di HP riwayat pindah ke laci (Sheet).
  * Kontrak HTTP + SSE: lihat `asistenApi.js` (Kontrak B, `/api/asisten-ai`).
  */
@@ -26,7 +27,6 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { CV_ALL, CV_DEFAULT, CV_OPTIONS_FALLBACK, loadCvOptions, normalizeCv } from '@/lib/entitas';
 import { thisMonthWIB } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
-import { EmptyState } from '../moduleAtoms';
 import { monthOptions } from '../finance/PeriodPicker';
 import { KUNCI_SESI_AKTIF, asistenApi } from './asistenApi';
 import { JENIS_ISI as KONTEN, dariRiwayat, judulDariTeks, pesanAsistenBaru, terapkanPeristiwa } from './peristiwaSse';
@@ -456,14 +456,46 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
       onPilih={pilih} onBaru={baru} tampilan="chat" onTampilan={gantiTampilan} />
   );
 
+  // Sambutan di TENGAH utas: judul + saran sebagai tombol (dulu: ruang kosong besar + saran di bawah).
   const sambutan = siap ? (
-    <div className="flex h-full items-center justify-center">
-      <EmptyState icon={Sparkles} testId="asisten-sambutan" title="Mau tanya apa hari ini?"
-        description="Tanyakan omzet per toko, produk terlaris, piutang jatuh tempo, atau stok menipis. Jawaban mengikuti CV dan periode yang dipilih di atas." />
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-4 py-6 text-center" data-testid="asisten-sambutan">
+      <span className="grid h-10 w-10 place-items-center rounded-full bg-[hsl(var(--primary)/0.12)] text-primary" aria-hidden="true">
+        <Sparkles className="h-5 w-5" />
+      </span>
+      <div className="max-w-xl space-y-1">
+        <p className="text-lg font-semibold text-foreground">Mau tanya apa hari ini?</p>
+        <p className="text-sm text-muted-foreground">
+          Tanyakan omzet per toko, produk terlaris, piutang jatuh tempo, atau stok menipis. Jawaban mengikuti CV dan periode yang dipilih.
+        </p>
+      </div>
+      {saran.length > 0 && (
+        <div className="grid w-full max-w-2xl gap-2 sm:grid-cols-2" data-testid="asisten-saran">
+          {saran.slice(0, 6).map((s) => (
+            <Button key={s} variant="outline" className="h-auto min-h-9 justify-start whitespace-normal py-2 text-left font-normal"
+              disabled={mengalir} onClick={() => kirim(s)} data-testid="asisten-saran-item">
+              <Sparkles className="text-primary" />{s}
+            </Button>
+          ))}
+        </div>
+      )}
     </div>
   ) : (
     <div className="flex h-full items-center justify-center">
       <StatusBelumSiap status={status} peran={peran} onNavigate={onNavigate} onCobaLagi={muatStatus} />
+    </div>
+  );
+
+  // CV & periode ada di kepala percakapan (dulu satu baris penyaring sendiri di atas jendela chat).
+  const pilihan = (
+    <div className="flex w-full items-center gap-2 sm:w-auto">
+      <SmartNativeSelect value={cv} onChange={(e) => gantiCv(e.target.value)} searchable={false}
+        className="h-9 w-full sm:w-44" aria-label="CV yang dianalisis" title="CV yang dianalisis" data-testid="asisten-cv">
+        {cvOpsi.map((o) => <option key={o.code} value={o.code}>{labelCv(o)}</option>)}
+      </SmartNativeSelect>
+      <SmartNativeSelect value={periode} onChange={(e) => setPeriode(e.target.value)} searchable={false}
+        className="h-9 w-full sm:w-40" aria-label="Periode bawaan" title="Periode bawaan jawaban" data-testid="asisten-periode">
+        {periodeOpsi.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </SmartNativeSelect>
     </div>
   );
 
@@ -472,59 +504,45 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
       testId="asisten-ai-page"
       title="Asisten AI"
       subtitle={sempit ? undefined : 'Tanya data penjualan, keuangan, stok, dan produksi; dijawab dengan grafik, tabel, dan sumber.'}
-      filters={(
-        <>
-          <div className="w-40 shrink-0 sm:w-48">
-            <SmartNativeSelect value={cv} onChange={(e) => gantiCv(e.target.value)} searchable={false}
-              className="h-9 w-full" aria-label="CV yang dianalisis" title="CV yang dianalisis" data-testid="asisten-cv">
-              {cvOpsi.map((o) => <option key={o.code} value={o.code}>{labelCv(o)}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="w-44 shrink-0">
-            <SmartNativeSelect value={periode} onChange={(e) => setPeriode(e.target.value)} searchable={false}
-              className="h-9 w-full" aria-label="Periode bawaan" title="Periode bawaan jawaban" data-testid="asisten-periode">
-              {periodeOpsi.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-        </>
-      )}
     >
-      <div ref={wadahRef} className="min-h-[440px]" style={tinggi ? { height: tinggi } : { height: 'calc(100dvh - 15rem)' }}
+      <div ref={wadahRef} className="min-h-[440px]" style={tinggi ? { height: tinggi } : { height: 'calc(100dvh - 12rem)' }}
         data-testid="asisten-wadah">
-        <GlassCard className="flex h-full overflow-hidden" data-testid="asisten-jendela">
-          <aside className="hidden w-72 shrink-0 flex-col border-r border-[var(--glass-border)] md:flex" aria-label="Riwayat percakapan">
+        <GlassCard className="flex h-full overflow-hidden p-0" data-testid="asisten-jendela">
+          <aside className="hidden w-64 shrink-0 flex-col border-r border-[var(--glass-border)] md:flex" aria-label="Riwayat percakapan">
             {riwayat}
           </aside>
           <section className="flex min-w-0 flex-1 flex-col" aria-label="Percakapan">
-            <div className="flex min-h-[52px] items-center gap-2 border-b border-[var(--glass-border)] px-3 py-2 sm:px-4">
+            <div className="flex flex-wrap items-center gap-2 border-b border-[var(--glass-border)] px-3 py-2 sm:px-4">
               <Button variant="outline" size="icon" className="shrink-0 md:hidden" onClick={() => setLaci(true)}
                 title="Riwayat percakapan" aria-label="Riwayat percakapan" data-testid="asisten-buka-riwayat">
-                <PanelLeft className="h-4 w-4" />
+                <PanelLeft />
               </Button>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-foreground" data-testid="asisten-judul">{judulUtas}</p>
-                <p className="truncate text-xs text-muted-foreground" data-testid="asisten-konteks">{model} · {cvTeks} · {periodeTeks}</p>
+                <p className="truncate text-xs text-muted-foreground" data-testid="asisten-konteks"
+                  title={`${model} · ${cvTeks} · ${periodeTeks}`}>{model}</p>
               </div>
               {sesiAktif && (
                 <>
                   <Button variant="outline" size="icon" className="shrink-0" onClick={ubahJudul} disabled={mengalir}
                     title="Ubah judul" aria-label="Ubah judul" data-testid="asisten-ubah-judul">
-                    <Pencil className="h-4 w-4" />
+                    <Pencil />
                   </Button>
                   <Button variant="outline" size="icon" className="shrink-0" onClick={hapus} disabled={mengalir}
                     title="Hapus percakapan" aria-label="Hapus percakapan" data-testid="asisten-hapus-sesi">
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 />
                   </Button>
                 </>
               )}
               <Button variant="outline" size="icon" className="shrink-0 md:hidden" onClick={baru}
                 title="Percakapan baru" aria-label="Percakapan baru" data-testid="asisten-baru-hp">
-                <Plus className="h-4 w-4" />
+                <Plus />
               </Button>
+              <div className="order-last w-full sm:order-none sm:w-auto">{pilihan}</div>
             </div>
             <UtasPesan pesan={pesan} memuat={memuatPesan} kosong={sambutan} onCobaLagi={cobaLagi}
               onPutuskan={putuskan} onNavigate={onNavigate} mengalir={mengalir} tindakanAktif={tindakanAktif} />
-            <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : saran} saranRingkas={pesan.length > 0}
+            <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : []} saranRingkas={pesan.length > 0}
               onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap} catatan={catatanKomposer}
               placeholder={!siap ? (PLACEHOLDER_BELUM_SIAP[status.data?.alasan] || 'Asisten AI belum siap')
                 : (sempit ? 'Tanya soal penjualan, stok…' : undefined)} />

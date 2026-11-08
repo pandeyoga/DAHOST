@@ -1,560 +1,306 @@
 /**
- * AnnouncementModule — HR CMS untuk mengelola announcement board
- * Announcement board akan tampil di Portal Selector untuk semua user
- * 
- * Features:
- * - CRUD announcements
- * - Set priority, type, dan target portals
- * - Schedule announcement (start/end date)
- * - Toggle active/inactive
- * - Preview tampilan
+ * Papan Pengumuman (Portal SDM) — kelola pengumuman yang tampil di halaman pilih portal.
+ *
+ * Standar UI/UX v2 (keputusan owner 8 Nov 2026): cetakan PageLayout, kepala tipis, penyaring satu baris,
+ * daftar = tabel (kartu ringkas di HP), detail = popup, form = popup standar, pemilih tanggal seragam,
+ * hapus lewat konfirmasi, bahasa Indonesia, tombol Simpan hijau / Hapus merah.
+ *
+ * Perbaikan data yang ikut (lihat routes/announcements.py):
+ *  • tanggal dibaca sebagai WIB dari waktu berzona (dulu tampil mundur sehari & bergeser tiap disimpan);
+ *  • tanggal berakhir = sampai akhir hari WIB (dulu berhenti pukul 07.00 WIB di hari itu);
+ *  • tanggal bisa dikosongkan; hapus benar-benar menghapus; daftar tujuan berisi 16 portal (dulu 9).
  */
-import { useState, useEffect, useCallback } from 'react';
-import {
-  Bell, Plus, Edit2, Trash2, Eye, EyeOff, Calendar, Target,
-  AlertCircle, Info, CheckCircle2, AlertTriangle, Megaphone
-} from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { toWIBDate } from '@/lib/waktu';
-import { motion, AnimatePresence } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
-import { EmptyState } from './EmptyState';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import FilterChips from '@/components/ui/filter-chips';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { cn } from '@/lib/utils';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import { NAMA_PORTAL } from './portalAccess';
+import { instan, ymd, keadaanPengumuman, KEADAAN, labelPeriode, labelTujuan } from './pengumuman/aturan';
+import { AnnouncementItem, JENIS_PENGUMUMAN } from './AnnouncementBoard';
 
 const API = process.env.REACT_APP_BACKEND_URL;
-
-const ANNOUNCEMENT_TYPES = {
-  info: { label: 'Info', icon: Info, color: 'bg-blue-100 text-blue-700 border-blue-300' },
-  success: { label: 'Success', icon: CheckCircle2, color: 'bg-green-100 text-green-700 border-green-300' },
-  warning: { label: 'Warning', icon: AlertTriangle, color: 'bg-amber-100 text-amber-700 border-amber-300' },
-  urgent: { label: 'Urgent', icon: AlertCircle, color: 'bg-red-100 text-red-700 border-red-300' },
-};
-
-const PORTAL_OPTIONS = [
-  { value: 'all', label: 'Semua Portal' },
-  { value: 'management', label: 'Manajemen' },
-  { value: 'production', label: 'Produksi' },
-  { value: 'warehouse', label: 'Gudang' },
-  { value: 'accessories', label: 'Aksesoris' },
-  { value: 'finance', label: 'Keuangan' },
-  { value: 'hr', label: 'SDM' },
-  { value: 'maklon', label: 'Maklon' },
-  { value: 'toko', label: 'Marketing' },
-  { value: 'rnd', label: 'RnD' },
-];
-
-function TypeBadge({ type }) {
-  const config = ANNOUNCEMENT_TYPES[type] || ANNOUNCEMENT_TYPES.info;
-  const Icon = config.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium border ${config.color}`}>
-      <Icon size={12} />
-      {config.label}
-    </span>
-  );
+function JenisBadge({ jenis }) {
+  const j = JENIS_PENGUMUMAN[jenis] || JENIS_PENGUMUMAN.info;
+  return <StatusBadge status={jenis} label={j.label} tone={j.tone} />;
 }
 
-function AnnouncementCard({ announcement, onEdit, onToggle, onDelete }) {
-  const isExpired = announcement.end_date && new Date(announcement.end_date) < new Date();
-  const isPending = announcement.start_date && new Date(announcement.start_date) > new Date();
-  
-  return (
-    <GlassCard data-testid={`announcement-card-${announcement.id}`}>
-      <div className="p-4 space-y-3">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 space-y-2">
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-foreground">{announcement.title}</h3>
-              <TypeBadge type={announcement.type} />
-              {!announcement.is_active && (
-                <Badge variant="secondary" className="text-xs">Nonaktif</Badge>
-              )}
-              {isExpired && (
-                <Badge variant="outline" className="text-xs text-muted-foreground">Kedaluwarsa</Badge>
-              )}
-              {isPending && (
-                <Badge variant="outline" className="text-xs text-amber-600">Terjadwal</Badge>
-              )}
-            </div>
-            <p className="text-sm text-muted-foreground line-clamp-2">{announcement.content}</p>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => onToggle(announcement.id)}
-              className="h-8 w-8"
-              data-testid={`toggle-btn-${announcement.id}`}
-            >
-              {announcement.is_active ? <Eye size={16} /> : <EyeOff size={16} />}
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => onEdit(announcement)}
-              className="h-8 w-8"
-              data-testid={`edit-btn-${announcement.id}`}
-            >
-              <Edit2 size={16} />
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => onDelete(announcement.id)}
-              className="h-8 w-8 text-red-600 hover:bg-red-50"
-              data-testid={`delete-btn-${announcement.id}`}
-            >
-              <Trash2 size={16} />
-            </Button>
-          </div>
-        </div>
-
-        {/* Metadata */}
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1">
-            <Target size={12} />
-            Priority: {announcement.priority}
-          </div>
-          <div className="flex items-center gap-1">
-            <Calendar size={12} />
-            {announcement.start_date || announcement.end_date ? (
-              <>
-                {announcement.start_date && new Date(announcement.start_date).toLocaleDateString('id-ID')}
-                {announcement.start_date && announcement.end_date && ' - '}
-                {announcement.end_date && new Date(announcement.end_date).toLocaleDateString('id-ID')}
-              </>
-            ) : (
-              'Tidak terbatas'
-            )}
-          </div>
-        </div>
-
-        {/* Target Portals */}
-        <div className="flex flex-wrap gap-1">
-          {announcement.target_portals?.map(portal => (
-            <Badge key={portal} variant="outline" className="text-xs">
-              {PORTAL_OPTIONS.find(p => p.value === portal)?.label || portal}
-            </Badge>
-          ))}
-        </div>
-
-        {/* Creator */}
-        {announcement.created_by_name && (
-          <p className="text-xs text-muted-foreground">
-            Dibuat oleh: {announcement.created_by_name}
-          </p>
-        )}
-      </div>
-    </GlassCard>
-  );
-}
-
-function AnnouncementFormDialog({ open, onClose, announcement, onSuccess }) {
-  const isEdit = !!announcement;
-  const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({
-    title: '',
-    content: '',
-    type: 'info',
-    priority: 0,
-    target_portals: ['all'],
-    is_active: true,
-    start_date: '',
-    end_date: '',
+async function panggil(path, { method = 'GET', body } = {}) {
+  const token = localStorage.getItem('erp_token');
+  const res = await fetch(`${API}/api/announcements${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
   });
+  if (!res.ok) {
+    let pesan = 'Permintaan gagal. Coba lagi.';
+    try { const d = await res.json(); if (typeof d.detail === 'string') pesan = d.detail; } catch { /* abaikan */ }
+    throw new Error(pesan);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// ─── Form (popup standar) ────────────────────────────────────────────────────
+const KOSONG = { title: '', content: '', type: 'info', priority: 0, target_portals: ['all'], is_active: true, mulai: '', akhir: '' };
+
+function FormPengumuman({ open, awal, onClose, onTersimpan }) {
+  const ubah = !!awal?.id;
+  const [f, setF] = useState(KOSONG);
+  const [galat, setGalat] = useState({});
+  const [menyimpan, setMenyimpan] = useState(false);
 
   useEffect(() => {
-    if (announcement) {
-      setForm({
-        title: announcement.title || '',
-        content: announcement.content || '',
-        type: announcement.type || 'info',
-        priority: announcement.priority || 0,
-        target_portals: announcement.target_portals || ['all'],
-        is_active: announcement.is_active ?? true,
-        start_date: toWIBDate(announcement.start_date),
-        end_date: toWIBDate(announcement.end_date),
-      });
-    } else {
-      setForm({
-        title: '',
-        content: '',
-        type: 'info',
-        priority: 0,
-        target_portals: ['all'],
-        is_active: true,
-        start_date: '',
-        end_date: '',
-      });
-    }
-  }, [announcement, open]);
+    if (!open) return;
+    setGalat({});
+    setF(awal?.id ? {
+      title: awal.title || '', content: awal.content || '', type: awal.type || 'info',
+      priority: awal.priority ?? 0, target_portals: awal.target_portals?.length ? awal.target_portals : ['all'],
+      is_active: awal.is_active ?? true, mulai: ymd(awal.start_date), akhir: ymd(awal.end_date),
+    } : KOSONG);
+  }, [open, awal]);
 
-  const handleSubmit = async () => {
-    if (!form.title.trim() || !form.content.trim()) {
-      toast.error('Judul dan konten harus diisi');
-      return;
-    }
+  const set = (k) => (v) => setF((s) => ({ ...s, [k]: v }));
+  const pilihPortal = (id) => setF((s) => {
+    if (id === 'all') return { ...s, target_portals: ['all'] };
+    const kini = s.target_portals.filter((p) => p !== 'all');
+    const baru = kini.includes(id) ? kini.filter((p) => p !== id) : [...kini, id];
+    return { ...s, target_portals: baru.length ? baru : ['all'] };
+  });
 
-    setLoading(true);
-    const token = localStorage.getItem('erp_token');
-    const payload = {
-      ...form,
-      start_date: form.start_date ? new Date(form.start_date).toISOString() : null,
-      end_date: form.end_date ? new Date(form.end_date).toISOString() : null,
-    };
-
+  const simpan = async () => {
+    const g = {};
+    if (!f.title.trim()) g.title = 'Judul wajib diisi.';
+    if (!f.content.trim()) g.content = 'Isi pengumuman wajib diisi.';
+    if (f.mulai && f.akhir && f.akhir < f.mulai) g.akhir = 'Tanggal berakhir tidak boleh sebelum tanggal mulai.';
+    setGalat(g);
+    if (Object.keys(g).length) return;
+    setMenyimpan(true);
     try {
-      const url = isEdit
-        ? `${API}/api/announcements/${announcement.id}`
-        : `${API}/api/announcements/`;
-      const method = isEdit ? 'PUT' : 'POST';
-
-      const res = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || 'Request failed');
-      }
-
-      toast.success(isEdit ? 'Announcement berhasil diupdate' : 'Announcement berhasil dibuat');
-      onSuccess();
+      const body = {
+        title: f.title.trim(), content: f.content.trim(), type: f.type, priority: Number(f.priority) || 0,
+        target_portals: f.target_portals, is_active: f.is_active,
+        // Tanggal kalender WIB: mulai pukul 00.00, berakhir sampai 23.59.59 di hari itu.
+        start_date: f.mulai ? `${f.mulai}T00:00:00+07:00` : null,
+        end_date: f.akhir ? `${f.akhir}T23:59:59+07:00` : null,
+      };
+      await panggil(ubah ? `/${awal.id}` : '/', { method: ubah ? 'PUT' : 'POST', body });
+      toast.success(ubah ? 'Pengumuman disimpan.' : 'Pengumuman dibuat.');
+      onTersimpan();
       onClose();
-    } catch (error) {
-      console.error('Error saving announcement:', error);
-      toast.error(error.message || 'Gagal menyimpan announcement');
+    } catch (e) {
+      setGalat({ umum: e.message });
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const togglePortal = (portal) => {
-    if (portal === 'all') {
-      setForm(prev => ({ ...prev, target_portals: ['all'] }));
-    } else {
-      setForm(prev => {
-        const current = prev.target_portals.filter(p => p !== 'all');
-        const updated = current.includes(portal)
-          ? current.filter(p => p !== portal)
-          : [...current, portal];
-        return { ...prev, target_portals: updated.length > 0 ? updated : ['all'] };
-      });
+      setMenyimpan(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit Announcement' : 'Buat Announcement Baru'}</DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          {/* Title */}
-          <div>
-            <Label>Judul Announcement</Label>
-            <Input
-              value={form.title}
-              onChange={e => setForm(prev => ({ ...prev, title: e.target.value }))}
-              placeholder="Contoh: Libur Nasional 17 Agustus"
-              data-testid="announcement-title-input"
-            />
-          </div>
-
-          {/* Content */}
-          <div>
-            <Label>Konten</Label>
-            <Textarea
-              value={form.content}
-              onChange={e => setForm(prev => ({ ...prev, content: e.target.value }))}
-              placeholder="Deskripsi lengkap announcement..."
-              rows={4}
-              data-testid="announcement-content-input"
-            />
-          </div>
-
-          {/* Type & Priority */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Tipe</Label>
-              <Select value={form.type} onValueChange={type => setForm(prev => ({ ...prev, type }))}>
-                <SelectTrigger data-testid="announcement-type-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(ANNOUNCEMENT_TYPES).map(([key, config]) => (
-                    <SelectItem key={key} value={key}>
-                      <div className="flex items-center gap-2">
-                        <config.icon size={14} />
-                        {config.label}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label>Priority (0-10)</Label>
-              <Input
-                type="number"
-                min={0}
-                max={10}
-                value={form.priority}
-                onChange={e => setForm(prev => ({ ...prev, priority: parseInt(e.target.value) || 0 }))}
-                data-testid="announcement-priority-input"
-              />
-            </div>
-          </div>
-
-          {/* Date Range */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Tanggal Mulai (Opsional)</Label>
-              <Input
-                type="date"
-                value={form.start_date}
-                onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }))}
-                data-testid="announcement-start-date"
-              />
-            </div>
-            <div>
-              <Label>Tanggal Berakhir (Opsional)</Label>
-              <Input
-                type="date"
-                value={form.end_date}
-                onChange={e => setForm(prev => ({ ...prev, end_date: e.target.value }))}
-                data-testid="announcement-end-date"
-              />
-            </div>
-          </div>
-
-          {/* Target Portals */}
-          <div>
-            <Label>Target Portal</Label>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {PORTAL_OPTIONS.map(portal => (
-                <Button
-                  key={portal.value}
-                  type="button"
-                  size="sm"
-                  variant={form.target_portals.includes(portal.value) ? 'default' : 'outline'}
-                  onClick={() => togglePortal(portal.value)}
-                  data-testid={`portal-toggle-${portal.value}`}
-                >
-                  {portal.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-
-          {/* Active Status */}
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="is-active"
-              checked={form.is_active}
-              onChange={e => setForm(prev => ({ ...prev, is_active: e.target.checked }))}
-              className="rounded"
-              data-testid="announcement-active-checkbox"
-            />
-            <Label htmlFor="is-active" className="cursor-pointer">Aktif (tampilkan di Portal Selector)</Label>
-          </div>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" onSimpan={simpan} menyimpan={menyimpan}
+      judul={ubah ? 'Ubah pengumuman' : 'Buat pengumuman'}
+      keterangan="Tampil di halaman pilih portal bagi orang yang bisa membuka portal tujuan."
+      labelSimpan={ubah ? 'Simpan perubahan' : 'Buat pengumuman'} galat={galat.umum} testId="form-pengumuman">
+      <Isian label="Judul" wajib htmlFor="png-judul" galat={galat.title}>
+        <Input id="png-judul" value={f.title} maxLength={200} onChange={(e) => set('title')(e.target.value)}
+          placeholder="Contoh: Libur nasional 10 November" data-testid="announcement-title-input" />
+      </Isian>
+      <Isian label="Isi pengumuman" wajib htmlFor="png-isi" galat={galat.content}>
+        <Textarea id="png-isi" rows={4} value={f.content} onChange={(e) => set('content')(e.target.value)}
+          placeholder="Tulis informasinya dengan jelas: apa, kapan, siapa yang terkena." data-testid="announcement-content-input" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Jenis" htmlFor="png-jenis" petunjuk="Menentukan warna di papan.">
+          <SmartNativeSelect id="png-jenis" value={f.type} onChange={(e) => set('type')(e.target.value)}
+            data-testid="announcement-type-select">
+            {Object.entries(JENIS_PENGUMUMAN).map(([k, j]) => <option key={k} value={k}>{j.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Prioritas" htmlFor="png-prioritas" petunjuk="0–10. Angka lebih besar tampil lebih atas.">
+          <Input id="png-prioritas" type="number" inputMode="numeric" min={0} max={10} value={f.priority}
+            onChange={(e) => set('priority')(Math.max(0, Math.min(10, parseInt(e.target.value, 10) || 0)))}
+            data-testid="announcement-priority-input" />
+        </Isian>
+        <Isian label="Mulai tampil" petunjuk="Kosong = tampil sejak disimpan.">
+          <DatePicker value={f.mulai} onChange={set('mulai')} placeholder="Langsung" testId="announcement-start-date" />
+        </Isian>
+        <Isian label="Berhenti tampil" galat={galat.akhir} petunjuk="Tampil sampai akhir hari itu (WIB). Kosong = tanpa batas.">
+          <DatePicker value={f.akhir} onChange={set('akhir')} min={f.mulai || undefined} placeholder="Tanpa batas"
+            testId="announcement-end-date" />
+        </Isian>
+      </div>
+      <Isian label="Tampil untuk" petunjuk="Hanya orang yang bisa membuka portal terpilih yang melihat pengumuman ini.">
+        <div className="flex flex-wrap gap-1.5" data-testid="announcement-portals">
+          {[{ id: 'all', nama: 'Semua portal' }, ...NAMA_PORTAL].map((p) => {
+            const aktif = f.target_portals.includes(p.id);
+            return (
+              <button key={p.id} type="button" onClick={() => pilihPortal(p.id)} aria-pressed={aktif}
+                data-testid={`portal-toggle-${p.id}`}
+                className={cn('rounded-full border px-3 py-1 text-sm transition-colors',
+                  aktif ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground hover:border-[hsl(var(--primary)/0.4)]')}>
+                {p.nama}
+              </button>
+            );
+          })}
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={loading}>
-            Batal
-          </Button>
-          <Button onClick={handleSubmit} disabled={loading} data-testid="announcement-save-btn">
-            {loading ? 'Menyimpan...' : (isEdit ? 'Update' : 'Buat')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </Isian>
+      <label className="flex items-center gap-3 text-sm" htmlFor="png-aktif">
+        <Switch id="png-aktif" checked={f.is_active} onCheckedChange={set('is_active')} data-testid="announcement-active-checkbox" />
+        <span>Aktif — tampil di papan sesuai periode</span>
+      </label>
+    </FormPopup>
   );
 }
 
+// ─── Halaman ─────────────────────────────────────────────────────────────────
 export default function AnnouncementModule() {
-  const [announcements, setAnnouncements] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showDialog, setShowDialog] = useState(false);
-  const [editingAnnouncement, setEditingAnnouncement] = useState(null);
-  const [filter, setFilter] = useState('all'); // all | active | inactive
+  const [data, setData] = useState([]);
+  const [memuat, setMemuat] = useState(true);
+  const [saring, setSaring] = useState('');
+  const [cari, setCari] = useState('');
+  const [form, setForm] = useState(null);        // null | {} (baru) | pengumuman (ubah)
+  const [detail, setDetail] = useState(null);
 
-  const fetchAnnouncements = useCallback(async () => {
-    setLoading(true);
-    const token = localStorage.getItem('erp_token');
+  const muat = useCallback(async () => {
+    setMemuat(true);
     try {
-      const res = await fetch(`${API}/api/announcements/all`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
-      setAnnouncements(data);
-    } catch (error) {
-      console.error('Error fetching announcements:', error);
-      toast.error('Gagal memuat announcements');
+      setData(await panggil('/all?limit=200'));
+    } catch (e) {
+      toast.error(e.message || 'Gagal memuat pengumuman.');
     } finally {
-      setLoading(false);
+      setMemuat(false);
     }
   }, []);
+  useEffect(() => { muat(); }, [muat]);
 
-  useEffect(() => {
-    fetchAnnouncements();
-  }, [fetchAnnouncements]);
+  const denganKeadaan = useMemo(() => data.map((a) => ({ ...a, keadaan: keadaanPengumuman(a) })), [data]);
+  const hitung = (k) => denganKeadaan.filter((a) => a.keadaan === k).length;
+  const opsi = [
+    { key: '', label: 'Semua', count: denganKeadaan.length },
+    { key: 'tampil', label: 'Sedang tampil', count: hitung('tampil') },
+    { key: 'terjadwal', label: 'Terjadwal', count: hitung('terjadwal') },
+    { key: 'berakhir', label: 'Berakhir', count: hitung('berakhir') },
+    { key: 'nonaktif', label: 'Nonaktif', count: hitung('nonaktif') },
+  ];
+  const q = cari.trim().toLowerCase();
+  const baris = denganKeadaan
+    .filter((a) => !saring || a.keadaan === saring)
+    .filter((a) => !q || `${a.title} ${a.content}`.toLowerCase().includes(q));
 
-  const handleToggleStatus = async (id) => {
-    const token = localStorage.getItem('erp_token');
+  const alihAktif = async (a) => {
     try {
-      const res = await fetch(`${API}/api/announcements/${id}/toggle`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Failed to toggle');
-      toast.success('Status berhasil diubah');
-      fetchAnnouncements();
-    } catch (error) {
-      console.error('Error toggling status:', error);
-      toast.error('Gagal mengubah status');
-    }
+      await panggil(`/${a.id}/toggle`, { method: 'POST' });
+      toast.success(a.is_active ? 'Pengumuman dinonaktifkan.' : 'Pengumuman diaktifkan.');
+      setDetail(null);
+      muat();
+    } catch (e) { toast.error(e.message); }
   };
-
-  const handleDelete = async (id) => {
-    if (!window.confirm('Yakin ingin menghapus announcement ini?')) return;
-    
-    const token = localStorage.getItem('erp_token');
+  const hapus = async (a) => {
+    const ok = await confirmDialog({
+      title: 'Hapus pengumuman ini?', body: `"${a.title}" hilang dari papan dan dari daftar ini.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await fetch(`${API}/api/announcements/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Failed to delete');
-      toast.success('Announcement berhasil dihapus');
-      fetchAnnouncements();
-    } catch (error) {
-      console.error('Error deleting announcement:', error);
-      toast.error('Gagal menghapus announcement');
-    }
+      await panggil(`/${a.id}`, { method: 'DELETE' });
+      toast.success('Pengumuman dihapus.');
+      setDetail(null);
+      muat();
+    } catch (e) { toast.error(e.message); }
   };
 
-  const handleEdit = (announcement) => {
-    setEditingAnnouncement(announcement);
-    setShowDialog(true);
-  };
-
-  const handleCloseDialog = () => {
-    setShowDialog(false);
-    setEditingAnnouncement(null);
-  };
-
-  const filteredAnnouncements = announcements.filter(a => {
-    if (filter === 'active') return a.is_active;
-    if (filter === 'inactive') return !a.is_active;
-    return true;
-  });
+  const kolom = [
+    { kunci: 'judul', label: 'Pengumuman', hp: 'judul', isi: (a) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="truncate font-medium text-foreground" title={a.title}>{a.title}</p>
+        <p className="hidden truncate text-xs text-muted-foreground md:block" title={a.content}>{a.content}</p>
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (a) => <JenisBadge jenis={a.type} /> },
+    { kunci: 'tujuan', label: 'Tampil untuk', isi: (a) => <span className="text-sm">{labelTujuan(a.target_portals)}</span> },
+    { kunci: 'periode', label: 'Periode', isi: (a) => <span className="text-sm md:whitespace-nowrap">{labelPeriode(a)}</span> },
+    { kunci: 'prioritas', label: 'Prioritas', rata: 'kanan', isi: (a) => <span className="tabular-nums">{a.priority}</span> },
+    { kunci: 'keadaan', label: 'Status', isi: (a) => <StatusBadge status={a.keadaan} label={KEADAAN[a.keadaan].label} tone={KEADAAN[a.keadaan].tone} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (a) => (
+      <Button size="sm" variant="outline" onClick={() => setForm(a)} data-testid={`edit-btn-${a.id}`}>
+        <Pencil />Ubah
+      </Button>) },
+  ];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        icon={Megaphone}
-        title="Announcement Management"
-        description="Kelola pengumuman yang tampil di Portal Selector untuk seluruh user"
-        actions={
-          <Button onClick={() => { setEditingAnnouncement(null); setShowDialog(true); }} data-testid="create-announcement-btn">
-            <Plus size={16} className="mr-2" />
-            Buat Announcement
-          </Button>
-        }
-      />
-
-      {/* Filter */}
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant={filter === 'all' ? 'default' : 'outline'}
-          onClick={() => setFilter('all')}
-        >
-          Semua
-        </Button>
-        <Button
-          size="sm"
-          variant={filter === 'active' ? 'default' : 'outline'}
-          onClick={() => setFilter('active')}
-        >
-          Aktif
-        </Button>
-        <Button
-          size="sm"
-          variant={filter === 'inactive' ? 'default' : 'outline'}
-          onClick={() => setFilter('inactive')}
-        >
-          Nonaktif
-        </Button>
-      </div>
-
-      {/* List */}
-      {loading ? (
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
-          <p className="text-sm text-muted-foreground mt-4">Memuat announcements...</p>
+    <PageLayout testId="announcement-module" title="Papan pengumuman"
+      subtitle="Pengumuman di halaman pilih portal, untuk portal yang bisa dibuka tiap orang."
+      actions={<Button onClick={() => setForm({})} data-testid="create-announcement-btn"><Plus />Buat pengumuman</Button>}
+      filters={<>
+        <FilterChips options={opsi} value={saring} onChange={setSaring} hideWhenEmpty={false} testId="announcement-filter" />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari judul atau isi"
+            className="pl-8" data-testid="announcement-search" />
         </div>
-      ) : filteredAnnouncements.length === 0 ? (
-        <EmptyState
-          icon={Bell}
-          title="Belum ada announcement"
-          description="Buat announcement pertama Anda untuk ditampilkan di Portal Selector"
-          action={
-            <Button onClick={() => { setEditingAnnouncement(null); setShowDialog(true); }}>
-              <Plus size={16} className="mr-2" />
-              Buat Announcement
-            </Button>
-          }
-        />
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="papan-pengumuman" namaLembar="Pengumuman" baris={baris} testId="announcement-unduh"
+          kolom={[
+            { label: 'Judul', nilai: (a) => a.title },
+            { label: 'Isi', nilai: (a) => a.content },
+            { label: 'Jenis', nilai: (a) => (JENIS_PENGUMUMAN[a.type] || JENIS_PENGUMUMAN.info).label },
+            { label: 'Tampil untuk', nilai: (a) => labelTujuan(a.target_portals, 99) },
+            { label: 'Periode', nilai: (a) => labelPeriode(a) },
+            { label: 'Prioritas', nilai: (a) => a.priority },
+            { label: 'Status', nilai: (a) => KEADAAN[a.keadaan].label },
+            { label: 'Dibuat oleh', nilai: (a) => a.created_by_name || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={muat} disabled={memuat} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={memuat ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {memuat && data.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengumuman…</p>
       ) : (
-        <div className="grid gap-4">
-          <AnimatePresence mode="popLayout">
-            {filteredAnnouncements.map(announcement => (
-              <motion.div
-                key={announcement.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ duration: 0.2 }}
-              >
-                <AnnouncementCard
-                  announcement={announcement}
-                  onEdit={handleEdit}
-                  onToggle={handleToggleStatus}
-                  onDelete={handleDelete}
-                />
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
+        <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="announcement-table"
+          kosong={<EmptyState title={data.length ? 'Tidak ada pengumuman yang cocok' : 'Belum ada pengumuman'}
+            description={data.length ? 'Ubah saringan atau kata pencarian.' : 'Buat pengumuman pertama untuk ditampilkan di halaman pilih portal.'}
+            action={!data.length && <Button onClick={() => setForm({})}><Plus />Buat pengumuman</Button>} />} />
       )}
 
-      {/* Dialog */}
-      <AnnouncementFormDialog
-        open={showDialog}
-        onClose={handleCloseDialog}
-        announcement={editingAnnouncement}
-        onSuccess={fetchAnnouncements}
-      />
-    </div>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.title} testId="announcement-detail"
+          status={<><JenisBadge jenis={detail.type} />
+            <StatusBadge status={detail.keadaan} label={KEADAAN[detail.keadaan].label} tone={KEADAAN[detail.keadaan].tone} /></>}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { setForm(detail); setDetail(null); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="outline" onClick={() => alihAktif(detail)} data-testid="announcement-toggle"><Power />{detail.is_active ? 'Nonaktifkan' : 'Aktifkan'}</Button>
+            <Button size="sm" variant="destructive" onClick={() => hapus(detail)} data-testid="announcement-delete"><Trash2 />Hapus</Button>
+          </>}>
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Tampilan di papan</p>
+            <AnnouncementItem announcement={detail} />
+          </div>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Tampil untuk">{labelTujuan(detail.target_portals, 99)}</BarisDetail>
+            <BarisDetail label="Periode">{labelPeriode(detail)}</BarisDetail>
+            <BarisDetail label="Prioritas">{detail.priority} <span className="text-muted-foreground">(lebih besar = lebih atas)</span></BarisDetail>
+            <BarisDetail label="Dibuat">{formatDateTimeID(instan(detail.created_at))}{detail.created_by_name ? ` · ${detail.created_by_name}` : ''}</BarisDetail>
+            {detail.updated_at && <BarisDetail label="Terakhir diubah">{formatDateTimeID(instan(detail.updated_at))}</BarisDetail>}
+          </dl>
+        </DetailPopup>
+      )}
+
+      <FormPengumuman open={form !== null} awal={form} onClose={() => setForm(null)} onTersimpan={muat} />
+    </PageLayout>
   );
 }
+

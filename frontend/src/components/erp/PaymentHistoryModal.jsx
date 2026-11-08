@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, FileDown, History } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import { toast } from 'sonner';
@@ -48,10 +49,21 @@ export function PaymentHistoryList({ token, kind, invoiceId }) {
   }
   const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   return (
+    <div className="space-y-2">
+    <div className="flex justify-end">
+      <TombolUnduh namaBerkas="riwayat-pembayaran" namaLembar="Pembayaran" baris={rows} testId="payment-history-unduh"
+        kolom={[
+          { label: 'Tanggal', nilai: (r) => formatDateID(r.date) },
+          { label: 'Rekening', nilai: (r) => (r.account_code ? `${r.account_code} · ${r.account_name}` : 'Tanpa rekening') },
+          { label: 'No. jurnal', nilai: (r) => r.gl_je_number || (r.post_error ? 'Jurnal gagal' : 'Belum dijurnal') },
+          { label: 'Catatan', nilai: (r) => r.notes || '' },
+          { label: 'Jumlah', nilai: (r) => Number(r.amount) || 0 },
+        ]} />
+    </div>
     <div className="overflow-x-auto" data-testid="payment-history-table">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-[10px] uppercase tracking-wider text-foreground/50">
+          <tr className="text-left text-xs text-muted-foreground">
             <th className="py-2 pr-2">Tanggal</th>
             <th className="py-2 pr-2">Rekening</th>
             <th className="py-2 pr-2">No. jurnal</th>
@@ -63,15 +75,15 @@ export function PaymentHistoryList({ token, kind, invoiceId }) {
         <tbody>
           {rows.map(r => (
             <tr key={r.id} className="border-t border-[var(--glass-border)]" data-testid={`payment-row-${r.id}`}>
-              <td className="py-2 pr-2 text-xs whitespace-nowrap">{formatDateID(r.date)}</td>
-              <td className="py-2 pr-2 text-xs">{r.account_code ? `${r.account_code} · ${r.account_name}` : <span className="text-muted-foreground">Tanpa rekening</span>}</td>
-              <td className="py-2 pr-2 text-xs">
+              <td className="py-2 pr-2 whitespace-nowrap">{formatDateID(r.date)}</td>
+              <td className="py-2 pr-2">{r.account_code ? `${r.account_code} · ${r.account_name}` : <span className="text-muted-foreground">Tanpa rekening</span>}</td>
+              <td className="py-2 pr-2">
                 {r.gl_je_number
-                  ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]" data-testid={`payment-je-${r.id}`}><BookOpen size={11} />{r.gl_je_number}</span>
-                  : <span className={`text-[10px] ${r.post_error ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--warning))]'}`} title={r.post_error || ''}>{r.post_error ? 'Jurnal gagal' : 'Belum dijurnal'}</span>}
+                  ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success-text))]" data-testid={`payment-je-${r.id}`}><BookOpen size={11} />{r.gl_je_number}</span>
+                  : <span className={`text-xs ${r.post_error ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--warning-text))]'}`} title={r.post_error || ''}>{r.post_error ? 'Jurnal gagal' : 'Belum dijurnal'}</span>}
               </td>
-              <td className="py-2 pr-2 text-xs text-muted-foreground truncate max-w-[180px]" title={r.notes}>{r.notes || '—'}</td>
-              <td className="py-2 text-right tabular-nums text-xs whitespace-nowrap">{formatRupiah(r.amount)}</td>
+              <td className="py-2 pr-2 text-muted-foreground truncate max-w-[180px]" title={r.notes}>{r.notes || '—'}</td>
+              <td className="py-2 text-right tabular-nums whitespace-nowrap">{formatRupiah(r.amount)}</td>
               <td className="py-2 pl-2 text-right">
                 <Button variant="outline" size="sm" onClick={() => downloadReceipt(token, kind, invoiceId, r.id)}
                   data-testid={`payment-receipt-${r.id}`} title="Unduh kwitansi PDF" aria-label="Unduh kwitansi PDF">
@@ -83,12 +95,13 @@ export function PaymentHistoryList({ token, kind, invoiceId }) {
         </tbody>
         <tfoot>
           <tr className="border-t-2 border-[var(--glass-border)] font-semibold">
-            <td colSpan={4} className="py-2 text-right text-xs">Total dibayar ({rows.length} pembayaran)</td>
-            <td className="py-2 text-right tabular-nums text-xs whitespace-nowrap" data-testid="payment-history-total">{formatRupiah(total)}</td>
+            <td colSpan={4} className="py-2 text-right">Total dibayar ({rows.length} pembayaran)</td>
+            <td className="py-2 text-right tabular-nums whitespace-nowrap" data-testid="payment-history-total">{formatRupiah(total)}</td>
             <td />
           </tr>
         </tfoot>
       </table>
+    </div>
     </div>
   );
 }

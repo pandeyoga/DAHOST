@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, PackageMinus, Trash2 } from 'lucide-react';
 import FilterChips from '@/components/ui/filter-chips';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Textarea } from '@/components/ui/textarea';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatTile, EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
-import Modal from './Modal';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah, formatDateID } from '@/lib/format';
@@ -16,12 +20,14 @@ import { todayWIB, thisMonthWIB, toWIBDate } from '@/lib/waktu';
 const fmt = formatRupiah;
 const PAGE_SIZE = 25;
 const catLabel = (c) => (c === 'it' ? 'IT' : c ? c.charAt(0).toUpperCase() + c.slice(1).replace(/-/g, ' ') : '—');
-const gainClass = (n) => (Number(n) < 0 ? 'text-[hsl(var(--destructive))]' : Number(n) > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground');
+const gainClass = (n) => (Number(n) < 0 ? 'text-[hsl(var(--danger-text))]' : Number(n) > 0 ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground');
 
 /**
  * Pelepasan aset (menu Aset Tetap › Pelepasan).
  * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — pil "Aset aktif / Riwayat pelepasan" di toolbar kiri,
  * tombol baris berbentuk garis (dulu merah penuh di tiap baris), formulir di dialog aplikasi.
+ * 2026-11-08 (Standar UI/UX v2): form = FormPopup pendek + DatePicker; daftar bisa diunduh Excel/CSV; rata-rata
+ * laba/rugi tanpa riwayat = "—" (dulu "Rp 0").
  */
 export default function AssetDisposalModule({ token }) {
   const [activeAssets, setActiveAssets] = useState([]);
@@ -97,20 +103,38 @@ export default function AssetDisposalModule({ token }) {
         <FilterChips value={tab} onChange={setTab} testId="disposal-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
           options={[{ key: 'active', label: 'Aset aktif', count: activeAssets.length }, { key: 'disposed', label: 'Riwayat pelepasan', count: disposedAssets.length }]} />
       }
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas={tab === 'active' ? 'aset-aktif' : 'riwayat-pelepasan-aset'} namaLembar={tab === 'active' ? 'Aset aktif' : 'Pelepasan'} baris={assets} testId="disposal-unduh"
+          kolom={tab === 'active' ? [
+            { label: 'Kode', nilai: (a) => a.code },
+            { label: 'Nama aset', nilai: (a) => a.name },
+            { label: 'Kategori', nilai: (a) => catLabel(a.category) },
+            { label: 'Harga perolehan', nilai: (a) => Number(a.purchase_cost) || 0 },
+            { label: 'Nilai buku', nilai: (a) => Number(a.book_value_current) || 0 },
+          ] : [
+            { label: 'Kode', nilai: (a) => a.code },
+            { label: 'Nama aset', nilai: (a) => a.name },
+            { label: 'Kategori', nilai: (a) => catLabel(a.category) },
+            { label: 'Tanggal pelepasan', nilai: (a) => formatDateID(a.disposal_date) },
+            { label: 'Nilai buku saat dilepas', nilai: (a) => Number(a.nbv_at_disposal) || 0 },
+            { label: 'Nilai jual', nilai: (a) => Number(a.disposal_value) || 0 },
+            { label: 'Laba/rugi', nilai: (a) => Number(a.disposal_gain_loss) || 0 },
+            { label: 'Alasan', nilai: (a) => a.disposal_notes || a.notes || '' },
+          ]} />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAssets} data-testid="disposal-refresh">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      }
+      </>}
       summary={(activeAssets.length > 0 || disposedAssets.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <StatTile label="Aset aktif" value={activeAssets.length} />
+          <StatTile label="Aset aktif" value={activeAssets.length} sub="Bisa dilepas" />
           <StatTile label="Dilepas bulan ini" value={disposedAssets.filter(a => (
             toWIBDate(a.disposal_date).slice(0, 7) === thisMonthWIB()
-          )).length} />
+          )).length} sub="Menurut tanggal pelepasan" />
           <StatTile
             label="Rata-rata laba/rugi pelepasan"
-            value={disposedAssets.length > 0 ? fmt(disposedAssets.reduce((s, a) => s + (a.disposal_gain_loss || 0), 0) / disposedAssets.length) : 'Rp 0'}
+            value={disposedAssets.length > 0 ? fmt(disposedAssets.reduce((s, a) => s + (a.disposal_gain_loss || 0), 0) / disposedAssets.length) : '—'}
+            sub={disposedAssets.length > 0 ? `Dari ${disposedAssets.length} pelepasan` : 'Belum ada pelepasan'}
           />
         </div>
       )}
@@ -189,57 +213,30 @@ export default function AssetDisposalModule({ token }) {
         )}
       </GlassCard>
       {disposalTarget && (
-        <Modal title={`Lepaskan aset ${disposalTarget.name}`} onClose={() => setDisposalTarget(null)} size="md" data-testid="disposal-dialog">
-          <div className="space-y-3">
-            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm rounded-[var(--radius-md)] bg-[hsl(var(--primary)/0.06)] px-3 py-2">
-              <dt className="text-muted-foreground">Kode</dt><dd className="text-right">{disposalTarget.code}</dd>
-              <dt className="text-muted-foreground">Harga perolehan</dt><dd className="text-right tabular-nums">{fmt(disposalTarget.purchase_cost)}</dd>
-              <dt className="text-muted-foreground">Nilai buku saat ini</dt><dd className="text-right tabular-nums font-semibold">{fmt(disposalTarget.book_value_current)}</dd>
-            </dl>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Tanggal pelepasan</label>
-              <GlassInput
-                type="date"
-                value={disposalTarget.disposal_date}
-                onChange={e => setDisposalTarget(d => ({ ...d, disposal_date: e.target.value }))}
-                className="h-9"
-                data-testid="disposal-date"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Nilai jual (harga jual atau nilai sisa)</label>
-              <MoneyInput
-                glass
-                value={disposalTarget.disposal_value}
-                onChange={e => setDisposalTarget(d => ({ ...d, disposal_value: e.target.value }))}
-                data-testid="disposal-value"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Perkiraan laba/rugi: <span className={`tabular-nums ${gainClass(estGain)}`}>{fmt(estGain)}</span>
-              </p>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Alasan pelepasan *</label>
-              <textarea
-                value={disposalTarget.notes}
-                onChange={e => setDisposalTarget(d => ({ ...d, notes: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                rows={3}
-                placeholder="Contoh: dijual karena tidak produktif, rusak berat"
-                data-testid="disposal-notes"
-              />
-            </div>
-            <div className="flex gap-2 pt-2 justify-end">
-              <Button variant="outline" onClick={() => setDisposalTarget(null)} data-testid="disposal-cancel">
-                Batal
-              </Button>
-              <Button variant="destructive" onClick={dispose} data-testid="disposal-confirm">
-                <Trash2 className="w-4 h-4" />
-                Lepaskan aset
-              </Button>
-            </div>
-          </div>
-        </Modal>
+        <FormPopup open onClose={() => setDisposalTarget(null)} ukuran="pendek" testId="disposal-dialog"
+          judul={`Lepaskan aset ${disposalTarget.name}`} keterangan="Jurnal laba/rugi pelepasan dicatat otomatis."
+          onSimpan={dispose} labelSimpan="Lepaskan aset" warnaSimpan="destructive">
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Kode">{disposalTarget.code}</BarisDetail>
+            <BarisDetail label="Harga perolehan"><span className="tabular-nums">{fmt(disposalTarget.purchase_cost)}</span></BarisDetail>
+            <BarisDetail label="Nilai buku saat ini"><span className="tabular-nums font-semibold">{fmt(disposalTarget.book_value_current)}</span></BarisDetail>
+          </dl>
+          <Isian label="Tanggal pelepasan">
+            <DatePicker value={disposalTarget.disposal_date} onChange={v => setDisposalTarget(d => ({ ...d, disposal_date: v }))} testId="disposal-date" />
+          </Isian>
+          <Isian label="Nilai jual (harga jual atau nilai sisa)">
+            <MoneyInput glass value={disposalTarget.disposal_value}
+              onChange={e => setDisposalTarget(d => ({ ...d, disposal_value: e.target.value }))} data-testid="disposal-value" />
+            <p className="text-xs text-muted-foreground">
+              Perkiraan laba/rugi: <span className={`tabular-nums ${gainClass(estGain)}`}>{fmt(estGain)}</span>
+            </p>
+          </Isian>
+          <Isian label="Alasan pelepasan" wajib petunjuk="Minimal 5 huruf." htmlFor="disposal-notes">
+            <Textarea id="disposal-notes" value={disposalTarget.notes} rows={3}
+              onChange={e => setDisposalTarget(d => ({ ...d, notes: e.target.value }))}
+              placeholder="Contoh: dijual karena tidak produktif, rusak berat" data-testid="disposal-notes" />
+          </Isian>
+        </FormPopup>
       )}
     </PageLayout>
   );

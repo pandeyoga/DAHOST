@@ -1,19 +1,7 @@
-import { useState, useEffect } from 'react';
-export function StatCard({ title, value, icon: Icon, color, sub, alert }) {
-  return (
-    <div className={`bg-card rounded-xl border p-5 shadow-sm ${alert ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.4)]' : 'border-border'}`}>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">{title}</p>
-          <p className={`text-2xl font-bold mt-1 ${alert ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`}>{value}</p>
-          {sub && <p className="text-xs text-muted-foreground/70 mt-1">{sub}</p>}
-        </div>
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
-          <Icon className="w-6 h-6 text-white" />
-        </div>
-      </div>
-    </div>
-  );
+import { StatTile } from '../moduleAtoms';
+// Standar UI/UX v2 (8 Nov 2026): kartu angka vendor = StatTile (satu gaya kartu); dulu kartu berikon berwarna sendiri.
+export function StatCard({ title, value, sub, alert }) {
+  return <StatTile label={title} value={value} sub={sub} accent={alert ? 'danger' : 'default'} />;
 }
 
 export function MiniBar({ pct }) {

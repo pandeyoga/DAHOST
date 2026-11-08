@@ -1,19 +1,28 @@
 /**
- * Analytics Tab - LiveHost Performance Analytics
+ * Analitik host live (Live Selling › Host live › Analitik) — performa host & shift per bulan.
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, bulan = pilihan berlabel (dulu input type="month"), tabel + unduh,
+ * dua daftar kartu (per jenis shift / per hari) → tabel, label Indonesia (dulu "Host Performance", "avg/shift").
+ * Perbaikan tampilan: peringkat dulu dihitung ulang per halaman (halaman 2 kembali 🥇) → kini dari urutan seluruh daftar.
  */
-
 import { useState, useEffect, useCallback } from 'react';
-import { BarChart3, RefreshCw, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { BarChart3, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { toast } from 'sonner';
-import { thisMonthWIB, addMonthsYM } from '@/lib/waktu';
+import { addMonthsYM, thisMonthWIB } from '@/lib/waktu';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import PageLayout from '../layout/PageLayout';
+import { monthOptions } from '../finance/PeriodPicker';
+import { EmptyState } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
+const SHIFT = { morning: 'Pagi', afternoon: 'Siang', evening: 'Sore', night: 'Malam', custom: 'Atur sendiri' };
+const HARI = { Monday: 'Senin', Tuesday: 'Selasa', Wednesday: 'Rabu', Thursday: 'Kamis', Friday: 'Jumat', Saturday: 'Sabtu', Sunday: 'Minggu' };
+const BULAN = monthOptions(24, 1);
 
 export default function AnalyticsTab({ authH }) {
   const [month, setMonth] = useState(() => thisMonthWIB());
@@ -39,7 +48,7 @@ export default function AnalyticsTab({ authH }) {
         setShiftAnalysis(shiftData);
       }
     } catch (e) {
-      toast.error('Gagal memuat analytics');
+      toast.error('Gagal memuat analitik host live');
     } finally {
       setLoading(false);
     }
@@ -52,153 +61,89 @@ export default function AnalyticsTab({ authH }) {
   // Aritmetika bulan murni (lib/waktu) — `new Date(y, m, 1).toISOString()` di browser
   // WIB mundur ke bulan sebelumnya.
   const changeMonth = (offset) => setMonth(addMonthsYM(month, offset));
+  const labelBulan = BULAN.find((b) => b.value === month)?.label || month;
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(hostPerformance, 10);
-  return (
-    <div className="space-y-6">
-      {/* Month Selector */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => changeMonth(-1)} className="h-9">
-            <ChevronLeft size={14} />
-          </Button>
-          <Input
-            type="month"
-            value={month}
-            onChange={e => setMonth(e.target.value)}
-            className="w-40 h-9"
-            data-testid="analytics-month-selector"
-          />
-          <Button variant="outline" size="sm" onClick={() => changeMonth(1)} className="h-9">
-            <ChevronRight size={14} />
-          </Button>
-        </div>
-        <Button variant="outline" size="sm" onClick={fetchAnalytics} className="h-9">
-          <RefreshCw size={14} className="mr-1.5" />
-          Refresh
-        </Button>
-      </div>
+  const peringkat = (h) => hostPerformance.indexOf(h) + 1;
+  const perShift = shiftAnalysis?.by_shift_type || [];
+  const perHari = shiftAnalysis?.by_day_of_week || [];
 
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 size={28} className="animate-spin text-muted-foreground" />
+  const kolomHost = [
+    { kunci: 'rank', label: 'Peringkat', isi: (h) => { const r = peringkat(h); return r <= 3 ? <span className="text-lg">{['🥇', '🥈', '🥉'][r - 1]}</span> : <span className="tabular-nums text-muted-foreground">#{r}</span>; } },
+    { kunci: 'nama', label: 'Host live', hp: 'judul', isi: (h) => <span className="font-medium">{h.host_name}</span> },
+    { kunci: 'shift', label: 'Shift', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmt(h.total_shifts)}</span> },
+    { kunci: 'jam', label: 'Jam', rata: 'kanan', isi: (h) => <span className="tabular-nums">{(Number(h.total_hours) || 0).toFixed(1).replace('.', ',')}</span> },
+    { kunci: 'omzet', label: 'Omzet', rata: 'kanan', hp: 'nilai', isi: (h) => <span className="font-medium tabular-nums">{fmtRp(h.total_revenue)}</span> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmt(h.total_orders)}</span> },
+    { kunci: 'penonton', label: 'Penonton', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmt(h.total_viewers)}</span> },
+    { kunci: 'rata', label: 'Rata-rata omzet per shift', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmtRp(h.avg_revenue_per_shift)}</span> },
+  ];
+  const kolomRingkas = (labelPertama, isiPertama) => [
+    { kunci: 'nama', label: labelPertama, hp: 'judul', isi: isiPertama },
+    { kunci: 'n', label: 'Jumlah shift', rata: 'kanan', isi: (x) => <span className="tabular-nums">{fmt(x.count)}</span> },
+    { kunci: 'avg', label: 'Rata-rata omzet per shift', rata: 'kanan', hp: 'nilai', isi: (x) => <span className="tabular-nums">{fmtRp(x.avg_revenue)}</span> },
+  ];
+
+  return (
+    <PageLayout testId="livehost-analytics" title="Analitik host live" subtitle="Performa host dan shift dalam satu bulan."
+      filters={
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon" onClick={() => changeMonth(-1)} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
+          <SmartNativeSelect value={month} onChange={(e) => setMonth(e.target.value)} className="w-full" wrapperClassName="w-44 max-w-full" searchable={false} data-testid="analytics-month-selector">
+            {!BULAN.some((b) => b.value === month) && <option value={month}>{month}</option>}
+            {BULAN.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </SmartNativeSelect>
+          <Button variant="outline" size="icon" onClick={() => changeMonth(1)} title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
         </div>
+      }
+      tools={<>
+        <TombolUnduh namaBerkas={`performa-host-live-${month}`} namaLembar="Performa host" baris={hostPerformance} testId="analytics-unduh"
+          kolom={[
+            { label: 'Peringkat', nilai: peringkat }, { label: 'Host live', nilai: (h) => h.host_name || '' },
+            { label: 'Shift', nilai: (h) => Number(h.total_shifts) || 0 }, { label: 'Jam', nilai: (h) => Number(h.total_hours) || 0 },
+            { label: 'Omzet', nilai: (h) => Number(h.total_revenue) || 0 }, { label: 'Pesanan', nilai: (h) => Number(h.total_orders) || 0 },
+            { label: 'Penonton', nilai: (h) => Number(h.total_viewers) || 0 }, { label: 'Rata-rata omzet per shift', nilai: (h) => Number(h.avg_revenue_per_shift) || 0 },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchAnalytics} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {loading && !shiftAnalysis ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat analitik…</p>
       ) : (
         <>
-          {/* Host Performance Table */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Host Performance - {month}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {hostPerformance.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <BarChart3 size={40} className="mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">Belum ada data performance untuk bulan ini</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm" data-testid="host-performance-table">
-                    <thead>
-                      <tr className="border-b bg-muted/30">
-                        <th className="px-4 py-3 text-left text-xs font-semibold">Rank</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold">LiveHost</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold">Shifts</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold">Hours</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold">Revenue</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold">Orders</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold">Viewers</th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold">Avg Rev/Shift</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {paged.map((host, idx) => (
-                        <tr key={host.host_id} className="hover:bg-muted/30">
-                          <td className="px-4 py-3 text-center">
-                            {idx === 0 && <span className="text-lg">🥇</span>}
-                            {idx === 1 && <span className="text-lg">🥈</span>}
-                            {idx === 2 && <span className="text-lg">🥉</span>}
-                            {idx > 2 && <span className="text-muted-foreground">#{idx + 1}</span>}
-                          </td>
-                          <td className="px-4 py-3 font-medium">{host.host_name}</td>
-                          <td className="px-4 py-3 text-right tabular-nums">{host.total_shifts}</td>
-                          <td className="px-4 py-3 text-right tabular-nums">{host.total_hours.toFixed(1)}</td>
-                          <td className="px-4 py-3 text-right tabular-nums font-medium">{fmtRp(host.total_revenue)}</td>
-                          <td className="px-4 py-3 text-right tabular-nums">{fmt(host.total_orders)}</td>
-                          <td className="px-4 py-3 text-right tabular-nums">{fmt(host.total_viewers)}</td>
-                          <td className="px-4 py-3 text-right tabular-nums text-emerald-600 dark:text-emerald-400">
-                            {fmtRp(host.avg_revenue_per_shift)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <section className="space-y-2">
+            <p className="text-base font-semibold">Performa host · {labelBulan}</p>
+            <TabelData kolom={kolomHost} baris={paged} kunci={(r) => r.host_id} testId="host-performance-table"
+              kosong={<EmptyState icon={BarChart3} title="Belum ada data performa bulan ini"
+                description="Performa muncul setelah shift selesai dan performanya dicatat di tab Shift." />} />
+            {hostPerformance.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
+          </section>
 
-          {/* Shift Analysis */}
-          {shiftAnalysis && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* By Shift Type */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Performance by Shift Type</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {shiftAnalysis.by_shift_type.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">No data</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {shiftAnalysis.by_shift_type.map(shift => (
-                        <div key={shift.shift_type} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                          <div>
-                            <p className="text-sm font-medium capitalize">{shift.shift_type}</p>
-                            <p className="text-xs text-muted-foreground">{shift.count} shifts</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-semibold">{fmtRp(shift.avg_revenue)}</p>
-                            <p className="text-xs text-muted-foreground">avg/shift</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* By Day of Week */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Performance by Day of Week</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {shiftAnalysis.by_day_of_week.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-4">No data</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {shiftAnalysis.by_day_of_week.map(day => (
-                        <div key={day.day} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                          <div>
-                            <p className="text-sm font-medium">{day.day}</p>
-                            <p className="text-xs text-muted-foreground">{day.count} shifts</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-semibold">{fmtRp(day.avg_revenue)}</p>
-                            <p className="text-xs text-muted-foreground">avg/shift</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="flex-1 text-base font-semibold">Per jenis shift</p>
+                <TombolUnduh namaBerkas={`shift-per-jenis-${month}`} baris={perShift} testId="analytics-unduh-jenis"
+                  kolom={[{ label: 'Jenis shift', nilai: (x) => SHIFT[x.shift_type] || x.shift_type }, { label: 'Jumlah shift', nilai: (x) => x.count },
+                    { label: 'Rata-rata omzet per shift', nilai: (x) => Number(x.avg_revenue) || 0 }]} />
+              </div>
+              <TabelData kolom={kolomRingkas('Jenis shift', (x) => SHIFT[x.shift_type] || x.shift_type)} baris={perShift} kunci={(r) => r.shift_type}
+                testId="analytics-per-shift" kosong={<EmptyState title="Belum ada shift bulan ini" />} />
+            </section>
+            <section className="space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="flex-1 text-base font-semibold">Per hari</p>
+                <TombolUnduh namaBerkas={`shift-per-hari-${month}`} baris={perHari} testId="analytics-unduh-hari"
+                  kolom={[{ label: 'Hari', nilai: (x) => HARI[x.day] || x.day }, { label: 'Jumlah shift', nilai: (x) => x.count },
+                    { label: 'Rata-rata omzet per shift', nilai: (x) => Number(x.avg_revenue) || 0 }]} />
+              </div>
+              <TabelData kolom={kolomRingkas('Hari', (x) => HARI[x.day] || x.day)} baris={perHari} kunci={(r) => r.day}
+                testId="analytics-per-day" kosong={<EmptyState title="Belum ada shift bulan ini" />} />
+            </section>
+          </div>
         </>
       )}
-    </div>
+    </PageLayout>
   );
 }

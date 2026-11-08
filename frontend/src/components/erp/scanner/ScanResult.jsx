@@ -13,9 +13,9 @@ import { CheckCircle2, XCircle, AlertTriangle, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const TONE = {
-  ok: { icon: CheckCircle2, cls: 'border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]' },
-  error: { icon: XCircle, cls: 'border-[hsl(var(--destructive)/0.4)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]' },
-  dup: { icon: AlertTriangle, cls: 'border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]' },
+  ok: { icon: CheckCircle2, cls: 'border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]' },
+  error: { icon: XCircle, cls: 'border-[hsl(var(--destructive)/0.4)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--danger-text))]' },
+  dup: { icon: AlertTriangle, cls: 'border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]' },
   info: { icon: Info, cls: 'border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground' },
 };
 

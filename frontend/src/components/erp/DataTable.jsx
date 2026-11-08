@@ -108,7 +108,7 @@ function DataTableV1Native({ columns, data, searchKeys = [], onSearch, actions, 
           <thead>
             <tr className="bg-[var(--glass-bg)]">
               {columns.map((col) => (
-                <th key={col.key} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                <th key={col.key} className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground whitespace-nowrap">
                   {col.label}
                 </th>
               ))}

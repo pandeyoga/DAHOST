@@ -3,8 +3,8 @@
  *
  * Tahap 9 (7 Nov 2026, keputusan owner "menu & tampilan dua portal identik"):
  *   • Cetakan PageLayout + tabel bisa dicari & berhalaman (dulu kartu 2 kolom + kartu angka warna-warni).
- *   • Rincian, klien baru, dan ubah klien dibuka DI HALAMAN (DetailPanel), bukan popup.
- *   • Akses portal klien (buat login, ganti sandi, aktif/nonaktif, hapus) tetap dialog singkat.
+ *   • Standar UI/UX v2 (8 Nov 2026): rincian = popup (DetailPanel), klien baru/ubah = FormPopup panjang,
+ *     akses portal klien = DetailPopup + form akun baru = FormPopup pendek (popup tidak bertumpuk), cari ± 16 rem.
  *   • Nonaktifkan/aktifkan dan aksi akun memakai confirmDialog.
  *
  *   - klien : GET/POST /api/dewi/maklon/clients · PUT /api/dewi/maklon/clients/{id}[/toggle]
@@ -14,11 +14,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Copy, KeyRound, Pencil, Plus, Power, RefreshCw, Search, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup from '@/components/ui/detail-popup';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -42,13 +45,10 @@ const ActiveBadge = ({ c }) => (
   <StatusBadge status={isActive(c) ? 'aktif' : 'nonaktif'} label={isActive(c) ? 'Aktif' : 'Nonaktif'} tone={isActive(c) ? 'success' : 'muted'} />
 );
 
+/** Isian standar; tanda * di label → `wajib`. */
 function Field({ label, children, className = '' }) {
-  return (
-    <label className={`block space-y-1 ${className}`}>
-      <span className="text-xs text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
+  const wajib = /\*\s*$/.test(label);
+  return <Isian label={label.replace(/\s*\*\s*$/, '')} wajib={wajib} className={className}>{children}</Isian>;
 }
 function Info({ label, value, className = '' }) {
   return (
@@ -59,7 +59,7 @@ function Info({ label, value, className = '' }) {
   );
 }
 
-// ── Form klien (baru / ubah) — di halaman ─────────────────────────────────────
+// ── Form klien (baru / ubah) — FormPopup panjang ─────────────────────────────
 function ClientForm({ data, onCancel, onSaved }) {
   const isEdit = !!data;
   const [form, setForm] = useState(() => ({ ...EMPTY_FORM, ...(data || {}),
@@ -87,18 +87,19 @@ function ClientForm({ data, onCancel, onSaved }) {
   };
 
   return (
-    <DetailPanel testId="maklon-client-form" onClose={onCancel}
-      title={isEdit ? `Ubah klien · ${data.name}` : 'Klien baru'}
-      description={isEdit ? 'Kode klien dipakai di nomor akun piutang & pendapatan klien.' : 'Akun piutang & pendapatan klien dibuat otomatis setelah disimpan.'}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <Field label="Kode klien *"><GlassInput value={form.code} onChange={set('code')} placeholder="mis. KLN01" data-testid="client-form-code" /></Field>
-        <Field label="Nama perusahaan / merek *" className="lg:col-span-3"><GlassInput value={form.name} onChange={set('name')} data-testid="client-form-name" /></Field>
-        <Field label="Nama PIC"><GlassInput value={form.pic_name} onChange={set('pic_name')} data-testid="client-form-pic" /></Field>
-        <Field label="No. HP PIC"><GlassInput value={form.pic_phone} onChange={set('pic_phone')} /></Field>
-        <Field label="Email PIC" className="lg:col-span-2"><GlassInput type="email" value={form.pic_email} onChange={set('pic_email')} /></Field>
-        <Field label="Alamat" className="sm:col-span-2 lg:col-span-3"><GlassInput value={form.address} onChange={set('address')} /></Field>
-        <Field label="Kota"><GlassInput value={form.city} onChange={set('city')} /></Field>
-        <Field label="Tarif standar (Rp/pcs)"><MoneyInput glass value={form.standard_rate_per_pcs} onChange={set('standard_rate_per_pcs')} data-testid="client-form-rate" /></Field>
+    <FormPopup open onClose={onCancel} ukuran="panjang" testId="maklon-client-form" onSimpan={save} menyimpan={saving}
+      judul={isEdit ? `Ubah klien · ${data.name}` : 'Klien baru'}
+      keterangan={isEdit ? 'Kode klien dipakai di nomor akun piutang & pendapatan klien.' : 'Akun piutang & pendapatan klien dibuat otomatis setelah disimpan.'}
+      labelSimpan={isEdit ? 'Simpan perubahan' : 'Simpan klien'}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Kode klien *"><Input value={form.code} onChange={set('code')} placeholder="mis. KLN01" data-testid="client-form-code" /></Field>
+        <Field label="Nama perusahaan / merek *"><Input value={form.name} onChange={set('name')} data-testid="client-form-name" /></Field>
+        <Field label="Nama PIC"><Input value={form.pic_name} onChange={set('pic_name')} data-testid="client-form-pic" /></Field>
+        <Field label="No. HP PIC"><Input value={form.pic_phone} onChange={set('pic_phone')} /></Field>
+        <Field label="Email PIC"><Input type="email" value={form.pic_email} onChange={set('pic_email')} /></Field>
+        <Field label="Kota"><Input value={form.city} onChange={set('city')} /></Field>
+        <Field label="Alamat" className="sm:col-span-2"><Input value={form.address} onChange={set('address')} /></Field>
+        <Field label="Tarif standar (Rp/pcs)"><MoneyInput value={form.standard_rate_per_pcs} onChange={set('standard_rate_per_pcs')} data-testid="client-form-rate" /></Field>
         <Field label="Termin pembayaran">
           <SmartNativeSelect value={form.payment_terms} onChange={set('payment_terms')} className="w-full h-9" searchable={false}
             data-testid="client-form-payment-terms" aria-label="Termin pembayaran">
@@ -112,27 +113,21 @@ function ClientForm({ data, onCancel, onSaved }) {
           </SmartNativeSelect>
         </Field>
       </div>
-      <div className="space-y-1">
-        <p className="text-xs text-muted-foreground">Spesialisasi produk</p>
+      <Isian label="Spesialisasi produk">
         <div className="flex flex-wrap gap-x-4 gap-y-1.5" data-testid="client-form-spec">
           {PRODUCT_SPECIALIZATIONS.map((s) => (
-            <label key={s} className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
-              <input type="checkbox" checked={form.product_specialization.includes(s)} onChange={() => toggleSpec(s)}
-                className="h-4 w-4 accent-[hsl(var(--primary))]" />{s}
+            <label key={s} className="inline-flex cursor-pointer items-center gap-1.5 text-sm">
+              <Checkbox checked={form.product_specialization.includes(s)} onCheckedChange={() => toggleSpec(s)} />{s}
             </label>
           ))}
         </div>
-      </div>
+      </Isian>
       <Field label="Catatan"><Textarea rows={2} value={form.notes} onChange={set('notes')} data-testid="client-form-notes" /></Field>
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={onCancel} disabled={saving}>Batal</Button>
-        <Button onClick={save} disabled={saving} data-testid="client-form-save">{isEdit ? 'Simpan perubahan' : 'Simpan klien'}</Button>
-      </div>
-    </DetailPanel>
+    </FormPopup>
   );
 }
 
-// ── Rincian klien — di halaman ────────────────────────────────────────────────
+// ── Rincian klien — popup (DetailPanel) ───────────────────────────────────────
 function ClientDetail({ client, onClose, onEdit, onPortal, onChanged }) {
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
@@ -178,7 +173,7 @@ function ClientDetail({ client, onClose, onEdit, onPortal, onChanged }) {
   );
 }
 
-// ── Akses portal klien — dialog singkat ───────────────────────────────────────
+// ── Akses portal klien — DetailPopup; akun baru = FormPopup pendek (menggantikan rincian sementara) ──
 function PortalAccessDialog({ client, onClose }) {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -228,63 +223,51 @@ function PortalAccessDialog({ client, onClose }) {
   const copy = async (text) => { try { await navigator.clipboard.writeText(text); toast.success('Disalin'); } catch { /* clipboard ditolak */ } };
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-xl" data-testid="maklon-portal-access-dialog">
-        <DialogHeader><DialogTitle>Akses portal klien · {client.name}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">Klien login di alamat /client untuk melihat status order, menyetujui sampel, dan melihat faktur.</p>
+    <>
+      <DetailPopup open={!provisionMode} onClose={onClose} judul={`Akses portal klien · ${client.name}`} testId="maklon-portal-access-dialog"
+        keterangan="Klien login di alamat /client untuk melihat status order, menyetujui sampel, dan melihat faktur."
+        aksi={<Button size="sm" onClick={() => setProvisionMode(true)} data-testid="maklon-portal-provision-btn"><Plus className="w-4 h-4" />Akun portal baru</Button>}>
         {credential && (
           <Notice tone="success" icon={ShieldCheck} title="Data login hanya tampil sekali — catat sekarang" testId="maklon-portal-credential">
-            <span className="flex items-center gap-2 text-xs">Email: <span className="font-semibold">{credential.email}</span>
+            <span className="flex items-center gap-2 text-sm">Email: <span className="font-semibold">{credential.email}</span>
               <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.email)} title="Salin email" aria-label="Salin email"><Copy className="w-3 h-3" /></Button></span>
-            <span className="flex items-center gap-2 text-xs">Sandi: <span className="font-semibold tabular-nums">{credential.password}</span>
+            <span className="flex items-center gap-2 text-sm">Sandi: <span className="font-semibold tabular-nums">{credential.password}</span>
               <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.password)} title="Salin sandi" aria-label="Salin sandi"><Copy className="w-3 h-3" /></Button></span>
-            <span className="block text-[11px] text-muted-foreground">Klien wajib mengganti sandi saat login pertama.</span>
+            <span className="block text-xs text-muted-foreground">Klien wajib mengganti sandi saat login pertama.</span>
           </Notice>
         )}
         {loading ? <p className="text-sm text-muted-foreground">Memuat akun…</p> : (
-          <div className="divide-y divide-border" data-testid="maklon-portal-accounts">
+          <div className="divide-y divide-[var(--glass-border)]" data-testid="maklon-portal-accounts">
             {accounts.map((acc) => (
-              <div key={acc.id} className="flex items-center justify-between gap-2 py-2" data-testid={`maklon-portal-account-${acc.id}`}>
+              <div key={acc.id} className="flex flex-wrap items-center justify-between gap-2 py-2" data-testid={`maklon-portal-account-${acc.id}`}>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{acc.email}</p>
+                  <p className="truncate text-sm font-medium">{acc.email}</p>
                   <p className="text-xs text-muted-foreground">
                     {acc.status === 'active' ? 'Aktif' : 'Nonaktif'}{acc.must_change_password ? ' · wajib ganti sandi' : ''}
                     {acc.last_login_at ? ` · login terakhir ${formatDateID(acc.last_login_at)}` : ' · belum pernah login'}
                   </p>
                 </div>
-                <div className="flex gap-1 shrink-0">
+                <div className="flex shrink-0 gap-1">
                   <Button size="sm" variant="outline" onClick={() => reset(acc)} disabled={busy} data-testid={`maklon-portal-reset-${acc.id}`}>Ganti sandi</Button>
                   <Button size="sm" variant="outline" onClick={() => toggle(acc)} disabled={busy}>{acc.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
                   <Button size="icon-sm" variant="ghost" onClick={() => remove(acc)} disabled={busy} title="Hapus akun" aria-label="Hapus akun"><Trash2 className="w-3.5 h-3.5" /></Button>
                 </div>
               </div>
             ))}
-            {!accounts.length && !provisionMode && (
+            {!accounts.length && (
               <EmptyState icon={KeyRound} title="Belum ada akun portal untuk klien ini" className="py-6"
                 description="Buat akun supaya klien bisa memantau order dan sampel sendiri." />
             )}
           </div>
         )}
-        {provisionMode ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="maklon-portal-provision-form">
-            <Field label="Email login *"><GlassInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="klien@perusahaan.id" data-testid="maklon-portal-email-input" /></Field>
-            <Field label="Nama PIC (opsional)"><GlassInput value={picName} onChange={(e) => setPicName(e.target.value)} /></Field>
-            <p className="text-[11px] text-muted-foreground sm:col-span-2">Sandi dibuat otomatis dan ditampilkan setelah akun dibuat.</p>
-          </div>
-        ) : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Tutup</Button>
-          {provisionMode ? (
-            <>
-              <Button variant="outline" onClick={() => setProvisionMode(false)} disabled={busy}>Batal</Button>
-              <Button onClick={provision} disabled={busy} data-testid="maklon-portal-provision-submit">Buat akun</Button>
-            </>
-          ) : (
-            <Button onClick={() => setProvisionMode(true)} data-testid="maklon-portal-provision-btn"><Plus className="w-4 h-4" />Akun portal baru</Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </DetailPopup>
+      <FormPopup open={provisionMode} onClose={() => setProvisionMode(false)} ukuran="pendek" judul={`Akun portal baru · ${client.name}`}
+        keterangan="Sandi dibuat otomatis dan ditampilkan setelah akun dibuat." onSimpan={provision} menyimpan={busy}
+        labelSimpan="Buat akun" testId="maklon-portal-provision-form">
+        <Field label="Email login *"><Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="klien@perusahaan.id" data-testid="maklon-portal-email-input" /></Field>
+        <Field label="Nama PIC (opsional)"><Input value={picName} onChange={(e) => setPicName(e.target.value)} /></Field>
+      </FormPopup>
+    </>
   );
 }
 
@@ -329,9 +312,9 @@ export default function MaklonClientManagement() {
     <PageLayout testId="maklon-clients" title="Klien maklon" subtitle="Data klien jasa maklon: kontak, tarif standar, termin, dan akses portal klien."
       actions={<Button onClick={() => setPanel({ mode: 'new' })} data-testid="maklon-client-add"><Plus className="w-4 h-4" />Klien baru</Button>}
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / kode / PIC / kota…" className="pl-8 h-9"
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama, kode, PIC, kota" className="pl-8"
             data-testid="maklon-client-search" />
         </div>
         <FilterChips value={status} onChange={setStatus} testId="maklon-client-status" ariaLabel="Status klien"
@@ -345,7 +328,7 @@ export default function MaklonClientManagement() {
         </Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat data klien">{error}</Notice>}
-      detail={detail}
+      detail={portalFor ? null : detail /* akses portal menggantikan popup rincian sementara (tidak bertumpuk) */}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       <GlassCard className="p-0 overflow-hidden">
         {loading && !clients.length ? (

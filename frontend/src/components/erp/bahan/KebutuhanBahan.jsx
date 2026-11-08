@@ -11,6 +11,7 @@
  *
  * Pengganti layar lama "Kebutuhan Material" (`prod-material-requirements`, mode PO + mode manual model×ukuran).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ClipboardList, Download, Info, Loader2, RefreshCw, Search, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,6 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
@@ -77,7 +79,7 @@ export default function KebutuhanBahan({ portalId }) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="bahan-kebutuhan"
       title="Kebutuhan bahan"
       subtitle="Bahan dan aksesoris yang dibutuhkan tiap PO, yang sudah keluar, dan yang masih kurang di gudang."
@@ -90,9 +92,14 @@ export default function KebutuhanBahan({ portalId }) {
         <FilterChips value={scope} onChange={setScope} testId="kebutuhan-scope" ariaLabel="Penyaring PO" hideWhenEmpty={false}
           options={[{ key: 'open', label: 'Berjalan', count: counts.open }, { key: 'all', label: 'Semua', count: counts.all }]} />
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="kebutuhan-refresh">
+      tools={<><TombolUnduh namaBerkas="kebutuhan-bahan-daftar-po" namaLembar="PO" baris={filtered} testId="kebutuhan-po-unduh" kolom={[
+          { label: 'No. PO', nilai: (p) => p.po_number || '' }, { label: 'Klien', nilai: (p) => p.customer_name || '' },
+          { label: 'Vendor CMT', nilai: (p) => p.vendor_name || '' }, { label: 'Qty', nilai: (p) => Number(p.total_qty) || 0 },
+          { label: 'Tanggal', nilai: (p) => formatDateID(p.po_date || p.created_at, { fallback: '' }) }, { label: 'Status', nilai: (p) => p.status || '' },
+        ]} />
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="kebutuhan-refresh">
         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      </Button></>}
       detail={detail && <NeedPanel detail={detail} onClose={() => setDetail(null)} />}
       footer={filtered.length > pageSize && (
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
@@ -115,7 +122,7 @@ export default function KebutuhanBahan({ portalId }) {
                 <TableRow key={p.id} data-testid={`kebutuhan-po-${p.po_number}`}
                   className={detail?.po?.id === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell className="whitespace-nowrap">
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openNeed(p)}>{p.po_number}</Button>
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openNeed(p)}>{p.po_number}</Button>
                   </TableCell>
                   <TableCell>{p.customer_name || '—'}</TableCell>
                   <TableCell>{p.vendor_name || '—'}</TableCell>
@@ -123,7 +130,7 @@ export default function KebutuhanBahan({ portalId }) {
                   <TableCell className="whitespace-nowrap">{p.po_date || p.created_at ? formatDateID(p.po_date || p.created_at) : '—'}</TableCell>
                   <TableCell><StatusBadge status={p.status} label={poStatusLabel(p.status)} tone={poStatusTone(p.status)} /></TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => openNeed(p)} data-testid={`kebutuhan-open-${p.po_number}`}>Lihat kebutuhan</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => openNeed(p)} data-testid={`kebutuhan-open-${p.po_number}`}>Lihat kebutuhan</Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -131,7 +138,7 @@ export default function KebutuhanBahan({ portalId }) {
           </Table>
         )}
       </GlassCard>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -159,11 +166,19 @@ function NeedPanel({ detail, onClose }) {
   return (
     <DetailPanel testId="kebutuhan-detail" onClose={onClose} title={`Kebutuhan bahan ${po.po_number}`}
       description={`${po.customer_name || (po.business_type === 'internal' ? 'Internal' : '—')} · ${fmtQty(po.total_qty)} pcs · sumber: ${sourceLabel}`}
-      actions={<Button variant="outline" onClick={exportCSV} disabled={!rows.length} data-testid="kebutuhan-export-csv">
-        <Download className="w-4 h-4" />Unduh CSV
-      </Button>}>
+      actions={<>
+        {/* Standar UI/UX v2: Excel + CSV (dulu hanya CSV); kolom sama dengan unduhan CSV lama. */}
+        <TombolUnduh namaBerkas={`kebutuhan-bahan-${po.po_number || 'po'}`} namaLembar="Kebutuhan bahan" baris={rows} testId="kebutuhan-unduh" kolom={[
+          { label: 'Jenis', nilai: (r) => r.kind_label || '' }, { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Nama', nilai: (r) => r.name || '' },
+          { label: 'Satuan', nilai: (r) => r.unit || '' }, { label: 'Dibutuhkan', nilai: (r) => Number(r.qty_required) || 0 },
+          { label: 'Sudah keluar', nilai: (r) => Number(r.issued) || 0 }, { label: 'Sisa', nilai: (r) => Number(r.remaining) || 0 },
+          { label: 'Tersedia', nilai: (r) => (r.available == null ? '' : Number(r.available)) }, { label: 'Kurang', nilai: (r) => (r.shortage == null ? '' : Number(r.shortage)) },
+          { label: 'Perkiraan nilai (Rp)', nilai: (r) => Number(r.value_estimate) || 0 },
+        ]} />
+        <span className="sr-only" data-testid="kebutuhan-export-csv" onClick={exportCSV} />
+      </>}>
       <p className="text-sm text-muted-foreground" data-testid="kebutuhan-summary">
-        {totals.lines || 0} baris bahan · <span className={totals.shortage_lines ? 'text-[hsl(var(--destructive))] font-medium' : ''}>{totals.shortage_lines || 0} kurang</span>
+        {totals.lines || 0} baris bahan · <span className={totals.shortage_lines ? 'text-[hsl(var(--danger-text))] font-medium' : ''}>{totals.shortage_lines || 0} kurang</span>
         {totals.unlinked_lines ? ` · ${totals.unlinked_lines} belum tertaut master` : ''}
         {totals.client_lines ? ` · ${totals.client_lines} disediakan klien` : ''}
         {Number(totals.value_estimate || 0) > 0 && <> · perkiraan nilai <span className="tabular-nums text-foreground">{fmtRp(totals.value_estimate)}</span></>}
@@ -200,7 +215,7 @@ function NeedPanel({ detail, onClose }) {
                     <TableCell className="text-right tabular-nums">{fmtQty(r.remaining)}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtQty(r.available)}</TableCell>
                     <TableCell className="text-right tabular-nums" data-testid={`kebutuhan-shortage-${r.code || i}`}>
-                      {r.shortage ? <span className="font-medium text-[hsl(var(--destructive))]">{fmtQty(r.shortage)}</span> : fmtQty(r.shortage)}
+                      {r.shortage ? <span className="font-medium text-[hsl(var(--danger-text))]">{fmtQty(r.shortage)}</span> : fmtQty(r.shortage)}
                     </TableCell>
                     <TableCell><StatusBadge status={r.status} label={label} tone={tone} /></TableCell>
                   </TableRow>

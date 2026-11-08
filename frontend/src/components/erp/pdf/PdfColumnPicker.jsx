@@ -21,10 +21,8 @@
  *     tidak mengubah setelan global milik orang lain.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, Loader2, RotateCcw } from 'lucide-react';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
+import { Loader2, RotateCcw } from 'lucide-react';
+import FormPopup from '@/components/ui/form-popup';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
@@ -121,43 +119,36 @@ export function PdfColumnPicker({
   const total = cols.length;
   const picked = cols.filter(c => checked.has(c.key) || c.required).length;
 
+  // Standar UI/UX v2 (8 Nov 2026): popup standar FormPopup (kaki Batal · Unduh hijau, penuh layar di HP).
   return (
-    <Dialog open={!!open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg" data-testid="pdf-column-picker">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileText size={18} /> {title}
-          </DialogTitle>
-          <DialogDescription>
-            {hint || 'Centang kolom yang ingin tercetak. Pilihan ini diingat untuk cetakan berikutnya dan tidak mengubah setelan global.'}
-          </DialogDescription>
-        </DialogHeader>
-
+    <FormPopup open={!!open} onClose={() => onOpenChange?.(false)} ukuran="pendek" testId="pdf-column-picker"
+      judul={title} onSimpan={confirm} labelSimpan={confirmLabel} bisaSimpan={!loading && !err}
+      keterangan={hint || 'Centang kolom yang ingin tercetak. Pilihan ini diingat untuk cetakan berikutnya dan tidak mengubah setelan global.'}>
         {loading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">
             <Loader2 className="animate-spin mx-auto mb-2" size={18} /> Memuat daftar kolom…
           </div>
         ) : err ? (
-          <div className="py-6 text-sm text-[hsl(var(--warning))] " data-testid="pdf-picker-error">{err}</div>
+          <div className="py-6 text-sm text-[hsl(var(--warning-text))]" data-testid="pdf-picker-error">{err}</div>
         ) : (
           <>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <Badge variant="secondary" data-testid="pdf-picker-count">{picked}/{total} kolom</Badge>
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={selectAll} data-testid="pdf-picker-all">
+              <Button type="button" variant="outline" size="sm" onClick={selectAll} data-testid="pdf-picker-all">
                 Pilih semua
               </Button>
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={clearAll} data-testid="pdf-picker-clear">
+              <Button type="button" variant="outline" size="sm" onClick={clearAll} data-testid="pdf-picker-clear">
                 <RotateCcw size={12} className="mr-1" /> Hanya yang wajib
               </Button>
             </div>
-            <div className="max-h-[46vh] overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 py-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 py-1">
               {cols.map(c => {
                 const on = checked.has(c.key) || c.required;
                 return (
                   <label
                     key={c.key}
                     className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-sm cursor-pointer transition-colors
-                      ${on ? 'border-primary/40 bg-primary/5' : 'border-border hover:bg-foreground/5'}
+                      ${on ? 'border-primary/40 bg-primary/5' : 'border-[var(--glass-border)] hover:bg-foreground/5'}
                       ${c.required ? 'opacity-80 cursor-not-allowed' : ''}`}
                     data-testid={`pdf-col-${c.key}`}
                   >
@@ -167,24 +158,14 @@ export function PdfColumnPicker({
                       onCheckedChange={() => toggle(c.key, c.required)}
                     />
                     <span className="flex-1">{c.label}</span>
-                    {c.required && <span className="text-[10px] text-muted-foreground">wajib</span>}
+                    {c.required && <span className="text-xs text-muted-foreground">wajib</span>}
                   </label>
                 );
               })}
             </div>
           </>
         )}
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange?.(false)} data-testid="pdf-picker-cancel">
-            Batal
-          </Button>
-          <Button onClick={confirm} disabled={loading || !!err} data-testid="pdf-picker-confirm">
-            <FileText size={14} className="mr-1" /> {confirmLabel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }
 

@@ -74,7 +74,7 @@ export default function FormulaBar({ selectedCell, rows, onUpdateCell, readOnly 
           ) : displayVal || <span className="text-muted-foreground">Kosong — klik untuk edit</span>}
         </div>
       )}
-      {isFormula && <Badge variant="secondary" className="text-[10px] shrink-0">Formula</Badge>}
+      {isFormula && <Badge variant="secondary" className="text-xs shrink-0">Rumus</Badge>}
     </div>
   );
 }

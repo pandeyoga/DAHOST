@@ -9,6 +9,18 @@ export const SUPER_ROLES = ['superadmin', 'admin', 'owner'];
 // Portals available to every authenticated user regardless of role.
 export const ALL_ROLE_PORTALS = ['self', 'collaboration'];
 
+// Nama pendek tiap portal untuk pilihan di form (urutan = halaman pilih portal). Satu sumber, supaya daftar
+// tujuan pengumuman tidak lagi tertinggal ketika portal baru ditambah (dulu hanya 9 dari 16).
+export const NAMA_PORTAL = [
+  { id: 'management', nama: 'Manajemen' }, { id: 'sysadmin', nama: 'Administrasi Sistem' },
+  { id: 'production', nama: 'Produksi' }, { id: 'cutting', nama: 'Cutting' },
+  { id: 'procurement', nama: 'Pengadaan' }, { id: 'warehouse', nama: 'Gudang' },
+  { id: 'accessories', nama: 'Aksesoris' }, { id: 'finance', nama: 'Keuangan' },
+  { id: 'sales', nama: 'Penjualan' }, { id: 'hr', nama: 'SDM' }, { id: 'maklon', nama: 'Maklon' },
+  { id: 'toko', nama: 'Marketing' }, { id: 'rnd', nama: 'RnD' }, { id: 'collaboration', nama: 'Kolaborasi' },
+  { id: 'assets', nama: 'Aset' }, { id: 'self', nama: 'Portal Saya' },
+];
+
 export const PORTAL_ROLES = {
   management:     ['hr_manager', 'manager_produksi', 'manager_keuangan', 'manager_hr', 'manager_marketing'],
   sysadmin:       [],   // super_admin + admin saja

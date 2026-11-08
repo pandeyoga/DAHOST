@@ -1,29 +1,41 @@
+/**
+ * RahazaOvertimeModule — pengajuan lembur (Portal SDM › Cuti & Lembur › Lembur, juga menu lama `hr-overtime`).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu kepala buatan sendiri "Request Lembur (Overtime)"),
+ * tab status Radix → pil penyaring, tabel standar + unduh Excel/CSV, form = FormPopup, tanggal = DatePicker,
+ * tolak = konfirmasi merah dengan alasan wajib (sama seperti dulu). Panggilan API tidak berubah.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import {
-  Clock, Plus, Check, X, RefreshCw, Calendar, User, AlertCircle,
-  CheckCircle2, XCircle, Loader2, Search, Save,
-} from 'lucide-react';
+import { Check, Clock, MoreHorizontal, Plus, RefreshCw, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB } from '@/lib/waktu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const STATUS_CFG = {
-  pending:   { label: 'Menunggu',  color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300',   icon: Clock },
-  approved:  { label: 'Disetujui', color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300', icon: CheckCircle2 },
-  rejected:  { label: 'Ditolak',   color: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300',       icon: XCircle },
-  cancelled: { label: 'Dibatalkan',color: 'bg-muted dark:bg-slate-500/20 text-foreground/70',   icon: X },
+  pending:   { label: 'Menunggu',   tone: 'warning' },
+  approved:  { label: 'Disetujui',  tone: 'success' },
+  rejected:  { label: 'Ditolak',    tone: 'danger' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
 };
+const statusCfg = (s) => STATUS_CFG[s] || STATUS_CFG.pending;
 
 export default function RahazaOvertimeModule({ token, user }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -32,7 +44,6 @@ export default function RahazaOvertimeModule({ token, user }) {
   const [tab, setTab] = useState('pending');
   const [loading, setLoading] = useState(false);
   const [dialog, setDialog] = useState(null);
-  const [rejectDialog, setRejectDialog] = useState(null);
 
   const isApprover = ['superadmin', 'admin', 'owner', 'hr', 'manager'].includes(user?.role);
 
@@ -56,10 +67,10 @@ export default function RahazaOvertimeModule({ token, user }) {
   const handleSave = async (form) => {
     try {
       await axios.post(`${API}/api/rahaza/overtime`, form, { headers });
-      toast.success('Request lembur dikirim, menunggu approval');
+      toast.success('Pengajuan lembur terkirim, menunggu persetujuan');
       setDialog(null);
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal submit'); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal mengirim'); }
   };
 
   const handleApprove = async (id) => {
@@ -67,140 +78,129 @@ export default function RahazaOvertimeModule({ token, user }) {
       await axios.put(`${API}/api/rahaza/overtime/${id}/approve`, {}, { headers });
       toast.success('Lembur disetujui');
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal approve'); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal menyetujui'); }
   };
 
   const handleReject = async (id, reason) => {
     try {
       await axios.put(`${API}/api/rahaza/overtime/${id}/reject`, { reason }, { headers });
       toast.success('Lembur ditolak');
-      setRejectDialog(null);
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal reject'); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal menolak'); }
+  };
+
+  const tolak = async (it) => {
+    const reason = await confirmDialog({
+      title: 'Tolak pengajuan lembur?',
+      body: `${it.employee?.name || ''} · ${formatTanggalID(it.date)} · ${it.hours} jam · ${it.reason || ''}`,
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan', placeholder: 'Contoh: produksi sudah selesai di jam reguler' },
+    });
+    if (!reason) return;
+    handleReject(it.id, reason);
   };
 
   const handleCancel = async (id) => {
     if (!(await confirmDialog({ title: 'Batalkan pengajuan lembur ini?', confirmLabel: 'Batalkan pengajuan', cancelLabel: 'Kembali', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/rahaza/overtime/${id}`, { headers });
-      toast.success('Request dibatalkan');
+      toast.success('Pengajuan dibatalkan');
       load();
-    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal cancel'); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal membatalkan'); }
   };
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(items, 10);
 
+  const kolom = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (it) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{it.employee?.name || '—'}</p>
+        <p className="text-xs text-muted-foreground">{it.employee?.employee_code}</p>
+      </div>) },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (it) => <span className="whitespace-nowrap">{formatTanggalID(it.date) || it.date}</span> },
+    { kunci: 'jam', label: 'Jam', isi: (it) => <span className="whitespace-nowrap tabular-nums">{it.start_time} – {it.end_time}</span> },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (it) => (
+      <span className="whitespace-nowrap tabular-nums">
+        {it.hours} jam{it.rate_multiplier !== 1 && it.rate_multiplier != null && <span className="text-muted-foreground"> ×{it.rate_multiplier}</span>}
+      </span>) },
+    { kunci: 'alasan', label: 'Alasan', isi: (it) => <span className="block max-w-[18rem] truncate" title={it.reason || ''}>{it.reason || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (it) => (
+      <div>
+        <StatusBadge status={it.status} label={statusCfg(it.status).label} tone={statusCfg(it.status).tone} />
+        {it.status === 'rejected' && it.rejected_reason && (
+          <p className="mt-0.5 text-xs text-[hsl(var(--danger-text))]">{it.rejected_reason}</p>
+        )}
+      </div>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (it.status !== 'pending' ? null : (
+      <div className="flex items-center justify-end gap-1">
+        {isApprover ? (<>
+          <Button size="sm" variant="success" onClick={() => handleApprove(it.id)} data-testid={`overtime-approve-${it.id}`}>
+            <Check />Setujui
+          </Button>
+          <Button size="sm" variant="destructive" onClick={() => tolak(it)} data-testid={`overtime-reject-${it.id}`}>
+            <X />Tolak
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya"><MoreHorizontal /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => handleCancel(it.id)}>
+                <XCircle className="mr-2 h-4 w-4" />Batalkan pengajuan
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>) : (
+          <Button size="sm" variant="outline" onClick={() => handleCancel(it.id)}>
+            <XCircle />Batalkan
+          </Button>
+        )}
+      </div>)) },
+  ];
+
   return (
-    <div className="space-y-6 p-6" data-testid="overtime-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Clock className="w-6 h-6 text-amber-700 dark:text-amber-400" /> Request Lembur (Overtime)
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {isApprover
-              ? 'Kelola request lembur karyawan · Hanya lembur yang disetujui akan masuk ke payroll'
-              : 'Ajukan request lembur · Tunggu persetujuan supervisor'}
-            {' · '}{items.length} record
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load} data-testid="overtime-refresh">
-            <RefreshCw className="w-4 h-4 mr-1" /> Refresh
+    <PageLayout testId="overtime-page" title="Pengajuan lembur"
+      subtitle={isApprover
+        ? 'Kelola pengajuan lembur karyawan. Hanya lembur yang disetujui masuk ke penggajian.'
+        : 'Ajukan lembur lalu tunggu persetujuan atasan.'}
+      actions={<Button onClick={() => setDialog({})} data-testid="overtime-create"><Plus />Ajukan lembur</Button>}
+      filters={<>
+        <FilterChips hideWhenEmpty={false} value={tab} onChange={setTab} testId="overtime-status" ariaLabel="Status"
+          options={[
+            { key: 'pending', label: 'Menunggu' },
+            { key: 'approved', label: 'Disetujui' },
+            { key: 'rejected', label: 'Ditolak' },
+            { key: 'cancelled', label: 'Dibatalkan' },
+            { key: 'all', label: 'Semua' },
+          ]} />
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas={`lembur-${tab}`} namaLembar="Lembur" baris={items} testId="overtime-unduh"
+            kolom={[
+              { label: 'Kode karyawan', nilai: (it) => it.employee?.employee_code || '' },
+              { label: 'Nama karyawan', nilai: (it) => it.employee?.name || '' },
+              { label: 'Tanggal', nilai: (it) => formatTanggalID(it.date) || it.date },
+              { label: 'Mulai', nilai: (it) => it.start_time },
+              { label: 'Selesai', nilai: (it) => it.end_time },
+              { label: 'Durasi (jam)', nilai: (it) => Number(it.hours) || 0 },
+              { label: 'Pengali', nilai: (it) => (it.rate_multiplier != null ? Number(it.rate_multiplier) : '') },
+              { label: 'Alasan', nilai: (it) => it.reason || '' },
+              { label: 'Status', nilai: (it) => statusCfg(it.status).label },
+              { label: 'Alasan ditolak', nilai: (it) => it.rejected_reason || '' },
+            ]} />
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="overtime-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
           </Button>
-          <Button size="sm" onClick={() => setDialog({})} data-testid="overtime-create">
-            <Plus className="w-4 h-4 mr-1" /> Ajukan Lembur
-          </Button>
         </div>
-      </div>
-
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full max-w-md">
-          <TabsTrigger value="pending" className="text-xs">Menunggu</TabsTrigger>
-          <TabsTrigger value="approved" className="text-xs">Disetujui</TabsTrigger>
-          <TabsTrigger value="rejected" className="text-xs">Ditolak</TabsTrigger>
-          <TabsTrigger value="cancelled" className="text-xs">Dibatal</TabsTrigger>
-          <TabsTrigger value="all" className="text-xs">Semua</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value={tab} className="mt-4">
-          <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-                  <th className="text-left px-4 py-3">Karyawan</th>
-                  <th className="text-left px-4 py-3">Tanggal</th>
-                  <th className="text-left px-4 py-3">Jam</th>
-                  <th className="text-left px-4 py-3">Durasi</th>
-                  <th className="text-left px-4 py-3">Alasan</th>
-                  <th className="text-left px-4 py-3">Status</th>
-                  <th className="px-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {paged.map(it => {
-                  const s = STATUS_CFG[it.status] || STATUS_CFG.pending;
-                  const StatIcon = s.icon;
-                  return (
-                    <tr key={it.id} className="hover:bg-foreground/5" data-testid={`overtime-row-${it.id}`}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-sm">{it.employee?.name || '—'}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">{it.employee?.employee_code}</div>
-                      </td>
-                      <td className="px-4 py-3 text-xs font-mono">{it.date}</td>
-                      <td className="px-4 py-3 text-xs">{it.start_time} — {it.end_time}</td>
-                      <td className="px-4 py-3 text-xs">
-                        <span className="font-bold">{it.hours}</span> jam
-                        {it.rate_multiplier !== 1 && <span className="text-muted-foreground"> ×{it.rate_multiplier}</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs max-w-xs truncate">{it.reason || '—'}</td>
-                      <td className="px-4 py-3">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full flex items-center gap-1 w-fit ${s.color}`}>
-                          <StatIcon className="w-3 h-3" />{s.label}
-                        </span>
-                        {it.status === 'rejected' && it.rejected_reason && (
-                          <div className="text-[10px] text-red-700 dark:text-red-400 mt-0.5">{it.rejected_reason}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          {isApprover && it.status === 'pending' && (
-                            <>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 dark:text-emerald-400"
-                                title="Approve" onClick={() => handleApprove(it.id)}
-                                data-testid={`overtime-approve-${it.id}`}>
-                                <Check className="w-3.5 h-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400"
-                                title="Reject" onClick={() => setRejectDialog(it)}>
-                                <X className="w-3.5 h-3.5" />
-                              </Button>
-                            </>
-                          )}
-                          {it.status === 'pending' && (
-                            <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground"
-                              title="Cancel" onClick={() => handleCancel(it.id)}>
-                              <XCircle className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {items.length === 0 && !loading && (
-                  <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">
-                    <Clock className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                    <p>Tidak ada request lembur</p>
-                  </td></tr>
-                )}
-                {loading && <tr><td colSpan={7} className="text-center py-8"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></td></tr>}
-              </tbody>
-            </table>
-          </div>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-4" />
-        </TabsContent>
-      </Tabs>
+      </>}
+      footer={items.length > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}>
+      {loading && items.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan lembur…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={paged} testId="overtime-table"
+          kosong={<EmptyState icon={Clock} title="Tidak ada pengajuan lembur"
+            description={tab === 'all' ? 'Pengajuan lembur karyawan akan tampil di sini.' : 'Tidak ada pengajuan dengan status ini. Pilih status lain.'} />} />
+      )}
 
       {dialog && (
         <OvertimeDialog
@@ -211,15 +211,7 @@ export default function RahazaOvertimeModule({ token, user }) {
           onClose={() => setDialog(null)}
         />
       )}
-
-      {rejectDialog && (
-        <RejectDialog
-          request={rejectDialog}
-          onReject={(reason) => handleReject(rejectDialog.id, reason)}
-          onClose={() => setRejectDialog(null)}
-        />
-      )}
-    </div>
+    </PageLayout>
   );
 }
 
@@ -244,9 +236,9 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
     } catch { return 0; }
   }, [form.start_time, form.end_time]);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = async () => {
     if (isApprover && !form.employee_id) { toast.error('Pilih karyawan'); return; }
+    if (!form.date) { toast.error('Pilih tanggal'); return; }
     if (!(Number(hours) > 0)) { toast.error('Isi jam mulai dan selesai'); return; }
     if (!form.reason?.trim()) { toast.error('Alasan wajib diisi'); return; }
     setSaving(true);
@@ -255,81 +247,38 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Request Lembur Baru</DialogTitle></DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          {isApprover && (
-            <div className="space-y-1">
-              <Label>Karyawan *</Label>
-              {/* Tahap 5 (2026-11-07): dulu Select tanpa kotak cari & hanya 100 karyawan pertama */}
-              <EmployeeSelect employees={employees} value={form.employee_id}
-                onChange={v => setForm(f => ({ ...f, employee_id: v }))} testId="overtime-employee" />
-            </div>
-          )}
-          <div className="space-y-1">
-            <Label>Tanggal *</Label>
-            <Input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required data-testid="overtime-date" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="space-y-1">
-              <Label>Mulai</Label>
-              <Input type="time" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>Selesai</Label>
-              <Input type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>Durasi</Label>
-              <Input value={`${hours} jam`} readOnly className="bg-muted/50" />
-            </div>
-          </div>
-          {/* Tahap 2 (2026-11-06): pengali lembur dari Pengaturan Payroll, tidak dipilih di formulir */}
-          <p className="text-xs text-muted-foreground">Pengali upah lembur mengikuti Pengaturan Payroll.</p>
-          <div className="space-y-1">
-            <Label>Alasan *</Label>
-            <Textarea value={form.reason} rows={3} data-testid="overtime-reason"
-              onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
-              placeholder="Contoh: Menyelesaikan batch produksi urgent untuk client A" required />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving} data-testid="overtime-save">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Ajukan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function RejectDialog({ request, onReject, onClose }) {
-  const [reason, setReason] = useState('');
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Tolak Request Lembur</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div className="rounded-lg border border-foreground/10 bg-foreground/5 px-3 py-2 text-xs">
-            <div className="font-medium">{request.employee?.name}</div>
-            <div className="text-muted-foreground">{request.date} · {request.hours} jam · {request.reason}</div>
-          </div>
-          <div className="space-y-1">
-            <Label>Alasan Penolakan *</Label>
-            <Textarea value={reason} rows={3} onChange={e => setReason(e.target.value)}
-              placeholder="Contoh: Produksi sudah selesai di jam reguler" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button variant="destructive" disabled={!reason.trim()} onClick={() => onReject(reason.trim())} data-testid="overtime-reject-confirm">
-            <X className="w-4 h-4 mr-1" /> Tolak
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="overtime-form" judul="Ajukan lembur"
+      keterangan="Pengali upah lembur mengikuti Pengaturan penggajian." onSimpan={submit} menyimpan={saving}
+      labelSimpan="Ajukan">
+      <div className="grid gap-4 sm:grid-cols-2">
+        {isApprover && (
+          <Isian label="Karyawan" wajib>
+            {/* Tahap 5 (2026-11-07): dulu Select tanpa kotak cari & hanya 100 karyawan pertama */}
+            <EmployeeSelect employees={employees} value={form.employee_id}
+              onChange={v => setForm(f => ({ ...f, employee_id: v }))} testId="overtime-employee" />
+          </Isian>
+        )}
+        <Isian label="Tanggal" wajib>
+          <DatePicker value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} bolehKosong={false} testId="overtime-date" />
+        </Isian>
+      </div>
+      {/* Jam: belum ada pemilih jam bersama — isian jam bawaan peramban dipertahankan */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Isian label="Mulai" htmlFor="ot-start">
+          <Input id="ot-start" type="time" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+        </Isian>
+        <Isian label="Selesai" htmlFor="ot-end">
+          <Input id="ot-end" type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+        </Isian>
+        <Isian label="Durasi" className="col-span-2 sm:col-span-1">
+          <p className="flex h-9 items-center text-sm tabular-nums">{hours} jam</p>
+        </Isian>
+      </div>
+      <Isian label="Alasan" wajib htmlFor="ot-reason">
+        <Textarea id="ot-reason" value={form.reason} rows={3} data-testid="overtime-reason"
+          onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+          placeholder="Contoh: menyelesaikan batch produksi mendesak untuk klien A" />
+      </Isian>
+    </FormPopup>
   );
 }

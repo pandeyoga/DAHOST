@@ -7,35 +7,50 @@
  *   4. Peminjaman       — borrow & return tracking
  *   5. Purchase Request — PR ke Finance
  *   6. Valuasi HPP      — nilai persediaan, set HPP (rata-rata bergerak), scrap bernilai (FASE 8)
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout di setiap tab; tab memakai HubTabs (tombol tab
+ * buatan sendiri dihapus) sehingga tombol tab pindah ke baris tab; 4 kartu angka (dulu 7 kartu warna-warni
+ * + 4 kartu ganda di tab Master); daftar = TabelData; form = FormPopup; detail = DetailPopup;
+ * hapus/tolak lewat confirmDialog (dulu modal buatan & window.prompt); tanggal lewat DatePicker;
+ * semua tabel bisa diunduh Excel/CSV.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
-  Package, Plus, Edit2, Trash2, Search, X, CheckCircle, Clock,
-  AlertTriangle, TrendingDown, FileText, RotateCcw, ShoppingCart,
-  ChevronDown, ChevronUp, RefreshCw, Eye, Check, XCircle,  ArrowUpCircle, ArrowDownCircle, ClipboardCheck, Banknote,
-  PackageMinus, PackagePlus, Info, BarChart3
+  Package, Plus, Pencil, Trash2, Search, X, FileText, RotateCcw, ShoppingCart, RefreshCw, Eye, Check,
+  XCircle, ArrowDownCircle, AlertTriangle, PackageMinus, PackagePlus, MoreHorizontal,
 } from 'lucide-react';
-import { EmptyState } from './EmptyState';
-import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import UomEditor from './UomEditor';
 // MATERIAL_UNITS = cermin persis daftar satuan backend (satu sumber, tanpa konversi diam-diam)
 import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf, MATERIAL_UNITS } from '@/lib/uom';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint, baseUnitOf, toBaseQty } from './uom/UomPicker';
 // FASE 8: tab valuasi HPP aksesoris (nilai persediaan + set HPP + scrap bernilai)
 import AccessoryValuationTab from './accessory/AccessoryValuationTab';
-// F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
-import { tone } from '@/lib/tone';
 import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 // 2026-11-02 (K9): tab Stok Opname = layar Sesi Opname bersama (mesin tunggal), terfilter aksesoris
 import WMSOpnameScanModule from './WMSOpnameScanModule';
 // 2026-11-07 (Tahap 6 HR3): pemohon Request Internal = karyawan dari master (pemilih SDM bersama)
 import { useActiveEmployees, EmployeeSelect } from './hr/hrPickers';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -44,30 +59,30 @@ const API = process.env.REACT_APP_BACKEND_URL || '';
 // Satuan lama item yang tidak ada di daftar tetap ditampilkan supaya tidak berubah diam-diam.
 const unitOptions = (current) => (current && !MATERIAL_UNITS.includes(current)
   ? [current, ...MATERIAL_UNITS] : MATERIAL_UNITS);
-const STATUS_COLOR = {
-  ok:      'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
-  low:     'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10',
-  out:     'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10',
-  Pending:   'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10',
-  Approved:  'text-sky-600 dark:text-sky-400 bg-sky-100 dark:bg-sky-500/10',
-  Rejected:  'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10',
-  Issued:    'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
-  Active:    'text-sky-600 dark:text-sky-400 bg-sky-100 dark:bg-sky-500/10',
-  Returned:  'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
-  Overdue:   'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10',
-  Draft:     'text-muted-foreground bg-muted dark:bg-slate-500/10',
-  Submitted: 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10',
-  Completed: 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
-  Cancelled: 'text-muted-foreground bg-muted dark:bg-slate-500/10',
-  Ordered:   'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10',
-  Received:  'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
-  // 2026-11-06 (Tahap 2): PR aksesoris diteruskan ke Permintaan Pengadaan
-  Forwarded: 'text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.12)]',
-};
 
-function Badge({ status, label }) {
-  const cls = STATUS_COLOR[status] || 'text-muted-foreground bg-secondary';
-  return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>{label || status}</span>;
+// Status (kode server) → label Indonesia + nada StatusBadge (dulu teks Inggris & warna mentah).
+const STOCK_STATUS = {
+  ok: { label: 'Aman', tone: 'success' },
+  low: { label: 'Menipis', tone: 'warning' },
+  out: { label: 'Habis', tone: 'danger' },
+};
+const REQ_STATUS = {
+  Draft: { label: 'Draf', tone: 'muted' },
+  Pending: { label: 'Menunggu', tone: 'warning' },
+  Approved: { label: 'Disetujui', tone: 'info' },
+  Issued: { label: 'Diserahkan', tone: 'success' },
+  Rejected: { label: 'Ditolak', tone: 'danger' },
+  Cancelled: { label: 'Dibatalkan', tone: 'muted' },
+};
+const PR_STATUS_TONE = {
+  Draft: 'muted', Forwarded: 'primary', Submitted: 'warning', Approved: 'info', Rejected: 'danger',
+  Ordered: 'info', Received: 'success', Cancelled: 'muted',
+};
+const PR_PRIORITY_TONE = { Urgent: 'danger', Normal: 'info', Low: 'muted' };
+
+function Lencana({ peta, status, label }) {
+  const m = peta[status] || { label: label || status || '-', tone: 'muted' };
+  return <StatusBadge status={String(status || '')} label={label || m.label} tone={m.tone} />;
 }
 
 function fmtDate(iso) {
@@ -151,12 +166,41 @@ function divisionHint(divs, value) {
   return `Dicatat sebagai: ${d.cost_label}${d.account_code ? ` · akun ${d.account_code}${d.account_name ? ` ${d.account_name}` : ''}` : ''}`;
 }
 
+/** Kotak cari standar toolbar (± 16 rem, tidak pernah selebar layar). */
+function KotakCari({ value, onChange, placeholder, testId }) {
+  return (
+    <div className="relative w-full sm:w-64">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="pl-8 pr-8" data-testid={testId} />
+      {value && (
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => onChange('')}
+          className="absolute right-0.5 top-1/2 -translate-y-1/2" title="Hapus pencarian" aria-label="Hapus pencarian">
+          <X />
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function TombolMuatUlang({ onClick, memuat, testId }) {
+  return (
+    <Button variant="outline" size="icon" onClick={onClick} disabled={memuat} title="Muat ulang" aria-label="Muat ulang"
+      data-testid={testId}>
+      <RefreshCw className={memuat ? 'animate-spin' : ''} />
+    </Button>
+  );
+}
+
+const Memuat = ({ teks }) => <p className="py-6 text-center text-sm text-muted-foreground">{teks}</p>;
+
 // ─── TAB 1: MASTER & STOK ────────────────────────────────────────────────────
-function MasterTab({ token, onRefreshDash, onOpenValuation }) {
+function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
   const [items, setItems]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
   const [catFilter, setCat]     = useState('');
+  const [statusF, setStatusF]   = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm]         = useState({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', supplier_id:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false });
@@ -171,9 +215,8 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const [moveResult, setMoveResult] = useState('');
   const [saving, setSaving]     = useState(false);
   const [err, setErr]           = useState('');
+  const [formErr, setFormErr]   = useState('');
   const [msg, setMsg]           = useState('');
-  // FASE 10: konfirmasi hapus memakai modal seragam (bukan window.confirm native)
-  const [delItem, setDelItem]   = useState(null); // {id, name, code}
 
   // ROADMAP P1 (2026-08-05) — pemilih satuan pada penerimaan & pengeluaran stok:
   // daftar satuan sah + faktornya untuk aksesoris yang sedang dibuka di modal.
@@ -214,12 +257,12 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const cats = [...new Map(items.filter(i => i.category)
     .map(i => [i.category_id || i.category, i.category])).entries()];
 
-  const openAdd = () => { setEditItem(null); setForm({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', supplier_id:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false }); setShowForm(true); };
-  const openEdit = it => { setEditItem(it); setForm({ code: it.code||'', name: it.name||'', category_id: it.category_id||'', sub_category: it.sub_category||'', unit: it.unit||'pcs', description: it.description||'', min_stock: it.min_stock||0, unit_cost: it.unit_cost||0, supplier: it.supplier||'', supplier_id: it.supplier_id||'', notes: it.notes||'', uoms: resolveUoms(it), purchase_uom: purchaseUomOf(it), issue_uom: issueUomOf(it), display_uom: displayUomOf(it), pack_unit: it.pack_unit||'pack', pack_size: it.pack_size||1, display_in_packs: it.display_in_packs||false }); setShowForm(true); };
+  const openAdd = () => { setEditItem(null); setFormErr(''); setForm({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', supplier_id:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false }); setShowForm(true); };
+  const openEdit = it => { setEditItem(it); setFormErr(''); setForm({ code: it.code||'', name: it.name||'', category_id: it.category_id||'', sub_category: it.sub_category||'', unit: it.unit||'pcs', description: it.description||'', min_stock: it.min_stock||0, unit_cost: it.unit_cost||0, supplier: it.supplier||'', supplier_id: it.supplier_id||'', notes: it.notes||'', uoms: resolveUoms(it), purchase_uom: purchaseUomOf(it), issue_uom: issueUomOf(it), display_uom: displayUomOf(it), pack_unit: it.pack_unit||'pack', pack_size: it.pack_size||1, display_in_packs: it.display_in_packs||false }); setShowForm(true); };
 
   const save = async () => {
     if (!form.name.trim()) return;
-    setSaving(true); setErr('');
+    setSaving(true); setFormErr('');
     try {
       // Satuan dinormalkan dulu; backend (core/uom) memvalidasi ulang dan
       // menulis cermin pack_unit/pack_size sendiri (INV-UOM-4).
@@ -230,32 +273,40 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
       if (editItem) { delete payload.unit_cost; await api('PUT', `/api/acc/items/${editItem.id}`, token, payload); }
       else          await api('POST', '/api/acc/items', token, payload);
       setShowForm(false); load(); onRefreshDash();
-    } catch(e) { setErr(e.message); }
+    } catch(e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };
 
+  // FASE 10: konfirmasi hapus memakai dialog aplikasi (bukan window.confirm native)
   const del = async it => {
     setErr(''); setMsg('');
-    setDelItem({ id: it.id, name: it.name, code: it.code });
-  };
-
-  const confirmDel = async () => {
-    setSaving(true); setErr('');
+    const ok = await confirmDialog({
+      title: `Hapus aksesoris ${it.code || ''} ${it.name}?`.replace(/\s+/g, ' '),
+      body: 'Item dihapus dari master. Riwayat mutasi & jurnal yang sudah terbentuk tetap tersimpan. Item yang masih berstok atau terpakai di BOM akan ditolak sistem.',
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
+    setSaving(true);
     try {
-      await api('DELETE', `/api/acc/items/${delItem.id}`, token);
-      setMsg(`Aksesoris ${delItem.code || ''} ${delItem.name} dihapus.`);
-      setDelItem(null);
+      await api('DELETE', `/api/acc/items/${it.id}`, token);
+      setMsg(`Aksesoris ${it.code || ''} ${it.name} dihapus.`);
       load(); onRefreshDash();
     }
     catch(e) { setErr(e.message); }
     finally { setSaving(false); }
   };
 
+  const openMove = (it, action) => {
+    const item = items.find(x => x.id === it.id);
+    setShowMove({ id: it.id, name: it.name, action, unit: item?.unit, pack_unit: item?.pack_unit, pack_size: item?.pack_size, display_in_packs: item?.display_in_packs });
+    setMoveForm({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' }); setFormErr(''); setMoveResult('');
+  };
+
   const doMove = async () => {
     const qty = parseFloat(moveForm.qty);
-    if (!qty || qty <= 0) { setErr('Qty harus > 0'); return; }
-    if (showMove.action === 'out' && !moveForm.divisi) { setErr('Pilih divisi pemakai — divisi menentukan akun bebannya.'); return; }
-    setSaving(true); setErr(''); setMoveResult('');
+    if (!qty || qty <= 0) { setFormErr('Qty harus > 0'); return; }
+    if (showMove.action === 'out' && !moveForm.divisi) { setFormErr('Pilih divisi pemakai — divisi menentukan akun bebannya.'); return; }
+    setSaving(true); setFormErr(''); setMoveResult('');
     try {
       const isIn = showMove.action === 'in';
       const path = isIn ? '/api/acc/stock/receive' : '/api/acc/stock/issue';
@@ -289,378 +340,266 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
       parts.push(je.posted ? `jurnal ${je.je_number} di-posting` : `tanpa jurnal (${je.error || 'HPP belum diisi'})`);
       setMoveResult(parts.join(' · '));
       setShowMove(null); setMoveForm({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' }); load(); onRefreshDash();
-    } catch(e) { setErr(e.message); }
+    } catch(e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };
 
-  const lowCount = items.filter(i => i.stock_status === 'low').length;
-  const outCount = items.filter(i => i.stock_status === 'out').length;
+  const hitung = (k) => items.filter(i => i.stock_status === k).length;
+  const opsiStatus = [
+    { key: '', label: 'Semua', count: items.length },
+    { key: 'ok', label: 'Aman', count: hitung('ok') },
+    { key: 'low', label: 'Menipis', count: hitung('low') },
+    { key: 'out', label: 'Habis', count: hitung('out') },
+  ];
+  const tampil = statusF ? items.filter(i => i.stock_status === statusF) : items;
 
-  // RC-UI-03: client-side pagination (10/page) for accessory item catalog
-  const itemsPg = useClientPagination(items, 10);
+  // RC-UI-03: paginasi di sisi layar (25/halaman, PANDUAN G7)
+  const itemsPg = useClientPagination(tampil, 25);
+
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'keterangan', isi: (it) => <span className="whitespace-nowrap tabular-nums">{it.code || '—'}</span> },
+    { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (it) => <span className="font-medium">{it.name}</span> },
+    { kunci: 'kategori', label: 'Kategori', isi: (it) => (
+      // 2026-11-06 (Tahap 2): nama kategori (dulu ID master mentah) + sub kategori
+      <div className="text-sm">
+        <div>{it.category || '—'}</div>
+        {it.sub_category && <div className="text-xs text-muted-foreground">{it.sub_category}</div>}
+      </div>) },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (it) => (it.display_in_packs ? (
+      <div className="tabular-nums">
+        <div>{fmtNum(it.stock_qty_in_packs)} {it.pack_unit}</div>
+        <div className="text-xs text-muted-foreground">({fmtNum(it.stock_qty)} {it.unit})</div>
+      </div>
+    ) : <span className="tabular-nums">{fmtNum(it.stock_qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></span>) },
+    { kunci: 'min', label: 'Minimum', rata: 'kanan', isi: (it) => (
+      <span className="tabular-nums text-muted-foreground">
+        {it.display_in_packs ? `${fmtNum(it.min_stock_in_packs)} ${it.pack_unit}` : fmtNum(it.min_stock)}
+      </span>) },
+    { kunci: 'hpp', label: 'Harga satuan', rata: 'kanan', isi: (it) => ((it.unit_cost || 0) > 0
+      ? <span className="tabular-nums">{fmtRp(it.unit_cost)}</span>
+      : <span className="text-[hsl(var(--warning-text))]" title="Belum ada harga satuan — selisih opname tidak akan masuk jurnal keuangan">belum diisi</span>) },
+    { kunci: 'nilai', label: 'Nilai stok', rata: 'kanan', isi: (it) => (
+      <span className="tabular-nums text-muted-foreground">{(it.stock_value || 0) > 0 ? fmtRp(it.stock_value) : '—'}</span>) },
+    { kunci: 'status', label: 'Status', isi: (it) => <Lencana peta={STOCK_STATUS} status={it.stock_status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="outline" size="icon-sm" onClick={() => openMove(it, 'in')} title="Terima stok"
+          aria-label={`Terima stok ${it.name}`} data-testid={`acc-in-${it.id}`}>
+          <PackagePlus />
+        </Button>
+        <Button variant="outline" size="icon-sm" onClick={() => openMove(it, 'out')} title="Keluarkan stok"
+          aria-label={`Keluarkan stok ${it.name}`} data-testid={`acc-out-${it.id}`}>
+          <PackageMinus />
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label={`Aksi lain ${it.name}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => openEdit(it)} data-testid={`edit-acc-${it.id}`}>
+              <Pencil className="mr-2 h-4 w-4" /> Ubah
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => del(it)} disabled={saving} data-testid={`del-acc-${it.id}`}
+              className="text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" /> Hapus
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-5">
-      {/* Stat Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label:'Total Item', val: items.length, icon: Package, color:'violet' },
-          { label:'Stok Aman', val: items.filter(i=>i.stock_status==='ok').length, icon: CheckCircle, color:'emerald' },
-          { label:'Stok Rendah', val: lowCount, icon: AlertTriangle, color:'amber' },
-          { label:'Habis', val: outCount, icon: TrendingDown, color:'red' },
-        ].map(s => (
-          <div key={s.label} className={`border rounded-xl p-3 ${tone(s.color).surface}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <s.icon className={`w-4 h-4 ${tone(s.color).text}`} />
-              <span className="text-xs text-muted-foreground">{s.label}</span>
-            </div>
-            <div className={`text-2xl font-bold ${tone(s.color).text}`}>{s.val}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] flex-1 min-w-48">
-          <Search className="w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari aksesoris..." className="flex-1 bg-transparent text-sm focus:outline-none" data-testid="acc-search" />
-          {search && <button onClick={()=>setSearch('')}><X className="w-4 h-4 text-muted-foreground" /></button>}
-        </div>
-        <SmartNativeSelect value={catFilter} onChange={e=>setCat(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm" data-testid="acc-cat-filter">
-          <option value="">Semua Kategori</option>
+    <PageLayout title={title} subtitle={subtitle} testId="acc-master-tab"
+      actions={<Button onClick={openAdd} data-testid="add-acc-btn"><Plus /> Tambah aksesoris</Button>}
+      filters={<>
+        <KotakCari value={search} onChange={setSearch} placeholder="Cari kode atau nama" testId="acc-search" />
+        <SmartNativeSelect value={catFilter} onChange={e=>setCat(e.target.value)} className="w-44" data-testid="acc-cat-filter">
+          <option value="">Semua kategori</option>
           {cats.map(([v, label])=><option key={v} value={v}>{label}</option>)}
         </SmartNativeSelect>
-        <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
-        <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-primary text-foreground rounded-lg text-sm font-medium hover:brightness-110" data-testid="add-acc-btn">
-          <Plus className="w-4 h-4" /> Tambah Aksesoris
-        </button>
-      </div>
+        <FilterChips options={opsiStatus} value={statusF} onChange={setStatusF} testId="acc-status-filter" />
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="master-aksesoris" namaLembar="Aksesoris" baris={tampil} testId="acc-master-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (it) => it.code },
+            { label: 'Nama', nilai: (it) => it.name },
+            { label: 'Kategori', nilai: (it) => it.category || '' },
+            { label: 'Sub kategori', nilai: (it) => it.sub_category || '' },
+            { label: 'Stok', nilai: (it) => Number(it.stock_qty || 0) },
+            { label: 'Satuan', nilai: (it) => it.unit },
+            { label: 'Stok minimum', nilai: (it) => Number(it.min_stock || 0) },
+            { label: 'Harga satuan (Rp)', nilai: (it) => Number(it.unit_cost || 0) },
+            { label: 'Nilai stok (Rp)', nilai: (it) => Number(it.stock_value || 0) },
+            { label: 'Status', nilai: (it) => (STOCK_STATUS[it.stock_status] || {}).label || '' },
+            { label: 'Supplier', nilai: (it) => it.supplier || '' },
+          ]} />
+        <TombolMuatUlang onClick={load} memuat={loading} />
+      </>}
+      footer={itemsPg.total > 0 && <PaginationLite page={itemsPg.page} totalPages={itemsPg.totalPages} total={itemsPg.total} pageSize={itemsPg.pageSize} onPageChange={itemsPg.setPage} />}>
+      {err && <Notice tone="danger" testId="acc-master-error">{err}</Notice>}
+      {msg && <Notice tone="success" testId="acc-master-msg">{msg}</Notice>}
+      {moveResult && <Notice tone="success" testId="acc-move-result">{moveResult}</Notice>}
 
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2" data-testid="acc-master-error">{err}</div>}
-      {msg && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2"
-          data-testid="acc-master-msg">{msg}</div>
+      {loading && items.length === 0 ? <Memuat teks="Memuat aksesoris…" /> : (
+        <TabelData kolom={kolom} baris={itemsPg.paged} testId="acc-master-table"
+          kosong={<EmptyState icon={Package}
+            title={items.length ? 'Tidak ada aksesoris yang cocok' : 'Belum ada item aksesoris'}
+            description={items.length ? 'Ubah saringan status.' : 'Tambah item pertama untuk mulai mengelola stok aksesoris.'} />} />
       )}
 
-      {/* Modal hapus aksesoris (pengganti window.confirm native) */}
-      {delItem && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={()=>setDelItem(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={e=>e.stopPropagation()}
-            data-testid="acc-delete-modal">
-            <h3 className="text-lg font-bold mb-1">Hapus Aksesoris</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              <span className="font-mono">{delItem.code}</span> — <strong>{delItem.name}</strong> akan
-              dihapus dari master. Riwayat mutasi & jurnal yang sudah terbentuk tetap tersimpan.
-              Item yang masih berstok atau terpakai di BOM akan ditolak sistem.
-            </p>
-            <div className="flex gap-3">
-              <button onClick={()=>setDelItem(null)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5"
-                data-testid="acc-delete-cancel">Batal</button>
-              <button onClick={confirmDel} disabled={saving}
-                className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50"
-                data-testid="acc-delete-confirm">{saving ? 'Menghapus...' : 'Hapus'}</button>
-            </div>
-          </div>
+      {/* Form tambah / ubah (popup panjang) */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={save}
+        menyimpan={saving} bisaSimpan={!!form.name} galat={formErr} testId="acc-form"
+        judul={editItem ? 'Ubah aksesoris' : 'Tambah aksesoris'} labelSimpan="Simpan">
+        {/* 2026-11-06 (Tahap 2): kategori dipilih dari master kategori material; rincian bebas
+            (mis. Trimming) di Sub kategori — dulu teks bebas yang tertimpa ID master. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Kategori">
+            <SmartNativeSelect value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value})}
+              className="w-full" data-testid="acc-category-select">
+              <option value="">{!editItem ? 'Aksesoris (bawaan)'
+                : (editItem.category && !editItem.category_id ? `${editItem.category} (lama)` : 'Tidak diubah')}</option>
+              {catMaster.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Sub kategori" htmlFor="acc-subkat">
+            <Input id="acc-subkat" value={form.sub_category||''} onChange={e=>setForm({...form,sub_category:e.target.value})}
+              placeholder="Trimming" data-testid="acc-subcategory-input" />
+          </Isian>
+          <Isian label="Kode" htmlFor="acc-kode">
+            <Input id="acc-kode" value={form.code||''} onChange={e=>setForm({...form,code:e.target.value})}
+              placeholder="ACC-001" data-testid="acc-field-code" />
+          </Isian>
+          <Isian label="Nama" wajib htmlFor="acc-nama">
+            <Input id="acc-nama" value={form.name||''} onChange={e=>setForm({...form,name:e.target.value})}
+              placeholder="Kancing" data-testid="acc-field-name" />
+          </Isian>
         </div>
-      )}
-
-      {moveResult && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2"
-          data-testid="acc-move-result">{moveResult}</div>
-      )}
-
-      {/* Table */}
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[700px]">
-          <thead className="bg-[var(--glass-bg)] border-b border-border">
-            <tr>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Kode</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Nama</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Kategori</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Stok</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Min</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Harga Satuan</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Nilai Stok</th>
-              <th className="text-center px-4 py-3 text-muted-foreground font-medium">Status</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              Array.from({ length: 5 }).map((_, i) => (
-                <tr key={i}>{[...Array(9)].map((__, j) => <td key={j} className="px-3 py-2.5"><Skeleton className="h-4" /></td>)}</tr>
-              ))
-            ) : items.length === 0 ? (
-              <tr><td colSpan="9">
-                <EmptyState icon={Package} title="Belum ada item aksesoris" description="Tambah item pertama untuk mulai mengelola stok aksesoris." />
-              </td></tr>
-            ) : itemsPg.paged.map(it => (
-              <tr key={it.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`acc-row-${it.id}`}>
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{it.code}</td>
-                <td className="px-4 py-3 font-medium">{it.name}</td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {/* 2026-11-06 (Tahap 2): nama kategori (dulu ID master mentah) + sub kategori */}
-                  <div>{it.category || '-'}</div>
-                  {it.sub_category && <div className="text-xs">{it.sub_category}</div>}
-                </td>
-                <td className="px-4 py-3 text-right font-medium">
-                  {it.display_in_packs ? (
-                    <div>
-                      <div>{fmtNum(it.stock_qty_in_packs)} {it.pack_unit}</div>
-                      <div className="text-xs text-muted-foreground">({fmtNum(it.stock_qty)} {it.unit})</div>
-                    </div>
-                  ) : (
-                    <>{fmtNum(it.stock_qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right text-muted-foreground text-xs">
-                  {it.display_in_packs ? (
-                    <>{fmtNum(it.min_stock_in_packs)} {it.pack_unit}</>
-                  ) : (
-                    <>{fmtNum(it.min_stock)}</>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right text-xs">
-                  {(it.unit_cost || 0) > 0
-                    ? <span className="text-foreground">Rp {fmtNum(it.unit_cost)}</span>
-                    : <span className="text-amber-700 dark:text-amber-400" title="Belum ada harga satuan — selisih opname tidak akan masuk jurnal keuangan">belum diisi</span>}
-                </td>
-                <td className="px-4 py-3 text-right text-xs text-muted-foreground">
-                  {(it.stock_value || 0) > 0 ? <>Rp {fmtNum(it.stock_value)}</> : '-'}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <Badge status={it.stock_status} label={it.stock_status==='ok'?'Aman':it.stock_status==='low'?'Rendah':'Habis'} />
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1">
-                    <button onClick={()=>{const item=items.find(x=>x.id===it.id); setShowMove({id:it.id,name:it.name,action:'in',unit:item?.unit,pack_unit:item?.pack_unit,pack_size:item?.pack_size,display_in_packs:item?.display_in_packs}); setMoveForm({qty:'',notes:'',input_unit:'base',unit_cost:'',divisi:''}); setErr(''); setMoveResult('');}}
-                      className="p-1 hover:bg-emerald-100 dark:bg-emerald-500/10 rounded" title="Terima Stok" data-testid={`acc-in-${it.id}`}>
-                      <PackagePlus className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    </button>
-                    <button onClick={()=>{const item=items.find(x=>x.id===it.id); setShowMove({id:it.id,name:it.name,action:'out',unit:item?.unit,pack_unit:item?.pack_unit,pack_size:item?.pack_size,display_in_packs:item?.display_in_packs}); setMoveForm({qty:'',notes:'',input_unit:'base',unit_cost:'',divisi:''}); setErr(''); setMoveResult('');}}
-                      className="p-1 hover:bg-amber-100 dark:bg-amber-500/10 rounded" title="Keluarkan Stok" data-testid={`acc-out-${it.id}`}>
-                      <PackageMinus className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-                    </button>
-                    <button onClick={()=>openEdit(it)} className="p-1 hover:bg-foreground/5 rounded" data-testid={`edit-acc-${it.id}`}><Edit2 className="w-4 h-4 text-muted-foreground" /></button>
-                    <button onClick={()=>del(it)} className="p-1 hover:bg-red-100 dark:bg-red-500/10 rounded" data-testid={`del-acc-${it.id}`}><Trash2 className="w-4 h-4 text-red-700 dark:text-red-400" /></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {itemsPg.total > 0 && <PaginationLite page={itemsPg.page} totalPages={itemsPg.totalPages} total={itemsPg.total} pageSize={itemsPg.pageSize} onPageChange={itemsPg.setPage} />}
-
-      {/* Form Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={()=>setShowForm(false)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-md p-6" onClick={e=>e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-4">{editItem ? 'Edit Aksesoris' : 'Tambah Aksesoris'}</h3>
-            <div className="space-y-3">
-              {/* 2026-11-06 (Tahap 2): kategori dipilih dari master kategori material; rincian bebas
-                  (mis. Trimming) di Sub kategori — dulu teks bebas yang tertimpa ID master. */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Kategori</label>
-                  <SmartNativeSelect value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-category-select">
-                    <option value="">{!editItem ? 'Aksesoris (bawaan)'
-                      : (editItem.category && !editItem.category_id ? `${editItem.category} (lama)` : 'Tidak diubah')}</option>
-                    {catMaster.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Sub kategori</label>
-                  <input value={form.sub_category||''} onChange={e=>setForm({...form,sub_category:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Trimming" data-testid="acc-subcategory-input" />
-                </div>
-              </div>
-              {[
-                {label:'Kode', key:'code', placeholder:'ACC-001'},
-                {label:'Nama *', key:'name', placeholder:'Kancing'},
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="text-xs text-muted-foreground block mb-1">{f.label}</label>
-                  <input value={form[f.key]||''} onChange={e=>setForm({...form,[f.key]:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder={f.placeholder}
-                    data-testid={`acc-field-${f.key}`} />
-                </div>
-              ))}
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Supplier</label>
-                <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-supplier-select" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Unit</label>
-                  <SmartNativeSelect value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-unit-select">
-                    {unitOptions(editItem?.unit).map(u=><option key={u} value={u}>{u}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Stok Minimum</label>
-                  <input type="number" min="0" value={form.min_stock} onChange={e=>setForm({...form,min_stock:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" />
-                </div>
-              </div>
-              {/* FASE G+: harga satuan — dasar nilai selisih opname & jurnal keuangan */}
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Harga Satuan / HPP (Rp)</label>
-                {editItem ? (
-                  // 2026-11-06 (Tahap 1, K12): HPP item yang sudah ada hanya diubah lewat Set HPP
-                  // (revaluasi berjurnal + alasan) — bukan ditimpa dari form ini.
-                  <>
-                    <div className="text-sm tabular-nums" data-testid="acc-unit-cost-readonly">{fmtRp(editItem.unit_cost)}</div>
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      HPP diubah lewat Set HPP di Valuasi HPP supaya perubahan nilai stok tercatat dengan jurnal dan alasannya.
-                      {onOpenValuation && (
-                        <> <Button variant="link" size="sm" className="px-0" onClick={() => { setShowForm(false); onOpenValuation(); }}
-                          data-testid="acc-open-set-hpp">Buka Valuasi HPP</Button></>
-                      )}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <MoneyInput unstyled value={form.unit_cost}
-                      onChange={e=>setForm({...form,unit_cost:e.target.value})}
-                      className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                      placeholder="0" data-testid="acc-unit-cost-input" />
-                    <p className="text-[11px] text-muted-foreground mt-1">Harga awal. Dipakai untuk menilai stok &amp; <strong>jurnal penyesuaian keuangan</strong> saat opname disetujui. Kosong/0 = selisih opname tidak masuk keuangan.</p>
-                  </>
-                )}
-              </div>
-              
-              {/* Satuan & kemasan berjenjang (maks 3 tingkat) — SSOT lib/uom.js */}
-              <UomEditor
-                baseUnit={form.unit}
-                uoms={form.uoms}
-                purchaseUom={form.purchase_uom}
-                issueUom={form.issue_uom}
-                displayUom={form.display_uom}
-                resetKey={editItem?.id || 'new'}
-                onChange={patch => setForm(f => ({ ...f, ...patch }))}
-              />
-
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-                <textarea value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows="2"
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none" />
-              </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={()=>setShowForm(false)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={save} disabled={!form.name||saving} className="flex-1 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="save-acc-btn">
-                {saving ? 'Menyimpan...' : 'Simpan'}
-              </button>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Isian label="Supplier">
+            <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
+              className="w-full" data-testid="acc-supplier-select" />
+          </Isian>
+          <Isian label="Satuan">
+            <SmartNativeSelect value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full" data-testid="acc-unit-select">
+              {unitOptions(editItem?.unit).map(u=><option key={u} value={u}>{u}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Stok minimum" htmlFor="acc-min">
+            <Input id="acc-min" type="number" min="0" value={form.min_stock} onChange={e=>setForm({...form,min_stock:e.target.value})} />
+          </Isian>
         </div>
-      )}
+        {/* FASE G+: harga satuan — dasar nilai selisih opname & jurnal keuangan */}
+        {editItem ? (
+          // 2026-11-06 (Tahap 1, K12): HPP item yang sudah ada hanya diubah lewat Set HPP
+          // (revaluasi berjurnal + alasan) — bukan ditimpa dari form ini.
+          <Isian label="Harga satuan / HPP"
+            petunjuk="HPP diubah lewat Set HPP di Valuasi HPP supaya perubahan nilai stok tercatat dengan jurnal dan alasannya.">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm tabular-nums" data-testid="acc-unit-cost-readonly">{fmtRp(editItem.unit_cost)}</span>
+              {onOpenValuation && (
+                <Button type="button" variant="link" size="sm" className="px-0"
+                  onClick={() => { setShowForm(false); onOpenValuation(); }} data-testid="acc-open-set-hpp">
+                  Buka Valuasi HPP
+                </Button>
+              )}
+            </div>
+          </Isian>
+        ) : (
+          <Isian label="Harga satuan / HPP (Rp)" htmlFor="acc-hpp"
+            petunjuk="Harga awal. Dipakai untuk menilai stok & jurnal penyesuaian keuangan saat opname disetujui. Kosong/0 = selisih opname tidak masuk keuangan.">
+            <MoneyInput id="acc-hpp" value={form.unit_cost}
+              onChange={e=>setForm({...form,unit_cost:e.target.value})}
+              placeholder="0" data-testid="acc-unit-cost-input" />
+          </Isian>
+        )}
 
-      {/* Move Modal */}
+        {/* Satuan & kemasan berjenjang (maks 3 tingkat) — SSOT lib/uom.js */}
+        <UomEditor
+          baseUnit={form.unit}
+          uoms={form.uoms}
+          purchaseUom={form.purchase_uom}
+          issueUom={form.issue_uom}
+          displayUom={form.display_uom}
+          resetKey={editItem?.id || 'new'}
+          onChange={patch => setForm(f => ({ ...f, ...patch }))}
+        />
+
+        <Isian label="Catatan" htmlFor="acc-catatan">
+          <Textarea id="acc-catatan" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows={2} />
+        </Isian>
+      </FormPopup>
+
+      {/* Terima / keluarkan stok (popup pendek) */}
       {showMove && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={()=>setShowMove(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-sm p-6" onClick={e=>e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-1">
-              {showMove.action === 'in' ? 'Terima Stok Masuk' : 'Keluarkan Stok'}
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">{showMove.name}</p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Satuan Input</label>
-                <UomSelect opt={moveUomOpt} value={moveUnit} fallbackUnit={showMove.unit}
-                  onChange={e=>setMoveForm({...moveForm,input_unit:e.target.value})}
-                  testId="move-uom-select" className="w-full" />
-                {showMove.display_in_packs && showMove.pack_unit && (
-                  <small className="text-[11px] text-muted-foreground">
-                    1 {showMove.pack_unit} = {fmtNum(showMove.pack_size)} {showMove.unit}
-                  </small>
-                )}
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">
-                  Jumlah ({moveUnit || showMove.unit}) *
-                </label>
-                <input type="number" min="0.0001" step="0.0001" value={moveForm.qty} onChange={e=>setMoveForm({...moveForm,qty:e.target.value})}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="0" data-testid="move-qty-input" />
-                <UomConversionHint opt={moveUomOpt} qty={moveForm.qty} unit={moveUnit}
-                  fallbackUnit={showMove.unit} testId="move-uom-hint" className="mt-1" />
-              </div>
-              {showMove.action === 'out' && (
-                <div>
-                  {/* 2026-11-06 (Tahap 2): divisi pemakai menentukan akun beban jurnal pengeluaran */}
-                  <label className="text-xs text-muted-foreground block mb-1">Divisi pemakai *</label>
-                  <SmartNativeSelect value={moveForm.divisi} onChange={e=>setMoveForm({...moveForm,divisi:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="move-divisi-select">
-                    <option value="">Pilih divisi...</option>
-                    {divisions.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
-                  </SmartNativeSelect>
-                  {moveForm.divisi && (
-                    <small className="block text-[11px] text-muted-foreground" data-testid="move-divisi-hint">
-                      {divisionHint(divisions, moveForm.divisi)}
-                    </small>
-                  )}
-                  <small className="block text-[11px] text-muted-foreground">
-                    Aksesoris untuk PO produksi dikeluarkan lewat Kirim Material CMT atau permintaan ber-PO, bukan dari sini.
-                  </small>
-                </div>
+        <FormPopup open onClose={() => setShowMove(null)} ukuran="pendek" onSimpan={doMove} menyimpan={saving}
+          galat={formErr} testId="acc-move-form"
+          judul={showMove.action === 'in' ? 'Terima stok masuk' : 'Keluarkan stok'} keterangan={showMove.name}
+          labelSimpan={showMove.action === 'in' ? 'Terima' : 'Keluarkan'}>
+          <Isian label="Satuan input"
+            petunjuk={showMove.display_in_packs && showMove.pack_unit
+              ? `1 ${showMove.pack_unit} = ${fmtNum(showMove.pack_size)} ${showMove.unit}` : undefined}>
+            <UomSelect opt={moveUomOpt} value={moveUnit} fallbackUnit={showMove.unit}
+              onChange={e=>setMoveForm({...moveForm,input_unit:e.target.value})}
+              testId="move-uom-select" className="w-full" />
+          </Isian>
+          <Isian label={`Jumlah (${moveUnit || showMove.unit})`} wajib htmlFor="move-qty">
+            <Input id="move-qty" type="number" min="0.0001" step="0.0001" value={moveForm.qty} onChange={e=>setMoveForm({...moveForm,qty:e.target.value})}
+              placeholder="0" data-testid="move-qty-input" />
+            <UomConversionHint opt={moveUomOpt} qty={moveForm.qty} unit={moveUnit}
+              fallbackUnit={showMove.unit} testId="move-uom-hint" className="mt-1" />
+          </Isian>
+          {showMove.action === 'out' && (
+            // 2026-11-06 (Tahap 2): divisi pemakai menentukan akun beban jurnal pengeluaran
+            <Isian label="Divisi pemakai" wajib
+              petunjuk="Aksesoris untuk PO produksi dikeluarkan lewat Kirim Material CMT atau permintaan ber-PO, bukan dari sini.">
+              <SmartNativeSelect value={moveForm.divisi} onChange={e=>setMoveForm({...moveForm,divisi:e.target.value})}
+                className="w-full" data-testid="move-divisi-select">
+                <option value="">Pilih divisi...</option>
+                {divisions.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+              </SmartNativeSelect>
+              {moveForm.divisi && (
+                <p className="text-xs text-muted-foreground" data-testid="move-divisi-hint">
+                  {divisionHint(divisions, moveForm.divisi)}
+                </p>
               )}
-              {showMove.action === 'in' && recvPrice && !recvPrice.can_set_price && (
-                <div className="text-xs text-muted-foreground" data-testid="move-price-locked">
-                  Harga penerimaan: <b className="text-foreground">{fmtRp(recvPrice.unit_cost)}</b> per {moveBaseUnit || showMove.unit}
-                  {' '}({recvPrice.source_label}). Hanya Keuangan yang boleh mengubah harga.
-                </div>
+            </Isian>
+          )}
+          {showMove.action === 'in' && recvPrice && !recvPrice.can_set_price && (
+            <p className="text-sm text-muted-foreground" data-testid="move-price-locked">
+              Harga penerimaan: <b className="text-foreground">{fmtRp(recvPrice.unit_cost)}</b> per {moveBaseUnit || showMove.unit}
+              {' '}({recvPrice.source_label}). Hanya Keuangan yang boleh mengubah harga.
+            </p>
+          )}
+          {showMove.action === 'in' && recvPrice?.can_set_price && (
+            <Isian label={`Harga satuan beli per ${moveUnit || showMove.unit} (Rp), opsional`} htmlFor="move-cost"
+              petunjuk="Bila diisi, HPP master diperbarui dengan metode rata-rata bergerak dan jurnal persediaan dibuat otomatis.">
+              <MoneyInput id="move-cost" decimals={2} value={moveForm.unit_cost}
+                onChange={e=>setMoveForm({...moveForm,unit_cost:e.target.value})}
+                placeholder="kosongkan bila harga tidak berubah" data-testid="move-unit-cost-input" />
+              <p className="text-xs text-muted-foreground">
+                Acuan: {fmtRp(recvPrice.unit_cost)} per {moveBaseUnit || showMove.unit} ({recvPrice.source_label}).
+              </p>
+              {moveUnit && moveBaseUnit && moveUnit !== moveBaseUnit && moveForm.unit_cost && (
+                <p className="text-xs text-muted-foreground" data-testid="move-cost-conversion-hint">
+                  = {fmtRp(Number(moveForm.unit_cost) / (toBaseQty(moveUomOpt, 1, moveUnit) || 1))} per {moveBaseUnit}
+                </p>
               )}
-              {showMove.action === 'in' && recvPrice?.can_set_price && (
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">
-                    Harga satuan beli (Rp) — per{' '}
-                    <b className="text-foreground">{moveUnit || showMove.unit}</b>{' '}
-                    — opsional
-                  </label>
-                  <MoneyInput unstyled decimals={2} value={moveForm.unit_cost}
-                    onChange={e=>setMoveForm({...moveForm,unit_cost:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                    placeholder="kosongkan bila harga tidak berubah" data-testid="move-unit-cost-input" />
-                  <small className="block text-[11px] text-muted-foreground">
-                    Acuan: {fmtRp(recvPrice.unit_cost)} per {moveBaseUnit || showMove.unit} ({recvPrice.source_label}).
-                  </small>
-                  {moveUnit && moveBaseUnit && moveUnit !== moveBaseUnit && moveForm.unit_cost && (
-                    <small className="block text-[11px] text-muted-foreground" data-testid="move-cost-conversion-hint">
-                      = {fmtRp(Number(moveForm.unit_cost) / (toBaseQty(moveUomOpt, 1, moveUnit) || 1))} per {moveBaseUnit}
-                    </small>
-                  )}
-                  <small className="text-[11px] text-muted-foreground">
-                    Bila diisi, HPP master diperbarui dengan metode rata-rata bergerak dan jurnal persediaan dibuat otomatis.
-                  </small>
-                </div>
-              )}
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-                <input value={moveForm.notes} onChange={e=>setMoveForm({...moveForm,notes:e.target.value})}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Keterangan..." />
-              </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={()=>setShowMove(null)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={doMove} disabled={saving}
-                className={`flex-1 py-2 text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50 ${showMove.action==='in'?'bg-emerald-600':'bg-amber-600'}`}
-                data-testid="confirm-move-btn">
-                {saving ? 'Memproses...' : showMove.action==='in' ? 'Terima' : 'Keluarkan'}
-              </button>
-            </div>
-          </div>
-        </div>
+            </Isian>
+          )}
+          <Isian label="Catatan" htmlFor="move-notes">
+            <Input id="move-notes" value={moveForm.notes} onChange={e=>setMoveForm({...moveForm,notes:e.target.value})}
+              placeholder="Keterangan..." />
+          </Isian>
+        </FormPopup>
       )}
-    </div>
+    </PageLayout>
   );
 }
 
-// ─── TAB 2: REQUEST INTERNAL ─────────────────────────────────────────────────
 // ─── TAB 2: REQUEST INTERNAL ────────────────────────────────────────────────
 // FASE 10 — DIPINDAH KE SSOT `dewi_accessory_requests` (request_type='internal_issuance').
 // Sebelumnya tab ini memakai `/api/acc/internal-requests` yang menulis ke koleksi
@@ -669,8 +608,8 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
 // ini, dan koleksi legacy tidak bisa di-drop. Sekarang satu jalur saja:
 //   buat → submitted · setujui → allocated · serahkan → delivered (POTONG STOK) ·
 //   tolak → rejected.
-// Label lama (Pending/Approved/Issued/Rejected) dipertahankan di layar supaya
-// kebiasaan pengguna tidak berubah.
+// Kode status lama (Pending/Approved/Issued/Rejected) dipertahankan di dalam layar; label tampilnya
+// berbahasa Indonesia (REQ_STATUS).
 const REQ_STATUS_FROM_SSOT = {
   draft: 'Draft', submitted: 'Pending', allocated: 'Approved',
   delivered: 'Issued', rejected: 'Rejected', cancelled: 'Cancelled',
@@ -697,7 +636,7 @@ function reqFromSSOT(d) {
   };
 }
 
-function RequestInternalTab({ token, items }) {
+function RequestInternalTab({ token, items, title, subtitle }) {
   const [requests, setReqs]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShow]   = useState(false);
@@ -717,6 +656,7 @@ function RequestInternalTab({ token, items }) {
   }, [showForm, token]);
   const [saving, setSaving]   = useState(false);
   const [err, setErr]         = useState('');
+  const [formErr, setFormErr] = useState('');
   const [msg, setMsg]         = useState('');
   const [statusFilter, setStatusF] = useState('');
   // SESI #27 — kebijakan penomoran Permintaan Aksesoris. TIPE=INT-REQ (pengeluaran internal).
@@ -752,11 +692,11 @@ function RequestInternalTab({ token, items }) {
   };
 
   const submit = async () => {
-    if (!form.divisi) { setErr('Divisi wajib dipilih'); return; }
-    if (!form.requester_employee_id) { setErr('Pemohon wajib dipilih dari Data Karyawan'); return; }
+    if (!form.divisi) { setFormErr('Divisi wajib dipilih'); return; }
+    if (!form.requester_employee_id) { setFormErr('Pemohon wajib dipilih dari Data Karyawan'); return; }
     const validLines = lines.filter(l=>l.acc_id && l.qty_requested>0);
-    if (validLines.length === 0) { setErr('Minimal 1 item'); return; }
-    setSaving(true); setErr(''); setMsg('');
+    if (validLines.length === 0) { setFormErr('Minimal 1 item'); return; }
+    setSaving(true); setFormErr(''); setMsg('');
     try {
       const res = await api('POST', '/api/dewi/accessory-requests', token, {
         request_type: 'internal_issuance',
@@ -773,9 +713,9 @@ function RequestInternalTab({ token, items }) {
       });
       setShow(false); setLines([{ acc_id:'', qty_requested:1, unit:'pcs', notes:'' }]);
       setForm({ divisi:'', requester_employee_id:'', purpose:'', needed_by:'', items:[] });
-      setMsg(`Request ${res.request_code || ''} dibuat & menunggu persetujuan.`);
+      setMsg(`Permintaan ${res.request_code || ''} dibuat & menunggu persetujuan.`);
       load();
-    } catch(e) { setErr(e.message); }
+    } catch(e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };
 
@@ -785,10 +725,10 @@ function RequestInternalTab({ token, items }) {
     try {
       if (status === 'Approved') {
         await api('POST', `/api/dewi/accessory-requests/${id}/allocate`, token, { notes });
-        setMsg('Request disetujui. Klik ikon “Serahkan” untuk mengeluarkan barang & memotong stok.');
+        setMsg('Permintaan disetujui. Klik “Serahkan” untuk mengeluarkan barang & memotong stok.');
       } else if (status === 'Rejected') {
         await api('POST', `/api/dewi/accessory-requests/${id}/reject`, token, { reason: notes || 'Ditolak admin aksesoris' });
-        setMsg('Request ditolak. Stok tidak berubah.');
+        setMsg('Permintaan ditolak. Stok tidak berubah.');
       } else if (status === 'Issued') {
         const res = await api('POST', `/api/dewi/accessory-requests/${id}/deliver`, token, { notes });
         const n = (res.issued_items || []).length;
@@ -801,185 +741,160 @@ function RequestInternalTab({ token, items }) {
     } catch(e) { setErr(e.message); }
   };
 
-  // RC-UI-03: client-side pagination (10/page) for accessory requests
-  const requestsPg = useClientPagination(requests, 10);
+  // RC-UI-03: paginasi di sisi layar (25/halaman)
+  const requestsPg = useClientPagination(requests, 25);
+
+  const aksiStatus = (r) => (
+    <>
+      {r.status === 'Pending' && (
+        <>
+          <Button size="sm" variant="success" onClick={()=>updateStatus(r.id,'Approved')} data-testid={`approve-req-${r.id}`}>
+            <Check /> Setujui
+          </Button>
+          <Button size="sm" variant="destructive" onClick={()=>updateStatus(r.id,'Rejected')} data-testid={`reject-req-${r.id}`}>
+            <XCircle /> Tolak
+          </Button>
+        </>
+      )}
+      {r.status === 'Approved' && (
+        <Button size="sm" onClick={()=>updateStatus(r.id,'Issued')} data-testid={`issue-req-${r.id}`}>
+          <ArrowDownCircle /> Serahkan
+        </Button>
+      )}
+    </>
+  );
+
+  const kolom = [
+    { kunci: 'no', label: 'No. permintaan', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums">{r.request_number}</span> },
+    { kunci: 'divisi', label: 'Divisi', isi: (r) => r.divisi || '—' },
+    { kunci: 'pemohon', label: 'Pemohon', isi: (r) => r.requester_name || '—' },
+    { kunci: 'keperluan', label: 'Keperluan', hp: 'keterangan', isi: (r) => (
+      <span className="block max-w-xs truncate text-muted-foreground" title={r.purpose || ''}>{r.purpose || '—'}</span>) },
+    { kunci: 'butuh', label: 'Tanggal butuh', isi: (r) => <span className="whitespace-nowrap">{fmtDate(r.needed_by)}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <Lencana peta={REQ_STATUS} status={r.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex items-center justify-end gap-1">
+        {aksiStatus(r)}
+        {r.status !== 'Pending' && (
+          <Button variant="ghost" size="icon-sm" onClick={()=>setDetail(r)} title="Lihat rincian"
+            aria-label={`Lihat rincian ${r.request_number}`} data-testid={`view-req-${r.id}`}>
+            <Eye />
+          </Button>
+        )}
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3 justify-between">
-        <div className="flex items-center gap-2">
-          <SmartNativeSelect value={statusFilter} onChange={e=>setStatusF(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm">
-            <option value="">Semua Status</option>
-            {['Pending','Approved','Rejected','Issued'].map(s=><option key={s} value={s}>{s}</option>)}
-          </SmartNativeSelect>
-          <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
-        </div>
-        <button onClick={()=>{setShow(true);setErr('');}} className="flex items-center gap-2 px-4 py-2 bg-primary text-foreground rounded-lg text-sm font-medium hover:brightness-110" data-testid="add-int-req-btn">
-          <Plus className="w-4 h-4" /> Buat Request
-        </button>
-      </div>
+    <PageLayout title={title} subtitle={subtitle} testId="acc-internal-tab"
+      actions={<Button onClick={()=>{setShow(true);setFormErr('');}} data-testid="add-int-req-btn"><Plus /> Buat permintaan</Button>}
+      filters={
+        <FilterChips value={statusFilter} onChange={setStatusF} hideWhenEmpty={false} testId="acc-req-status"
+          options={[{ key: '', label: 'Semua' }, ...['Pending','Approved','Rejected','Issued'].map(s => ({ key: s, label: REQ_STATUS[s].label }))]} />
+      }
+      tools={<>
+        <TombolUnduh namaBerkas="permintaan-internal-aksesoris" namaLembar="Permintaan internal" baris={requests}
+          testId="acc-req-unduh"
+          kolom={[
+            { label: 'No. permintaan', nilai: (r) => r.request_number },
+            { label: 'Divisi', nilai: (r) => r.divisi || '' },
+            { label: 'Pemohon', nilai: (r) => r.requester_name || '' },
+            { label: 'Keperluan', nilai: (r) => r.purpose || '' },
+            { label: 'Tanggal butuh', nilai: (r) => (r.needed_by ? fmtDate(r.needed_by) : '') },
+            { label: 'Status', nilai: (r) => (REQ_STATUS[r.status] || {}).label || r.status },
+            { label: 'Item', nilai: (r) => (r.items || []).map(it => `${it.acc_name || it.acc_code} ${it.qty_requested} ${it.unit}`).join('; ') },
+          ]} />
+        <TombolMuatUlang onClick={load} memuat={loading} />
+      </>}
+      footer={requestsPg.total > 0 && <PaginationLite page={requestsPg.page} totalPages={requestsPg.totalPages} total={requestsPg.total} pageSize={requestsPg.pageSize} onPageChange={requestsPg.setPage} />}>
+      {err && <Notice tone="danger" testId="acc-req-error">{err}</Notice>}
+      {msg && <Notice tone="success" testId="acc-req-msg">{msg}</Notice>}
 
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2" data-testid="acc-req-error">{err}</div>}
-      {msg && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2"
-          data-testid="acc-req-msg">{msg}</div>
+      {loading && requests.length === 0 ? <Memuat teks="Memuat permintaan…" /> : (
+        <TabelData kolom={kolom} baris={requestsPg.paged} onKlikBaris={setDetail} testId="acc-req-table"
+          kosong={<EmptyState icon={FileText} title="Belum ada permintaan internal" description="Permintaan dari divisi akan muncul di sini." />} />
       )}
 
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[650px]">
-          <thead className="bg-[var(--glass-bg)] border-b border-border">
-            <tr>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">No. Request</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Divisi</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Pemohon</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Keperluan</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Tgl Butuh</th>
-              <th className="text-center px-4 py-3 text-muted-foreground font-medium">Status</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i}>{[...Array(7)].map((__, j) => <td key={j} className="px-3 py-2.5"><Skeleton className="h-4" /></td>)}</tr>
-            )) : requests.length === 0 ? <tr><td colSpan="7"><EmptyState icon={FileText} title="Belum ada request internal" description="Request dari divisi akan muncul di sini." /></td></tr>
-            : requestsPg.paged.map(r => (
-              <tr key={r.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`req-row-${r.id}`}>
-                <td className="px-4 py-3 font-mono text-xs">{r.request_number}</td>
-                <td className="px-4 py-3">{r.divisi}</td>
-                <td className="px-4 py-3 text-muted-foreground">{r.requester_name}</td>
-                <td className="px-4 py-3 text-muted-foreground max-w-xs truncate">{r.purpose || '-'}</td>
-                <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(r.needed_by)}</td>
-                <td className="px-4 py-3 text-center"><Badge status={r.status} /></td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1">
-                    <button onClick={()=>setDetail(r)} className="p-1 hover:bg-foreground/5 rounded" title="Detail" data-testid={`view-req-${r.id}`}>
-                      <Eye className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                    {r.status === 'Pending' && (
-                      <>
-                        <button onClick={()=>updateStatus(r.id,'Approved')} className="p-1 hover:bg-emerald-100 dark:bg-emerald-500/10 rounded" title="Setujui" data-testid={`approve-req-${r.id}`}>
-                          <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                        </button>
-                        <button onClick={()=>updateStatus(r.id,'Rejected')} className="p-1 hover:bg-red-100 dark:bg-red-500/10 rounded" title="Tolak">
-                          <XCircle className="w-4 h-4 text-red-700 dark:text-red-400" />
-                        </button>
-                      </>
-                    )}
-                    {r.status === 'Approved' && (
-                      <button onClick={()=>updateStatus(r.id,'Issued')} className="p-1 hover:bg-sky-100 dark:bg-sky-500/10 rounded" title="Issue / Keluarkan" data-testid={`issue-req-${r.id}`}>
-                        <ArrowDownCircle className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {requestsPg.total > 0 && <PaginationLite page={requestsPg.page} totalPages={requestsPg.totalPages} total={requestsPg.total} pageSize={requestsPg.pageSize} onPageChange={requestsPg.setPage} />}
-
-      {/* Detail Panel */}
+      {/* Rincian permintaan (popup) */}
       {detail && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={()=>setDetail(null)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-lg p-6" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold">{detail.request_number}</h3>
-              <Badge status={detail.status} />
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
-              <div><span className="text-muted-foreground">Divisi:</span> <span className="font-medium ml-1">{detail.divisi}</span></div>
-              <div><span className="text-muted-foreground">Pemohon:</span> <span className="font-medium ml-1">{detail.requester_name}</span></div>
-              <div><span className="text-muted-foreground">Keperluan:</span> <span className="font-medium ml-1">{detail.purpose||'-'}</span></div>
-              <div><span className="text-muted-foreground">Tgl Butuh:</span> <span className="font-medium ml-1">{fmtDate(detail.needed_by)}</span></div>
-            </div>
-            <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Item yang diminta:</p>
-            <div className="space-y-1 mb-4">
+        <DetailPopup open onClose={()=>setDetail(null)} judul={detail.request_number} testId="acc-req-detail"
+          status={<Lencana peta={REQ_STATUS} status={detail.status} />}
+          aksi={aksiStatus(detail)}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Divisi">{detail.divisi || '—'}</BarisDetail>
+            <BarisDetail label="Pemohon">{detail.requester_name || '—'}</BarisDetail>
+            <BarisDetail label="Keperluan">{detail.purpose || '—'}</BarisDetail>
+            <BarisDetail label="Tanggal butuh">{fmtDate(detail.needed_by)}</BarisDetail>
+            {detail.admin_notes && <BarisDetail label="Catatan admin">{detail.admin_notes}</BarisDetail>}
+          </dl>
+          <div>
+            <p className="mb-2 text-sm font-medium">Item yang diminta</p>
+            <dl className="divide-y divide-[var(--glass-border)]">
               {(detail.items||[]).map((it,i)=>(
-                <div key={i} className="flex items-center justify-between text-sm bg-foreground/[0.03] rounded-lg px-3 py-2">
-                  <span>{it.acc_name || it.acc_code || (items.find(a => a.id === it.acc_id) || {}).name || 'Aksesoris tanpa nama'}</span>
-                  <span className="font-medium">{it.qty_requested} {it.unit}</span>
-                </div>
+                <BarisDetail key={i} label={it.acc_name || it.acc_code || (items.find(a => a.id === it.acc_id) || {}).name || 'Aksesoris tanpa nama'}>
+                  <span className="tabular-nums">{it.qty_requested} {it.unit}</span>
+                </BarisDetail>
               ))}
-            </div>
-            {detail.admin_notes && <p className="text-xs text-muted-foreground">Catatan admin: {detail.admin_notes}</p>}
-            <button onClick={()=>setDetail(null)} className="mt-4 w-full py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Tutup</button>
+            </dl>
           </div>
-        </div>
+        </DetailPopup>
       )}
 
-      {/* Create Form Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={()=>setShow(false)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-4">Buat Request Internal</h3>
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Divisi *</label>
-                  <SmartNativeSelect value={form.divisi} onChange={e=>setForm({...form,divisi:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="req-divisi">
-                    <option value="">Pilih...</option>
-                    {divisions.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
-                  </SmartNativeSelect>
-                  {form.divisi && (
-                    <small className="block text-[11px] text-muted-foreground" data-testid="req-divisi-hint">
-                      {divisionHint(divisions, form.divisi)}
-                    </small>
-                  )}
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Pemohon *</label>
-                  <EmployeeSelect employees={employees} value={form.requester_employee_id}
-                    onChange={v => setForm(f => ({ ...f, requester_employee_id: v }))}
-                    placeholder="— pilih karyawan —" testId="req-requester"
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Keperluan</label>
-                  <input value={form.purpose} onChange={e=>setForm({...form,purpose:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Untuk apa..." />
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Dibutuhkan Tgl</label>
-                  <input type="date" value={form.needed_by} onChange={e=>setForm({...form,needed_by:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Item yang Diminta</label>
-                  <button onClick={addLine} className="text-xs text-primary flex items-center gap-1 hover:underline"><Plus className="w-3 h-3" /> Tambah</button>
-                </div>
-                {lines.map((ln,i) => (
-                  <div key={i} className="flex items-center gap-2 mb-2">
-                    <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="flex-1 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" data-testid={`req-item-${i}`}>
-                      <option value="">Pilih item...</option>
-                      {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
-                    </SmartNativeSelect>
-                    <input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)}
-                      className="w-16 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Qty" />
-                    <span className="text-xs text-muted-foreground w-8">{ln.unit}</span>
-                    {lines.length > 1 && <button onClick={()=>removeLine(i)}><X className="w-4 h-4 text-muted-foreground hover:text-red-700 dark:text-red-400" /></button>}
-                  </div>
-                ))}
-              </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
-
-              <DocNumberField
-                policy={numPolicy} value={reqCode} onChange={setReqCode}
-                testId="int-req-docnum" label="Nomor Permintaan" />
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={()=>setShow(false)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={submit} disabled={saving} className="flex-1 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="submit-int-req-btn">
-                {saving ? 'Mengirim...' : 'Kirim Request'}
-              </button>
-            </div>
-          </div>
+      {/* Form permintaan internal (popup panjang) */}
+      <FormPopup open={showForm} onClose={()=>setShow(false)} ukuran="panjang" onSimpan={submit} menyimpan={saving}
+        galat={formErr} judul="Buat permintaan internal" labelSimpan="Kirim permintaan" testId="acc-req-form">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Divisi" wajib>
+            <SmartNativeSelect value={form.divisi} onChange={e=>setForm({...form,divisi:e.target.value})} className="w-full" data-testid="req-divisi">
+              <option value="">Pilih...</option>
+              {divisions.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+            </SmartNativeSelect>
+            {form.divisi && (
+              <p className="text-xs text-muted-foreground" data-testid="req-divisi-hint">
+                {divisionHint(divisions, form.divisi)}
+              </p>
+            )}
+          </Isian>
+          <Isian label="Pemohon" wajib>
+            <EmployeeSelect employees={employees} value={form.requester_employee_id}
+              onChange={v => setForm(f => ({ ...f, requester_employee_id: v }))}
+              placeholder="— pilih karyawan —" testId="req-requester" className="w-full" />
+          </Isian>
+          <Isian label="Keperluan" htmlFor="req-keperluan">
+            <Input id="req-keperluan" value={form.purpose} onChange={e=>setForm({...form,purpose:e.target.value})} placeholder="Untuk apa..." />
+          </Isian>
+          <Isian label="Dibutuhkan tanggal">
+            <DatePicker value={form.needed_by} onChange={v=>setForm(f => ({ ...f, needed_by: v }))} testId="req-needed-by" />
+          </Isian>
         </div>
-      )}
-    </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">Item yang diminta</p>
+            <Button type="button" variant="link" size="sm" className="px-0" onClick={addLine}><Plus /> Tambah item</Button>
+          </div>
+          {lines.map((ln,i) => (
+            <div key={i} className="flex items-center gap-2">
+              <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="w-full" wrapperClassName="min-w-0 flex-1 sm:max-w-[26rem]" data-testid={`req-item-${i}`}>
+                <option value="">Pilih item...</option>
+                {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
+              </SmartNativeSelect>
+              <Input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)}
+                className="w-20" placeholder="Qty" aria-label="Jumlah" />
+              <span className="w-10 text-sm text-muted-foreground">{ln.unit}</span>
+              {lines.length > 1 && (
+                <Button type="button" variant="ghost" size="icon-sm" onClick={()=>removeLine(i)} title="Hapus baris" aria-label="Hapus baris">
+                  <X />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <DocNumberField
+          policy={numPolicy} value={reqCode} onChange={setReqCode}
+          testId="int-req-docnum" label="Nomor Permintaan" />
+      </FormPopup>
+    </PageLayout>
   );
 }
 
@@ -1001,37 +916,18 @@ function StokOpnameTab({ token }) {
 // buntu: user diarahkan ke tempat yang benar, bukan melihat layar kosong/500.
 function LegacyLoanRedirect({ onNavigate, onBack }) {
   return (
-    <div className="max-w-2xl mx-auto text-center py-10 space-y-4" data-testid="acc-loans-moved">
-      <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-amber-100 dark:bg-amber-500/10">
-        <RotateCcw className="w-7 h-7 text-amber-700 dark:text-amber-400" />
-      </div>
-      <h3 className="text-lg font-bold">Peminjaman pindah ke Manajemen Aset</h3>
-      <p className="text-sm text-muted-foreground">
-        Yang dipinjam-kembalikan adalah <strong>unit aset ber-nomor</strong> (mesin, alat,
-        gunting, dsb), bukan stok aksesoris habis pakai. Karena itu seluruh peminjaman kini
-        dicatat di <strong>Manajemen Aset → Peminjaman Alat</strong>, lengkap dengan jadwal
-        kembali dan riwayat kondisi barang.
-      </p>
-      <p className="text-xs text-muted-foreground">
-        Data pinjaman aksesoris lama sudah ditutup dan stoknya dikembalikan ke gudang
-        (migrasi FASE 10). Aksesoris habis pakai tetap lewat jalur
-        <strong> Request Internal → Persetujuan → Serahkan</strong>.
-      </p>
-      <div className="flex items-center justify-center gap-3 pt-2">
-        <button onClick={onBack}
-          className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5"
-          data-testid="acc-loans-back">
-          Kembali ke Master &amp; Stok
-        </button>
-        {onNavigate && (
-          <button onClick={() => onNavigate('asset-loans')}
-            className="px-4 py-2 rounded-lg text-sm font-medium bg-amber-500 text-white hover:brightness-110"
-            data-testid="acc-loans-open-asset-loans">
-            Buka Peminjaman Alat →
-          </button>
-        )}
-      </div>
-    </div>
+    <EmptyState icon={RotateCcw} testId="acc-loans-moved" title="Peminjaman pindah ke Manajemen Aset"
+      description="Yang dipinjam-kembalikan adalah unit aset bernomor (mesin, alat, gunting), bukan stok aksesoris habis pakai. Peminjaman kini dicatat di Manajemen Aset › Peminjaman Alat; data pinjaman aksesoris lama sudah ditutup dan stoknya dikembalikan. Aksesoris habis pakai tetap lewat Permintaan internal › Persetujuan › Serahkan."
+      action={
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Button variant="outline" onClick={onBack} data-testid="acc-loans-back">Kembali ke Master & stok</Button>
+          {onNavigate && (
+            <Button onClick={() => onNavigate('asset-loans')} data-testid="acc-loans-open-asset-loans">
+              Buka Peminjaman Alat
+            </Button>
+          )}
+        </div>
+      } />
   );
 }
 
@@ -1043,7 +939,7 @@ const PR_STATUS_LABEL = {
   Received: 'Diterima (lama)', Cancelled: 'Dibatalkan',
 };
 
-function PurchaseRequestTab({ token, items }) {
+function PurchaseRequestTab({ token, items, title, subtitle, ringkasan }) {
   const [prs, setPRs]         = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShow]   = useState(false);
@@ -1052,6 +948,7 @@ function PurchaseRequestTab({ token, items }) {
   const [filter, setFilter]   = useState('');
   const [saving, setSaving]   = useState(false);
   const [err, setErr]         = useState('');
+  const [formErr, setFormErr] = useState('');
   // SESI #27 — nomor PR aksesoris mengikuti kebijakan Otomatis/Manual milik owner.
   const numPolicy = useDocNumberPolicy('acc_purchase_requests.pr_number', token);
   const [prNumber, setPrNumber] = useState('');
@@ -1080,8 +977,8 @@ function PurchaseRequestTab({ token, items }) {
 
   const submit = async () => {
     const validLines = lines.filter(l=>l.acc_id && l.qty_requested>0);
-    if (!validLines.length) { setErr('Minimal 1 item'); return; }
-    setSaving(true); setErr('');
+    if (!validLines.length) { setFormErr('Minimal 1 item'); return; }
+    setSaving(true); setFormErr('');
     try {
       await api('POST', '/api/acc/purchase-requests', token,
                 { ...form, items: validLines,
@@ -1089,7 +986,7 @@ function PurchaseRequestTab({ token, items }) {
       setShow(false); setLines([{acc_id:'',qty_requested:1,unit:'pcs',estimated_price:0,notes:''}]);
       setForm({ priority:'Normal', purpose:'', supplier:'', supplier_id:'', notes:'', items:[] });
       load();
-    } catch(e) { setErr(e.message); }
+    } catch(e) { setFormErr(e.message); }
     finally { setSaving(false); }
   };
 
@@ -1113,11 +1010,16 @@ function PurchaseRequestTab({ token, items }) {
     catch(e) { setErr(e.message); }
   };
 
+  // Alasan penolakan lewat dialog aplikasi (dulu window.prompt bawaan peramban).
   const doReject = async (pr) => {
-    const reason = window.prompt(
-      `Alasan menolak ${pr.pr_number}? (wajib diisi agar pemohon tahu apa yang harus diperbaiki)`);
-    if (reason === null) return;
-    if (!reason.trim()) { setErr('Alasan penolakan wajib diisi.'); return; }
+    const reason = await confirmDialog({
+      title: `Tolak ${pr.pr_number}?`,
+      body: 'Alasan wajib diisi agar pemohon tahu apa yang harus diperbaiki.',
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan', placeholder: 'Mis. jumlah melebihi kebutuhan bulan ini' },
+    });
+    if (reason === false || reason === null) return;
+    if (!String(reason).trim()) { setErr('Alasan penolakan wajib diisi.'); return; }
     await act(pr.id, 'reject', { reason });
   };
 
@@ -1126,169 +1028,150 @@ function PurchaseRequestTab({ token, items }) {
 
   const totalEst = lines.reduce((s,l)=>s + (parseFloat(l.qty_requested)||0)*(parseFloat(l.estimated_price)||0), 0);
 
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3 justify-between">
-        <div className="flex items-center gap-2">
-          <SmartNativeSelect value={filter} onChange={e=>setFilter(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm">
-            <option value="">Semua Status</option>
-            {['Draft','Forwarded','Submitted','Approved','Rejected','Ordered','Received'].map(s=><option key={s} value={s}>{PR_STATUS_LABEL[s] || s}</option>)}
-          </SmartNativeSelect>
-          <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
-        </div>
-        <button onClick={()=>{setShow(true);setErr('');}} className="flex items-center gap-2 px-4 py-2 bg-primary text-foreground rounded-lg text-sm font-medium hover:brightness-110" data-testid="add-pr-btn">
-          <Plus className="w-4 h-4" /> Buat Purchase Request
-        </button>
-      </div>
-
-      {/* 2026-11-06 (Tahap 2): alur pembelian aksesoris = alur Pengadaan */}
-      <p className="text-xs text-muted-foreground" data-testid="pr-flow-help">
-        PR yang diajukan diteruskan ke Permintaan Pengadaan dan disetujui di sana. Barang masuk stok lewat PO
-        dan Penerimaan Barang, sehingga nilai persediaan dan jurnalnya tercatat.
-      </p>
-
-      {prMsg && (
-        <div className="text-sm text-[hsl(var(--success))] bg-[hsl(var(--success)/0.12)] rounded-lg px-4 py-2" data-testid="pr-msg">{prMsg}</div>
-      )}
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
-
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[700px]">
-          <thead className="bg-[var(--glass-bg)] border-b border-border">
-            <tr>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">No. PR</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Keperluan</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Supplier</th>
-              <th className="text-center px-4 py-3 text-muted-foreground font-medium">Prioritas</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Est. Total</th>
-              <th className="text-center px-4 py-3 text-muted-foreground font-medium">Status</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? Array.from({ length: 5 }).map((_, i) => (
-              <tr key={i}>{[...Array(7)].map((__, j) => <td key={j} className="px-3 py-2.5"><Skeleton className="h-4" /></td>)}</tr>
-            )) : prs.length === 0 ? <tr><td colSpan="7"><EmptyState icon={ShoppingCart} title="Belum ada purchase request" description="Buat PR baru untuk mengajukan pengadaan aksesoris ke Finance." /></td></tr>
-            : prs.map(pr => (
-              <tr key={pr.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`pr-row-${pr.id}`}>
-                <td className="px-4 py-3 font-mono text-xs">{pr.pr_number}</td>
-                <td className="px-4 py-3 max-w-xs truncate">{pr.purpose||'-'}</td>
-                <td className="px-4 py-3 text-muted-foreground">{pr.supplier||'-'}</td>
-                <td className="px-4 py-3 text-center">
-                  <span className={`px-2 py-0.5 rounded-full text-xs ${pr.priority==='Urgent'?'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400':pr.priority==='Low'?'bg-muted dark:bg-slate-500/10 text-muted-foreground':'bg-sky-100 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400'}`}>
-                    {PR_PRIORITY_LABEL[pr.priority] || pr.priority}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right font-medium">Rp {fmtNum(pr.total_estimated)}</td>
-                <td className="px-4 py-3 text-center">
-                  <Badge status={pr.status} label={PR_STATUS_LABEL[pr.status]} />
-                  {pr.procurement && (
-                    <div className="mt-1 text-[10px] text-muted-foreground leading-snug" data-testid={`pr-proc-${pr.id}`}>
-                      <div className="tabular-nums">{pr.procurement.pr_number} · {pr.procurement.pr_status_label}</div>
-                      {pr.procurement.po_number && (
-                        <div className="tabular-nums">PO {pr.procurement.po_number}{pr.procurement.receive_label ? ` · ${pr.procurement.receive_label}` : ''}</div>
-                      )}
-                    </div>
-                  )}
-                  {pr.status === 'Submitted' && pr.stage_label && (
-                    <div className="mt-1 text-[10px] text-muted-foreground" data-testid={`pr-stage-${pr.id}`}>
-                      {pr.stage_label}{pr.total_stages ? ` (${pr.stage_order}/${pr.total_stages})` : ''}
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-end gap-1">
-                    {(pr.status === 'Draft' || pr.status === 'Forwarded') && pr.can_submit && (
-                      <button onClick={()=>act(pr.id,'submit')} className="px-2 py-1 bg-sky-600/10 text-sky-600 dark:text-sky-400 rounded text-xs hover:bg-sky-600/20" data-testid={`submit-pr-${pr.id}`}>Ajukan</button>
-                    )}
-                    {pr.status === 'Submitted' && pr.can_approve && (
-                      <>
-                        <button onClick={()=>act(pr.id,'approve')} className="px-2 py-1 bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 rounded text-xs hover:bg-emerald-600/20" data-testid={`approve-pr-${pr.id}`} title={pr.stage_label ? `Setujui — ${pr.stage_label}` : 'Setujui'}>Setujui</button>
-                        <button onClick={()=>doReject(pr)} className="px-2 py-1 bg-red-600/10 text-red-700 dark:text-red-400 rounded text-xs hover:bg-red-600/20" data-testid={`reject-pr-${pr.id}`}>Tolak</button>
-                      </>
-                    )}
-                    {pr.status === 'Submitted' && !pr.can_approve && (
-                      <span className="max-w-[260px] text-[10px] leading-snug text-muted-foreground text-right" data-testid={`pr-blocked-${pr.id}`}>
-                        {pr.blocked_reason || 'Menunggu approver yang berhak.'}
-                      </span>
-                    )}
-                    {/* 2026-11-06 (Tahap 2): PR lama yang sudah disetujui/dipesan diteruskan ke Pengadaan
-                        supaya dibuatkan PO dan diterima lewat Penerimaan Barang (bernilai & berjurnal). */}
-                    {(pr.status === 'Approved' || pr.status === 'Ordered') && (
-                      <Button size="sm" variant="outline" onClick={()=>act(pr.id,'forward')} data-testid={`forward-pr-${pr.id}`}>
-                        Teruskan ke Pengadaan
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Create PR Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={()=>setShow(false)}>
-          <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-xl p-6 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-4">Buat Purchase Request</h3>
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Prioritas</label>
-                  <SmartNativeSelect value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="pr-priority">
-                    {['Urgent','Normal','Low'].map(p=><option key={p} value={p}>{PR_PRIORITY_LABEL[p]}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Supplier usulan</label>
-                  <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="pr-supplier" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Keperluan / Alasan</label>
-                <input value={form.purpose} onChange={e=>setForm({...form,purpose:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Stok habis, urgent untuk order WO-XXX..." data-testid="pr-purpose" />
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Item yang Dipesan</label>
-                  <button onClick={addLine} className="text-xs text-primary flex items-center gap-1 hover:underline"><Plus className="w-3 h-3" />Tambah</button>
-                </div>
-                {lines.map((ln,i)=>(
-                  <div key={i} className="flex items-center gap-2 mb-2">
-                    <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="flex-1 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" data-testid={`pr-item-${i}`}>
-                      <option value="">Pilih item...</option>
-                      {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
-                    </SmartNativeSelect>
-                    <input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)} className="w-14 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Qty" />
-                    <span className="text-xs text-muted-foreground">{ln.unit}</span>
-                    <MoneyInput unstyled value={ln.estimated_price} onChange={e=>updateLine(i,'estimated_price',+e.target.value)} className="w-24 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Harga Est." />
-                    {lines.length>1 && <button onClick={()=>removeLine(i)}><X className="w-4 h-4 text-muted-foreground" /></button>}
-                  </div>
-                ))}
-                <div className="text-right text-sm font-medium text-primary mt-1">Est. Total: Rp {fmtNum(totalEst)}</div>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-                <textarea value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none" />
-              </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
-
-              <DocNumberField
-                policy={numPolicy} value={prNumber} onChange={setPrNumber}
-                testId="pr-docnum" label="Nomor Permintaan Beli" />
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button onClick={()=>setShow(false)} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={submit} disabled={saving} className="flex-1 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="save-pr-btn">
-                {saving?'Menyimpan...':'Simpan Draft'}
-              </button>
-            </div>
+  const kolom = [
+    { kunci: 'no', label: 'No. PR', hp: 'judul', isi: (pr) => <span className="font-medium tabular-nums">{pr.pr_number}</span> },
+    { kunci: 'keperluan', label: 'Keperluan', hp: 'keterangan', isi: (pr) => (
+      <span className="block max-w-xs truncate" title={pr.purpose || ''}>{pr.purpose || '—'}</span>) },
+    { kunci: 'supplier', label: 'Supplier', isi: (pr) => <span className="text-muted-foreground">{pr.supplier || '—'}</span> },
+    { kunci: 'prioritas', label: 'Prioritas', isi: (pr) => (
+      <StatusBadge status={pr.priority} label={PR_PRIORITY_LABEL[pr.priority] || pr.priority} tone={PR_PRIORITY_TONE[pr.priority] || 'muted'} />) },
+    { kunci: 'total', label: 'Perkiraan total', rata: 'kanan', isi: (pr) => <span className="font-medium tabular-nums">{fmtRp(pr.total_estimated)}</span> },
+    { kunci: 'status', label: 'Status', isi: (pr) => (
+      <div className="space-y-1">
+        <StatusBadge status={pr.status} label={PR_STATUS_LABEL[pr.status] || pr.status} tone={PR_STATUS_TONE[pr.status] || 'muted'} />
+        {pr.procurement && (
+          <div className="text-xs leading-snug text-muted-foreground" data-testid={`pr-proc-${pr.id}`}>
+            <div className="tabular-nums">{pr.procurement.pr_number} · {pr.procurement.pr_status_label}</div>
+            {pr.procurement.po_number && (
+              <div className="tabular-nums">PO {pr.procurement.po_number}{pr.procurement.receive_label ? ` · ${pr.procurement.receive_label}` : ''}</div>
+            )}
           </div>
-        </div>
+        )}
+        {pr.status === 'Submitted' && pr.stage_label && (
+          <div className="text-xs text-muted-foreground" data-testid={`pr-stage-${pr.id}`}>
+            {pr.stage_label}{pr.total_stages ? ` (${pr.stage_order}/${pr.total_stages})` : ''}
+          </div>
+        )}
+      </div>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (pr) => (
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        {(pr.status === 'Draft' || pr.status === 'Forwarded') && pr.can_submit && (
+          <Button size="sm" variant="outline" onClick={()=>act(pr.id,'submit')} data-testid={`submit-pr-${pr.id}`}>Ajukan</Button>
+        )}
+        {pr.status === 'Submitted' && pr.can_approve && (
+          <>
+            <Button size="sm" variant="success" onClick={()=>act(pr.id,'approve')} data-testid={`approve-pr-${pr.id}`}
+              title={pr.stage_label ? `Setujui — ${pr.stage_label}` : 'Setujui'}>Setujui</Button>
+            <Button size="sm" variant="destructive" onClick={()=>doReject(pr)} data-testid={`reject-pr-${pr.id}`}>Tolak</Button>
+          </>
+        )}
+        {pr.status === 'Submitted' && !pr.can_approve && (
+          <span className="max-w-[16rem] text-right text-xs leading-snug text-muted-foreground" data-testid={`pr-blocked-${pr.id}`}>
+            {pr.blocked_reason || 'Menunggu penyetuju yang berhak.'}
+          </span>
+        )}
+        {/* 2026-11-06 (Tahap 2): PR lama yang sudah disetujui/dipesan diteruskan ke Pengadaan
+            supaya dibuatkan PO dan diterima lewat Penerimaan Barang (bernilai & berjurnal). */}
+        {(pr.status === 'Approved' || pr.status === 'Ordered') && (
+          <Button size="sm" variant="outline" onClick={()=>act(pr.id,'forward')} data-testid={`forward-pr-${pr.id}`}>
+            Teruskan ke Pengadaan
+          </Button>
+        )}
+      </div>) },
+  ];
+
+  return (
+    <PageLayout title={title} subtitle={subtitle} testId="acc-pr-tab"
+      actions={<Button onClick={()=>{setShow(true);setFormErr('');}} data-testid="add-pr-btn"><Plus /> Buat permintaan beli</Button>}
+      filters={
+        <SmartNativeSelect value={filter} onChange={e=>setFilter(e.target.value)} className="w-56" data-testid="pr-status-filter">
+          <option value="">Semua status</option>
+          {['Draft','Forwarded','Submitted','Approved','Rejected','Ordered','Received'].map(s=><option key={s} value={s}>{PR_STATUS_LABEL[s] || s}</option>)}
+        </SmartNativeSelect>
+      }
+      tools={<>
+        <TombolUnduh namaBerkas="permintaan-beli-aksesoris" namaLembar="Permintaan beli" baris={prs} testId="pr-unduh"
+          kolom={[
+            { label: 'No. PR', nilai: (pr) => pr.pr_number },
+            { label: 'Keperluan', nilai: (pr) => pr.purpose || '' },
+            { label: 'Supplier', nilai: (pr) => pr.supplier || '' },
+            { label: 'Prioritas', nilai: (pr) => PR_PRIORITY_LABEL[pr.priority] || pr.priority || '' },
+            { label: 'Perkiraan total (Rp)', nilai: (pr) => Number(pr.total_estimated || 0) },
+            { label: 'Status', nilai: (pr) => PR_STATUS_LABEL[pr.status] || pr.status },
+            { label: 'Permintaan pengadaan', nilai: (pr) => (pr.procurement ? `${pr.procurement.pr_number} · ${pr.procurement.pr_status_label || ''}` : '') },
+            { label: 'PO', nilai: (pr) => pr.procurement?.po_number || '' },
+          ]} />
+        <TombolMuatUlang onClick={load} memuat={loading} />
+      </>}
+      summary={<>
+        {ringkasan}
+        {/* 2026-11-06 (Tahap 2): alur pembelian aksesoris = alur Pengadaan */}
+        <p className="text-sm text-muted-foreground" data-testid="pr-flow-help">
+          PR yang diajukan diteruskan ke Permintaan Pengadaan dan disetujui di sana. Barang masuk stok lewat PO
+          dan Penerimaan Barang, sehingga nilai persediaan dan jurnalnya tercatat.
+        </p>
+      </>}>
+      {prMsg && <Notice tone="success" testId="pr-msg">{prMsg}</Notice>}
+      {err && <Notice tone="danger">{err}</Notice>}
+
+      {loading && prs.length === 0 ? <Memuat teks="Memuat permintaan beli…" /> : (
+        <TabelData kolom={kolom} baris={prs} testId="acc-pr-table"
+          kosong={<EmptyState icon={ShoppingCart} title="Belum ada permintaan beli aksesoris"
+            description="Buat permintaan beli untuk mengajukan pembelian aksesoris lewat Pengadaan." />} />
       )}
-    </div>
+
+      {/* Form permintaan beli (popup panjang) */}
+      <FormPopup open={showForm} onClose={()=>setShow(false)} ukuran="panjang" onSimpan={submit} menyimpan={saving}
+        galat={formErr} judul="Buat permintaan beli aksesoris" labelSimpan="Simpan draf" testId="acc-pr-form">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Prioritas">
+            <SmartNativeSelect value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} className="w-full" data-testid="pr-priority">
+              {['Urgent','Normal','Low'].map(p=><option key={p} value={p}>{PR_PRIORITY_LABEL[p]}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Supplier usulan">
+            <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
+              className="w-full" data-testid="pr-supplier" />
+          </Isian>
+        </div>
+        <Isian label="Keperluan / alasan" htmlFor="pr-keperluan">
+          <Input id="pr-keperluan" value={form.purpose} onChange={e=>setForm({...form,purpose:e.target.value})}
+            placeholder="Stok habis, mendesak untuk order WO-XXX..." data-testid="pr-purpose" />
+        </Isian>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium">Item yang dipesan</p>
+            <Button type="button" variant="link" size="sm" className="px-0" onClick={addLine}><Plus /> Tambah item</Button>
+          </div>
+          {lines.map((ln,i)=>(
+            <div key={i} className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+              <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="w-full" wrapperClassName="w-full min-w-0 sm:w-auto sm:flex-1 sm:max-w-[22rem]" data-testid={`pr-item-${i}`}>
+                <option value="">Pilih item...</option>
+                {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
+              </SmartNativeSelect>
+              <Input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)}
+                className="w-20" placeholder="Qty" aria-label="Jumlah" />
+              <span className="text-sm text-muted-foreground">{ln.unit}</span>
+              <MoneyInput value={ln.estimated_price} onChange={e=>updateLine(i,'estimated_price',+e.target.value)}
+                className="w-32" placeholder="Perkiraan harga" aria-label="Perkiraan harga satuan" />
+              {lines.length>1 && (
+                <Button type="button" variant="ghost" size="icon-sm" onClick={()=>removeLine(i)} title="Hapus baris" aria-label="Hapus baris">
+                  <X />
+                </Button>
+              )}
+            </div>
+          ))}
+          <p className="text-right text-sm font-medium text-[hsl(var(--primary))]">Perkiraan total: {fmtRp(totalEst)}</p>
+        </div>
+        <Isian label="Catatan" htmlFor="pr-catatan">
+          <Textarea id="pr-catatan" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} rows={2} />
+        </Isian>
+
+        <DocNumberField
+          policy={numPolicy} value={prNumber} onChange={setPrNumber}
+          testId="pr-docnum" label="Nomor Permintaan Beli" />
+      </FormPopup>
+    </PageLayout>
   );
 }
 
@@ -1329,102 +1212,109 @@ export default function AccessoryModule({
 
   useEffect(() => { loadDash(); loadItems(); }, [loadDash, loadItems]);
 
+  const refreshAll = () => { loadDash(); loadItems(); };
+  // Judul = label menu yang membuka modul ini (Standar UI/UX v2: judul halaman = label menu).
+  const JUDUL_MENU = { master: 'Master Aksesoris', opname: 'Stok Opname', internal: 'Request Internal' };
+  const judul = headerTitle || JUDUL_MENU[defaultTab] || 'Manajemen Aksesoris';
+  const sub = headerSubtitle || 'Master, stok, permintaan internal, permintaan beli, dan valuasi aksesoris produksi.';
+
   // FASE 10 — tab "Peminjaman" DILEPAS. Peminjaman alat/aset sudah pindah ke
   // Manajemen Aset → Peminjaman Alat sejak ACC-3; tab ini hanya membaca koleksi
   // legacy `acc_loans` yang kini sudah ditutup & di-drop. Deep-link lama
-  // (`?tab=pinjam`) tetap ditangani: lihat `LEGACY_TAB_REDIRECT` di bawah.
+  // (`?tab=pinjam`) tetap ditangani: lihat LegacyLoanRedirect di bawah.
   const ALL_TABS = [
-    { id:'master',   label:'Master & Stok',     icon: Package },
-    { id:'internal', label:'Request Internal',  icon: FileText },
-    { id:'opname',   label:'Stok Opname',       icon: ClipboardCheck },
-    { id:'pr',       label:'Purchase Request',  icon: ShoppingCart },
-    { id:'valuasi',  label:'Valuasi HPP',       icon: Banknote },
+    { id:'master',   label:'Master & stok',       Component: MasterTab,
+      props: { token, onRefreshDash: refreshAll, title: judul, subtitle: sub } },
+    { id:'internal', label:'Permintaan internal', Component: RequestInternalTab,
+      props: { token, items, title: judul, subtitle: sub } },
+    { id:'opname',   label:'Stok opname',         Component: StokOpnameTab, props: { token } },
+    { id:'pr',       label:'Permintaan beli',     Component: PurchaseRequestTab,
+      props: { token, items, title: judul, subtitle: sub } },
+    { id:'valuasi',  label:'Valuasi HPP',         Component: AccessoryValuationTab,
+      props: { token, onRefreshDash: refreshAll } },
   ];
   const TABS = Array.isArray(allowedTabs) && allowedTabs.length
     ? ALL_TABS.filter(t => allowedTabs.includes(t.id))
     : ALL_TABS;
   const scoped = TABS.length !== ALL_TABS.length;
+  // "Buka Valuasi HPP" dari form Master hanya bila tab Valuasi ada di pintu ini
+  const masterTab = TABS.find(t => t.id === 'master');
+  if (masterTab) masterTab.props.onOpenValuation = TABS.some(t => t.id === 'valuasi') ? () => setTab('valuasi') : null;
+
+  // Stok habis / menipis — di pintu pengadaan justru pemicu pembelian. Dulu hanya item "menipis"
+  // (maks 5) yang tampil; item yang stoknya HABIS tidak disebut sama sekali (data uji: 324 dari 324 habis).
+  const habis = Number(dash?.out_of_stock || 0);
+  const menipis = Number(dash?.low_stock || 0);
+  const daftarMenipis = dash?.low_stock_items || [];
+  const peringatanStok = dash && (habis > 0 || menipis > 0) && (
+    <Notice tone="warning" icon={AlertTriangle} testId="acc-low-stock-alert"
+      title={`${fmtNum(habis)} aksesoris stok habis · ${fmtNum(menipis)} stok menipis — perlu permintaan beli`}>
+      {daftarMenipis.length > 0 && (
+        <span>
+          Menipis: {daftarMenipis.map(it => `${it.name} ${fmtNum(it.stock_qty)}/${fmtNum(it.min_stock)} ${it.unit}`).join(' · ')}
+          {menipis > daftarMenipis.length ? ` · dan ${fmtNum(menipis - daftarMenipis.length)} lainnya` : ''}.
+        </span>
+      )}
+    </Notice>
+  );
+
+  // Pintu satu tab (mis. Portal Pengadaan › Request Aksesoris): tab dirender langsung sebagai halaman.
+  if (TABS.length < 2) {
+    const t = TABS[0];
+    if (!t) return null;
+    return <t.Component {...t.props} ringkasan={peringatanStok} />;
+  }
+
+  // Ringkasan modul = satu kalimat (dulu 4 kartu di atas tab; di tab Valuasi HPP jadi dua baris kartu
+  // sehingga tabel baru mulai di tengah layar). Angka & sumbernya tetap sama (`/api/acc/dashboard`).
+  const ringkasan = dash && !scoped && (
+    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted-foreground" data-testid="acc-summary">
+      <span title="Aksesoris aktif yang stoknya 0 atau kurang.">
+        Stok habis <b className={habis ? 'tabular-nums text-[hsl(var(--danger-text))]' : 'tabular-nums text-foreground'}>{fmtNum(habis)}</b>
+        {' '}dari {fmtNum(dash.total_items)} item aktif
+      </span>
+      <span aria-hidden="true">·</span>
+      <span title="Masih ada, tetapi di bawah stok minimum.">
+        Stok menipis <b className={menipis ? 'tabular-nums text-[hsl(var(--warning-text))]' : 'tabular-nums text-foreground'}>{fmtNum(menipis)}</b>
+      </span>
+      <span aria-hidden="true">·</span>
+      {/* FASE 8 — KPI valuasi menggantikan kartu "Dipinjam" (peminjaman pindah ke Portal Aset sejak ACC-3) */}
+      <span>
+        Nilai persediaan <b className="tabular-nums text-foreground">{fmtRp(dash.total_stock_value)}</b>
+        {dash.unvalued_items
+          ? <span className="text-[hsl(var(--warning-text))]"> ({fmtNum(dash.unvalued_items)} item belum punya HPP)</span>
+          : ' (semua item sudah punya HPP)'}
+      </span>
+      <span aria-hidden="true">·</span>
+      <span title="Permintaan aksesoris yang diajukan dan belum diputuskan (semua jenis, sama dengan Inbox Persetujuan).">
+        Permintaan menunggu <b className="tabular-nums text-foreground">{fmtNum(dash.pending_requests)}</b>
+        {' '}({fmtNum(dash.pending_pr)} permintaan beli berjalan)
+      </span>
+    </p>
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">{headerTitle || 'Manajemen Aksesoris'}</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          {headerSubtitle || 'Master, stok, request internal, purchase request, dan valuasi aksesoris produksi'}
-        </p>
-      </div>
-
-      {/* Dashboard Summary */}
-      {dash && !scoped && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {[
-            { label:'Total Item', val: dash.total_items, color:'violet', icon: Package },
-            { label:'Stok Habis', val: dash.out_of_stock, color:'red', icon: TrendingDown },
-            { label:'Stok Rendah', val: dash.low_stock, color:'amber', icon: AlertTriangle },
-            { label:'Request Pending', val: dash.pending_requests, color:'sky', icon: Clock },
-            // FASE 8 — KPI valuasi menggantikan kartu "Dipinjam" (sisa domain lama:
-            // peminjaman aksesoris sudah pindah ke Portal Aset sejak ACC-3, nilainya selalu 0).
-            { label:'Nilai Persediaan', val: fmtRp(dash.total_stock_value), color:'emerald', icon: Banknote },
-            { label:'Belum Dinilai', val: dash.unvalued_items ?? 0, color:'orange', icon: Info },
-            { label:'PR Pending', val: dash.pending_pr, color:'emerald', icon: ShoppingCart },
-          ].map(s=>(
-            <div key={s.label} className={`border rounded-xl p-3 ${tone(s.color).surface}`}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <s.icon className={`w-3.5 h-3.5 ${tone(s.color).text}`} />
-                <span className="text-xs text-muted-foreground">{s.label}</span>
-              </div>
-              <div className={`text-xl font-bold ${tone(s.color).text}`}>{s.val}</div>
-            </div>
-          ))}
-        </div>
+    <PageLayout testId="accessory-module" title={judul} subtitle={sub}
+      summary={(ringkasan || daftarMenipis.length > 0) && (
+        <>
+          {ringkasan}
+          {/* Daftar item menipis tetap tampil (pemicu pembelian); jumlah habis sudah ada di kartu. */}
+          {daftarMenipis.length > 0 && (
+            <Notice tone="warning" icon={AlertTriangle} testId="acc-low-stock-alert"
+              title={`${fmtNum(menipis)} aksesoris stok menipis — perlu permintaan beli`}>
+              {daftarMenipis.map(it => `${it.name} ${fmtNum(it.stock_qty)}/${fmtNum(it.min_stock)} ${it.unit}`).join(' · ')}
+              {menipis > daftarMenipis.length ? ` · dan ${fmtNum(menipis - daftarMenipis.length)} lainnya` : ''}.
+            </Notice>
+          )}
+        </>
+      )}>
+      {/* FASE 10 — tautan lama `?tab=pinjam` tidak boleh buntu: penunjuk arah ke tempat yang benar. */}
+      {tab === 'pinjam' ? (
+        <LegacyLoanRedirect onNavigate={onNavigate} onBack={() => setTab('master')} />
+      ) : (
+        <HubTabs hubId="acc-tabs" value={TABS.some(t => t.id === tab) ? tab : TABS[0].id} onValueChange={setTab}
+          tabs={TABS.map(t => ({ key: t.id, label: t.label, Component: t.Component, props: t.props }))} />
       )}
-
-      {/* Low Stock Alerts — tetap ditampilkan di pintu pengadaan: justru pemicu pembelian */}
-      {dash?.low_stock_items?.length > 0 && (
-        <div className="bg-amber-100 dark:bg-amber-500/5 border border-amber-300 dark:border-amber-500/20 rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-            <span className="text-sm font-medium text-amber-700 dark:text-amber-400">Stok Rendah — Perlu Purchase Request</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {dash.low_stock_items.map(it=>(
-              <span key={it.id} className="px-3 py-1 bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded-full text-xs">
-                {it.name}: {fmtNum(it.stock_qty)}/{fmtNum(it.min_stock)} {it.unit}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Tabs — disembunyikan bila pintu ini memang hanya punya satu tab */}
-      <div className={`flex items-center gap-1 border-b border-border overflow-x-auto pb-0 ${TABS.length < 2 ? 'hidden' : ''}`}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            data-testid={`acc-tab-${t.id}`}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap -mb-px ${
-              tab === t.id
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}>
-            <t.icon className="w-4 h-4" />
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
-      <div>
-        {tab === 'master'   && <MasterTab token={token} onRefreshDash={() => { loadDash(); loadItems(); }}
-          onOpenValuation={TABS.some(t => t.id === 'valuasi') ? () => setTab('valuasi') : null} />}
-        {tab === 'internal' && <RequestInternalTab token={token} items={items} />}
-        {tab === 'opname'   && <StokOpnameTab token={token} />}
-        {/* FASE 10 — tautan lama `?tab=pinjam` tidak boleh buntu: tampilkan penunjuk arah
-            (bukan halaman kosong) ke tempat yang benar. */}
-        {tab === 'pinjam'   && <LegacyLoanRedirect onNavigate={onNavigate} onBack={() => setTab('master')} />}
-        {tab === 'pr'       && <PurchaseRequestTab token={token} items={items} />}
-        {tab === 'valuasi'  && <AccessoryValuationTab token={token} onRefreshDash={() => { loadDash(); loadItems(); }} />}
-      </div>
-    </div>
+    </PageLayout>
   );
 }

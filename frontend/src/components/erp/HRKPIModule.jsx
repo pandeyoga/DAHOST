@@ -1,76 +1,116 @@
+/**
+ * KPI bulanan (Portal SDM › Manajemen Kinerja) — evaluasi operasional per periode:
+ * kinerja 60% · sikap 20% · absensi 20%. Review tahunan ada di tab "Penilaian tahunan".
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (di dalam hub: judul hub, bagian KPI jadi pil), daftar
+ * periode/soal/sasaran = tabel + unduh Excel/CSV (dulu kartu berulang), semua form = FormPopup, detail hasil =
+ * DetailPopup, konfirmasi = confirmDialog (dulu window.confirm), tanggal = DatePicker, warna token, bahasa
+ * Indonesia (Perform → kinerja, Attitude → sikap, Goals → sasaran, Publish → terbitkan).
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
-  Target, Users, ClipboardList, BarChart3, Settings, Plus, RefreshCw,
-  ChevronDown, ChevronRight, CheckCircle2, Clock, AlertCircle, Edit2,
-  Trash2, Eye, Send, FileText, TrendingUp, Award, UserCheck, X,
-  BookOpen, Save, Loader2, Download, Star, Flag, Activity, Trophy,
+  Award, BarChart3, CheckCircle2, ChevronDown, ClipboardList, Clock, Download, Edit2, Loader2, Plus, RefreshCw,
+  Save, Send, Trash2, X, AlertCircle, BookOpen,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, BarChart, Bar, Cell,
+  ResponsiveContainer, BarChart, Bar,
 } from 'recharts';
 import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { EmployeeSelect } from './hr/hrPickers';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import KPIGamificationTab from './KPIGamificationTab';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge as Lencana } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const kpi = (path, opts = {}) => fetch(`${API}/api/dewi/kpi${path}`, opts);
 
 const GRADE_CFG = {
-  A: { color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border-emerald-400 dark:border-emerald-500/30', label: 'Sangat Baik', raise: '10%' },
-  B: { color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-500/30', label: 'Baik', raise: '7%' },
-  C: { color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-400 dark:border-amber-500/30', label: 'Cukup', raise: '-' },
-  D: { color: 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-300 border-orange-400 dark:border-orange-500/30', label: 'Kurang', raise: '-' },
-  E: { color: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300 border-red-400 dark:border-red-500/30', label: 'Sangat Kurang', raise: '-' },
+  A: { tone: 'success', label: 'Sangat baik', raise: '10%' },
+  B: { tone: 'info', label: 'Baik', raise: '7%' },
+  C: { tone: 'warning', label: 'Cukup', raise: '-' },
+  D: { tone: 'warning', label: 'Kurang', raise: '-' },
+  E: { tone: 'danger', label: 'Sangat kurang', raise: '-' },
 };
 
 const STATUS_CFG = {
-  draft: { color: 'bg-muted dark:bg-slate-500/20 text-foreground/70', label: 'Draft' },
-  open: { color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300', label: 'Buka' },
-  closed: { color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300', label: 'Ditutup' },
-  finalized: { color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300', label: 'Final' },
+  draft: { tone: 'muted', label: 'Draf' },
+  open: { tone: 'success', label: 'Buka' },
+  closed: { tone: 'warning', label: 'Ditutup' },
+  finalized: { tone: 'info', label: 'Final' },
 };
 
 const EVAL_TYPE_CFG = {
-  self: { label: 'Self-Assessment', color: 'text-indigo-600 dark:text-indigo-400', weight: '20%' },
-  peer: { label: 'Peer Review', color: 'text-sky-600 dark:text-sky-400', weight: '20%' },
-  supervisor_to_staff: { label: 'Supervisor → Staff', color: 'text-amber-700 dark:text-amber-400', weight: '35%' },
-  staff_to_supervisor: { label: 'Staff → Supervisor', color: 'text-violet-600 dark:text-violet-400', weight: '25%' },
+  self: { label: 'Penilaian diri', weight: '20%' },
+  peer: { label: 'Penilaian rekan', weight: '20%' },
+  supervisor_to_staff: { label: 'Atasan → staf', weight: '35%' },
+  staff_to_supervisor: { label: 'Staf → atasan', weight: '25%' },
+};
+
+const GOAL_STATUS = {
+  achieved: { label: 'Tercapai', tone: 'success', bar: 'bg-[hsl(var(--success))]' },
+  on_track: { label: 'Sesuai jalur', tone: 'info', bar: 'bg-primary' },
+  at_risk: { label: 'Berisiko', tone: 'warning', bar: 'bg-[hsl(var(--warning))]' },
+  missed: { label: 'Terlewat', tone: 'danger', bar: 'bg-[hsl(var(--destructive))]' },
 };
 
 const fmtScore = (n) => (n === null || n === undefined) ? '—' : Number(n).toFixed(1);
 const fmtPct = (n) => (n === null || n === undefined) ? '—' : `${Number(n).toFixed(1)}%`;
+const SUMBU = { fontSize: 12, fill: 'hsl(var(--muted-foreground))' };
+const TOOLTIP = { background: 'var(--card-surface)', border: '1px solid var(--glass-border)', borderRadius: 8, fontSize: 12 };
 
 function GradeBadge({ grade }) {
-  if (!grade) return <span className="text-muted-foreground text-xs">—</span>;
+  if (!grade) return <span className="text-sm text-muted-foreground">—</span>;
   const cfg = GRADE_CFG[grade] || {};
-  return <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${cfg.color}`}>{grade}</span>;
+  return <Lencana status={`grade-${grade}`} label={grade} tone={cfg.tone} />;
 }
 
 function StatusBadge({ status }) {
   const cfg = STATUS_CFG[status] || STATUS_CFG.draft;
-  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.color}`}>{cfg.label}</span>;
+  return <Lencana status={status} label={cfg.label} tone={cfg.tone} />;
 }
 
-function ScoreBar({ score, max = 100, color = 'bg-indigo-500' }) {
+function ScoreBar({ score, max = 100 }) {
   const pct = Math.min(100, Math.max(0, (score / max) * 100));
   return (
-    <div className="w-full bg-foreground/5 rounded-full h-1.5 overflow-hidden">
-      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--glass-border)]">
+      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
     </div>
   );
 }
+
+/** Baris judul kecil + alat di dalam satu bagian KPI. */
+function BarisAlat({ kiri, kanan }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0 text-sm text-muted-foreground">{kiri}</div>
+      <div className="flex flex-wrap items-center gap-2">{kanan}</div>
+    </div>
+  );
+}
+
+const Tick = ({ ok }) => (ok
+  ? <CheckCircle2 className="mx-auto h-4 w-4 text-[hsl(var(--success-text))]" aria-label="Sudah" />
+  : <Clock className="mx-auto h-4 w-4 text-muted-foreground" aria-label="Belum" />);
 
 export default function HRKPIModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -118,7 +158,7 @@ export default function HRKPIModule({ token }) {
       });
       const d = await r.json();
       if (!r.ok) { toast.error(d.detail || 'Gagal simpan'); return; }
-      toast.success(`${d.saved} nilai perform disimpan, ${d.skipped} dilewati`);
+      toast.success(`${d.saved} nilai kinerja disimpan, ${d.skipped} dilewati`);
       setBulkScores({});
       loadPerform(selectedPeriod.period_id);
     } catch (e) { toast.error('Gagal menyimpan'); }
@@ -263,7 +303,7 @@ export default function HRKPIModule({ token }) {
     const r = await kpi(url, { method, headers, body: JSON.stringify(form) });
     const d = await r.json();
     if (!r.ok) { toast.error(d.detail || 'Gagal menyimpan periode'); return; }
-    toast.success(isEdit ? 'Periode diupdate' : 'Periode dibuat');
+    toast.success(isEdit ? 'Periode disimpan' : 'Periode dibuat');
     setPeriodDialog(null);
     loadPeriods();
   };
@@ -298,7 +338,7 @@ export default function HRKPIModule({ token }) {
     const r = await kpi(url, { method, headers, body: JSON.stringify(form) });
     const d = await r.json();
     if (!r.ok) { toast.error(d.detail || 'Gagal'); return; }
-    toast.success(isEdit ? 'Pertanyaan diupdate' : 'Pertanyaan ditambahkan');
+    toast.success(isEdit ? 'Pertanyaan disimpan' : 'Pertanyaan ditambahkan');
     setQuestionDialog(null);
     loadQuestions();
   };
@@ -317,7 +357,7 @@ export default function HRKPIModule({ token }) {
     });
     const d = await r.json();
     if (!r.ok) { toast.error(d.detail || 'Gagal'); return; }
-    toast.success('Nilai Perform disimpan');
+    toast.success('Nilai kinerja disimpan');
     setPerformDialog(null);
     loadPerform(form.period_id);
   };
@@ -338,19 +378,19 @@ export default function HRKPIModule({ token }) {
 
   const handlePublish = async (force = false) => {
     if (!selectedPeriod) return;
-    if (!force && !window.confirm('Publish hasil KPI? Karyawan akan bisa melihat hasilnya.')) return;
+    if (!force && !(await confirmDialog({ title: 'Terbitkan hasil KPI?', body: 'Karyawan akan bisa melihat hasilnya.', confirmLabel: 'Terbitkan' }))) return;
     const r = await kpi(`/results/${selectedPeriod.period_id}/publish`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ force }),
     });
     const d = await r.json();
-    if (!r.ok) { toast.error(d.detail || 'Gagal publish'); return; }
+    if (!r.ok) { toast.error(d.detail || 'Gagal menerbitkan'); return; }
     // Completion warning
     if (d.warning) {
-      if (window.confirm(
-        `${d.message}\n\nLanjutkan publish dengan data yang ada?`
-      )) {
+      if (await confirmDialog({
+        title: 'Data penilaian belum lengkap', body: `${d.message} Lanjutkan menerbitkan dengan data yang ada?`, confirmLabel: 'Tetap terbitkan',
+      })) {
         return handlePublish(true);
       }
       return;
@@ -358,9 +398,9 @@ export default function HRKPIModule({ token }) {
     const raiseMsg = d.raise_proposals
       ? ` | ${d.raise_proposals.created} usulan kenaikan gaji otomatis dibuat`
       : '';
-    toast.success(`${d.published} hasil KPI dipublish (${d.completion_pct}% lengkap)${raiseMsg}`, {
+    toast.success(`${d.published} hasil KPI diterbitkan (${d.completion_pct}% lengkap)${raiseMsg}`, {
       description: d.raise_proposals?.created > 0
-        ? 'Buka HR → Penggajian → Kenaikan Gaji untuk approve usulan kenaikan.'
+        ? 'Buka SDM → Penggajian → Kenaikan gaji untuk menyetujui usulan.'
         : undefined,
       duration: 6000,
     });
@@ -373,11 +413,12 @@ export default function HRKPIModule({ token }) {
   const [generatingRaise, setGeneratingRaise] = useState(false);
   const handleGenerateRaiseProposals = async () => {
     if (!selectedPeriod) return;
-    if (!window.confirm(
-      `Generate usulan kenaikan gaji untuk semua karyawan dengan Grade A (10%) atau B (7%) di periode ini?\n\n` +
-      `Usulan akan masuk workflow dual approval: Atasan → HR.\n` +
-      `Karyawan yang sudah punya usulan aktif untuk periode ini akan di-skip.`
-    )) return;
+    if (!(await confirmDialog({
+      title: 'Buat usulan kenaikan gaji?',
+      body: 'Untuk semua karyawan grade A (10%) atau B (7%) di periode ini. Usulan masuk persetujuan berjenjang: atasan lalu SDM. '
+        + 'Karyawan yang sudah punya usulan aktif untuk periode ini dilewati.',
+      confirmLabel: 'Buat usulan',
+    }))) return;
 
     setGeneratingRaise(true);
     try {
@@ -388,18 +429,18 @@ export default function HRKPIModule({ token }) {
       );
       const d = await r.json();
       if (!r.ok) {
-        toast.error(d.detail || 'Gagal generate usulan');
+        toast.error(d.detail || 'Gagal membuat usulan');
         return;
       }
       toast.success(
         `${d.message || `Berhasil ${d.created} usulan, ${d.skipped} di-skip`}`,
         {
-          description: `Buka menu HR → Penggajian → Kenaikan Gaji untuk approve.`,
+          description: `Buka menu SDM → Penggajian → Kenaikan gaji untuk menyetujui.`,
           duration: 5000,
         }
       );
     } catch (e) {
-      toast.error(e.message || 'Gagal generate');
+      toast.error(e.message || 'Gagal membuat usulan');
     } finally {
       setGeneratingRaise(false);
     }
@@ -410,309 +451,261 @@ export default function HRKPIModule({ token }) {
   // RC-UI-03: client-side pagination (10/page) for KPI periods & goals lists
   const periodsPg = useClientPagination(periods, 10);
   const goalsPg   = useClientPagination(goals, 10);
+  const namaKaryawan = (id) => employees.find(e => e.id === id);
+  const pilihPeriodeDulu = (
+    <EmptyState title="Pilih periode terlebih dahulu" description='Klik salah satu periode di bagian "Periode".'
+      action={<Button variant="outline" onClick={() => setTab('periods')}>Buka daftar periode</Button>} />
+  );
+
+  // ── Kolom tabel ──
+  const kolomPeriode = [
+    { kunci: 'nama', label: 'Periode', hp: 'judul', isi: (p) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">
+          {p.name}
+          {selectedPeriod?.period_id === p.period_id && <Lencana className="ml-2 align-middle" status="dipilih" label="Dipilih" tone="primary" />}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {p.period_from && p.period_to ? `${formatDateID(p.period_from)} – ${formatDateID(p.period_to)}` : 'Tanggal belum diatur'}
+        </p>
+      </div>) },
+    { kunci: 'hari', label: 'Hari kerja', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.working_days ?? '—'}</span> },
+    { kunci: 'peserta', label: 'Peserta', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.participant_count || 0}</span> },
+    { kunci: 'status', label: 'Status', isi: (p) => <StatusBadge status={p.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (
+      <div className="flex justify-end gap-2">
+        {p.status === 'draft' && <Button size="sm" variant="outline" onClick={() => handleChangeStatus(p, 'open')}>Buka formulir</Button>}
+        {p.status === 'open' && <Button size="sm" variant="outline" onClick={() => handleChangeStatus(p, 'closed')}>Tutup formulir</Button>}
+        {p.status === 'closed' && (
+          <Button size="sm" variant="success" onClick={() => { setSelectedPeriod(p); setTab('reports'); setTimeout(() => handlePublish(), 100); }}>
+            <Send />Terbitkan hasil
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" aria-label="Aksi lainnya" title="Aksi lainnya">Lainnya<ChevronDown /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setPeriodDialog(p)}><Edit2 className="mr-2 h-4 w-4" />Ubah</DropdownMenuItem>
+            {p.status === 'draft' && (
+              <DropdownMenuItem onSelect={() => handleDeletePeriod(p)} className="text-[hsl(var(--danger-text))]">
+                <Trash2 className="mr-2 h-4 w-4" />Hapus
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  const soalUrut = Object.keys(EVAL_TYPE_CFG).flatMap(type => questions.filter(q => q.eval_type === type));
+  const kolomSoal = [
+    { kunci: 'soal', label: 'Pertanyaan', hp: 'judul', isi: (q) => <span className="block text-sm md:max-w-[28rem]">{q.question_text}</span> },
+    { kunci: 'jenis', label: 'Jenis penilaian', isi: (q) => (
+      <span className="text-sm">{EVAL_TYPE_CFG[q.eval_type]?.label || '—'} <span className="text-muted-foreground">({EVAL_TYPE_CFG[q.eval_type]?.weight})</span></span>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (q) => <span className="text-sm">{q.category}</span> },
+    { kunci: 'bobot', label: 'Bobot', rata: 'kanan', isi: (q) => <span className="tabular-nums">{(q.category_weight * 100).toFixed(0)}%</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (q) => (
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={() => setQuestionDialog(q)}><Edit2 />Ubah</Button>
+        <Button size="sm" variant="destructive" onClick={() => handleDeleteQuestion(q.question_id)}>Nonaktifkan</Button>
+      </div>) },
+  ];
+
+  const barisKinerja = (selectedPeriod?.participant_employee_ids || []).map((empId) => {
+    const emp = namaKaryawan(empId);
+    const perf = performData.find(p => p.employee_id === empId);
+    return { empId, emp, perf };
+  });
+
+  const kolomHasil = [
+    { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (r) => (
+      <div><p className="font-medium text-foreground">{r.employee_name}</p><p className="text-xs text-muted-foreground">{r.employee_code}</p></div>) },
+    { kunci: 'kinerja', label: 'Kinerja', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.perform_score)}</span> },
+    { kunci: 'sikap', label: 'Sikap', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.attitude_score)}</span> },
+    { kunci: 'absensi', label: 'Absensi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.absensi_score)}</span> },
+    { kunci: 'final', label: 'KPI final', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{fmtScore(r.kpi_final)}</span> },
+    { kunci: 'grade', label: 'Grade', isi: (r) => <GradeBadge grade={r.grade} /> },
+    { kunci: 'status', label: 'Status', isi: (r) => (r.publish_status === 'published'
+      ? <Lencana status="published" label="Terbit" tone="success" /> : <Lencana status="draft" label="Draf" tone="muted" />) },
+    { kunci: 'pdf', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button size="icon-sm" variant="ghost" title="Unduh PDF" aria-label="Unduh PDF"
+        onClick={() => window.open(`${API}/api/dewi/kpi/results/${selectedPeriod.period_id}/${r.employee_id}/pdf?token=${token}`, '_blank')}>
+        <Download />
+      </Button>) },
+  ];
+
+  const kolomSasaran = [
+    { kunci: 'judul', label: 'Sasaran', hp: 'judul', isi: (g) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="font-medium text-foreground">{g.title}</p>
+        {g.description && <p className="truncate text-xs text-muted-foreground" title={g.description}>{g.description}</p>}
+      </div>) },
+    { kunci: 'karyawan', label: 'Karyawan', isi: (g) => <span className="text-sm">{g.employee_name || '—'}</span> },
+    { kunci: 'periode', label: 'Periode', isi: (g) => <span className="text-sm">{g.period_name || '—'}</span> },
+    { kunci: 'kemajuan', label: 'Kemajuan', isi: (g) => {
+      const pct = g.progress_pct || 0;
+      const st = GOAL_STATUS[g.status];
+      return (
+        <div className="w-44 max-w-full">
+          <div className="flex justify-between text-xs text-muted-foreground"><span>{g.actual_value} / {g.target_value} {g.unit}</span><span className="tabular-nums">{pct.toFixed(1)}%</span></div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--glass-border)]">
+            <div className={`h-full rounded-full ${st?.bar || 'bg-muted-foreground'}`} style={{ width: `${Math.min(100, pct)}%` }} />
+          </div>
+        </div>
+      );
+    } },
+    { kunci: 'status', label: 'Status', isi: (g) => {
+      const st = GOAL_STATUS[g.status];
+      return st ? <Lencana status={g.status} label={st.label} tone={st.tone} /> : <span className="text-muted-foreground">—</span>;
+    } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (goal) => (
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="outline" onClick={() => setGoalDialog(goal)}><Edit2 />Ubah</Button>
+        <Button size="sm" variant="destructive" onClick={async () => {
+          if (!(await confirmDialog({ title: 'Hapus sasaran ini?', danger: true, confirmLabel: 'Hapus' }))) return;
+          const r = await kpi(`/goals/${goal.goal_id}`, { method: 'DELETE', headers });
+          if (!r.ok) { toast.error('Gagal menghapus sasaran'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
+          toast.success('Sasaran dihapus');
+          loadGoals(goalsPeriodId, goalsEmployeeId);
+        }}><Trash2 />Hapus</Button>
+      </div>) },
+  ];
+
+  const rs = reportData?.summary;
 
   return (
-    <div className="space-y-6 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Target className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
-            KPI Bulanan Operasional
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Evaluasi operasional per periode (bulanan) · Perform 60% · Attitude 20% · Absensi 20% · Untuk review tahunan, gunakan menu <strong>Annual Review</strong>.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => { loadPeriods(); loadEmployees(); }}>
-          <RefreshCw className="w-4 h-4 mr-1" /> Refresh
+    <PageLayout testId="hr-kpi-module" title="KPI bulanan"
+      subtitle="Evaluasi operasional per periode: kinerja 60%, sikap 20%, absensi 20%."
+      tools={
+        <Button variant="outline" size="icon" onClick={() => { loadPeriods(); loadEmployees(); }} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw />
         </Button>
-      </div>
-
+      }>
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-8 w-full">
-          <TabsTrigger value="periods" className="flex items-center gap-1.5 text-xs">
-            <FileText className="w-3.5 h-3.5" /> Periode
-          </TabsTrigger>
-          <TabsTrigger value="questions" className="flex items-center gap-1.5 text-xs">
-            <BookOpen className="w-3.5 h-3.5" /> Bank Soal
-          </TabsTrigger>
-          <TabsTrigger value="perform" className="flex items-center gap-1.5 text-xs">
-            <TrendingUp className="w-3.5 h-3.5" /> Nilai Perform
-          </TabsTrigger>
-          <TabsTrigger value="monitor" className="flex items-center gap-1.5 text-xs">
-            <UserCheck className="w-3.5 h-3.5" /> Progress
-          </TabsTrigger>
-          <TabsTrigger value="reports" className="flex items-center gap-1.5 text-xs">
-            <BarChart3 className="w-3.5 h-3.5" /> Laporan
-          </TabsTrigger>
-          <TabsTrigger value="trend" className="flex items-center gap-1.5 text-xs">
-            <Activity className="w-3.5 h-3.5" /> Tren KPI
-          </TabsTrigger>
-          <TabsTrigger value="goals" className="flex items-center gap-1.5 text-xs">
-            <Flag className="w-3.5 h-3.5" /> Goals
-          </TabsTrigger>
-          <TabsTrigger value="gamifikasi" className="flex items-center gap-1.5 text-xs">
-            <Trophy className="w-3.5 h-3.5" /> Gamifikasi
-          </TabsTrigger>
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="periods">Periode</TabsTrigger>
+          <TabsTrigger value="questions">Bank soal</TabsTrigger>
+          <TabsTrigger value="perform">Nilai kinerja</TabsTrigger>
+          <TabsTrigger value="monitor">Kemajuan</TabsTrigger>
+          <TabsTrigger value="reports">Laporan</TabsTrigger>
+          <TabsTrigger value="trend">Tren KPI</TabsTrigger>
+          <TabsTrigger value="goals">Sasaran</TabsTrigger>
+          <TabsTrigger value="gamifikasi">Gamifikasi</TabsTrigger>
         </TabsList>
 
-        {/* ── TAB 1: PERIODE ─────────────────────────────────── */}
-        <TabsContent value="periods" className="space-y-4 mt-4">
-          <div className="flex justify-between items-center">
-            <p className="text-sm text-muted-foreground">{periods.length} periode terdaftar</p>
-            <Button size="sm" onClick={() => setPeriodDialog({ participant_employee_ids: [], supervisor_assignments: [] })}>
-              <Plus className="w-4 h-4 mr-1" /> Buat Periode
-            </Button>
-          </div>
-
-          <div className="space-y-3">
-            {periodsPg.paged.map(p => (
-              <div
-                key={p.period_id}
-                className={`rounded-xl border p-4 cursor-pointer transition-all ${selectedPeriod?.period_id === p.period_id ? 'border-indigo-500/50 bg-indigo-100 dark:bg-indigo-500/5' : 'border-foreground/10 bg-foreground/5 hover:border-foreground/20'}`}
-                onClick={() => setSelectedPeriod(p)}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-foreground">{p.name}</span>
-                      <StatusBadge status={p.status} />
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {p.period_from && p.period_to ? `${p.period_from} s.d. ${p.period_to}` : 'Tanggal belum diatur'}
-                      {' · '}{p.working_days} hari kerja
-                      {' · '}{p.participant_count || 0} karyawan
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                    {p.status === 'draft' && (
-                      <Button size="sm" variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30 h-7 text-xs"
-                        onClick={() => handleChangeStatus(p, 'open')}>
-                        Buka Form
-                      </Button>
-                    )}
-                    {p.status === 'open' && (
-                      <Button size="sm" variant="outline" className="text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-500/30 h-7 text-xs"
-                        onClick={() => handleChangeStatus(p, 'closed')}>
-                        Tutup Form
-                      </Button>
-                    )}
-                    {p.status === 'closed' && (
-                      <Button size="sm" variant="outline" className="text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-500/30 h-7 text-xs"
-                        onClick={() => { setSelectedPeriod(p); setTab('reports'); setTimeout(() => handlePublish(), 100); }}>
-                        <Send className="w-3 h-3 mr-1" /> Publish Hasil
-                      </Button>
-                    )}
-                    <Button size="icon" variant="ghost" className="h-7 w-7"
-                      onClick={() => setPeriodDialog(p)}>
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </Button>
-                    {p.status === 'draft' && (
-                      <Button size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400"
-                        onClick={() => handleDeletePeriod(p)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {periods.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">
-                <Target className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                <p>Belum ada periode KPI</p>
-                <Button size="sm" className="mt-3" onClick={() => setPeriodDialog({})}>
-                  Buat Periode Pertama
-                </Button>
-              </div>
-            )}
-            {periodsPg.total > 0 && <PaginationLite page={periodsPg.page} totalPages={periodsPg.totalPages} total={periodsPg.total} pageSize={periodsPg.pageSize} onPageChange={periodsPg.setPage} />}
-          </div>
+        {/* ── PERIODE ── */}
+        <TabsContent value="periods" className="mt-4 space-y-3">
+          <BarisAlat
+            kiri={selectedPeriod ? <>Periode terpilih: <span className="font-medium text-foreground">{selectedPeriod.name}</span> — dipakai di Nilai kinerja, Kemajuan, dan Laporan.</>
+              : `${periods.length} periode. Klik satu periode untuk memilihnya.`}
+            kanan={<>
+              <TombolUnduh namaBerkas="periode-kpi" namaLembar="Periode" baris={periods} testId="kpi-unduh-periode"
+                kolom={[
+                  { label: 'Periode', nilai: (p) => p.name }, { label: 'Mulai', nilai: (p) => formatDateID(p.period_from) },
+                  { label: 'Selesai', nilai: (p) => formatDateID(p.period_to) }, { label: 'Hari kerja', nilai: (p) => p.working_days ?? '' },
+                  { label: 'Peserta', nilai: (p) => p.participant_count || 0 }, { label: 'Status', nilai: (p) => (STATUS_CFG[p.status] || STATUS_CFG.draft).label },
+                ]} />
+              <Button onClick={() => setPeriodDialog({ participant_employee_ids: [], supervisor_assignments: [] })} data-testid="kpi-new-period">
+                <Plus />Buat periode
+              </Button>
+            </>} />
+          <TabelData kolom={kolomPeriode} baris={periodsPg.paged} kunci={(p) => p.period_id} onKlikBaris={setSelectedPeriod} testId="kpi-periods"
+            kosong={<EmptyState title="Belum ada periode KPI"
+              action={<Button onClick={() => setPeriodDialog({ participant_employee_ids: [], supervisor_assignments: [] })}><Plus />Buat periode pertama</Button>} />} />
+          {periodsPg.total > 10 && <PaginationLite page={periodsPg.page} totalPages={periodsPg.totalPages} total={periodsPg.total} pageSize={10} onPageChange={periodsPg.setPage} />}
         </TabsContent>
 
-        {/* ── TAB 2: BANK SOAL ─────────────────────────────────── */}
-        <TabsContent value="questions" className="space-y-4 mt-4">
-          <div className="flex justify-between items-center flex-wrap gap-2">
-            <p className="text-sm text-muted-foreground">{questions.length} pertanyaan aktif</p>
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={handleSeedDefaults}>
-                <BookOpen className="w-4 h-4 mr-1" /> Seed Default DA
-              </Button>
-              <Button size="sm" onClick={() => setQuestionDialog({ eval_type: 'self', category_weight: 0.10 })}>
-                <Plus className="w-4 h-4 mr-1" /> Tambah Soal
-              </Button>
-            </div>
-          </div>
-
-          {Object.entries(EVAL_TYPE_CFG).map(([type, cfg]) => {
-            const typeQs = questions.filter(q => q.eval_type === type);
-            if (!typeQs.length) return null;
-            return (
-              <div key={type} className="rounded-xl border border-foreground/10 bg-foreground/5 overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-foreground/10">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-sm font-semibold ${cfg.color}`}>{cfg.label}</span>
-                    <span className="text-xs text-muted-foreground">Bobot {cfg.weight}</span>
-                    <span className="text-xs bg-foreground/10 px-2 py-0.5 rounded-full">{typeQs.length} soal</span>
-                  </div>
-                </div>
-                <div className="divide-y divide-white/5">
-                  {typeQs.map((q, i) => (
-                    <div key={q.question_id} className="flex items-start justify-between px-4 py-3 group">
-                      <div className="flex items-start gap-3 flex-1 min-w-0">
-                        <span className="text-xs text-muted-foreground mt-0.5 shrink-0">{i + 1}.</span>
-                        <div className="min-w-0">
-                          <div className="text-xs text-foreground/80 leading-relaxed">{q.question_text}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            Kategori: <span className="text-foreground/60">{q.category}</span>
-                            {' · '}Bobot: {(q.category_weight * 100).toFixed(0)}%
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 shrink-0 ml-2">
-                        <Button size="icon" variant="ghost" className="h-6 w-6"
-                          onClick={() => setQuestionDialog(q)}>
-                          <Edit2 className="w-3 h-3" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-6 w-6 text-red-700 dark:text-red-400"
-                          onClick={() => handleDeleteQuestion(q.question_id)}>
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {questions.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <BookOpen className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="mb-3">Bank soal kosong</p>
-              <Button size="sm" onClick={handleSeedDefaults}>Seed Pertanyaan Default DA</Button>
-            </div>
-          )}
+        {/* ── BANK SOAL ── */}
+        <TabsContent value="questions" className="mt-4 space-y-3">
+          <BarisAlat kiri={`${questions.length} pertanyaan aktif.`}
+            kanan={<>
+              <TombolUnduh namaBerkas="bank-soal-kpi" namaLembar="Bank soal" baris={soalUrut} testId="kpi-unduh-soal"
+                kolom={[
+                  { label: 'Pertanyaan', nilai: (q) => q.question_text }, { label: 'Jenis penilaian', nilai: (q) => EVAL_TYPE_CFG[q.eval_type]?.label || '' },
+                  { label: 'Kategori', nilai: (q) => q.category }, { label: 'Bobot (%)', nilai: (q) => Math.round(q.category_weight * 100) },
+                  { label: 'Urutan', nilai: (q) => q.order ?? '' },
+                ]} />
+              <Button variant="outline" onClick={handleSeedDefaults}><BookOpen />Muat soal bawaan DA</Button>
+              <Button onClick={() => setQuestionDialog({ eval_type: 'self', category_weight: 0.10 })}><Plus />Tambah soal</Button>
+            </>} />
+          <TabelData kolom={kolomSoal} baris={soalUrut} kunci={(q) => q.question_id} testId="kpi-questions"
+            kosong={<EmptyState title="Bank soal kosong" description="Muat soal bawaan DA atau tambah soal sendiri."
+              action={<Button onClick={handleSeedDefaults}>Muat soal bawaan DA</Button>} />} />
         </TabsContent>
 
-        {/* ── TAB 3: NILAI PERFORM ─────────────────────────────── */}
-        <TabsContent value="perform" className="space-y-4 mt-4">
-          {!selectedPeriod ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p>Pilih periode terlebih dahulu di tab Periode</p>
-            </div>
-          ) : (
+        {/* ── NILAI KINERJA ── */}
+        <TabsContent value="perform" className="mt-4 space-y-3">
+          {!selectedPeriod ? pilihPeriodeDulu : (
             <>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                  <p className="font-medium text-foreground">{selectedPeriod.name}</p>
-                  <p className="text-xs text-muted-foreground">{performData.length} karyawan sudah diinput</p>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant={bulkMode ? 'default' : 'outline'}
-                    className={bulkMode ? 'bg-indigo-600 hover:bg-indigo-700' : ''}
-                    onClick={() => { setBulkMode(!bulkMode); setBulkScores({}); }}
-                  >
-                    <ClipboardList className="w-4 h-4 mr-1" />
-                    {bulkMode ? 'Kembali ke Normal' : 'Mode Bulk Input'}
+              <BarisAlat
+                kiri={<><span className="font-medium text-foreground">{selectedPeriod.name}</span> · {performData.length} karyawan sudah diisi</>}
+                kanan={<>
+                  <TombolUnduh namaBerkas={`nilai-kinerja-${selectedPeriod.name}`} namaLembar="Nilai kinerja" baris={barisKinerja} testId="kpi-unduh-kinerja"
+                    kolom={[
+                      { label: 'Kode', nilai: (b) => b.emp?.employee_code || '' }, { label: 'Karyawan', nilai: (b) => b.emp?.name || '' },
+                      { label: 'Nilai kinerja', nilai: (b) => (b.perf ? Number(b.perf.perform_score) : '') }, { label: 'Catatan', nilai: (b) => b.perf?.notes || '' },
+                    ]} />
+                  <Button variant={bulkMode ? 'default' : 'outline'} onClick={() => { setBulkMode(!bulkMode); setBulkScores({}); }}>
+                    <ClipboardList />{bulkMode ? 'Kembali ke isian biasa' : 'Isi massal'}
                   </Button>
                   {!bulkMode && (
-                    <Button size="sm" onClick={() => setPerformDialog({
+                    <Button onClick={() => setPerformDialog({
                       period_id: selectedPeriod.period_id,
                       items: [{ label: 'KPI Utama', target: 100, actual: 0, score: 0, weight: 1 }],
-                    })}>
-                      <Plus className="w-4 h-4 mr-1" /> Input Nilai
-                    </Button>
+                    })}><Plus />Isi nilai</Button>
                   )}
                   {bulkMode && (
-                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700"
-                      onClick={handleBulkSave} disabled={bulkSaving || !Object.keys(bulkScores).length}>
-                      {bulkSaving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-                      Simpan Semua ({Object.keys(bulkScores).length})
+                    <Button variant="success" onClick={handleBulkSave} disabled={bulkSaving || !Object.keys(bulkScores).length}>
+                      {bulkSaving ? <Loader2 className="animate-spin" /> : <Save />}Simpan semua ({Object.keys(bulkScores).length})
                     </Button>
                   )}
-                </div>
-              </div>
-
-              {/* Bulk mode info banner */}
+                </>} />
               {bulkMode && (
-                <div className="rounded-lg border border-indigo-400 dark:border-indigo-500/30 bg-indigo-100 dark:bg-indigo-500/5 px-4 py-2.5 text-xs text-indigo-600 dark:text-indigo-300 flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4 shrink-0" />
-                  <span>
-                    <strong>Mode Bulk Input:</strong> Ketik langsung nilai perform (0–100) di kolom input. Klik "Simpan Semua" untuk menyimpan semua sekaligus.
-                    Nilai kosong tidak akan tersimpan.
-                  </span>
-                </div>
+                <Notice tone="info" icon={ClipboardList} title="Isi massal">
+                  Ketik nilai kinerja (0–100) langsung di kolom isian, lalu klik "Simpan semua". Nilai kosong tidak disimpan.
+                </Notice>
               )}
-
-              {/* Participants table */}
-              {selectedPeriod.participant_employee_ids?.length > 0 && (
-                <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-                        <th className="text-left px-4 py-3">Karyawan</th>
-                        <th className="text-center px-4 py-3">Nilai Perform</th>
-                        {bulkMode && <th className="text-center px-4 py-3 text-indigo-600 dark:text-indigo-300">Input Baru</th>}
-                        <th className="text-left px-4 py-3">{bulkMode ? 'Catatan Baru' : 'Catatan'}</th>
-                        {!bulkMode && <th className="px-4 py-3"></th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {selectedPeriod.participant_employee_ids.map(empId => {
-                        const emp = employees.find(e => e.id === empId);
-                        const perf = performData.find(p => p.employee_id === empId);
+              {barisKinerja.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Karyawan</TableHead>
+                        <TableHead className="text-right">Nilai kinerja</TableHead>
+                        {bulkMode && <TableHead className="text-right">Isian baru</TableHead>}
+                        <TableHead>{bulkMode ? 'Catatan baru' : 'Catatan'}</TableHead>
+                        {!bulkMode && <TableHead />}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {barisKinerja.map(({ empId, emp, perf }) => {
                         const bulkVal = bulkScores[empId] || {};
-                        const hasBulkInput = bulkVal.perform_score !== undefined && bulkVal.perform_score !== '';
                         return (
-                          <tr key={empId} className={`hover:bg-foreground/5 transition-colors ${hasBulkInput ? 'bg-indigo-100 dark:bg-indigo-500/5' : ''}`}>
-                            <td className="px-4 py-3">
-                              <div className="font-medium">{emp?.name || 'Karyawan'}</div>
-                              <div className="text-xs text-muted-foreground">{emp?.employee_code || empId.slice(0, 8)}</div>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              {perf ? (
-                                <span className="font-bold text-indigo-600 dark:text-indigo-400">{fmtScore(perf.perform_score)}</span>
-                              ) : (
-                                <span className="text-muted-foreground text-xs">Belum diinput</span>
-                              )}
-                            </td>
+                          <TableRow key={empId}>
+                            <TableCell>
+                              <p className="font-medium">{emp?.name || 'Karyawan'}</p>
+                              <p className="text-xs text-muted-foreground">{emp?.employee_code || empId.slice(0, 8)}</p>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {perf ? <span className="font-semibold tabular-nums">{fmtScore(perf.perform_score)}</span>
+                                : <span className="text-sm text-muted-foreground">Belum diisi</span>}
+                            </TableCell>
                             {bulkMode && (
-                              <td className="px-4 py-2 text-center">
-                                <input
-                                  type="number"
-                                  min={0} max={100} step={0.5}
-                                  placeholder={perf?.perform_score?.toFixed(1) || '0–100'}
-                                  value={bulkVal.perform_score ?? ''}
-                                  onChange={e => setBulkScores(prev => ({
-                                    ...prev,
-                                    [empId]: { ...prev[empId], perform_score: e.target.value }
-                                  }))}
-                                  className="w-20 text-center rounded border border-foreground/10 bg-foreground/5 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
-                                />
-                              </td>
+                              <TableCell className="text-right">
+                                <Input type="number" min={0} max={100} step={0.5} className="ml-auto w-24 text-right"
+                                  placeholder={perf?.perform_score?.toFixed(1) || '0–100'} value={bulkVal.perform_score ?? ''}
+                                  onChange={e => setBulkScores(prev => ({ ...prev, [empId]: { ...prev[empId], perform_score: e.target.value } }))} />
+                              </TableCell>
                             )}
-                            <td className="px-4 py-3 text-xs text-muted-foreground">
+                            <TableCell className="text-sm text-muted-foreground">
                               {bulkMode ? (
-                                <input
-                                  type="text"
-                                  placeholder="Catatan..."
-                                  value={bulkVal.notes ?? ''}
-                                  onChange={e => setBulkScores(prev => ({
-                                    ...prev,
-                                    [empId]: { ...prev[empId], notes: e.target.value }
-                                  }))}
-                                  className="w-full rounded border border-foreground/10 bg-foreground/5 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none"
-                                />
-                              ) : (
-                                perf?.notes || '—'
-                              )}
-                            </td>
+                                <Input placeholder="Catatan" value={bulkVal.notes ?? ''}
+                                  onChange={e => setBulkScores(prev => ({ ...prev, [empId]: { ...prev[empId], notes: e.target.value } }))} />
+                              ) : (perf?.notes || '—')}
+                            </TableCell>
                             {!bulkMode && (
-                              <td className="px-4 py-3">
-                                <Button size="sm" variant="outline" className="h-7 text-xs"
+                              <TableCell className="text-right">
+                                <Button size="sm" variant="outline"
                                   onClick={() => setPerformDialog({
                                     period_id: selectedPeriod.period_id,
                                     employee_id: empId,
@@ -721,593 +714,286 @@ export default function HRKPIModule({ token }) {
                                     items: perf?.items || [{ label: 'KPI Utama', target: 100, actual: 0, score: 0, weight: 1 }],
                                     notes: perf?.notes || '',
                                   })}>
-                                  {perf ? <><Edit2 className="w-3 h-3 mr-1" />Edit</> : <><Plus className="w-3 h-3 mr-1" />Input</>}
+                                  {perf ? <><Edit2 />Ubah</> : <><Plus />Isi</>}
                                 </Button>
-                              </td>
+                              </TableCell>
                             )}
-                          </tr>
+                          </TableRow>
                         );
                       })}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                 </div>
-              )}
+              ) : <EmptyState title="Periode ini belum punya peserta" description="Tambahkan peserta lewat Ubah periode." />}
             </>
           )}
         </TabsContent>
 
-        {/* ── TAB 4: MONITOR PROGRESS ───────────────────────────── */}
-        <TabsContent value="monitor" className="space-y-4 mt-4">
-          {!selectedPeriod ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p>Pilih periode terlebih dahulu di tab Periode</p>
-            </div>
-          ) : (
+        {/* ── KEMAJUAN PENGISIAN ── */}
+        <TabsContent value="monitor" className="mt-4 space-y-3">
+          {!selectedPeriod ? pilihPeriodeDulu : (
             <>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="font-medium">{selectedPeriod.name} — Progress Pengisian</p>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => loadProgress(selectedPeriod.period_id)}>
-                    <RefreshCw className="w-4 h-4 mr-1" /> Refresh
+              <BarisAlat kiri={<><span className="font-medium text-foreground">{selectedPeriod.name}</span> · kemajuan pengisian</>}
+                kanan={<>
+                  <TombolUnduh namaBerkas={`kemajuan-kpi-${selectedPeriod.name}`} namaLembar="Kemajuan" baris={progressData?.progress || []} testId="kpi-unduh-kemajuan"
+                    kolom={[
+                      { label: 'Kode', nilai: (p) => p.employee_code || '' }, { label: 'Karyawan', nilai: (p) => p.employee_name || '' },
+                      { label: 'Departemen', nilai: (p) => p.department || '' }, { label: 'Penilaian diri', nilai: (p) => (p.self_done ? 'Sudah' : 'Belum') },
+                      { label: 'Penilaian rekan', nilai: (p) => `${p.peer_done}/${p.peer_total}` },
+                      { label: 'Staf → atasan', nilai: (p) => (p.staff_to_sup_done ? 'Sudah' : 'Belum') },
+                      { label: 'Ulasan atasan', nilai: (p) => (p.supervisor_reviewed ? 'Sudah' : 'Belum') },
+                      { label: 'Nilai kinerja', nilai: (p) => (p.perform_input ? Number(p.perform_score) : '') },
+                    ]} />
+                  <Button variant="outline" onClick={() => loadFairness(selectedPeriod.period_id)} disabled={fairnessLoading}>
+                    {fairnessLoading ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}Cek keadilan penilaian rekan
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className={fairnessData ? (
-                      fairnessData.overall_severity === 'error' ? 'border-red-500/50 text-red-700 dark:text-red-400' :
-                      fairnessData.overall_severity === 'warning' ? 'border-amber-500/50 text-amber-700 dark:text-amber-400' :
-                      'border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
-                    ) : 'border-foreground/20'}
-                    onClick={() => loadFairness(selectedPeriod.period_id)}
-                    disabled={fairnessLoading}
-                  >
-                    {fairnessLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <CheckCircle2 className="w-4 h-4 mr-1" />}
-                    Cek Fairness
-                    {fairnessData && (
-                      <span className={`ml-1 text-xs font-bold ${
-                        fairnessData.overall_severity === 'error' ? 'text-red-700 dark:text-red-400' :
-                        fairnessData.overall_severity === 'warning' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
-                      }`}>
-                        {fairnessData.overall_severity === 'error' ? `${fairnessData.errors_count}E` :
-                         fairnessData.overall_severity === 'warning' ? `${fairnessData.warnings_count}W` : '✓'}
-                      </span>
-                    )}
+                  <Button variant="outline" size="icon" onClick={() => loadProgress(selectedPeriod.period_id)} title="Muat ulang kemajuan" aria-label="Muat ulang kemajuan">
+                    <RefreshCw />
                   </Button>
-                </div>
-              </div>
+                </>} />
 
-              {/* Fairness panel */}
               {fairnessData && (
-                <div className={`rounded-xl border p-4 space-y-3 ${
-                  fairnessData.overall_severity === 'error' ? 'border-red-400 dark:border-red-500/30 bg-red-100 dark:bg-red-500/5' :
-                  fairnessData.overall_severity === 'warning' ? 'border-amber-400 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/5' :
-                  'border-emerald-400 dark:border-emerald-500/30 bg-emerald-100 dark:bg-emerald-500/5'
-                }`}>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-medium text-sm flex items-center gap-2">
-                        {fairnessData.overall_severity === 'ok'
-                          ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                          : fairnessData.overall_severity === 'warning'
-                          ? <AlertCircle className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-                          : <AlertCircle className="w-4 h-4 text-red-700 dark:text-red-400" />}
-                        Hasil Peer Review Fairness Check
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{fairnessData.summary}</p>
-                    </div>
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setFairnessData(null)}>
-                      <X className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-
+                <Notice tone={fairnessData.overall_severity === 'error' ? 'danger' : fairnessData.overall_severity === 'warning' ? 'warning' : 'success'}
+                  icon={fairnessData.overall_severity === 'ok' ? CheckCircle2 : AlertCircle} title="Hasil cek keadilan penilaian rekan"
+                  action={<Button size="icon-sm" variant="ghost" onClick={() => setFairnessData(null)} aria-label="Tutup hasil" title="Tutup hasil"><X /></Button>}>
+                  <p>{fairnessData.summary}</p>
                   {fairnessData.issues?.length > 0 ? (
-                    <div className="space-y-2">
+                    <ul className="mt-2 space-y-1">
                       {fairnessData.issues.map(item => (
-                        <div key={item.employee_id} className="rounded-lg border border-foreground/10 bg-foreground/5 p-3">
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-medium text-sm">
-                              {item.employee_name}
-                              <span className="text-xs text-muted-foreground ml-2">{item.employee_code}</span>
-                            </span>
-                            <span className={`text-xs font-bold ${
-                              item.severity === 'error' ? 'text-red-700 dark:text-red-400' :
-                              item.severity === 'warning' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
-                            }`}>
-                              {item.reviewer_count} reviewer(s)
-                            </span>
-                          </div>
-                          <div className="space-y-1">
-                            {item.issues.map((iss, i) => (
-                              <div key={i} className={`flex items-start gap-2 text-xs rounded px-2 py-1 ${
-                                iss.severity === 'error' ? 'bg-red-100 dark:bg-red-500/10 text-red-600 dark:text-red-300' : 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-300'
-                              }`}>
-                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                                <span>{iss.message}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                        <li key={item.employee_id}>
+                          <span className="font-medium text-foreground">{item.employee_name}</span>
+                          <span className="text-muted-foreground"> ({item.employee_code}, {item.reviewer_count} penilai)</span>: {item.issues.map(iss => iss.message).join('; ')}
+                        </li>
                       ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-3 text-emerald-600 dark:text-emerald-400 text-sm">
-                      ✅ Semua {fairnessData.total_participants} karyawan lulus fairness check — tidak ada masalah ditemukan.
-                    </div>
-                  )}
-                </div>
+                    </ul>
+                  ) : <p className="mt-1">Semua {fairnessData.total_participants} karyawan lulus cek — tidak ada masalah ditemukan.</p>}
+                </Notice>
               )}
 
-              {progressData?.progress && (
-                <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-                        <th className="text-left px-4 py-3">Karyawan</th>
-                        <th className="text-center px-4 py-3">Self</th>
-                        <th className="text-center px-4 py-3">Peer</th>
-                        <th className="text-center px-4 py-3">Staff→Sup</th>
-                        <th className="text-center px-4 py-3">Sup Review</th>
-                        <th className="text-center px-4 py-3">Perform</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {progressData.progress.map(p => (
-                        <tr key={p.employee_id} className="hover:bg-foreground/5">
-                          <td className="px-4 py-3">
-                            <div className="font-medium">{p.employee_name}</div>
-                            <div className="text-xs text-muted-foreground">{p.employee_code} · {p.department}</div>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            {p.self_done ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mx-auto" /> : <Clock className="w-4 h-4 text-amber-400/60 mx-auto" />}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={p.peer_done === p.peer_total && p.peer_total > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}>
-                              {p.peer_done}/{p.peer_total}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            {p.staff_to_sup_done ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mx-auto" /> : <Clock className="w-4 h-4 text-amber-400/60 mx-auto" />}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            {p.supervisor_reviewed ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mx-auto" /> : <Clock className="w-4 h-4 text-amber-400/60 mx-auto" />}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            {p.perform_input ? (
-                              <span className="text-indigo-600 dark:text-indigo-400 font-medium">{fmtScore(p.perform_score)}</span>
-                            ) : (
-                              <AlertCircle className="w-4 h-4 text-red-400/60 mx-auto" />
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <TabelData baris={progressData?.progress || []} kunci={(p) => p.employee_id} testId="kpi-progress"
+                kolom={[
+                  { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (p) => (
+                    <div><p className="font-medium text-foreground">{p.employee_name}</p><p className="text-xs text-muted-foreground">{p.employee_code} · {p.department}</p></div>) },
+                  { kunci: 'self', label: 'Diri', rata: 'tengah', isi: (p) => <Tick ok={p.self_done} /> },
+                  { kunci: 'peer', label: 'Rekan', rata: 'tengah', isi: (p) => <span className="tabular-nums">{p.peer_done}/{p.peer_total}</span> },
+                  { kunci: 'sup', label: 'Staf → atasan', rata: 'tengah', isi: (p) => <Tick ok={p.staff_to_sup_done} /> },
+                  { kunci: 'review', label: 'Ulasan atasan', rata: 'tengah', isi: (p) => <Tick ok={p.supervisor_reviewed} /> },
+                  { kunci: 'kinerja', label: 'Kinerja', rata: 'kanan', isi: (p) => (p.perform_input
+                    ? <span className="font-medium tabular-nums">{fmtScore(p.perform_score)}</span>
+                    : <span className="text-sm text-[hsl(var(--danger-text))]">Belum</span>) },
+                ]}
+                kosong={<EmptyState title="Belum ada data kemajuan" description="Peserta periode ini akan tampil di sini." />} />
             </>
           )}
         </TabsContent>
 
-        {/* ── TAB 5: LAPORAN & FINALISASI ────────────────────────── */}
-        <TabsContent value="reports" className="space-y-4 mt-4">
-          {!selectedPeriod ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p>Pilih periode terlebih dahulu di tab Periode</p>
-            </div>
-          ) : (
+        {/* ── LAPORAN & FINALISASI ── */}
+        <TabsContent value="reports" className="mt-4 space-y-3">
+          {!selectedPeriod ? pilihPeriodeDulu : (
             <>
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <p className="font-medium">{selectedPeriod.name}</p>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => loadReport(selectedPeriod.period_id)}>
-                    <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={handleCalculate} disabled={calculating}>
-                    {calculating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-1" />}
-                    Hitung KPI
+              <BarisAlat kiri={<span className="font-medium text-foreground">{selectedPeriod.name}</span>}
+                kanan={<>
+                  <TombolUnduh namaBerkas={`hasil-kpi-${selectedPeriod.name}`} namaLembar="Hasil KPI" baris={reportData?.details || []} testId="kpi-unduh-hasil"
+                    kolom={[
+                      { label: 'Kode', nilai: (r) => r.employee_code || '' }, { label: 'Karyawan', nilai: (r) => r.employee_name || '' },
+                      { label: 'Kinerja', nilai: (r) => r.perform_score ?? '' }, { label: 'Sikap', nilai: (r) => r.attitude_score ?? '' },
+                      { label: 'Absensi', nilai: (r) => r.absensi_score ?? '' }, { label: 'KPI final', nilai: (r) => r.kpi_final ?? '' },
+                      { label: 'Grade', nilai: (r) => r.grade || '' }, { label: 'Status', nilai: (r) => (r.publish_status === 'published' ? 'Terbit' : 'Draf') },
+                    ]} />
+                  <Button variant="outline" onClick={handleCalculate} disabled={calculating}>
+                    {calculating ? <Loader2 className="animate-spin" /> : <BarChart3 />}Hitung KPI
                   </Button>
                   {selectedPeriod.status === 'closed' && (
-                    <Button size="sm" onClick={handlePublish} className="bg-emerald-600 hover:bg-emerald-700">
-                      <Send className="w-4 h-4 mr-1" /> Publish Hasil
-                    </Button>
+                    <Button variant="success" onClick={() => handlePublish()}><Send />Terbitkan hasil</Button>
                   )}
                   {selectedPeriod.status === 'finalized' && (
-                    <Button
-                      size="sm"
-                      onClick={handleGenerateRaiseProposals}
-                      disabled={generatingRaise}
-                      className="bg-indigo-600 hover:bg-indigo-700"
-                      data-testid="kpi-generate-raise-btn"
-                    >
-                      {generatingRaise ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Award className="w-4 h-4 mr-1" />}
-                      Generate Kenaikan Gaji
+                    <Button onClick={handleGenerateRaiseProposals} disabled={generatingRaise} data-testid="kpi-generate-raise-btn">
+                      {generatingRaise ? <Loader2 className="animate-spin" /> : <Award />}Buat usulan kenaikan gaji
                     </Button>
                   )}
-                </div>
-              </div>
+                  <Button variant="outline" size="icon" onClick={() => loadReport(selectedPeriod.period_id)} title="Muat ulang laporan" aria-label="Muat ulang laporan">
+                    <RefreshCw />
+                  </Button>
+                </>} />
 
-              {reportData && reportData.finalized_count > 0 && (
+              {reportData && reportData.finalized_count > 0 ? (
                 <>
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {[
-                      { label: 'Rata-rata KPI', value: fmtPct(reportData.summary.avg_kpi), color: 'text-indigo-600 dark:text-indigo-400' },
-                      { label: 'Rata-rata Perform', value: fmtPct(reportData.summary.avg_perform), color: 'text-blue-600 dark:text-blue-400' },
-                      { label: 'Rata-rata Attitude', value: fmtPct(reportData.summary.avg_attitude), color: 'text-violet-600 dark:text-violet-400' },
-                      { label: 'Rata-rata Absensi', value: fmtPct(reportData.summary.avg_absensi), color: 'text-emerald-600 dark:text-emerald-400' },
-                    ].map(card => (
-                      <div key={card.label} className="rounded-xl border border-foreground/10 bg-foreground/5 p-3 text-center">
-                        <div className={`text-xl font-bold ${card.color}`}>{card.value}</div>
-                        <div className="text-xs text-muted-foreground mt-0.5">{card.label}</div>
-                      </div>
+                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <StatTile label="Rata-rata KPI" value={fmtPct(rs.avg_kpi)} sub={`${reportData.finalized_count} karyawan sudah dihitung.`} />
+                    <StatTile label="Rata-rata kinerja" value={fmtPct(rs.avg_perform)} sub="Bobot 60% dari KPI." />
+                    <StatTile label="Rata-rata sikap" value={fmtPct(rs.avg_attitude)} sub="Bobot 20% dari KPI." />
+                    <StatTile label="Rata-rata absensi" value={fmtPct(rs.avg_absensi)} sub="Bobot 20% dari KPI." />
+                  </div>
+                  <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    Sebaran grade:
+                    {Object.entries(rs.grade_distribution || {}).map(([g, cnt]) => (
+                      <span key={g} className="inline-flex items-center gap-1"><GradeBadge grade={g} /><span className="font-medium text-foreground tabular-nums">{cnt}</span></span>
                     ))}
-                  </div>
-
-                  {/* Grade distribution */}
-                  <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">
-                    <p className="text-sm font-medium mb-3">Distribusi Grade</p>
-                    <div className="flex gap-3 flex-wrap">
-                      {Object.entries(reportData.summary.grade_distribution).map(([g, cnt]) => (
-                        <div key={g} className="flex items-center gap-2">
-                          <GradeBadge grade={g} />
-                          <span className="text-sm font-bold">{cnt}</span>
-                          <span className="text-xs text-muted-foreground">({GRADE_CFG[g]?.label})</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Detail table */}
-                  <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-                          <th className="text-left px-4 py-3">Karyawan</th>
-                          <th className="text-center px-4 py-3">Perform</th>
-                          <th className="text-center px-4 py-3">Attitude</th>
-                          <th className="text-center px-4 py-3">Absensi</th>
-                          <th className="text-center px-4 py-3">KPI Final</th>
-                          <th className="text-center px-4 py-3">Grade</th>
-                          <th className="text-center px-4 py-3">Status</th>
-                          <th className="text-center px-4 py-3">PDF</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {reportData.details.map(r => (
-                          <tr key={r.employee_id} className="hover:bg-foreground/5 cursor-pointer"
-                            onClick={() => setResultDialog(r)}>
-                            <td className="px-4 py-3">
-                              <div className="font-medium">{r.employee_name}</div>
-                              <div className="text-xs text-muted-foreground">{r.employee_code}</div>
-                            </td>
-                            <td className="px-4 py-3 text-center font-medium">{fmtScore(r.perform_score)}</td>
-                            <td className="px-4 py-3 text-center font-medium">{fmtScore(r.attitude_score)}</td>
-                            <td className="px-4 py-3 text-center font-medium">{fmtScore(r.absensi_score)}</td>
-                            <td className="px-4 py-3 text-center">
-                              <span className="font-bold text-indigo-600 dark:text-indigo-400">{fmtScore(r.kpi_final)}</span>
-                            </td>
-                            <td className="px-4 py-3 text-center"><GradeBadge grade={r.grade} /></td>
-                            <td className="px-4 py-3 text-center">
-                              <span className={`text-xs ${r.publish_status === 'published' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
-                                {r.publish_status === 'published' ? 'Published' : 'Draft'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center">
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7"
-                                title="Export PDF"
-                                onClick={e => {
-                                  e.stopPropagation();
-                                  window.open(`${API}/api/dewi/kpi/results/${selectedPeriod.period_id}/${r.employee_id}/pdf?token=${token}`, '_blank');
-                                }}
-                              >
-                                <Download className="w-3.5 h-3.5 text-muted-foreground" />
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  </p>
+                  <TabelData kolom={kolomHasil} baris={reportData.details} kunci={(r) => r.employee_id} onKlikBaris={setResultDialog} testId="kpi-results" />
                 </>
-              )}
-
-              {(!reportData || reportData.finalized_count === 0) && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <BarChart3 className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                  <p>Hasil KPI belum dihitung</p>
-                  <p className="text-xs mt-1">Klik "Hitung KPI" untuk kalkulasi otomatis</p>
-                </div>
+              ) : (
+                <EmptyState title="Hasil KPI belum dihitung" description='Klik "Hitung KPI" untuk menghitung otomatis.' />
               )}
             </>
           )}
         </TabsContent>
 
-        {/* ── TAB 6: TREN KPI ──────────────────────────────────────── */}
-        <TabsContent value="trend" className="space-y-4 mt-4">
-          <div className="flex flex-wrap items-center gap-3 justify-between">
-            <p className="font-medium text-sm">Tren KPI Historis</p>
-            <div className="flex gap-2">
-              <SmartNativeSelect
-                className="text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-                value={trendEmployeeId}
-                onChange={e => { setTrendEmployeeId(e.target.value); if (e.target.value) loadTrend(e.target.value); }}
-              >
-                <option value="">-- Pilih Karyawan --</option>
-                {employees.map(e => (
-                  <option key={e.id} value={e.id}>{e.employee_code} — {e.name}</option>
-                ))}
+        {/* ── TREN KPI ── */}
+        <TabsContent value="trend" className="mt-4 space-y-3">
+          <BarisAlat kiri="Tren KPI per periode."
+            kanan={<>
+              <SmartNativeSelect className="w-56" value={trendEmployeeId} aria-label="Pilih karyawan"
+                onChange={e => { setTrendEmployeeId(e.target.value); if (e.target.value) loadTrend(e.target.value); }}>
+                <option value="">Pilih karyawan</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{e.employee_code} — {e.name}</option>)}
               </SmartNativeSelect>
-              <Button size="sm" variant="outline" onClick={() => { loadCompanyTrend(); if (trendEmployeeId) loadTrend(trendEmployeeId); }}>
-                <RefreshCw className="w-4 h-4" />
+              <Button variant="outline" size="icon" title="Muat ulang tren" aria-label="Muat ulang tren"
+                onClick={() => { loadCompanyTrend(); if (trendEmployeeId) loadTrend(trendEmployeeId); }}>
+                <RefreshCw />
               </Button>
-            </div>
-          </div>
+            </>} />
 
-          {/* Company-wide trend */}
           {companyTrend?.trend && companyTrend.trend.length > 0 && (
-            <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">
-              <p className="text-xs text-muted-foreground mb-3 font-medium">📊 Rata-rata KPI Perusahaan ({companyTrend.trend.length} Periode Terakhir)</p>
-              <ResponsiveContainer width="100%" height={180}>
-                <LineChart data={companyTrend.trend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="period_name" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                  <Tooltip
-                    contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                    labelStyle={{ color: '#e2e8f0', fontWeight: 600 }}
-                    formatter={(v, name) => [`${Number(v).toFixed(1)}`, name]}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line type="monotone" dataKey="company_avg" stroke="#6366f1" strokeWidth={2} dot={{ r: 4 }} name="Avg KPI" />
-                </LineChart>
-              </ResponsiveContainer>
-
-              {/* Grade distribution chart */}
-              <p className="text-xs text-muted-foreground mt-4 mb-2 font-medium">Distribusi Grade per Periode</p>
-              <ResponsiveContainer width="100%" height={140}>
-                <BarChart data={companyTrend.trend} barSize={12}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="period_name" tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} allowDecimals={false} />
-                  <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Bar dataKey="grade_distribution.A" fill="#10b981" name="Grade A" stackId="a" />
-                  <Bar dataKey="grade_distribution.B" fill="#3b82f6" name="Grade B" stackId="a" />
-                  <Bar dataKey="grade_distribution.C" fill="#f59e0b" name="Grade C" stackId="a" />
-                  <Bar dataKey="grade_distribution.D" fill="#f97316" name="Grade D" stackId="a" />
-                  <Bar dataKey="grade_distribution.E" fill="#ef4444" name="Grade E" stackId="a" />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <GlassCard hover={false} className="space-y-2 p-4">
+                <p className="text-sm font-medium text-foreground">Rata-rata KPI perusahaan ({companyTrend.trend.length} periode terakhir)</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={companyTrend.trend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" vertical={false} />
+                    <XAxis dataKey="period_name" tick={SUMBU} />
+                    <YAxis domain={[0, 100]} tick={SUMBU} />
+                    <Tooltip contentStyle={TOOLTIP} formatter={(v, name) => [`${Number(v).toFixed(1)}`, name]} />
+                    <Line type="monotone" dataKey="company_avg" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} name="Rata-rata KPI" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </GlassCard>
+              <GlassCard hover={false} className="space-y-2 p-4">
+                <p className="text-sm font-medium text-foreground">Sebaran grade per periode</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={companyTrend.trend} barSize={14}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" vertical={false} />
+                    <XAxis dataKey="period_name" tick={SUMBU} />
+                    <YAxis tick={SUMBU} allowDecimals={false} />
+                    <Tooltip contentStyle={TOOLTIP} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="grade_distribution.A" fill="hsl(var(--success))" name="Grade A" stackId="a" />
+                    <Bar dataKey="grade_distribution.B" fill="hsl(var(--info))" name="Grade B" stackId="a" />
+                    <Bar dataKey="grade_distribution.C" fill="hsl(var(--warning))" name="Grade C" stackId="a" />
+                    <Bar dataKey="grade_distribution.D" fill="hsl(var(--muted-foreground))" name="Grade D" stackId="a" />
+                    <Bar dataKey="grade_distribution.E" fill="hsl(var(--destructive))" name="Grade E" stackId="a" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </GlassCard>
             </div>
           )}
 
-          {/* Individual employee trend */}
           {trendEmployeeId && (
-            <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">
-              <p className="text-xs text-muted-foreground mb-3 font-medium">
-                📈 Tren Individual — {employees.find(e => e.id === trendEmployeeId)?.name || trendEmployeeId}
-                {trendData?.department && <span className="ml-2 text-indigo-600 dark:text-indigo-400">({trendData.department})</span>}
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-foreground">
+                Tren {employees.find(e => e.id === trendEmployeeId)?.name || 'karyawan'}
+                {trendData?.department && <span className="font-normal text-muted-foreground"> · {trendData.department}</span>}
               </p>
-              {trendLoading && <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-indigo-600 dark:text-indigo-400" /></div>}
+              {trendLoading && <p className="py-6 text-center text-sm text-muted-foreground">Memuat tren…</p>}
               {!trendLoading && trendData?.trend && trendData.trend.length > 0 && (
                 <>
-                  <ResponsiveContainer width="100%" height={200}>
+                  <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={trendData.trend}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                      <XAxis dataKey="period_name" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                      <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                      <Tooltip
-                        contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                        formatter={(v, name) => [v !== null ? `${Number(v).toFixed(1)}` : '—', name]}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line type="monotone" dataKey="kpi_final" stroke="#6366f1" strokeWidth={2} dot={{ r: 4 }} name="KPI Final" connectNulls />
-                      <Line type="monotone" dataKey="perform_score" stroke="#3b82f6" strokeWidth={1.5} dot={{ r: 3 }} name="Perform" connectNulls strokeDasharray="4 2" />
-                      <Line type="monotone" dataKey="attitude_score" stroke="#8b5cf6" strokeWidth={1.5} dot={{ r: 3 }} name="Attitude" connectNulls strokeDasharray="4 2" />
-                      <Line type="monotone" dataKey="dept_avg" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Dept Avg" strokeDasharray="6 3" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" vertical={false} />
+                      <XAxis dataKey="period_name" tick={SUMBU} />
+                      <YAxis domain={[0, 100]} tick={SUMBU} />
+                      <Tooltip contentStyle={TOOLTIP} formatter={(v, name) => [v !== null ? `${Number(v).toFixed(1)}` : '—', name]} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Line type="monotone" dataKey="kpi_final" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} name="KPI final" connectNulls />
+                      <Line type="monotone" dataKey="perform_score" stroke="hsl(var(--info))" strokeWidth={1.5} dot={{ r: 2 }} name="Kinerja" connectNulls strokeDasharray="4 2" />
+                      <Line type="monotone" dataKey="attitude_score" stroke="hsl(var(--success))" strokeWidth={1.5} dot={{ r: 2 }} name="Sikap" connectNulls strokeDasharray="4 2" />
+                      <Line type="monotone" dataKey="dept_avg" stroke="hsl(var(--warning))" strokeWidth={1.5} dot={false} name="Rata-rata departemen" strokeDasharray="6 3" />
                     </LineChart>
                   </ResponsiveContainer>
-                  {/* Data table */}
-                  <div className="mt-3 rounded-lg border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-foreground/10 text-muted-foreground bg-foreground/5">
-                          <th className="text-left px-3 py-2">Periode</th>
-                          <th className="text-center px-3 py-2">KPI Final</th>
-                          <th className="text-center px-3 py-2">Perform</th>
-                          <th className="text-center px-3 py-2">Attitude</th>
-                          <th className="text-center px-3 py-2">Absensi</th>
-                          <th className="text-center px-3 py-2">Grade</th>
-                          <th className="text-center px-3 py-2">Dept Avg</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {trendData.trend.map(row => (
-                          <tr key={row.period_id} className="hover:bg-foreground/5">
-                            <td className="px-3 py-2 font-medium">{row.period_name}</td>
-                            <td className="px-3 py-2 text-center font-bold text-indigo-600 dark:text-indigo-400">{fmtScore(row.kpi_final)}</td>
-                            <td className="px-3 py-2 text-center">{fmtScore(row.perform_score)}</td>
-                            <td className="px-3 py-2 text-center">{fmtScore(row.attitude_score)}</td>
-                            <td className="px-3 py-2 text-center">{fmtScore(row.absensi_score)}</td>
-                            <td className="px-3 py-2 text-center"><GradeBadge grade={row.grade} /></td>
-                            <td className="px-3 py-2 text-center text-amber-700 dark:text-amber-400">{fmtScore(row.dept_avg)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="flex justify-end">
+                    <TombolUnduh namaBerkas="tren-kpi-karyawan" namaLembar="Tren" baris={trendData.trend} testId="kpi-unduh-tren"
+                      kolom={[
+                        { label: 'Periode', nilai: (r) => r.period_name }, { label: 'KPI final', nilai: (r) => r.kpi_final ?? '' },
+                        { label: 'Kinerja', nilai: (r) => r.perform_score ?? '' }, { label: 'Sikap', nilai: (r) => r.attitude_score ?? '' },
+                        { label: 'Absensi', nilai: (r) => r.absensi_score ?? '' }, { label: 'Grade', nilai: (r) => r.grade || '' },
+                        { label: 'Rata-rata departemen', nilai: (r) => r.dept_avg ?? '' },
+                      ]} />
                   </div>
+                  <TabelData baris={trendData.trend} kunci={(r) => r.period_id} testId="kpi-trend-table"
+                    kolom={[
+                      { kunci: 'periode', label: 'Periode', hp: 'judul' , isi: (r) => r.period_name },
+                      { kunci: 'final', label: 'KPI final', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{fmtScore(r.kpi_final)}</span> },
+                      { kunci: 'kinerja', label: 'Kinerja', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.perform_score)}</span> },
+                      { kunci: 'sikap', label: 'Sikap', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.attitude_score)}</span> },
+                      { kunci: 'absensi', label: 'Absensi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.absensi_score)}</span> },
+                      { kunci: 'grade', label: 'Grade', isi: (r) => <GradeBadge grade={r.grade} /> },
+                      { kunci: 'dept', label: 'Rata-rata departemen', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtScore(r.dept_avg)}</span> },
+                    ]} />
                 </>
               )}
               {!trendLoading && (!trendData?.trend || trendData.trend.length === 0) && (
-                <p className="text-center py-8 text-muted-foreground text-sm">Belum ada data KPI untuk karyawan ini.</p>
+                <EmptyState title="Belum ada data KPI untuk karyawan ini" />
               )}
             </div>
           )}
 
           {!trendEmployeeId && !companyTrend?.trend?.length && (
-            <div className="text-center py-16 text-muted-foreground">
-              <Activity className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Pilih karyawan untuk melihat tren KPI individual</p>
-              <p className="text-xs mt-1">Atau tunggu data perusahaan termuat</p>
-            </div>
+            <EmptyState title="Belum ada tren KPI" description="Tren muncul setelah ada periode yang hasilnya sudah dihitung. Pilih karyawan untuk melihat tren perorangan." />
           )}
         </TabsContent>
 
-        {/* ── TAB 7: GOALS ─────────────────────────────────────────── */}
-        <TabsContent value="goals" className="space-y-4 mt-4">
-          <div className="flex flex-wrap items-center gap-3 justify-between">
-            <p className="font-medium text-sm flex items-center gap-2"><Flag className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Goal Setting & Progress Tracking</p>
-            <div className="flex gap-2 flex-wrap">
-              <SmartNativeSelect
-                className="text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-                value={goalsPeriodId}
-                onChange={e => { setGoalsPeriodId(e.target.value); loadGoals(e.target.value, goalsEmployeeId); }}
-              >
-                <option value="">-- Semua Periode --</option>
+        {/* ── SASARAN ── */}
+        <TabsContent value="goals" className="mt-4 space-y-3">
+          <BarisAlat
+            kiri={<div className="flex flex-wrap items-center gap-2">
+              <SmartNativeSelect className="w-48" value={goalsPeriodId} aria-label="Saring periode"
+                onChange={e => { setGoalsPeriodId(e.target.value); loadGoals(e.target.value, goalsEmployeeId); }}>
+                <option value="">Semua periode</option>
                 {periods.map(p => <option key={p.period_id} value={p.period_id}>{p.name}</option>)}
               </SmartNativeSelect>
-              <SmartNativeSelect
-                className="text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-                value={goalsEmployeeId}
-                onChange={e => { setGoalsEmployeeId(e.target.value); loadGoals(goalsPeriodId, e.target.value); }}
-              >
-                <option value="">-- Semua Karyawan --</option>
+              <SmartNativeSelect className="w-56" value={goalsEmployeeId} aria-label="Saring karyawan"
+                onChange={e => { setGoalsEmployeeId(e.target.value); loadGoals(goalsPeriodId, e.target.value); }}>
+                <option value="">Semua karyawan</option>
                 {employees.map(e => <option key={e.id} value={e.id}>{e.employee_code} — {e.name}</option>)}
               </SmartNativeSelect>
-              <Button size="sm" onClick={() => setGoalDialog({ period_id: goalsPeriodId, employee_id: goalsEmployeeId })}
-                className="bg-emerald-600 hover:bg-emerald-700">
-                <Plus className="w-4 h-4 mr-1" /> Tambah Goal
-              </Button>
-            </div>
-          </div>
-
-          {goalsLoading && <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-emerald-600 dark:text-emerald-400" /></div>}
-
-          {!goalsLoading && goals.length > 0 && (
-            <div className="space-y-3">
-              {goalsPg.paged.map(goal => {
-                const pct = goal.progress_pct || 0;
-                const statusCfg = {
-                  achieved: { color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-500', label: '✅ Tercapai' },
-                  on_track: { color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-500', label: '🔵 On Track' },
-                  at_risk: { color: 'text-amber-700 dark:text-amber-400', bg: 'bg-amber-500', label: '⚠️ At Risk' },
-                  missed: { color: 'text-red-700 dark:text-red-400', bg: 'bg-red-500', label: '❌ Missed' },
-                }[goal.status] || { color: 'text-muted-foreground', bg: 'bg-muted', label: '—' };
-
-                return (
-                  <div key={goal.goal_id} className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <p className="font-medium text-sm">{goal.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {goal.employee_name} · {goal.period_name}
-                          {goal.description && <span> · {goal.description}</span>}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className={`text-xs font-medium ${statusCfg.color}`}>{statusCfg.label}</span>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setGoalDialog(goal)}>
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7"
-                          onClick={async () => {
-                            if (!(await confirmDialog({ title: 'Hapus goal ini?', danger: true }))) return;
-                            const r = await kpi(`/goals/${goal.goal_id}`, { method: 'DELETE', headers });
-                            if (!r.ok) { toast.error('Gagal menghapus goal'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
-                            toast.success('Goal dihapus');
-                            loadGoals(goalsPeriodId, goalsEmployeeId);
-                          }}>
-                          <Trash2 className="w-3.5 h-3.5 text-red-700 dark:text-red-400" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1">
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-muted-foreground">Progress</span>
-                          <span className="font-medium">{goal.actual_value} / {goal.target_value} {goal.unit}</span>
-                        </div>
-                        <div className="w-full bg-foreground/10 rounded-full h-2 overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${statusCfg.bg}`}
-                            style={{ width: `${Math.min(100, pct)}%` }}
-                          />
-                        </div>
-                        <div className="text-right text-xs mt-1 font-bold">{pct.toFixed(1)}%</div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-              {goalsPg.total > 0 && <PaginationLite page={goalsPg.page} totalPages={goalsPg.totalPages} total={goalsPg.total} pageSize={goalsPg.pageSize} onPageChange={goalsPg.setPage} />}
-            </div>
+            </div>}
+            kanan={<>
+              <TombolUnduh namaBerkas="sasaran-kpi" namaLembar="Sasaran" baris={goals} testId="kpi-unduh-sasaran"
+                kolom={[
+                  { label: 'Sasaran', nilai: (g) => g.title }, { label: 'Deskripsi', nilai: (g) => g.description || '' },
+                  { label: 'Karyawan', nilai: (g) => g.employee_name || '' }, { label: 'Periode', nilai: (g) => g.period_name || '' },
+                  { label: 'Target', nilai: (g) => g.target_value }, { label: 'Aktual', nilai: (g) => g.actual_value },
+                  { label: 'Satuan', nilai: (g) => g.unit || '' }, { label: 'Kemajuan (%)', nilai: (g) => g.progress_pct || 0 },
+                  { label: 'Status', nilai: (g) => GOAL_STATUS[g.status]?.label || '' },
+                ]} />
+              <Button onClick={() => setGoalDialog({ period_id: goalsPeriodId, employee_id: goalsEmployeeId })}><Plus />Tambah sasaran</Button>
+            </>} />
+          {goalsLoading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat sasaran…</p> : (
+            <TabelData kolom={kolomSasaran} baris={goalsPg.paged} kunci={(g) => g.goal_id} testId="kpi-goals"
+              kosong={<EmptyState title="Belum ada sasaran untuk saringan ini" description='Klik "Tambah sasaran" untuk membuat sasaran karyawan.' />} />
           )}
-
-          {!goalsLoading && goals.length === 0 && (
-            <div className="text-center py-16 text-muted-foreground">
-              <Flag className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Belum ada goals untuk filter yang dipilih</p>
-              <p className="text-xs mt-1">Klik "Tambah Goal" untuk mulai membuat goals karyawan</p>
-            </div>
-          )}
+          {goalsPg.total > 10 && <PaginationLite page={goalsPg.page} totalPages={goalsPg.totalPages} total={goalsPg.total} pageSize={10} onPageChange={goalsPg.setPage} />}
         </TabsContent>
 
-        {/* ── TAB 8: GAMIFIKASI ─────────────────────────────────── */}
-        <TabsContent value="gamifikasi" className="mt-4">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-yellow-500" /> Gamifikasi KPI
-            </h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              Leaderboard, badge, dan achievement system untuk memotivasi karyawan
-            </p>
-          </div>
+        {/* ── GAMIFIKASI ── */}
+        <TabsContent value="gamifikasi" className="mt-4 space-y-3">
+          <p className="text-sm text-muted-foreground">Papan peringkat, lencana, dan pencapaian untuk memotivasi karyawan.</p>
           <KPIGamificationTab token={token} periods={periods} isHR={true} />
         </TabsContent>
       </Tabs>
 
-      {/* ── PERIOD DIALOG ────────────────────────────────────────── */}
       {periodDialog !== null && (
-        <PeriodDialog
-          initial={periodDialog}
-          employees={employees}
-          headers={headers}
-          onSave={handleSavePeriod}
-          onClose={() => setPeriodDialog(null)}
-        />
+        <PeriodDialog initial={periodDialog} employees={employees} headers={headers} onSave={handleSavePeriod} onClose={() => setPeriodDialog(null)} />
       )}
-
-      {/* ── QUESTION DIALOG ──────────────────────────────────────── */}
       {questionDialog !== null && (
-        <QuestionDialog
-          initial={questionDialog}
-          onSave={handleSaveQuestion}
-          onClose={() => setQuestionDialog(null)}
-        />
+        <QuestionDialog initial={questionDialog} onSave={handleSaveQuestion} onClose={() => setQuestionDialog(null)} />
       )}
-
-      {/* ── PERFORM DIALOG ───────────────────────────────────────── */}
       {performDialog !== null && (
-        <PerformDialog
-          initial={performDialog}
-          employees={employees}
-          onSave={handleSavePerform}
-          onClose={() => setPerformDialog(null)}
-        />
+        <PerformDialog initial={performDialog} employees={employees} onSave={handleSavePerform} onClose={() => setPerformDialog(null)} />
       )}
-
-      {/* ── RESULT DETAIL DIALOG ─────────────────────────────────── */}
       {resultDialog !== null && (
-        <ResultDetailDialog
-          result={resultDialog}
-          onClose={() => setResultDialog(null)}
-        />
+        <ResultDetailDialog result={resultDialog} onClose={() => setResultDialog(null)} />
       )}
-
-      {/* ── GOAL DIALOG ──────────────────────────────────────────── */}
       {goalDialog !== null && (
         <GoalDialog
           initial={goalDialog}
@@ -1321,21 +1007,35 @@ export default function HRKPIModule({ token }) {
               { method: isEdit ? 'PUT' : 'POST', headers, body: JSON.stringify(form) }
             );
             const d = await r.json();
-            if (!r.ok) { toast.error(d.detail || 'Gagal menyimpan goal'); return; }
-            toast.success(isEdit ? 'Goal diupdate' : 'Goal berhasil dibuat');
+            if (!r.ok) { toast.error(d.detail || 'Gagal menyimpan sasaran'); return; }
+            toast.success(isEdit ? 'Sasaran disimpan' : 'Sasaran dibuat');
             setGoalDialog(null);
             loadGoals(goalsPeriodId, goalsEmployeeId);
           }}
           onClose={() => setGoalDialog(null)}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
 
 // ═══════════════════════════════════════════════════════
-// SUB-COMPONENTS
+// SUB-KOMPONEN (form popup standar)
 // ═══════════════════════════════════════════════════════
+
+function DaftarCentang({ items, terpilih, onAlih, kosong }) {
+  return (
+    <div className="grid gap-x-4 rounded-lg border border-[var(--glass-border)] px-3 py-1 sm:grid-cols-2">
+      {items.map(emp => (
+        <label key={emp.id} className="flex min-w-0 cursor-pointer items-center gap-2 py-1.5">
+          <input type="checkbox" className="rounded" checked={terpilih.includes(emp.id)} onChange={() => onAlih(emp.id)} />
+          <span className="min-w-0 text-sm" title={emp.job_title || undefined}>{emp.employee_code} — {emp.name}</span>
+        </label>
+      ))}
+      {items.length === 0 && <p className="py-3 text-center text-sm text-muted-foreground sm:col-span-2">{kosong}</p>}
+    </div>
+  );
+}
 
 function PeriodDialog({ initial, employees, headers, onSave, onClose }) {
   const [form, setForm] = useState({
@@ -1346,8 +1046,7 @@ function PeriodDialog({ initial, employees, headers, onSave, onClose }) {
   });
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setSaving(true);
     await onSave(form);
     setSaving(false);
@@ -1364,164 +1063,75 @@ function PeriodDialog({ initial, employees, headers, onSave, onClose }) {
 
   const selectAll = () => setForm(f => ({ ...f, participant_employee_ids: employees.map(e => e.id) }));
   const clearAll = () => setForm(f => ({ ...f, participant_employee_ids: [] }));
+  const setSa = (i, patch) => setForm(f => ({
+    ...f, supervisor_assignments: f.supervisor_assignments.map((s, idx) => (idx === i ? { ...s, ...patch } : s)),
+  }));
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{form.period_id ? 'Edit Periode' : 'Buat Periode KPI'}</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <Label>Nama Periode <span className="text-red-700 dark:text-red-400">*</span></Label>
-            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="KPI Januari 2026" required />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Tanggal Mulai</Label>
-              <Input type="date" value={form.period_from}
-                onChange={e => setForm(f => ({ ...f, period_from: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>Tanggal Selesai</Label>
-              <Input type="date" value={form.period_to}
-                onChange={e => setForm(f => ({ ...f, period_to: e.target.value }))} />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>Jumlah Hari Kerja</Label>
-            <Input type="number" value={form.working_days} min={1}
-              placeholder="Kosongkan = dihitung otomatis dari Kalender Produksi"
-              onChange={e => setForm(f => ({ ...f, working_days: parseInt(e.target.value) || '' }))} />
-          </div>
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={handleSubmit} menyimpan={saving} bisaSimpan={!!form.name}
+      judul={form.period_id ? 'Ubah periode' : 'Buat periode KPI'} testId="kpi-period-form">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Nama periode" wajib htmlFor="kpi-per-nama">
+          <Input id="kpi-per-nama" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="KPI Januari 2026" required />
+        </Isian>
+        <Isian label="Hari kerja" htmlFor="kpi-per-hari" petunjuk="Kosong = dihitung otomatis dari Kalender Produksi.">
+          <Input id="kpi-per-hari" type="number" value={form.working_days} min={1}
+            onChange={e => setForm(f => ({ ...f, working_days: parseInt(e.target.value) || '' }))} />
+        </Isian>
+        <Isian label="Tanggal mulai">
+          <DatePicker value={form.period_from} onChange={v => setForm(f => ({ ...f, period_from: v }))} testId="kpi-per-mulai" />
+        </Isian>
+        <Isian label="Tanggal selesai">
+          <DatePicker value={form.period_to} min={form.period_from || undefined} onChange={v => setForm(f => ({ ...f, period_to: v }))} testId="kpi-per-selesai" />
+        </Isian>
+      </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Peserta ({form.participant_employee_ids.length} dipilih)</Label>
-              <div className="flex gap-2">
-                <button type="button" onClick={selectAll}
-                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">Pilih Semua</button>
-                <span className="text-muted-foreground text-xs">·</span>
-                <button type="button" onClick={clearAll}
-                  className="text-xs text-red-700 dark:text-red-400 hover:underline">Kosongkan</button>
+      <Isian label={`Peserta (${form.participant_employee_ids.length} dipilih)`}>
+        <div className="mb-1 flex gap-2">
+          <Button type="button" size="sm" variant="link" className="h-auto p-0" onClick={selectAll}>Pilih semua</Button>
+          <Button type="button" size="sm" variant="link" className="h-auto p-0" onClick={clearAll}>Kosongkan</Button>
+        </div>
+        <DaftarCentang items={employees} terpilih={form.participant_employee_ids} onAlih={toggleEmployee} kosong="Belum ada data karyawan" />
+      </Isian>
+
+      <Isian label="Catatan" htmlFor="kpi-per-catatan">
+        <Textarea id="kpi-per-catatan" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Catatan (opsional)" rows={2} />
+      </Isian>
+
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Label>Penugasan atasan ({form.supervisor_assignments.length} kelompok)</Label>
+          <Button type="button" size="sm" variant="outline"
+            onClick={() => setForm(f => ({ ...f, supervisor_assignments: [...f.supervisor_assignments, { supervisor_employee_id: '', employee_ids: [] }] }))}>
+            <Plus />Tambah atasan
+          </Button>
+        </div>
+        {form.supervisor_assignments.length === 0 && (
+          <p className="text-xs text-muted-foreground">Atasan belum ditugaskan — formulir staf → atasan tidak akan muncul.</p>
+        )}
+        {form.supervisor_assignments.map((sa, i) => {
+          const calon = employees.filter(e => form.participant_employee_ids.includes(e.id) && e.id !== sa.supervisor_employee_id);
+          return (
+            <div key={i} className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-foreground">Atasan {i + 1}</span>
+                <Button type="button" size="sm" variant="ghost" className="text-[hsl(var(--danger-text))]"
+                  onClick={() => setForm(f => ({ ...f, supervisor_assignments: f.supervisor_assignments.filter((_, idx) => idx !== i) }))}>
+                  Hapus
+                </Button>
               </div>
+              <SmartNativeSelect value={sa.supervisor_employee_id} onChange={e => setSa(i, { supervisor_employee_id: e.target.value })} aria-label="Atasan">
+                <option value="">Pilih atasan</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{`${e.employee_code} — ${e.name}`}</option>)}
+              </SmartNativeSelect>
+              <p className="text-xs text-muted-foreground">Bawahan (dari peserta) · {sa.employee_ids.length} dipilih</p>
+              <DaftarCentang items={calon} terpilih={sa.employee_ids} kosong="Tambahkan peserta terlebih dahulu"
+                onAlih={(empId) => setSa(i, { employee_ids: sa.employee_ids.includes(empId) ? sa.employee_ids.filter(id => id !== empId) : [...sa.employee_ids, empId] })} />
             </div>
-            <div className="rounded-lg border border-foreground/10 max-h-48 overflow-y-auto divide-y divide-white/5">
-              {employees.map(emp => (
-                <label key={emp.id} className="flex items-center gap-3 px-3 py-2 hover:bg-foreground/5 cursor-pointer">
-                  <input type="checkbox"
-                    checked={form.participant_employee_ids.includes(emp.id)}
-                    onChange={() => toggleEmployee(emp.id)}
-                    className="rounded"
-                  />
-                  <span className="text-sm">{emp.employee_code} — {emp.name}</span>
-                  <span className="text-xs text-muted-foreground ml-auto">{emp.job_title}</span>
-                </label>
-              ))}
-              {employees.length === 0 && (
-                <p className="text-xs text-muted-foreground px-3 py-4 text-center">
-                  Belum ada data karyawan
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label>Catatan</Label>
-            <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              placeholder="Catatan optional..." rows={2} />
-          </div>
-
-          {/* Supervisor Assignments */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Penugasan Supervisor ({form.supervisor_assignments.length} grup)</Label>
-              <button type="button"
-                onClick={() => setForm(f => ({
-                  ...f,
-                  supervisor_assignments: [
-                    ...f.supervisor_assignments,
-                    { supervisor_employee_id: '', employee_ids: [] }
-                  ]
-                }))}
-                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">
-                + Tambah Supervisor
-              </button>
-            </div>
-            {form.supervisor_assignments.length === 0 && (
-              <p className="text-xs text-muted-foreground">Tidak ada supervisor assignment — staff→supervisor form tidak akan muncul.</p>
-            )}
-            {form.supervisor_assignments.map((sa, i) => (
-              <div key={i} className="rounded-lg border border-foreground/10 bg-foreground/5 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">Supervisor {i + 1}</span>
-                  <button type="button"
-                    onClick={() => setForm(f => ({ ...f, supervisor_assignments: f.supervisor_assignments.filter((_, idx) => idx !== i) }))}
-                    className="text-xs text-red-700 dark:text-red-400 hover:underline">Hapus</button>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Supervisor</Label>
-                  <SmartNativeSelect
-                    value={sa.supervisor_employee_id}
-                    onChange={e => setForm(f => ({
-                      ...f,
-                      supervisor_assignments: f.supervisor_assignments.map((s, idx) =>
-                        idx === i ? { ...s, supervisor_employee_id: e.target.value } : s
-                      )
-                    }))}
-                    className="w-full h-8 px-2 rounded border border-foreground/10 bg-foreground/5 text-xs"
-                  >
-                    <option value="">-- Pilih Supervisor --</option>
-                    {employees.map(e => (
-                      <option key={e.id} value={e.id}>{`${e.employee_code} — ${e.name}`}</option>
-                    ))}
-                  </SmartNativeSelect>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Bawahan (pilih dari peserta)</Label>
-                  <div className="rounded border border-foreground/10 max-h-32 overflow-y-auto divide-y divide-white/5">
-                    {employees.filter(e => form.participant_employee_ids.includes(e.id) && e.id !== sa.supervisor_employee_id).map(emp => (
-                      <label key={emp.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-foreground/5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sa.employee_ids.includes(emp.id)}
-                          onChange={e => {
-                            const newIds = e.target.checked
-                              ? [...sa.employee_ids, emp.id]
-                              : sa.employee_ids.filter(id => id !== emp.id);
-                            setForm(f => ({
-                              ...f,
-                              supervisor_assignments: f.supervisor_assignments.map((s, idx) =>
-                                idx === i ? { ...s, employee_ids: newIds } : s
-                              )
-                            }));
-                          }}
-                          className="rounded"
-                        />
-                        <span className="text-xs">{emp.employee_code} — {emp.name}</span>
-                      </label>
-                    ))}
-                    {employees.filter(e => form.participant_employee_ids.includes(e.id) && e.id !== sa.supervisor_employee_id).length === 0 && (
-                      <p className="text-xs text-muted-foreground px-2 py-2">Tambahkan peserta terlebih dahulu</p>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">{sa.employee_ids.length} bawahan dipilih</p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          );
+        })}
+      </div>
+    </FormPopup>
   );
 }
 
@@ -1533,64 +1143,37 @@ function QuestionDialog({ initial, onSave, onClose }) {
   });
   const [saving, setSaving] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setSaving(true);
     await onSave(form);
     setSaving(false);
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{form.question_id ? 'Edit Pertanyaan' : 'Tambah Pertanyaan'}</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <Label>Tipe Evaluasi</Label>
-            <Select value={form.eval_type} onValueChange={v => setForm(f => ({ ...f, eval_type: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {Object.entries(EVAL_TYPE_CFG).map(([k, v]) => (
-                  <SelectItem key={k} value={k}>{v.label} ({v.weight})</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Kategori</Label>
-              <Input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-                placeholder="misal: Tanggung Jawab" required />
-            </div>
-            <div className="space-y-1">
-              <Label>Bobot Kategori (0-1)</Label>
-              <Input type="number" value={form.category_weight} step={0.05} min={0.01} max={1}
-                onChange={e => setForm(f => ({ ...f, category_weight: parseFloat(e.target.value) || 0.10 }))} />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>Teks Pertanyaan</Label>
-            <Textarea value={form.question_text}
-              onChange={e => setForm(f => ({ ...f, question_text: e.target.value }))}
-              placeholder="Tuliskan pertanyaan..." rows={3} required />
-          </div>
-          <div className="space-y-1">
-            <Label>Urutan</Label>
-            <Input type="number" value={form.order} min={1}
-              onChange={e => setForm(f => ({ ...f, order: parseInt(e.target.value) || 99 }))} />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleSubmit} menyimpan={saving}
+      judul={form.question_id ? 'Ubah pertanyaan' : 'Tambah pertanyaan'} testId="kpi-question-form">
+      <Isian label="Jenis penilaian">
+        <SmartNativeSelect searchable={false} value={form.eval_type} onChange={e => setForm(f => ({ ...f, eval_type: e.target.value }))}>
+          {Object.entries(EVAL_TYPE_CFG).map(([k, v]) => <option key={k} value={k}>{v.label} ({v.weight})</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Kategori" wajib htmlFor="kpi-q-kategori">
+          <Input id="kpi-q-kategori" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="misal: Tanggung jawab" required />
+        </Isian>
+        <Isian label="Bobot kategori (0–1)" htmlFor="kpi-q-bobot">
+          <Input id="kpi-q-bobot" type="number" value={form.category_weight} step={0.05} min={0.01} max={1}
+            onChange={e => setForm(f => ({ ...f, category_weight: parseFloat(e.target.value) || 0.10 }))} />
+        </Isian>
+      </div>
+      <Isian label="Teks pertanyaan" wajib htmlFor="kpi-q-teks">
+        <Textarea id="kpi-q-teks" value={form.question_text} onChange={e => setForm(f => ({ ...f, question_text: e.target.value }))}
+          placeholder="Tuliskan pertanyaan" rows={3} required />
+      </Isian>
+      <Isian label="Urutan" htmlFor="kpi-q-urutan">
+        <Input id="kpi-q-urutan" type="number" value={form.order} min={1} onChange={e => setForm(f => ({ ...f, order: parseInt(e.target.value) || 99 }))} />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -1618,189 +1201,103 @@ function PerformDialog({ initial, employees, onSave, onClose }) {
     items: f.items.map((it, idx) => idx === i ? { ...it, [key]: val } : it),
   }));
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setSaving(true);
     await onSave({ ...form, perform_score: Math.round(weightedScore * 10) / 10 });
     setSaving(false);
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Input Nilai Perform</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {!form.employee_id && (
-            <div className="space-y-1">
-              <Label>Karyawan</Label>
-              {/* Tahap 5 (2026-11-07): pemilih karyawan bisa dicari (dulu Select tanpa kotak cari) */}
-              <EmployeeSelect employees={employees} value={form.employee_id} testId="kpi-goal-employee"
-                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground"
-                onChange={v => {
-                  const emp = employees.find(e => e.id === v);
-                  setForm(f => ({ ...f, employee_id: v, employee_name: emp?.name || '' }));
-                }} />
-            </div>
-          )}
-          {form.employee_name && (
-            <div className="rounded-lg bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-300 dark:border-indigo-500/20 px-3 py-2 text-sm">
-              Karyawan: <span className="font-semibold text-indigo-600 dark:text-indigo-300">{form.employee_name}</span>
-            </div>
-          )}
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={handleSubmit} menyimpan={saving} bisaSimpan={!!form.employee_id}
+      judul="Isi nilai kinerja" keterangan={form.employee_name ? `Karyawan: ${form.employee_name}` : undefined} testId="kpi-perform-form">
+      {!form.employee_id && (
+        <Isian label="Karyawan" wajib>
+          {/* Tahap 5 (2026-11-07): pemilih karyawan bisa dicari (dulu Select tanpa kotak cari) */}
+          <EmployeeSelect employees={employees} value={form.employee_id} testId="kpi-goal-employee" className="w-full"
+            onChange={v => {
+              const emp = employees.find(e => e.id === v);
+              setForm(f => ({ ...f, employee_id: v, employee_name: emp?.name || '' }));
+            }} />
+        </Isian>
+      )}
 
-          {/* KPI Items */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Item KPI ({form.items.length} item)</Label>
-              <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={addItem}>
-                <Plus className="w-3 h-3 mr-1" /> Tambah Item
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <Label>Item KPI ({form.items.length})</Label>
+          <Button type="button" size="sm" variant="outline" onClick={addItem}><Plus />Tambah item</Button>
+        </div>
+        <div className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+          {form.items.map((item, i) => (
+            <div key={i} className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-[1fr_6rem_6rem_1fr_auto] sm:items-end">
+              <Isian label="Nama KPI" className="col-span-2 sm:col-span-1">
+                <Input value={item.label} onChange={e => updateItem(i, 'label', e.target.value)} placeholder="Nama KPI" />
+              </Isian>
+              <Isian label="Skor (0–100)">
+                <Input type="number" value={item.score} min={0} max={100} onChange={e => updateItem(i, 'score', parseFloat(e.target.value) || 0)} />
+              </Isian>
+              <Isian label="Bobot">
+                <Input type="number" value={item.weight} min={0.1} step={0.1} onChange={e => updateItem(i, 'weight', parseFloat(e.target.value) || 1)} />
+              </Isian>
+              <Isian label="Catatan">
+                <Input value={item.notes || ''} onChange={e => updateItem(i, 'notes', e.target.value)} placeholder="opsional" />
+              </Isian>
+              <Button type="button" size="icon" variant="ghost" className="text-[hsl(var(--danger-text))]" onClick={() => removeItem(i)}
+                aria-label="Hapus item" title="Hapus item">
+                <X />
               </Button>
             </div>
-            <div className="space-y-2">
-              {form.items.map((item, i) => (
-                <div key={i} className="rounded-lg border border-foreground/10 bg-foreground/5 p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Input value={item.label} onChange={e => updateItem(i, 'label', e.target.value)}
-                      placeholder="Nama KPI" className="h-7 text-xs flex-1 mr-2" />
-                    <Button type="button" size="icon" variant="ghost" className="h-7 w-7 text-red-700 dark:text-red-400 shrink-0"
-                      onClick={() => removeItem(i)}>
-                      <X className="w-3 h-3" />
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <Label className="text-xs">Skor (0-100)</Label>
-                      <Input type="number" value={item.score} min={0} max={100}
-                        onChange={e => updateItem(i, 'score', parseFloat(e.target.value) || 0)}
-                        className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Bobot</Label>
-                      <Input type="number" value={item.weight} min={0.1} step={0.1}
-                        onChange={e => updateItem(i, 'weight', parseFloat(e.target.value) || 1)}
-                        className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Catatan</Label>
-                      <Input value={item.notes || ''} onChange={e => updateItem(i, 'notes', e.target.value)}
-                        placeholder="opsional" className="h-7 text-xs" />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          ))}
+        </div>
+      </div>
 
-          {/* Calculated score preview */}
-          <div className="rounded-xl bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-300 dark:border-indigo-500/20 px-4 py-3 flex items-center justify-between">
-            <span className="text-sm text-indigo-600 dark:text-indigo-300">Nilai Perform Terhitung:</span>
-            <span className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{weightedScore.toFixed(1)}</span>
-          </div>
+      <p className="flex items-center justify-between rounded-lg border border-[var(--glass-border)] px-4 py-3 text-sm">
+        <span className="text-muted-foreground">Nilai kinerja terhitung (rata-rata berbobot)</span>
+        <span className="text-xl font-semibold tabular-nums text-foreground">{weightedScore.toFixed(1)}</span>
+      </p>
 
-          <div className="space-y-1">
-            <Label>Catatan Supervisor</Label>
-            <Textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              placeholder="Catatan evaluasi..." rows={2} />
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving || !form.employee_id}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <Isian label="Catatan atasan" htmlFor="kpi-perf-catatan">
+        <Textarea id="kpi-perf-catatan" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Catatan evaluasi" rows={2} />
+      </Isian>
+    </FormPopup>
   );
 }
 
 function ResultDetailDialog({ result, onClose }) {
   const g = GRADE_CFG[result.grade] || {};
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Detail KPI — {result.employee_name}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          {/* Final score */}
-          <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-4 text-center">
-            <div className="text-5xl font-bold text-indigo-600 dark:text-indigo-400 mb-1">{fmtScore(result.kpi_final)}</div>
-            <div className="text-sm text-muted-foreground">KPI Final (dari 100)</div>
-            {result.grade && (
-              <div className={`inline-flex items-center gap-2 mt-2 px-3 py-1 rounded-full text-sm font-semibold border ${g.color}`}>
-                <Award className="w-4 h-4" />
-                Grade {result.grade} — {g.label}
-              </div>
-            )}
-          </div>
-
-          {/* Component breakdown */}
-          <div className="space-y-3">
-            {[
-              { label: 'Perform (60%)', score: result.perform_score, color: 'bg-blue-500' },
-              { label: 'Attitude (20%)', score: result.attitude_score, color: 'bg-violet-500' },
-              { label: 'Absensi (20%)', score: result.absensi_score, color: 'bg-emerald-500' },
-            ].map(c => (
-              <div key={c.label} className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">{c.label}</span>
-                  <span className="font-medium">{fmtScore(c.score)}</span>
-                </div>
-                <ScoreBar score={c.score || 0} color={c.color} />
-              </div>
+    <DetailPopup open onClose={onClose} testId="kpi-result-detail" judul={`Detail KPI — ${result.employee_name}`}
+      keterangan={result.employee_code}
+      status={result.grade ? <Lencana status={`grade-${result.grade}`} label={`Grade ${result.grade} — ${g.label}`} tone={g.tone} /> : null}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="KPI final"><span className="text-base font-semibold tabular-nums">{fmtScore(result.kpi_final)}</span> <span className="text-muted-foreground">dari 100</span></BarisDetail>
+        {[
+          { label: 'Kinerja (60%)', score: result.perform_score },
+          { label: 'Sikap (20%)', score: result.attitude_score },
+          { label: 'Absensi (20%)', score: result.absensi_score },
+        ].map(c => (
+          <BarisDetail key={c.label} label={c.label}>
+            <div className="flex items-center gap-3"><span className="w-10 tabular-nums">{fmtScore(c.score)}</span><div className="flex-1"><ScoreBar score={c.score || 0} /></div></div>
+          </BarisDetail>
+        ))}
+        {result.status_kpi && <BarisDetail label="Status">{result.status_kpi}</BarisDetail>}
+        {result.raise_pct > 0 && <BarisDetail label="Kenaikan gaji">{result.raise_pct}%</BarisDetail>}
+      </dl>
+      {result.absensi_detail && (
+        <div>
+          <p className="mb-1 text-sm font-medium text-foreground">Rincian absensi</p>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            {Object.entries(result.absensi_detail.breakdown || {}).filter(([, v]) => v > 0).map(([k, v]) => (
+              <BarisDetail key={k} label={k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ')}>{v}</BarisDetail>
             ))}
-          </div>
-
-          {/* Absensi detail */}
-          {result.absensi_detail && (
-            <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-3">
-              <p className="text-xs font-medium mb-2 text-muted-foreground">Detail Absensi</p>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {Object.entries(result.absensi_detail.breakdown || {}).map(([k, v]) => (
-                  v > 0 && <div key={k} className="flex justify-between">
-                    <span className="capitalize text-muted-foreground">{k}</span>
-                    <span className="font-medium">{v}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between col-span-3 pt-1 border-t border-foreground/10 mt-1">
-                  <span className="text-muted-foreground">Hari Tidak Hadir</span>
-                  <span className="font-medium">{result.absensi_detail.absent_days || 0} / {result.absensi_detail.working_days}</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Status and recommendations */}
-          {result.status_kpi && (
-            <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Status</span>
-                <span className="font-medium">{result.status_kpi}</span>
-              </div>
-              {result.raise_pct > 0 && (
-                <div className="flex justify-between text-sm mt-1">
-                  <span className="text-muted-foreground">Kenaikan Gaji</span>
-                  <span className="font-medium text-emerald-600 dark:text-emerald-400">{result.raise_pct}%</span>
-                </div>
-              )}
-            </div>
-          )}
+            <BarisDetail label="Hari tidak hadir">{result.absensi_detail.absent_days || 0} dari {result.absensi_detail.working_days} hari kerja</BarisDetail>
+          </dl>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Tutup</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </DetailPopup>
   );
 }
 
-
-// ─── GOAL DIALOG ──────────────────────────────────────────────────────────────
+// ─── SASARAN ──────────────────────────────────────────────────────────────
 function GoalDialog({ initial, periods, employees, headers, onSave, onClose }) {
   const [form, setForm] = useState({
     period_id: '',
@@ -1819,139 +1316,58 @@ function GoalDialog({ initial, periods, employees, headers, onSave, onClose }) {
     ? Math.min(100, Math.round((form.actual_value / form.target_value) * 100))
     : 0;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     setSaving(true);
     await onSave(form);
     setSaving(false);
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Flag className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            {form.goal_id ? 'Edit Goal' : 'Tambah Goal'}
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Periode</Label>
-              <SmartNativeSelect
-                className="w-full text-xs rounded border border-foreground/10 bg-foreground/5 px-2 py-1.5 text-foreground"
-                value={form.period_id}
-                onChange={e => setForm(f => ({ ...f, period_id: e.target.value }))}
-                required
-              >
-                <option value="">-- Pilih Periode --</option>
-                {periods.map(p => <option key={p.period_id} value={p.period_id}>{p.name}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Karyawan</Label>
-              <SmartNativeSelect
-                className="w-full text-xs rounded border border-foreground/10 bg-foreground/5 px-2 py-1.5 text-foreground"
-                value={form.employee_id}
-                onChange={e => setForm(f => ({ ...f, employee_id: e.target.value }))}
-                required
-              >
-                <option value="">-- Pilih Karyawan --</option>
-                {employees.map(e => <option key={e.id} value={e.id}>{e.employee_code} — {e.name}</option>)}
-              </SmartNativeSelect>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Judul Goal</Label>
-            <Input
-              value={form.title}
-              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              placeholder="contoh: Produksi 1000 pcs per bulan"
-              required
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Deskripsi (opsional)</Label>
-            <Textarea
-              value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="Penjelasan lebih lanjut tentang goal ini..."
-              rows={2}
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Target</Label>
-              <Input
-                type="number"
-                value={form.target_value}
-                min={0}
-                step={0.1}
-                onChange={e => setForm(f => ({ ...f, target_value: parseFloat(e.target.value) || 0 }))}
-                required
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Aktual</Label>
-              <Input
-                type="number"
-                value={form.actual_value}
-                min={0}
-                step={0.1}
-                onChange={e => setForm(f => ({ ...f, actual_value: parseFloat(e.target.value) || 0 }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Satuan</Label>
-              <Input
-                value={form.unit}
-                onChange={e => setForm(f => ({ ...f, unit: e.target.value }))}
-                placeholder="pcs, %, dll"
-              />
-            </div>
-          </div>
-
-          {/* Progress preview */}
-          <div className="rounded-lg border border-foreground/10 bg-foreground/5 p-3">
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-muted-foreground">Progress Preview</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">{progress}%</span>
-            </div>
-            <div className="w-full bg-foreground/10 rounded-full h-2">
-              <div
-                className={`h-2 rounded-full transition-all ${
-                  progress >= 100 ? 'bg-emerald-500' :
-                  progress >= 70 ? 'bg-blue-500' :
-                  progress >= 40 ? 'bg-amber-500' : 'bg-red-500'
-                }`}
-                style={{ width: `${Math.min(100, progress)}%` }}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Catatan</Label>
-            <Textarea
-              value={form.notes}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              placeholder="Catatan tambahan..."
-              rows={2}
-            />
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving} className="bg-emerald-600 hover:bg-emerald-700">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleSubmit} menyimpan={saving}
+      bisaSimpan={!!(form.period_id && form.employee_id && form.title)}
+      judul={form.goal_id ? 'Ubah sasaran' : 'Tambah sasaran'} testId="kpi-goal-form">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Periode" wajib>
+          <SmartNativeSelect value={form.period_id} onChange={e => setForm(f => ({ ...f, period_id: e.target.value }))}>
+            <option value="">Pilih periode</option>
+            {periods.map(p => <option key={p.period_id} value={p.period_id}>{p.name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Karyawan" wajib>
+          <SmartNativeSelect value={form.employee_id} onChange={e => setForm(f => ({ ...f, employee_id: e.target.value }))}>
+            <option value="">Pilih karyawan</option>
+            {employees.map(e => <option key={e.id} value={e.id}>{e.employee_code} — {e.name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </div>
+      <Isian label="Judul sasaran" wajib htmlFor="kpi-goal-judul">
+        <Input id="kpi-goal-judul" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="contoh: Produksi 1000 pcs per bulan" required />
+      </Isian>
+      <Isian label="Deskripsi (opsional)" htmlFor="kpi-goal-desk">
+        <Textarea id="kpi-goal-desk" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} />
+      </Isian>
+      <div className="grid grid-cols-3 gap-3">
+        <Isian label="Target" wajib htmlFor="kpi-goal-target">
+          <Input id="kpi-goal-target" type="number" value={form.target_value} min={0} step={0.1} required
+            onChange={e => setForm(f => ({ ...f, target_value: parseFloat(e.target.value) || 0 }))} />
+        </Isian>
+        <Isian label="Aktual" htmlFor="kpi-goal-aktual">
+          <Input id="kpi-goal-aktual" type="number" value={form.actual_value} min={0} step={0.1}
+            onChange={e => setForm(f => ({ ...f, actual_value: parseFloat(e.target.value) || 0 }))} />
+        </Isian>
+        <Isian label="Satuan" htmlFor="kpi-goal-satuan">
+          <Input id="kpi-goal-satuan" value={form.unit} onChange={e => setForm(f => ({ ...f, unit: e.target.value }))} placeholder="pcs, %, dll" />
+        </Isian>
+      </div>
+      <div className="space-y-1">
+        <div className="flex justify-between text-sm"><span className="text-muted-foreground">Perkiraan kemajuan</span><span className="font-semibold tabular-nums">{progress}%</span></div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--glass-border)]">
+          <div className="h-2 rounded-full bg-primary transition-all" style={{ width: `${Math.min(100, progress)}%` }} />
+        </div>
+      </div>
+      <Isian label="Catatan" htmlFor="kpi-goal-catatan">
+        <Textarea id="kpi-goal-catatan" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} />
+      </Isian>
+    </FormPopup>
   );
 }

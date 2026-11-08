@@ -1,9 +1,11 @@
 /**
- * Dashboard Atoms — Tahap 2 (Dashboard Modernization)
+ * Dashboard Atoms — komponen dashboard bersama: StatCard, ChartCard, GlassTooltip, HeroCrystalCard, DonutProgress,
+ * TrendDelta, CHART_PALETTE.
  *
- * Komponen reusable untuk semua dashboard: StatCard, ChartCard, GlassTooltip,
- * HeroCrystalCard (3D prism CSS accent per Ref B), DonutProgress, TrendDelta.
- * Semua mengikuti design tokens di index.css + dual-theme (dark + light).
+ * Standar UI/UX v2 (keputusan owner 8 Nov 2026): SATU gaya kartu angka (sama dengan `StatTile`: putih/netral,
+ * label 12 px, angka 20 px, ikon kecil abu — tanpa kotak ikon berwarna, tanpa HURUF BESAR), kartu grafik polos
+ * (judul 16 px), dan kepala halaman TIPIS (tanpa cahaya/kristal/gradasi). Props tetap sama supaya layar lain yang
+ * memakainya (mis. Dashboard Produksi) ikut seragam tanpa diubah.
  */
 import { cn } from '@/lib/utils';
 import { ArrowUp, ArrowDown, Minus } from 'lucide-react';
@@ -18,10 +20,10 @@ export function TrendDelta({ value, suffix = '%', neutralThreshold = 0.01 }) {
   const positive = v > 0;
   const Icon = neutral ? Minus : positive ? ArrowUp : ArrowDown;
   const color = neutral
-    ? 'text-foreground/50'
+    ? 'text-muted-foreground'
     : positive
-      ? 'text-[hsl(var(--success))]'
-      : 'text-[hsl(var(--destructive))]';
+      ? 'text-[hsl(var(--success-text))]'
+      : 'text-[hsl(var(--danger-text))]';
   return (
     <span className={cn('inline-flex items-center gap-0.5 text-xs font-semibold', color)}>
       <Icon className="w-3 h-3" strokeWidth={2.5} />
@@ -31,56 +33,56 @@ export function TrendDelta({ value, suffix = '%', neutralThreshold = 0.01 }) {
 }
 
 /* ───────────────────────────────────────────────────────────────────────── */
-/*  StatCard — KPI card premium dengan icon, trend delta, sub-text            */
+/*  StatCard — kartu angka, tampilan = StatTile (satu gaya kartu angka)       */
 /* ───────────────────────────────────────────────────────────────────────── */
+const ACCENT_TEXT = {
+  primary: 'text-foreground',
+  info: 'text-foreground',
+  mint: 'text-foreground',
+  success: 'text-[hsl(var(--success-text))]',
+  warning: 'text-[hsl(var(--warning-text))]',
+  danger: 'text-[hsl(var(--danger-text))]',
+};
+
 export function StatCard({
   icon: Icon,
   label,
   value,
   sub,
   trend,
-  accent = 'primary', // primary | success | warning | info | mint
+  accent = 'primary', // primary | success | warning | info | mint — hanya warna ANGKA untuk success/warning
   className,
   testId,
   onClick,
+  hint,
 }) {
-  const accentMap = {
-    primary: { bg: 'bg-[hsl(var(--primary)/0.12)]', border: 'border-[hsl(var(--primary)/0.25)]', icon: 'text-[hsl(var(--primary))]' },
-    success: { bg: 'bg-[hsl(var(--success)/0.12)]', border: 'border-[hsl(var(--success)/0.22)]', icon: 'text-[hsl(var(--success))]' },
-    warning: { bg: 'bg-[hsl(var(--warning)/0.12)]', border: 'border-[hsl(var(--warning)/0.22)]', icon: 'text-[hsl(var(--warning))]' },
-    info:    { bg: 'bg-[hsl(var(--info)/0.12)]',    border: 'border-[hsl(var(--info)/0.22)]',    icon: 'text-[hsl(var(--info))]' },
-    mint:    { bg: 'bg-[hsl(var(--accent)/0.22)]',  border: 'border-[hsl(var(--accent)/0.35)]',  icon: 'text-[hsl(var(--accent-foreground))]' },
-  };
-  const a = accentMap[accent] || accentMap.primary;
   const Component = onClick ? 'button' : 'div';
+  // nol selalu abu (PANDUAN_UI G5)
+  const nol = /^(Rp\s?)?[-−]?0([.,]0+)?%?$/.test(String(value ?? '').trim());
   return (
     <Component
       onClick={onClick}
+      type={onClick ? 'button' : undefined}
+      title={onClick ? (hint || 'Klik untuk lihat detail') : hint}
       data-testid={testId}
       className={cn(
-        'relative rounded-[var(--radius-lg)] border p-4 text-left flex flex-col h-full min-h-[120px]',
-        'bg-[var(--card-surface)] border-[var(--glass-border)]',
-        'backdrop-blur-[var(--glass-blur)] shadow-[var(--shadow-card)]',
-        onClick && 'transition-[transform,box-shadow,background-color] duration-200 ease-smooth-out hover:bg-[var(--card-surface-hover)] hover:shadow-[var(--shadow-glow-blue)] hover:-translate-y-0.5 cursor-pointer',
+        'w-full rounded-[var(--radius-md)] border px-4 py-3 text-left flex flex-col h-full',
+        'bg-[var(--card-surface)] border-[var(--glass-border)] backdrop-blur-[var(--glass-blur)]',
+        onClick && 'cursor-pointer transition-[border-color,box-shadow] duration-150 hover:border-[hsl(var(--primary)/0.45)] hover:shadow-[var(--shadow-card)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]',
         className
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">{label}</p>
-          <p className="text-3xl font-bold text-foreground mt-1.5 leading-none tracking-tight">{value}</p>
-          {sub && <p className="text-xs text-foreground/50 mt-1.5 truncate">{sub}</p>}
-        </div>
-        {Icon && (
-          <div className={cn('w-10 h-10 rounded-[12px] border grid place-items-center shrink-0', a.bg, a.border)}>
-            <Icon className={cn('w-4 h-4', a.icon)} strokeWidth={2} />
-          </div>
-        )}
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        {Icon && <Icon className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden="true" />}
       </div>
+      <p className={cn('mt-1 text-xl font-bold tracking-tight tabular-nums',
+        nol ? 'text-muted-foreground' : (ACCENT_TEXT[accent] || 'text-foreground'))}>{value}</p>
+      {sub && <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{sub}</p>}
       {trend !== undefined && trend !== null && (
-        <div className="mt-auto pt-3 border-t border-[var(--glass-border)] flex items-center gap-2">
+        <div className="mt-auto pt-2 flex items-center gap-2">
           <TrendDelta value={trend.value} suffix={trend.suffix || '%'} />
-          {trend.label && <span className="text-xs text-foreground/50">{trend.label}</span>}
+          {trend.label && <span className="text-xs text-muted-foreground">{trend.label}</span>}
         </div>
       )}
     </Component>
@@ -88,26 +90,28 @@ export function StatCard({
 }
 
 /* ───────────────────────────────────────────────────────────────────────── */
-/*  ChartCard — wrapper untuk chart dengan title + actions                    */
+/*  ChartCard — kartu standar untuk grafik/daftar dengan judul + aksi         */
 /* ───────────────────────────────────────────────────────────────────────── */
 export function ChartCard({ title, subtitle, actions, children, className, testId }) {
   return (
     <div
       data-testid={testId}
       className={cn(
-        'rounded-[var(--radius-lg)] border p-5',
+        'min-w-0 rounded-[var(--radius-lg)] border p-4',
         'bg-[var(--card-surface)] border-[var(--glass-border)]',
-        'backdrop-blur-[var(--glass-blur)] shadow-[var(--shadow-card)]',
+        'backdrop-blur-[var(--glass-blur)]',
         className
       )}
     >
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div className="min-w-0">
-          {title && <h3 className="text-sm font-semibold text-foreground tracking-tight">{title}</h3>}
-          {subtitle && <p className="text-xs text-foreground/50 mt-0.5">{subtitle}</p>}
+      {(title || subtitle || actions) && (
+        <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+          <div className="min-w-0">
+            {title && <p className="text-base font-semibold text-foreground">{title}</p>}
+            {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
+          </div>
+          {actions && <div className="flex items-center gap-2">{actions}</div>}
         </div>
-        {actions}
-      </div>
+      )}
       {children}
     </div>
   );
@@ -125,7 +129,7 @@ export function GlassTooltip({ active, payload, label, formatter }) {
         {payload.map((p, i) => (
           <div key={i} className="flex items-center gap-2 text-xs">
             <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color || p.fill }} />
-            <span className="text-foreground/60">{p.name}:</span>
+            <span className="text-muted-foreground">{p.name}:</span>
             <span className="font-semibold text-foreground tabular-nums">
               {formatter ? formatter(p.value) : (p.value ?? 0).toLocaleString('id-ID')}
             </span>
@@ -137,50 +141,20 @@ export function GlassTooltip({ active, payload, label, formatter }) {
 }
 
 /* ───────────────────────────────────────────────────────────────────────── */
-/*  HeroCrystalCard — hero card dengan 3D prism CSS accent (Ref B inspired)   */
-/*  Tampilan: big heading + supporting copy + crystal illustration (pure CSS) */
+/*  HeroCrystalCard — kepala halaman TIPIS (Standar UI/UX v2: tanpa cahaya,   */
+/*  kristal, gradasi, atau eyebrow huruf besar). Props lama tetap diterima.   */
 /* ───────────────────────────────────────────────────────────────────────── */
-export function HeroCrystalCard({ eyebrow, title, description, children, className, testId, actions }) {
+export function HeroCrystalCard({ eyebrow: _eyebrow, title, description, children, className, testId, actions }) {
   return (
-    <div
-      data-testid={testId}
-      className={cn(
-        'relative overflow-hidden rounded-[var(--radius-xl)] border p-6 lg:p-8',
-        'bg-[var(--card-surface)] border-[var(--glass-border)]',
-        'backdrop-blur-[var(--glass-blur-strong)] shadow-[var(--shadow-card)]',
-        className
-      )}
-    >
-      {/* Ambient glow (blue-mint, sesuai Ref B) */}
-      <div
-        aria-hidden="true"
-        className="absolute -top-16 -right-16 w-72 h-72 rounded-full blur-[96px] opacity-40 pointer-events-none"
-        style={{ background: 'radial-gradient(circle, hsl(var(--accent)), transparent 70%)' }}
-      />
-      <div
-        aria-hidden="true"
-        className="absolute -bottom-20 -left-10 w-72 h-72 rounded-full blur-[90px] opacity-30 pointer-events-none"
-        style={{ background: 'radial-gradient(circle, hsl(var(--primary)), transparent 70%)' }}
-      />
-
-      {/* CSS-only crystal/prism accent — geometric stacked shapes */}
-      <div aria-hidden="true" className="absolute top-6 right-6 w-32 h-32 hidden lg:block pointer-events-none">
-        <div className="relative w-full h-full">
-          <div className="absolute inset-0 rotate-12 rounded-3xl bg-gradient-to-br from-[hsl(var(--accent))] to-[hsl(var(--primary))] opacity-70 shadow-2xl" />
-          <div className="absolute inset-2 -rotate-6 rounded-2xl bg-gradient-to-tr from-[hsl(var(--primary)/0.6)] to-[hsl(var(--info))] opacity-50" />
-          <div className="absolute inset-6 rotate-45 rounded-xl bg-foreground/[0.15] backdrop-blur-sm border border-foreground/30" />
+    <div data-testid={testId} className={cn('space-y-3', className)}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          {title && <p className="text-xl font-bold leading-tight tracking-tight text-foreground sm:text-2xl">{title}</p>}
+          {description && <p className="mt-1 hidden text-sm text-muted-foreground sm:block">{description}</p>}
         </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
-
-      <div className="relative z-10 flex items-start justify-between gap-4 flex-wrap">
-        <div className="max-w-2xl">
-          {eyebrow && <p className="text-[11px] uppercase tracking-[0.18em] text-foreground/60 font-semibold mb-2">{eyebrow}</p>}
-          {title && <h1 className="text-3xl lg:text-4xl font-bold text-foreground tracking-tight leading-[1.05]">{title}</h1>}
-          {description && <p className="text-sm text-foreground/60 mt-3 leading-relaxed">{description}</p>}
-          {children && <div className="mt-5">{children}</div>}
-        </div>
-        {actions && <div className="shrink-0">{actions}</div>}
-      </div>
+      {children && <div>{children}</div>}
     </div>
   );
 }
@@ -218,9 +192,9 @@ export function DonutProgress({ value = 0, size = 140, stroke = 12, label, sub, 
       </svg>
       <div className="absolute inset-0 grid place-items-center text-center">
         <div>
-          <p className="text-3xl font-bold text-foreground leading-none tracking-tight">{pct.toFixed(0)}<span className="text-lg text-foreground/50">%</span></p>
-          {label && <p className="text-[10px] uppercase tracking-wider text-foreground/50 mt-1">{label}</p>}
-          {sub && <p className="text-[10px] text-foreground/40 mt-0.5">{sub}</p>}
+          <p className="text-2xl font-bold text-foreground leading-none tracking-tight">{pct.toFixed(0)}<span className="text-base text-muted-foreground">%</span></p>
+          {label && <p className="text-xs text-muted-foreground mt-1">{label}</p>}
+          {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
         </div>
       </div>
     </div>

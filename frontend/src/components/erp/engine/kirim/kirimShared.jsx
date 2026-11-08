@@ -53,10 +53,10 @@ export function PotonganTable({ rows, withStock = false, testId = 'kirim-potonga
             <TableCell>
               <span className="block">{p.name}</span>
               <span className="text-xs text-muted-foreground tabular-nums">{p.code}</span>
-              {p.problem && <span className="block text-xs text-[hsl(var(--destructive))]">{p.problem}</span>}
+              {p.problem && <span className="block text-xs text-[hsl(var(--danger-text))]">{p.problem}</span>}
             </TableCell>
             <TableCell className="text-right tabular-nums font-semibold">{fmtNum(p.qty)}</TableCell>
-            {withStock && <TableCell className={`text-right tabular-nums ${p.blocking ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmtNum(p.available)}</TableCell>}
+            {withStock && <TableCell className={`text-right tabular-nums ${p.blocking ? 'text-[hsl(var(--danger-text))]' : ''}`}>{fmtNum(p.available)}</TableCell>}
             <TableCell className="text-right tabular-nums whitespace-nowrap">{p.value ? fmtRp(p.value) : <span className="text-muted-foreground">Rp 0</span>}</TableCell>
           </TableRow>
         ))}
@@ -100,7 +100,7 @@ export function AksesorisTable({ rows, mode = 'form', values = {}, onChange, tes
                 <span className="text-xs text-muted-foreground tabular-nums">{a.code}</span>
                 {a.source === 'tambahan' && <span className="ml-2 text-xs text-muted-foreground">tambahan di luar BOM</span>}
                 {a.problem && (
-                  <span className={`flex items-center gap-1 text-xs ${a.blocking ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--warning))]'}`}>
+                  <span className={`flex items-center gap-1 text-xs ${a.blocking ? 'text-[hsl(var(--danger-text))]' : 'text-[hsl(var(--warning-text))]'}`}>
                     <AlertTriangle className="w-3 h-3" />{a.problem}
                   </span>
                 )}
@@ -135,7 +135,7 @@ export function AksesorisTable({ rows, mode = 'form', values = {}, onChange, tes
               </TableCell>
               <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtNum(form ? base : a.qty_base, 4)} {a.usage_unit}</TableCell>
               {form && (
-                <TableCell className={`text-right tabular-nums whitespace-nowrap ${a.blocking ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
+                <TableCell className={`text-right tabular-nums whitespace-nowrap ${a.blocking ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>
                   {fmtNum(a.available)} {a.usage_unit}
                 </TableCell>
               )}

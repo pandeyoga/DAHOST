@@ -6,14 +6,14 @@
  * bisa dicari) — dulu kotak teks bebas "1500 - Aset Tetap", sehingga yang tersimpan bukan kode akun dan
  * pemeriksa keterikatan akun (core/coa_bindings, "rujukan id ATAU kode") tidak bisa menautkannya. Yang disimpan
  * kini KODE akun. Nilai lama yang bukan kode akun tetap tampil (bertanda) sampai diganti.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): popup form standar pendek (FormPopup + Isian), galat di kaki form.
  */
 import { useState, useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { apicall } from '../utils';
 
 export function EditCategoryDialog({ open, onClose, token, category, onUpdated }) {
@@ -22,10 +22,12 @@ export function EditCategoryDialog({ open, onClose, token, category, onUpdated }
     coa_asset_account: '', coa_depreciation_account: '',
   });
   const [loading, setLoading] = useState(false);
+  const [galat, setGalat] = useState('');
   const [accounts, setAccounts] = useState([]);
 
   useEffect(() => {
     if (category) {
+      setGalat('');
       setForm({
         name: category.name || '',
         code: category.code || '',
@@ -48,8 +50,9 @@ export function EditCategoryDialog({ open, onClose, token, category, onUpdated }
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   const submit = async () => {
-    if (!form.name.trim()) { toast.error('Nama kategori wajib diisi'); return; }
-    if (!(Number(form.useful_life_years) > 0)) { toast.error('Umur manfaat harus lebih dari 0 tahun'); return; }
+    if (!form.name.trim()) { setGalat('Nama kategori wajib diisi.'); return; }
+    if (!(Number(form.useful_life_years) > 0)) { setGalat('Umur manfaat harus lebih dari 0 tahun.'); return; }
+    setGalat('');
     setLoading(true);
     try {
       // nama/kode hanya dikirim bila diubah — server memeriksa ulang keunikan nama setiap kali `name` dikirim,
@@ -63,9 +66,9 @@ export function EditCategoryDialog({ open, onClose, token, category, onUpdated }
         onUpdated();
         onClose();
       } else {
-        toast.error(data.detail || 'Gagal menyimpan kategori');
+        setGalat(data.detail || 'Gagal menyimpan kategori.');
       }
-    } catch (e) { toast.error(e.message || 'Gagal menyimpan kategori'); }
+    } catch (e) { setGalat(e.message || 'Gagal menyimpan kategori.'); }
     finally { setLoading(false); }
   };
 
@@ -73,67 +76,46 @@ export function EditCategoryDialog({ open, onClose, token, category, onUpdated }
     const cur = form[field];
     const known = !cur || accounts.some((a) => a.code === cur);
     return (
-      <SmartNativeSelect value={cur} onChange={(e) => set(field, e.target.value)} className="mt-1 h-9 w-full"
+      <SmartNativeSelect value={cur} onChange={(e) => set(field, e.target.value)} className="h-9 w-full"
         searchPlaceholder="Cari kode atau nama akun…" data-testid={testId}>
         <option value="">{placeholder}</option>
-        {!known && <option value={cur}>{`⚠ ${cur} (bukan kode akun di Bagan Akun — pilih ulang)`}</option>}
+        {!known && <option value={cur}>{`${cur} — bukan kode akun di Bagan Akun, pilih ulang`}</option>}
         {accounts.map((a) => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
       </SmartNativeSelect>
     );
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader><DialogTitle>Ubah kategori aset</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Nama kategori *</label>
-              <Input placeholder="Peralatan IT" value={form.name}
-                onChange={e => set('name', e.target.value)} className="mt-1" data-testid="cat-name-input" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Kode</label>
-              <Input placeholder="IT" value={form.code}
-                onChange={e => set('code', e.target.value)} className="mt-1" data-testid="cat-code-input" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Umur manfaat (tahun)</label>
-              <Input type="number" min="1" value={form.useful_life_years}
-                onChange={e => set('useful_life_years', e.target.value)} className="mt-1" data-testid="cat-life-input" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Metode penyusutan</label>
-              <SmartNativeSelect value={form.depr_method} onChange={e => set('depr_method', e.target.value)} searchable={false}
-                className="mt-1 h-9 w-full" data-testid="cat-depr-method">
-                <option value="straight_line">Garis lurus</option>
-                <option value="double_declining">Saldo menurun ganda</option>
-              </SmartNativeSelect>
-            </div>
-          </div>
-          <Separator className="my-3" />
-          <p className="text-xs font-semibold text-muted-foreground">Akun di Bagan Akun</p>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Akun aset</label>
-            {accountSelect('coa_asset_account', 'cat-coa-asset', '— Belum diatur —')}
-            <p className="text-[10px] text-muted-foreground mt-1">Akun untuk mencatat pembelian aset kategori ini</p>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Akun akumulasi penyusutan</label>
-            {accountSelect('coa_depreciation_account', 'cat-coa-depr', '— Belum diatur —')}
-            <p className="text-[10px] text-muted-foreground mt-1">Akun untuk mencatat akumulasi penyusutan</p>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={loading} data-testid="save-category-btn">
-            {loading ? 'Menyimpan...' : 'Simpan'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="edit-category-form"
+      judul="Ubah kategori aset" keterangan={category ? `${category.code || ''} ${category.name || ''}`.trim() : undefined}
+      onSimpan={submit} menyimpan={loading} galat={galat}>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Nama kategori" wajib htmlFor="cat-name">
+          <Input id="cat-name" placeholder="Peralatan IT" value={form.name}
+            onChange={e => set('name', e.target.value)} data-testid="cat-name-input" />
+        </Isian>
+        <Isian label="Kode" htmlFor="cat-code">
+          <Input id="cat-code" placeholder="IT" value={form.code}
+            onChange={e => set('code', e.target.value)} data-testid="cat-code-input" />
+        </Isian>
+        <Isian label="Umur manfaat (tahun)" htmlFor="cat-life">
+          <Input id="cat-life" type="number" min="1" inputMode="numeric" value={form.useful_life_years}
+            onChange={e => set('useful_life_years', e.target.value)} data-testid="cat-life-input" />
+        </Isian>
+        <Isian label="Metode penyusutan">
+          <SmartNativeSelect value={form.depr_method} onChange={e => set('depr_method', e.target.value)} searchable={false}
+            className="h-9 w-full" data-testid="cat-depr-method">
+            <option value="straight_line">Garis lurus</option>
+            <option value="double_declining">Saldo menurun ganda</option>
+          </SmartNativeSelect>
+        </Isian>
+      </div>
+      <Isian label="Akun aset" petunjuk="Akun Bagan Akun untuk mencatat pembelian aset kategori ini.">
+        {accountSelect('coa_asset_account', 'cat-coa-asset', '— Belum diatur —')}
+      </Isian>
+      <Isian label="Akun akumulasi penyusutan" petunjuk="Akun Bagan Akun untuk mencatat akumulasi penyusutan.">
+        {accountSelect('coa_depreciation_account', 'cat-coa-depr', '— Belum diatur —')}
+      </Isian>
+    </FormPopup>
   );
 }

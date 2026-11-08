@@ -1,32 +1,30 @@
 /**
  * Ringkasan Bisnis (Management Overview) — dipisah per DOMAIN + jejak sumber.
  *
- * 2026-08-06 — DIPERBAIKI TOTAL.
- * Versi lama membaca endpoint yang mengagregasi koleksi pra-migrasi
- * (`rahaza_orders`, `rahaza_work_orders`, `rahaza_wip_events`,
- * `rahaza_ap_invoices`, `rahaza_cash_accounts`) yang isinya 0–2 dokumen ⇒ semua
- * KPI nol/salah. Backend `routes/rahaza_reports.py` sekarang membaca SSOT
- * (production_pos / po_items / production_jobs / production_job_items /
- * production_progress / cmt_receipts / buyer_shipments / rahaza_ar_invoices)
- * dan setiap respons mengirim `sources` → dirender <SourceTrace/>.
- *
+ * 2026-08-06 — DIPERBAIKI TOTAL. Backend `routes/rahaza_reports.py` membaca SSOT (production_pos / po_items /
+ * production_jobs / production_job_items / production_progress / cmt_receipts / buyer_shipments / rahaza_ar_invoices)
+ * dan setiap respons mengirim `sources` → ditampilkan sebagai baris "Sumber data" berbahasa biasa.
  * Keputusan owner: **domain dipisah tegas** — Produksi Internal DA vs Maklon.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (domain = pil penyaring, periode, muat ulang), 4 kartu angka
+ * StatTile dengan keterangan yang benar, ambang peringatan & persetujuan PR diubah lewat FormPopup (isian & simpan
+ * sama), daftar peringatan / tahapan PO / produk / pelanggan = tabel yang bisa diunduh, tanpa kode koleksi di layar,
+ * tanpa warna mentah, gradasi, atau HURUF BESAR.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  RefreshCw, Users, Factory, DollarSign, AlertTriangle,
-  Package, Activity, ClipboardList, Database, BellRing, CalendarClock,
-  SlidersHorizontal, Loader2, Check,
-} from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Badge } from '@/components/ui/badge';
-import {
-  StatCard, ChartCard, GlassTooltip, HeroCrystalCard, DonutProgress, CHART_PALETTE,
-} from './dashboardAtoms';
+import FilterChips from '@/components/ui/filter-chips';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { ChartCard, GlassTooltip, DonutProgress, CHART_PALETTE } from './dashboardAtoms';
 import { PeriodPicker, resolvePreset } from './PeriodPicker';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
 } from 'recharts';
@@ -35,39 +33,51 @@ import { formatRupiah } from '@/lib/format';
 const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
 const fmtShortIDR = (n) => {
   const v = Number(n || 0);
-  if (v >= 1e9) return `Rp ${(v / 1e9).toFixed(1)}M`;
-  if (v >= 1e6) return `Rp ${(v / 1e6).toFixed(1)}jt`;
-  if (v >= 1e3) return `Rp ${(v / 1e3).toFixed(0)}rb`;
+  if (v >= 1e9) return `Rp ${(v / 1e9).toLocaleString('id-ID', { maximumFractionDigits: 1 })} M`;
+  if (v >= 1e6) return `Rp ${(v / 1e6).toLocaleString('id-ID', { maximumFractionDigits: 1 })} jt`;
+  if (v >= 1e3) return `Rp ${(v / 1e3).toLocaleString('id-ID', { maximumFractionDigits: 0 })} rb`;
   return formatRupiah(v);
 };
+const tglID = (ymd) => {
+  if (!ymd) return '';
+  const [y, m, d] = String(ymd).slice(0, 10).split('-');
+  const B = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  return `${Number(d)} ${B[Number(m) - 1] || ''} ${y}`;
+};
+const sisaHari = (n) => (n < 0 ? `Lewat ${Math.abs(n)} hari` : `Sisa ${n} hari`);
+const DOMAIN_LABEL = { internal: 'Internal DA', maklon: 'Maklon' };
 
 const DOMAINS = [
-  { id: 'all', label: 'Gabungan' },
-  { id: 'internal', label: 'Internal DA' },
-  { id: 'maklon', label: 'Maklon' },
+  { key: 'all', label: 'Gabungan' },
+  { key: 'internal', label: 'Internal DA' },
+  { key: 'maklon', label: 'Maklon' },
 ];
 
-/** Jejak koleksi SSOT yang dipakai — menjawab "angka ini dari mana?". */
+// Kode koleksi → nama yang dipahami staf (dulu tampil apa adanya: "production_pos 0").
+const NAMA_SUMBER = {
+  production_pos: 'PO produksi', po_items: 'Item PO', production_jobs: 'Job produksi',
+  production_job_items: 'Buku kuantitas job', production_progress: 'Progres produksi', cmt_receipts: 'Terima dari CMT',
+  buyer_shipments: 'Kirim ke buyer', rahaza_ar_invoices: 'Faktur piutang', rahaza_materials: 'Master material',
+};
+
+/** Jejak sumber — menjawab "angka ini dari mana?" tanpa istilah program. */
 function SourceTrace({ rows, domainLabel }) {
   if (!rows?.length) return null;
   return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--glass-border)] bg-[var(--card-surface)] px-3 py-2"
-         data-testid="overview-source-trace">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <Database className="h-3.5 w-3.5 text-foreground/40" />
-        <span className="text-[11px] font-semibold text-foreground/60">Sumber data:</span>
-        {domainLabel && <Badge variant="outline" className="text-[10px]">{domainLabel}</Badge>}
-        {rows.map((s) => (
-          <span key={s.collection} title={s.note || ''}
-                className="rounded border border-[var(--glass-border)] px-1.5 py-0.5 text-[10px] text-foreground/60">
-            <span className="font-mono">{s.collection}</span>
-            <span className="ml-1 font-semibold text-foreground">{fmtNum(s.count)}</span>
-          </span>
-        ))}
-      </div>
-    </div>
+    <p className="text-xs text-muted-foreground" data-testid="overview-source-trace">
+      Sumber data{domainLabel ? ` (${domainLabel})` : ''}:{' '}
+      {rows.map((s) => `${NAMA_SUMBER[s.collection] || 'Data lain'} ${fmtNum(s.count)}`).join(' · ')} dokumen.
+    </p>
   );
 }
+
+const TAHAP_PO = [
+  ['Draf', 'draft', 'Belum dikonfirmasi'],
+  ['Dikonfirmasi', 'confirmed', 'Siap didistribusi'],
+  ['Berjalan', 'running', 'Sedang diproduksi'],
+  ['Selesai', 'done', 'Selesai atau ditutup'],
+  ['Dibatalkan', 'cancelled', 'Dibatalkan'],
+];
 
 export default function ManagementOverviewModule({ token }) {
   const [domain, setDomain] = useState('all');
@@ -85,6 +95,10 @@ export default function ManagementOverviewModule({ token }) {
     pr_1_stage_max: '', pr_2_stage_max: '',
   });
   const [savingCfg, setSavingCfg] = useState(false);
+  const [bukaAmbang, setBukaAmbang] = useState(false);
+  // Muat otomatis tiap 60 detik tidak boleh menimpa isian yang sedang diubah di popup ambang.
+  const bukaAmbangRef = useRef(false);
+  useEffect(() => { bukaAmbangRef.current = bukaAmbang; }, [bukaAmbang]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [period, setPeriod] = useState({ preset: '30d', from: null, to: null });
@@ -99,6 +113,15 @@ export default function ManagementOverviewModule({ token }) {
     }
     return { from, to };
   }, [period]);
+
+  const isiDraft = (cfg) => setCfgDraft({
+    po_warn_days: String(cfg?.po_warn_days ?? 3),
+    ar_warn_days: String(cfg?.ar_warn_days ?? 3),
+    rnd_attention_days: String(cfg?.rnd_attention_days ?? 3),
+    rnd_stale_days: String(cfg?.rnd_stale_days ?? 7),
+    pr_1_stage_max: String(cfg?.pr_1_stage_max ?? 1000000),
+    pr_2_stage_max: String(cfg?.pr_2_stage_max ?? 25000000),
+  });
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -121,14 +144,7 @@ export default function ManagementOverviewModule({ token }) {
       setOnTime(ot);
       setAlerts(al);
       setAlertCfg(cfg);
-      setCfgDraft({
-        po_warn_days: String(cfg?.po_warn_days ?? 3),
-        ar_warn_days: String(cfg?.ar_warn_days ?? 3),
-        rnd_attention_days: String(cfg?.rnd_attention_days ?? 3),
-        rnd_stale_days: String(cfg?.rnd_stale_days ?? 7),
-        pr_1_stage_max: String(cfg?.pr_1_stage_max ?? 1000000),
-        pr_2_stage_max: String(cfg?.pr_2_stage_max ?? 25000000),
-      });
+      if (!bukaAmbangRef.current) isiDraft(cfg);
       setLastUpdate(new Date());
     } finally { setLoading(false); }
   }, [headers, domain, dateRange.from, dateRange.to]);
@@ -149,13 +165,14 @@ export default function ManagementOverviewModule({ token }) {
         }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(body.detail || `Permintaan gagal (kode ${res.status}).`);
       setAlertCfg(body);
       toast.success('Ambang disimpan', {
         description: `PO ${body.po_warn_days} hari · Piutang ${body.ar_warn_days} hari · `
           + `RnD kuning ${body.rnd_attention_days} hari / merah ${body.rnd_stale_days} hari · `
           + `PR 1 tahap ≤ ${fmtShortIDR(body.pr_1_stage_max)} · 2 tahap ≤ ${fmtShortIDR(body.pr_2_stage_max)}`,
       });
+      setBukaAmbang(false);
       const al = await fetch('/api/rahaza/management/alerts', { headers }).then(r => r.json());
       setAlerts(al);
     } catch (e) {
@@ -174,426 +191,342 @@ export default function ManagementOverviewModule({ token }) {
   const prod = data?.production || {};
   const ord = data?.orders || {};
   const fin = data?.finance || {};
+  const setDraft = (k) => (e) => setCfgDraft((p) => ({ ...p, [k]: e.target.value }));
+  const adaOutput = daily.some((d) => d.total);
+  const poAlerts = alerts?.po_alerts || [];
+  const arAlerts = alerts?.ar_alerts || [];
+
+  const filters = (
+    <>
+      <FilterChips options={DOMAINS} value={domain} onChange={setDomain} hideWhenEmpty={false}
+        ariaLabel="Pilih domain bisnis" testId="overview-domain" />
+      <PeriodPicker value={period} onChange={setPeriod} compareEnabled={false} testId="mgmt-overview-period" />
+    </>
+  );
+  const tools = (
+    <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+      data-testid="overview-refresh">
+      <RefreshCw className={loading ? 'animate-spin' : ''} />
+    </Button>
+  );
 
   if (loading && !data) {
     return (
-      <div className="space-y-5">
-        <div className="h-32 animate-pulse rounded-[var(--radius-xl)] border border-[var(--glass-border)] bg-[var(--card-surface)]" />
+      <PageLayout testId="management-overview-page" title="Ringkasan Bisnis"
+        subtitle="Angka langsung dari dokumen kerja: PO, job produksi, terima CMT, pengiriman, dan faktur."
+        filters={filters} tools={tools}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-28 animate-pulse rounded-[var(--radius-lg)] border border-[var(--glass-border)] bg-[var(--card-surface)]" />
+            <div key={i} className="h-24 animate-pulse rounded-[var(--radius-md)] border border-[var(--glass-border)] bg-[var(--card-surface)]" />
           ))}
         </div>
-      </div>
+      </PageLayout>
     );
   }
 
   return (
-    <div className="space-y-5" data-testid="management-overview-page">
-      <HeroCrystalCard
-        testId="mgmt-hero"
-        eyebrow="Ringkasan Bisnis"
-        title={data?.domain_label || 'Ringkasan Bisnis'}
-        description="Angka diambil langsung dari dokumen kerja nyata: PO, job produksi, penerimaan dari CMT, pengiriman, dan invoice. Setiap kartu bisa ditelusuri lewat jejak sumber di bawah."
-        actions={
-          <PeriodPicker value={period} onChange={setPeriod} compareEnabled={false}
-                        testId="mgmt-overview-period" />
-        }
-      >
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="inline-flex overflow-hidden rounded-lg border border-[var(--glass-border)]"
-               role="group" aria-label="Pilih domain bisnis" data-testid="overview-domain-switch">
-            {DOMAINS.map((d) => (
-              <button
-                key={d.id} type="button" onClick={() => setDomain(d.id)}
-                data-testid={`overview-domain-${d.id}`}
-                aria-pressed={domain === d.id}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-                  domain === d.id
-                    ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
-                    : 'bg-transparent text-foreground/60 hover:bg-[var(--glass-bg-hover)]'
-                }`}
-              >{d.label}</button>
-            ))}
+    <PageLayout
+      testId="management-overview-page"
+      title="Ringkasan Bisnis"
+      subtitle="Angka langsung dari dokumen kerja: PO, job produksi, terima CMT, pengiriman, dan faktur."
+      filters={filters}
+      tools={tools}
+      summary={(
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
+            <StatTile testId="kpi-output" label="Output periode" value={`${fmtNum(prod.output_period)} pcs`}
+              sub={prod.qty_produced
+                ? `${String(prod.accept_rate_pct).replace('.', ',')}% diterima dari ${fmtNum(prod.qty_produced)} diproduksi · ${fmtNum(prod.qty_reject)} ditolak`
+                : `Progres ${fmtNum(prod.output_progress_period)} + terima CMT ${fmtNum(prod.output_received_period)}`} />
+            <StatTile testId="kpi-orders" label="PO berjalan" value={fmtNum(ord.running)}
+              sub={`dari ${fmtNum(ord.total)} PO · ${fmtNum(ord.qty_ordered)} pcs dipesan`} />
+            <StatTile testId="kpi-ar" label="Piutang belum tertagih" value={fmtShortIDR(fin.ar_outstanding)}
+              accent={fin.ar_overdue_count > 0 ? 'warning' : 'default'}
+              sub={`${fmtNum(fin.ar_overdue_count)} faktur lewat jatuh tempo · dari ${fmtNum(fin.ar_invoices)} faktur`} />
+            <StatTile testId="kpi-low-stock" label="Material di bawah stok minimum" value={fmtNum(data?.warehouse?.low_stock_materials)}
+              accent={(data?.warehouse?.low_stock_materials || 0) > 0 ? 'warning' : 'default'}
+              sub={`dari ${fmtNum(data?.warehouse?.materials_tracked)} material aktif`} />
           </div>
-          <Button onClick={fetchAll} className="h-9 bg-[hsl(var(--primary))] hover:brightness-110"
-                  data-testid="overview-refresh">
-            <RefreshCw className={`mr-1.5 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            {loading ? 'Memuat...' : 'Refresh'}
-          </Button>
-          {lastUpdate && (
-            <span className="text-xs text-foreground/50">
-              Diperbarui {lastUpdate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-              {' '}· Periode {data?.date_from}→{data?.date_to}
-            </span>
-          )}
+          <p className="text-xs text-muted-foreground" data-testid="overview-ringkas">
+            {data?.domain_label || 'Gabungan'} · periode {tglID(data?.date_from)} – {tglID(data?.date_to)}
+            {' · '}{fmtNum(data?.hr?.employees_active)} karyawan aktif
+            {lastUpdate ? ` · diperbarui ${lastUpdate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}` : ''}
+          </p>
         </div>
-      </HeroCrystalCard>
-
-      {/* ── KPI ─────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard
-          testId="kpi-output"
-          icon={Factory}
-          label="Output Periode"
-          value={fmtNum(prod.output_period)}
-          sub={`pcs · progres ${fmtNum(prod.output_progress_period)} + terima CMT ${fmtNum(prod.output_received_period)}`}
-          accent="primary"
-        />
-        <StatCard
-          testId="kpi-quality"
-          icon={Activity}
-          label="Diterima / Diproduksi"
-          value={`${prod.accept_rate_pct || 0}%`}
-          sub={`${fmtNum(prod.qty_accepted)} diterima · ${fmtNum(prod.qty_reject)} reject · ${fmtNum(prod.qty_rework_open)} rework`}
-          accent="success"
-        />
-        <StatCard
-          testId="kpi-orders"
-          icon={ClipboardList}
-          label="PO Berjalan"
-          value={fmtNum(ord.running)}
-          sub={`dari ${fmtNum(ord.total)} PO · ${fmtNum(ord.qty_ordered)} pcs dipesan`}
-          accent="info"
-        />
-        <StatCard
-          testId="kpi-ar"
-          icon={DollarSign}
-          label="Piutang Belum Tertagih"
-          value={fmtShortIDR(fin.ar_outstanding)}
-          sub={`${fmtNum(fin.ar_invoices)} invoice · ${fmtNum(fin.ar_overdue_count)} jatuh tempo`}
-          accent="mint"
-        />
-      </div>
-
+      )}
+    >
       {/* ── Peringatan otomatis + ambang yang bisa diatur ───────────────── */}
-      <ChartCard testId="card-alerts" title="Peringatan Perlu Tindakan"
-                 subtitle={`Dikirim otomatis ke manajemen setiap pagi 07:00 — PO ${alertCfg?.po_warn_days ?? 3} hari & piutang ${alertCfg?.ar_warn_days ?? 3} hari sebelum tenggat (juga saat sudah lewat)`}>
-        <div className="space-y-3">
-          {/* Pengaturan ambang hari */}
-          <div className="flex flex-wrap items-end gap-3 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-3 py-2"
-               data-testid="alert-threshold-form">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/60">
-              <SlidersHorizontal className="h-3.5 w-3.5" /> Ambang Peringatan
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="po-warn-days">
-                PO — hari sebelum tenggat
-              </label>
-              <Input id="po-warn-days" type="number" min="0" max="60" className="h-8 w-24"
-                     value={cfgDraft.po_warn_days} data-testid="alert-po-days-input"
-                     onChange={(e) => setCfgDraft((p) => ({ ...p, po_warn_days: e.target.value }))} />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="ar-warn-days">
-                Piutang — hari sebelum jatuh tempo
-              </label>
-              <Input id="ar-warn-days" type="number" min="0" max="60" className="h-8 w-24"
-                     value={cfgDraft.ar_warn_days} data-testid="alert-ar-days-input"
-                     onChange={(e) => setCfgDraft((p) => ({ ...p, ar_warn_days: e.target.value }))} />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="rnd-attention-days">
-                RnD — kuning setelah (hari)
-              </label>
-              <Input id="rnd-attention-days" type="number" min="0" max="60" className="h-8 w-24"
-                     value={cfgDraft.rnd_attention_days} data-testid="alert-rnd-attention-input"
-                     onChange={(e) => setCfgDraft((p) => ({ ...p, rnd_attention_days: e.target.value }))} />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="rnd-stale-days">
-                RnD — merah / terlambat (hari)
-              </label>
-              <Input id="rnd-stale-days" type="number" min="0" max="60" className="h-8 w-24"
-                     value={cfgDraft.rnd_stale_days} data-testid="alert-rnd-stale-input"
-                     onChange={(e) => setCfgDraft((p) => ({ ...p, rnd_stale_days: e.target.value }))} />
-            </div>
-            <Button size="sm" className="h-8" onClick={saveAlertConfig} disabled={savingCfg}
-                    data-testid="alert-threshold-save">
-              {savingCfg ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                : <Check className="mr-1 h-3.5 w-3.5" />}
-              Simpan
-            </Button>
-            <span className="text-[11px] text-foreground/50">
-              Bawaan PO/piutang {alertCfg?.defaults?.po_warn_days ?? 3} hari · RnD {alertCfg?.defaults?.rnd_attention_days ?? 3}/{alertCfg?.defaults?.rnd_stale_days ?? 7} hari ·
-              berlaku untuk penjadwal harian, kokpit RnD &amp; layar ini
-              {alertCfg?.updated_by ? ` · terakhir diubah ${alertCfg.updated_by}` : ''}
-            </span>
-          </div>
-
-          {/* ── Ambang NILAI persetujuan Permintaan Pengadaan (PR) ─────────────
-              Permintaan owner 2026-08-07: "PR bernilai kecil jangan dipaksa lewat
-              3 tahap." Ambang ini menentukan berapa tahap yang wajib dilalui,
-              dan DIBEKUKAN pada tiap PR saat diajukan — mengubahnya di sini
-              hanya memengaruhi PR BARU, tidak menggeser PR yang sudah berjalan. */}
-          <div className="flex flex-wrap items-end gap-3 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-3 py-2"
-               data-testid="pr-chain-threshold-form">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/60">
-              <SlidersHorizontal className="h-3.5 w-3.5" /> Ambang Persetujuan PR
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="pr-1-stage-max">
-                Cukup 1 tahap bila nilai ≤ (Rp)
-              </label>
-              <MoneyInput id="pr-1-stage-max" className="h-8 w-40"
-                     value={cfgDraft.pr_1_stage_max} data-testid="pr-1-stage-max-input"
-                     onChange={(e) => setCfgDraft((p) => ({ ...p, pr_1_stage_max: e.target.value }))} />
-              <span className="mt-0.5 block text-[10px] text-foreground/50">
-                = {fmtShortIDR(Number(cfgDraft.pr_1_stage_max) || 0)} · hanya Persetujuan Departemen
-              </span>
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="pr-2-stage-max">
-                Cukup 2 tahap bila nilai ≤ (Rp)
-              </label>
-              <MoneyInput id="pr-2-stage-max" className="h-8 w-40"
-                     value={cfgDraft.pr_2_stage_max} data-testid="pr-2-stage-max-input"
-                     onChange={(e) => setCfgDraft((p) => ({ ...p, pr_2_stage_max: e.target.value }))} />
-              <span className="mt-0.5 block text-[10px] text-foreground/50">
-                = {fmtShortIDR(Number(cfgDraft.pr_2_stage_max) || 0)} · Departemen + Keuangan
-              </span>
-            </div>
-            <Button size="sm" className="h-8" onClick={saveAlertConfig} disabled={savingCfg}
-                    data-testid="pr-chain-threshold-save">
-              {savingCfg ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                : <Check className="mr-1 h-3.5 w-3.5" />}
-              Simpan
-            </Button>
-            <span className="max-w-md text-[11px] text-foreground/50">
-              Di atas {fmtShortIDR(Number(cfgDraft.pr_2_stage_max) || 0)} → 3 tahap
-              (Departemen + Keuangan + Final/Direksi). Ambang dibekukan saat PR diajukan,
-              jadi perubahan di sini hanya berlaku untuk PR baru.
-              {alertCfg?.updated_by ? ` · terakhir diubah ${alertCfg.updated_by}` : ''}
-            </span>
-          </div>
-
-          {alerts?.po_alerts?.length > 0 && (
-              <div>
-                <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/50">
-                  <CalendarClock className="h-3.5 w-3.5" /> PO ({alerts.po_count})
-                </p>
-                <ul className="space-y-1.5" data-testid="alert-po-list">
-                  {alerts.po_alerts.slice(0, 5).map((a) => (
-                    <li key={a.po_id}
-                        className={`flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs ${
-                          a.days_left < 0
-                            ? 'border-destructive/40 bg-destructive/10'
-                            : 'border-amber-500/40 bg-amber-500/10'}`}>
-                      <span className="font-medium text-foreground">
-                        {a.po_number} <span className="font-normal text-foreground/60">· {a.domain} · {a.customer}</span>
-                      </span>
-                      <span className="text-foreground/70">
-                        {a.days_left < 0 ? `lewat ${Math.abs(a.days_left)} hari` : `sisa ${a.days_left} hari`}
-                        {' · '}kurang {fmtNum(a.qty_short)} pcs
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+      <ChartCard testId="card-alerts" title="Peringatan perlu tindakan"
+        subtitle={`Dikirim otomatis ke manajemen setiap pagi pukul 07.00: PO ${alertCfg?.po_warn_days ?? 3} hari dan piutang ${alertCfg?.ar_warn_days ?? 3} hari sebelum tenggat (juga saat sudah lewat).`}
+        actions={(
+          <Button variant="outline" onClick={() => { isiDraft(alertCfg); setBukaAmbang(true); }} data-testid="alert-threshold-open">
+            <SlidersHorizontal />Atur ambang
+          </Button>
+        )}>
+        <div className="space-y-4">
+          {poAlerts.length > 0 && (
+            <div className="space-y-2" data-testid="alert-po-list">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-foreground">PO mendekati / lewat tenggat ({fmtNum(alerts.po_count)})</p>
+                <TombolUnduh namaBerkas="peringatan-po" namaLembar="Peringatan PO" baris={poAlerts} testId="alert-po-unduh"
+                  kolom={[
+                    { label: 'No. PO', nilai: (a) => a.po_number },
+                    { label: 'Domain', nilai: (a) => DOMAIN_LABEL[a.domain] || a.domain },
+                    { label: 'Pelanggan', nilai: (a) => a.customer },
+                    { label: 'Tenggat', nilai: (a) => sisaHari(a.days_left) },
+                    { label: 'Kurang (pcs)', nilai: (a) => a.qty_short },
+                  ]} />
               </div>
-            )}
-            {alerts?.ar_alerts?.length > 0 && (
-              <div>
-                <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/50">
-                  <BellRing className="h-3.5 w-3.5" /> Piutang ({alerts.ar_count})
-                </p>
-                <ul className="space-y-1.5" data-testid="alert-ar-list">
-                  {alerts.ar_alerts.slice(0, 5).map((a) => (
-                    <li key={a.invoice_id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs">
-                      <span className="font-medium text-foreground">
-                        {a.invoice_number} <span className="font-normal text-foreground/60">· {a.customer}</span>
-                      </span>
-                      <span className="text-foreground/70">
-                        {fmtShortIDR(a.outstanding)} ·
-                        {a.days_left < 0 ? ` lewat ${Math.abs(a.days_left)} hari` : ` sisa ${a.days_left} hari`}
-                      </span>
-                    </li>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>No. PO</TableHead>
+                    <TableHead className="hidden sm:table-cell">Pelanggan</TableHead>
+                    <TableHead>Tenggat</TableHead>
+                    <TableHead className="text-right">Kurang</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {poAlerts.slice(0, 5).map((a) => (
+                    <TableRow key={a.po_id}>
+                      <TableCell className="font-medium">{a.po_number}
+                        <span className="block text-xs text-muted-foreground">{DOMAIN_LABEL[a.domain] || a.domain}</span></TableCell>
+                      <TableCell className="hidden sm:table-cell">{a.customer}</TableCell>
+                      <TableCell><StatusBadge status="tenggat" label={sisaHari(a.days_left)} tone={a.days_left < 0 ? 'danger' : 'warning'} /></TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtNum(a.qty_short)} pcs</TableCell>
+                    </TableRow>
                   ))}
-                </ul>
-              </div>
-            )}
-            {!alerts?.po_count && !alerts?.ar_count && (
-              <p className="py-4 text-center text-xs text-foreground/50" data-testid="alert-empty">
-                Tidak ada PO atau piutang yang mendekati tenggat pada ambang saat ini.
-              </p>
-            )}
-        </div>
-      </ChartCard>
-
-      {/* ── Tahapan PO ──────────────────────────────────────────────────── */}
-      <ChartCard testId="card-po-funnel" title="Tahapan PO"
-                 subtitle="Sebaran PO menurut status di alur kerja (SSOT production_pos)">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {[
-            ['Draft', ord.draft, 'Belum dikonfirmasi'],
-            ['Dikonfirmasi', ord.confirmed, 'Siap didistribusi'],
-            ['Berjalan', ord.running, 'Sedang diproduksi'],
-            ['Selesai', ord.done, 'Completed / Closed'],
-            ['Dibatalkan', ord.cancelled, 'Cancelled'],
-          ].map(([label, val, hint]) => (
-            <div key={label} className="rounded-[var(--radius-md)] border border-[var(--glass-border)] px-3 py-2"
-                 data-testid={`po-bucket-${label}`}>
-              <p className="text-2xl font-bold tabular-nums text-foreground">{fmtNum(val)}</p>
-              <p className="text-xs font-medium text-foreground/70">{label}</p>
-              <p className="mt-0.5 text-[10px] text-foreground/40">{hint}</p>
+                </TableBody>
+              </Table>
+              {poAlerts.length > 5 && <p className="text-xs text-muted-foreground">Menampilkan 5 dari {fmtNum(poAlerts.length)}; semua ada di unduhan.</p>}
             </div>
-          ))}
+          )}
+          {arAlerts.length > 0 && (
+            <div className="space-y-2" data-testid="alert-ar-list">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium text-foreground">Piutang mendekati / lewat jatuh tempo ({fmtNum(alerts.ar_count)})</p>
+                <TombolUnduh namaBerkas="peringatan-piutang" namaLembar="Peringatan piutang" baris={arAlerts} testId="alert-ar-unduh"
+                  kolom={[
+                    { label: 'No. faktur', nilai: (a) => a.invoice_number },
+                    { label: 'Pelanggan', nilai: (a) => a.customer },
+                    { label: 'Sisa tagihan (Rp)', nilai: (a) => a.outstanding },
+                    { label: 'Jatuh tempo', nilai: (a) => sisaHari(a.days_left) },
+                  ]} />
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>No. faktur</TableHead>
+                    <TableHead className="hidden sm:table-cell">Pelanggan</TableHead>
+                    <TableHead>Jatuh tempo</TableHead>
+                    <TableHead className="text-right">Sisa tagihan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {arAlerts.slice(0, 5).map((a) => (
+                    <TableRow key={a.invoice_id}>
+                      <TableCell className="font-medium">{a.invoice_number}
+                        <span className="block text-xs text-muted-foreground sm:hidden">{a.customer}</span></TableCell>
+                      <TableCell className="hidden sm:table-cell">{a.customer}</TableCell>
+                      <TableCell><StatusBadge status="jatuh-tempo" label={sisaHari(a.days_left)} tone={a.days_left < 0 ? 'danger' : 'warning'} /></TableCell>
+                      <TableCell className="text-right tabular-nums">{formatRupiah(a.outstanding)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {arAlerts.length > 5 && <p className="text-xs text-muted-foreground">Menampilkan 5 dari {fmtNum(arAlerts.length)}; semua ada di unduhan.</p>}
+            </div>
+          )}
+          {!alerts?.po_count && !alerts?.ar_count && (
+            <p className="py-4 text-center text-sm text-muted-foreground" data-testid="alert-empty">
+              Tidak ada PO atau piutang yang mendekati tenggat pada ambang saat ini.
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground" data-testid="alert-threshold-ringkas">
+            Ambang: PO {alertCfg?.po_warn_days ?? 3} hari · piutang {alertCfg?.ar_warn_days ?? 3} hari ·
+            {' '}RnD kuning {alertCfg?.rnd_attention_days ?? 3} / merah {alertCfg?.rnd_stale_days ?? 7} hari ·
+            {' '}PR cukup 1 tahap ≤ {fmtShortIDR(alertCfg?.pr_1_stage_max ?? 1000000)}, 2 tahap ≤ {fmtShortIDR(alertCfg?.pr_2_stage_max ?? 25000000)}
+            {alertCfg?.updated_by ? ` · terakhir diubah ${alertCfg.updated_by}` : ''}
+          </p>
         </div>
       </ChartCard>
 
       {/* ── Output harian + ketepatan kirim ─────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <ChartCard
-          testId="chart-daily-output"
-          title="Output per Hari"
-          subtitle="Internal = catatan progres produksi · Maklon = penerimaan barang dari CMT"
-          className="lg:col-span-2"
-        >
-          {daily.every((d) => !d.total) ? (
-            <div className="py-12 text-center text-xs text-foreground/40" data-testid="daily-output-empty">
-              Belum ada output pada periode ini. Output tercatat saat progres produksi diinput
-              atau saat barang dari CMT diterima &amp; di-QC.
-            </div>
+        <ChartCard testId="chart-daily-output" title="Output per hari" className="lg:col-span-2"
+          subtitle="Internal = catatan progres produksi · Maklon = penerimaan barang dari CMT.">
+          {!adaOutput ? (
+            <EmptyState className="py-8" testId="daily-output-empty" title="Belum ada output pada periode ini"
+              description="Output tercatat saat progres produksi diinput atau saat barang dari CMT diterima dan diperiksa." />
           ) : (
             <div style={{ width: '100%', height: 240 }}>
               <ResponsiveContainer>
                 <AreaChart data={daily} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="outInternal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={CHART_PALETTE[0]} stopOpacity={0.5} />
-                      <stop offset="100%" stopColor={CHART_PALETTE[0]} stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="outMaklon" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={CHART_PALETTE[1]} stopOpacity={0.5} />
-                      <stop offset="100%" stopColor={CHART_PALETTE[1]} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
                   <CartesianGrid strokeDasharray="3 4" stroke="var(--chart-grid)" vertical={false} />
                   <XAxis dataKey="date" stroke="var(--chart-grid)"
-                         tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
-                         tickFormatter={(v) => (v ? v.slice(5).replace('-', '/') : '')} />
-                  <YAxis width={40} stroke="var(--chart-grid)"
-                         tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
-                  <Tooltip content={<GlassTooltip formatter={(v) => `${fmtNum(v)} pcs`} />}
-                           cursor={{ fill: 'var(--glass-bg-hover)' }} />
+                    tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
+                    tickFormatter={(v) => (v ? `${v.slice(8, 10)}/${v.slice(5, 7)}` : '')} />
+                  <YAxis width={40} stroke="var(--chart-grid)" tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} />
+                  <Tooltip content={<GlassTooltip formatter={(v) => `${fmtNum(v)} pcs`} />} cursor={{ fill: 'var(--glass-bg-hover)' }} />
                   <Area type="monotone" dataKey="internal" name="Internal DA" stackId="1"
-                        stroke={CHART_PALETTE[0]} strokeWidth={2} fill="url(#outInternal)" />
+                    stroke={CHART_PALETTE[0]} strokeWidth={2} fill={CHART_PALETTE[0]} fillOpacity={0.2} />
                   <Area type="monotone" dataKey="maklon" name="Maklon" stackId="1"
-                        stroke={CHART_PALETTE[1]} strokeWidth={2} fill="url(#outMaklon)" />
+                    stroke={CHART_PALETTE[1]} strokeWidth={2} fill={CHART_PALETTE[1]} fillOpacity={0.2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
         </ChartCard>
 
-        <ChartCard testId="card-on-time" title="Ketepatan Kirim ke Buyer"
-                   subtitle="Dispatch terakhir vs deadline PO (90 hari)">
-          <div className="flex flex-col items-center justify-center py-4">
-            <DonutProgress
-              value={onTime?.rate_pct || 0}
-              size={160}
-              stroke={14}
-              label="Tepat Waktu"
-              sub={`${onTime?.on_time || 0} / ${onTime?.total_po || 0} PO`}
-              accent={(onTime?.rate_pct || 0) >= 85 ? 'success'
-                : (onTime?.rate_pct || 0) >= 60 ? 'primary' : 'warning'}
-            />
-            <p className="mt-3 px-2 text-center text-[10px] leading-relaxed text-foreground/45">
-              {onTime?.total_po
-                ? onTime?.measurable_note
-                : 'Belum ada PO yang punya deadline sekaligus sudah dikirim ke buyer — belum bisa dinilai.'}
-            </p>
-          </div>
+        <ChartCard testId="card-on-time" title="Ketepatan kirim ke buyer" subtitle="Kirim terakhir dibanding tenggat PO, 90 hari.">
+          {onTime?.total_po ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-2">
+              <DonutProgress value={onTime.rate_pct || 0} size={150} stroke={14} label="Tepat waktu"
+                sub={`${fmtNum(onTime.on_time)} dari ${fmtNum(onTime.total_po)} PO`}
+                accent={(onTime.rate_pct || 0) >= 85 ? 'success' : (onTime.rate_pct || 0) >= 60 ? 'primary' : 'warning'} />
+              <p className="text-center text-xs text-muted-foreground">{onTime.measurable_note}</p>
+            </div>
+          ) : (
+            <EmptyState className="py-8" title="Belum bisa dinilai"
+              description="Belum ada PO yang punya tenggat sekaligus sudah dikirim ke buyer dalam 90 hari terakhir." />
+          )}
         </ChartCard>
       </div>
 
-      {/* ── Gudang + Top produk + Top pelanggan ─────────────────────────── */}
+      {/* ── Tahapan PO + Top produk + Top pelanggan ─────────────────────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <ChartCard testId="card-low-stock" title="Peringatan Gudang"
-                   subtitle="Material di bawah stok minimum">
-          <div className="flex items-center justify-between gap-4 py-2">
-            <div>
-              <p className="text-5xl font-bold leading-none tracking-tight text-[hsl(var(--warning))]">
-                {fmtNum(data?.warehouse?.low_stock_materials)}
-              </p>
-              <p className="mt-2 text-xs text-foreground/50">
-                dari {fmtNum(data?.warehouse?.materials_tracked)} material aktif
-              </p>
-            </div>
-            {(data?.warehouse?.low_stock_materials || 0) > 0 ? (
-              <div className="grid h-14 w-14 place-items-center rounded-2xl border border-[hsl(var(--warning)/0.25)] bg-[hsl(var(--warning)/0.15)]">
-                <AlertTriangle className="h-6 w-6 text-[hsl(var(--warning))]" />
-              </div>
-            ) : (
-              <div className="grid h-14 w-14 place-items-center rounded-2xl border border-[hsl(var(--success)/0.25)] bg-[hsl(var(--success)/0.15)]">
-                <Package className="h-6 w-6 text-[hsl(var(--success))]" />
-              </div>
-            )}
-          </div>
-          <div className="mt-2 flex items-center gap-2 border-t border-[var(--glass-border)] pt-2 text-xs text-foreground/50">
-            <Users className="h-3.5 w-3.5" />
-            {fmtNum(data?.hr?.employees_active)} karyawan aktif
-          </div>
+        <ChartCard testId="card-po-funnel" title="Tahapan PO" subtitle="Sebaran PO menurut status alur kerja."
+          actions={(
+            <TombolUnduh namaBerkas="tahapan-po" namaLembar="Tahapan PO" testId="po-funnel-unduh"
+              baris={TAHAP_PO.map(([label, k, hint]) => ({ label, hint, n: ord[k] || 0 }))}
+              kolom={[{ label: 'Tahap', nilai: (r) => r.label }, { label: 'Keterangan', nilai: (r) => r.hint }, { label: 'Jumlah PO', nilai: (r) => r.n }]} />
+          )}>
+          <Table>
+            <TableBody>
+              {TAHAP_PO.map(([label, k, hint]) => (
+                <TableRow key={k} data-testid={`po-bucket-${label}`}>
+                  <TableCell>{label}<span className="block text-xs text-muted-foreground">{hint}</span></TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums">{fmtNum(ord[k])}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </ChartCard>
 
-        <ChartCard testId="card-top-models" title="Top 5 Produk"
-                   subtitle="Qty dipesan (PO) vs qty sudah diterima">
+        <ChartCard testId="card-top-models" title="5 produk teratas" subtitle="Qty dipesan (PO) dan qty sudah diterima."
+          actions={(
+            <TombolUnduh namaBerkas="produk-teratas" namaLembar="Produk teratas" baris={topModels} testId="top-models-unduh"
+              kolom={[
+                { label: 'Produk', nilai: (m) => m.name || m.sku },
+                { label: 'SKU', nilai: (m) => m.sku || '' },
+                { label: 'Qty dipesan', nilai: (m) => m.qty },
+                { label: 'Qty diterima', nilai: (m) => m.accepted },
+              ]} />
+          )}>
           {topModels.length === 0 ? (
-            <div className="py-8 text-center text-xs text-foreground/40">Belum ada item PO.</div>
+            <EmptyState className="py-8" title="Belum ada item PO" />
           ) : (
-            <div className="space-y-2.5">
-              {topModels.map((m, idx) => {
-                const maxQty = topModels[0]?.qty || 1;
-                return (
-                  <div key={`${m.sku}-${idx}`} className="flex items-center gap-3"
-                       data-testid={`top-model-${idx}`}>
-                    <div className="w-6 text-center text-xs font-bold text-foreground/40">#{idx + 1}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <p className="truncate text-xs text-foreground">{m.name || m.sku}</p>
-                        <span className="shrink-0 font-mono text-xs tabular-nums text-foreground">
-                          {fmtNum(m.accepted)}/{fmtNum(m.qty)}
-                        </span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-[var(--glass-bg)]">
-                        <div className="h-full rounded-full bg-[hsl(var(--primary))] transition-[width] duration-500"
-                             style={{ width: `${(m.qty / maxQty) * 100}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Produk</TableHead><TableHead className="text-right">Diterima / dipesan</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {topModels.map((m, idx) => (
+                  <TableRow key={`${m.sku}-${idx}`} data-testid={`top-model-${idx}`}>
+                    <TableCell className="max-w-[12rem] truncate" title={m.name || m.sku}>{m.name || m.sku}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtNum(m.accepted)} / {fmtNum(m.qty)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </ChartCard>
 
-        <ChartCard testId="card-top-customers" title="Top 5 Pelanggan / Klien"
-                   subtitle="Volume PO (+ nilai order untuk maklon)">
+        <ChartCard testId="card-top-customers" title="5 pelanggan / klien teratas" subtitle="Volume PO (dan nilai order untuk maklon)."
+          actions={(
+            <TombolUnduh namaBerkas="pelanggan-teratas" namaLembar="Pelanggan teratas" baris={topCustomers} testId="top-customers-unduh"
+              kolom={[
+                { label: 'Pelanggan', nilai: (c) => c.name },
+                { label: 'Jumlah PO', nilai: (c) => c.orders },
+                { label: 'Qty (pcs)', nilai: (c) => c.total_qty },
+                { label: 'Nilai order (Rp)', nilai: (c) => c.total_value || '' },
+              ]} />
+          )}>
           {topCustomers.length === 0 ? (
-            <div className="py-8 text-center text-xs text-foreground/40">Belum ada PO.</div>
+            <EmptyState className="py-8" title="Belum ada PO" />
           ) : (
-            <div className="space-y-2.5">
-              {topCustomers.map((c, idx) => (
-                <div key={`${c.name}-${idx}`} className="flex items-center gap-3"
-                     data-testid={`top-customer-${idx}`}>
-                  <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-[hsl(var(--primary)/0.20)] bg-[hsl(var(--primary)/0.12)] text-xs font-bold text-[hsl(var(--primary))]">
-                    {(c.name || '?')[0]?.toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-foreground">{c.name}</p>
-                    <p className="text-[10px] text-foreground/50">
-                      {fmtNum(c.orders)} PO{c.total_value ? ` · ${fmtShortIDR(c.total_value)}` : ''}
-                    </p>
-                  </div>
-                  <span className="font-mono text-xs tabular-nums text-foreground">{fmtNum(c.total_qty)} pcs</span>
-                </div>
-              ))}
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow><TableHead>Pelanggan</TableHead><TableHead className="text-right">Qty</TableHead></TableRow>
+              </TableHeader>
+              <TableBody>
+                {topCustomers.map((c, idx) => (
+                  <TableRow key={`${c.name}-${idx}`} data-testid={`top-customer-${idx}`}>
+                    <TableCell className="max-w-[12rem]">
+                      <span className="block truncate font-medium" title={c.name}>{c.name}</span>
+                      <span className="text-xs text-muted-foreground">{fmtNum(c.orders)} PO{c.total_value ? ` · ${fmtShortIDR(c.total_value)}` : ''}</span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtNum(c.total_qty)} pcs</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </ChartCard>
       </div>
 
       <SourceTrace rows={data?.sources} domainLabel={data?.domain_label} />
-    </div>
+
+      {/* ── Ambang peringatan & persetujuan PR (popup form) ─────────────── */}
+      <FormPopup open={bukaAmbang} onClose={() => setBukaAmbang(false)} ukuran="panjang" judul="Atur ambang"
+        keterangan="Berlaku untuk penjadwal harian, kokpit RnD, layar ini, dan persetujuan Permintaan Pengadaan (PR)."
+        onSimpan={saveAlertConfig} menyimpan={savingCfg} labelSimpan="Simpan ambang" testId="alert-threshold-form">
+        <p className="text-sm font-medium text-foreground">Ambang peringatan (hari)</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="PO — hari sebelum tenggat" htmlFor="po-warn-days">
+            <Input id="po-warn-days" type="number" min="0" max="60" className="w-full sm:w-32"
+              value={cfgDraft.po_warn_days} data-testid="alert-po-days-input" onChange={setDraft('po_warn_days')} />
+          </Isian>
+          <Isian label="Piutang — hari sebelum jatuh tempo" htmlFor="ar-warn-days">
+            <Input id="ar-warn-days" type="number" min="0" max="60" className="w-full sm:w-32"
+              value={cfgDraft.ar_warn_days} data-testid="alert-ar-days-input" onChange={setDraft('ar_warn_days')} />
+          </Isian>
+          <Isian label="RnD — kuning setelah (hari)" htmlFor="rnd-attention-days">
+            <Input id="rnd-attention-days" type="number" min="0" max="60" className="w-full sm:w-32"
+              value={cfgDraft.rnd_attention_days} data-testid="alert-rnd-attention-input" onChange={setDraft('rnd_attention_days')} />
+          </Isian>
+          <Isian label="RnD — merah / terlambat (hari)" htmlFor="rnd-stale-days">
+            <Input id="rnd-stale-days" type="number" min="0" max="60" className="w-full sm:w-32"
+              value={cfgDraft.rnd_stale_days} data-testid="alert-rnd-stale-input" onChange={setDraft('rnd_stale_days')} />
+          </Isian>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Bawaan PO/piutang {alertCfg?.defaults?.po_warn_days ?? 3} hari · RnD {alertCfg?.defaults?.rnd_attention_days ?? 3}/{alertCfg?.defaults?.rnd_stale_days ?? 7} hari.
+        </p>
+
+        {/* Permintaan owner 2026-08-07: "PR bernilai kecil jangan dipaksa lewat 3 tahap." Ambang DIBEKUKAN pada
+            tiap PR saat diajukan — mengubahnya hanya memengaruhi PR BARU. */}
+        <p className="border-t border-[var(--glass-border)] pt-4 text-sm font-medium text-foreground" data-testid="pr-chain-threshold-form">
+          Ambang persetujuan Permintaan Pengadaan (PR)
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Cukup 1 tahap bila nilai ≤ (Rp)" htmlFor="pr-1-stage-max"
+            petunjuk={`= ${fmtShortIDR(Number(cfgDraft.pr_1_stage_max) || 0)} · hanya persetujuan departemen`}>
+            <MoneyInput id="pr-1-stage-max" value={cfgDraft.pr_1_stage_max} data-testid="pr-1-stage-max-input"
+              onChange={setDraft('pr_1_stage_max')} />
+          </Isian>
+          <Isian label="Cukup 2 tahap bila nilai ≤ (Rp)" htmlFor="pr-2-stage-max"
+            petunjuk={`= ${fmtShortIDR(Number(cfgDraft.pr_2_stage_max) || 0)} · departemen + keuangan`}>
+            <MoneyInput id="pr-2-stage-max" value={cfgDraft.pr_2_stage_max} data-testid="pr-2-stage-max-input"
+              onChange={setDraft('pr_2_stage_max')} />
+          </Isian>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Di atas {fmtShortIDR(Number(cfgDraft.pr_2_stage_max) || 0)} → 3 tahap (departemen + keuangan + final/direksi).
+          Ambang dibekukan saat PR diajukan, jadi perubahan di sini hanya berlaku untuk PR baru.
+          {alertCfg?.updated_by ? ` Terakhir diubah ${alertCfg.updated_by}.` : ''}
+        </p>
+      </FormPopup>
+    </PageLayout>
   );
 }

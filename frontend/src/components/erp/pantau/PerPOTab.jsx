@@ -3,12 +3,14 @@
  * angka per tahap. Cari PO, vendor, seri, atau SKU; saring status (Selesai = LOLOS QC ≥ dipesan, bukan
  * sekadar diproduksi). Pengganti pohon kartu 4 tingkat Production Jobs.
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useEffect, useState } from 'react';
 import { AlertCircle, ClipboardList } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID } from '@/lib/format';
 import {
@@ -39,7 +41,7 @@ export default function PerPOTab(props) {
   useEffect(() => { if (q && rows.length === 1) setOpen(rows[0].po_id); }, [q, rows]);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-po"
       title="Per PO"
       filters={<>
@@ -49,7 +51,16 @@ export default function PerPOTab(props) {
             ...Object.entries(STATE_META).map(([k, m]) => ({ key: k, label: m.label, count: c[k] || 0 }))]} />
         <ScopeChips value={scope} onChange={setScope} testId="pantau-po-scope" />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-po-refresh" />}
+      tools={<><TombolUnduh namaBerkas="pantau-per-po" baris={rows} kolom={[
+          { label: 'PO', nilai: (r) => r.po_number }, { label: 'Pemesan', nilai: (r) => r.customer_name || '' },
+          { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' }, { label: 'Batas kirim', nilai: (r) => formatDateID(r.deadline, { fallback: '' }) },
+          { label: 'Dipesan', nilai: (r) => Number(r.ordered) || 0 }, { label: 'Potongan dikirim', nilai: (r) => Number(r.sent_cmt) || 0 },
+          { label: 'Diterima CMT', nilai: (r) => Number(r.material_received) || 0 }, { label: 'Diproduksi', nilai: (r) => Number(r.produced) || 0 },
+          { label: 'Di CMT', nilai: (r) => Number(r.di_cmt) || 0 }, { label: 'Lolos QC', nilai: (r) => Number(r.accepted) || 0 },
+          { label: 'Ditolak QC', nilai: (r) => Number(r.reject) || 0 }, { label: 'Dikirim/diserahkan', nilai: (r) => Number(r.dispatched) || 0 },
+          { label: 'Status', nilai: (r) => (STATE_META[r.state] || {}).label || '' },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-po-refresh" /></>}
       summary={error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
       footer={rows.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     >
@@ -76,19 +87,19 @@ export default function PerPOTab(props) {
                     <TableRow data-testid={`pantau-po-row-${r.po_number}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : r.po_id)} label="Lihat seri dan SKU" testId={`pantau-po-toggle-${r.po_number}`} /></TableCell>
                       <TableCell className="font-medium whitespace-nowrap">{r.po_number}
-                        <div className="text-[11px] text-muted-foreground">{r.customer_name || '—'} · {poStatusLabel(r.status)}</div></TableCell>
+                        <div className="text-xs text-muted-foreground">{r.customer_name || '—'} · {poStatusLabel(r.status)}</div></TableCell>
                       <TableCell>{r.vendor_name || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">{r.deadline ? formatDateID(r.deadline) : '—'}
                         {(r.risk === 'telat' || r.risk === 'berisiko') && <div><Badge meta={RISK_META[r.risk]} /></div>}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-ordered">{n(r.ordered)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-sent">{n(r.sent_cmt)}{r.sent_extra ? <span className="text-xs text-muted-foreground"> +{n(r.sent_extra)}</span> : null}</TableCell>
-                      <TableCell className="text-right tabular-nums" data-testid="pantau-po-received">{n(r.material_received)}{r.material_missing ? <span className="text-xs text-[hsl(var(--destructive))]"> −{n(r.material_missing)}</span> : null}</TableCell>
+                      <TableCell className="text-right tabular-nums" data-testid="pantau-po-received">{n(r.material_received)}{r.material_missing ? <span className="text-xs text-[hsl(var(--danger-text))]"> −{n(r.material_missing)}</span> : null}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-produced">{n(r.produced)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-dicmt">{n(r.di_cmt)}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-accepted">{n(r.accepted)}{r.reject ? <span className="text-xs text-muted-foreground"> · ditolak {n(r.reject)}</span> : null}</TableCell>
                       <TableCell className="text-right tabular-nums" data-testid="pantau-po-dispatched">{n(r.dispatched)}</TableCell>
                       {maklon && <TableCell className="text-right tabular-nums" data-testid="pantau-po-final">{n(r.received_confirmed)}
-                        {r.pending_confirm ? <div className="text-[11px] text-[hsl(var(--warning))]">{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>}
+                        {r.pending_confirm ? <div className="text-xs text-[hsl(var(--warning-text))]">{n(r.pending_confirm)} belum dikonfirmasi</div> : null}</TableCell>}
                       <TableCell><Badge meta={STATE_META[r.state]} testId="pantau-po-state" /></TableCell>
                     </TableRow>
                     {isOpen && (
@@ -103,7 +114,7 @@ export default function PerPOTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 
@@ -125,19 +136,19 @@ function PoLines({ lines, maklon }) {
         {lines.map((l) => (
           <TableRow key={l.po_item_id} data-testid={`pantau-line-${l.sku}-${l.size}`}>
             <TableCell className="text-xs whitespace-nowrap">{l.serial_number || '—'}</TableCell>
-            <TableCell className="whitespace-nowrap">{l.sku}<div className="text-[11px] text-muted-foreground">{l.product_name}</div></TableCell>
+            <TableCell className="whitespace-nowrap">{l.sku}<div className="text-xs text-muted-foreground">{l.product_name}</div></TableCell>
             <TableCell>{l.size || '—'}</TableCell>
             <TableCell>{l.color || '—'}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.ordered)}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.sent_cmt)}{l.sent_extra ? <span className="text-xs text-muted-foreground"> +{n(l.sent_extra)}</span> : null}</TableCell>
             <TableCell className="text-right tabular-nums">{l.material_uninspected && !l.material_received ? <span className="text-xs text-muted-foreground">belum diperiksa</span> : n(l.material_received)}
-              {l.material_missing ? <span className="text-xs text-[hsl(var(--destructive))]"> −{n(l.material_missing)}</span> : null}</TableCell>
+              {l.material_missing ? <span className="text-xs text-[hsl(var(--danger-text))]"> −{n(l.material_missing)}</span> : null}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.produced)}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.in_qc)}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.accepted)}</TableCell>
-            <TableCell className="text-right tabular-nums">{n(l.reject)}{l.reject_open ? <span className="text-xs text-[hsl(var(--warning))]"> ({n(l.reject_open)} terbuka)</span> : null}</TableCell>
+            <TableCell className="text-right tabular-nums">{n(l.reject)}{l.reject_open ? <span className="text-xs text-[hsl(var(--warning-text))]"> ({n(l.reject_open)} terbuka)</span> : null}</TableCell>
             <TableCell className="text-right tabular-nums">{n(l.dispatched)}</TableCell>
-            {maklon && <TableCell className="text-right tabular-nums">{n(l.received_confirmed)}{l.pending_confirm ? <span className="text-xs text-[hsl(var(--warning))]"> ({n(l.pending_confirm)} belum dikonfirmasi)</span> : null}</TableCell>}
+            {maklon && <TableCell className="text-right tabular-nums">{n(l.received_confirmed)}{l.pending_confirm ? <span className="text-xs text-[hsl(var(--warning-text))]"> ({n(l.pending_confirm)} belum dikonfirmasi)</span> : null}</TableCell>}
             <TableCell><Badge meta={STATE_META[l.state]} /></TableCell>
           </TableRow>
         ))}

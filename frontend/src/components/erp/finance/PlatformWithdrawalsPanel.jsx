@@ -7,13 +7,22 @@
  * Penyaring toko dikirim dari FinanceSettlementModule (`filters`); tombol impor & catat di slot `actions`
  * (di hub pindah ke baris tab), muat ulang di `tools`. Dulu toolbar menempel di kanan dan kepala "Tahap 2"
  * + tombol ada di dalam kartu tabel. Nomor penarikan, tanggal, dan nominal tidak lagi dipatah ke dua baris.
+ * 2026-11-08 (Standar UI/UX v2): form penarikan = FormPopup pendek + DatePicker; daftar berhalaman (dulu diam-diam
+ * berhenti di 50 baris) dan bisa diunduh Excel/CSV semua baris; aksi baris paling banyak 2 terlihat + "Lainnya".
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatDateID } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
-  ArrowDownToLine, Plus, X, Loader2, CheckCircle2, BookCheck, Send, Pencil, Trash2, Landmark, Upload, RefreshCw,
+  ArrowDownToLine, Plus, Loader2, BookCheck, Send, Pencil, Trash2, Landmark, Upload, RefreshCw, MoreHorizontal,
 } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PaginationBar from '@/components/ui/PaginationBar';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -25,6 +34,7 @@ import { EmptyState, Notice } from '../moduleAtoms';
 import PageLayout from '../layout/PageLayout';
 import { WithdrawalImportPanel, previewWithdrawalFile } from './WithdrawalImportPanel';
 import { BankSelect } from './PayoutBankLinks';
+import { namaPlatform } from './PlatformBalanceCards';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/marketing/withdrawals`;
@@ -40,6 +50,7 @@ async function call(path, opts = {}) {
 }
 
 const EMPTY = { account_id: '', withdrawal_date: '', amount: '', reference: '', notes: '', cash_code: '' };
+const PAGE = 50;
 
 export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks = [], onChanged, filters, testId = 'platform-withdrawals-page' }) {
   const [rows, setRows] = useState([]);
@@ -52,18 +63,33 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
   const [importRes, setImportRes] = useState(null);
   const [importFile, setImportFile] = useState(null);
   const [importAccount, setImportAccount] = useState('');
+  const [skip, setSkip] = useState(0);
+  const [total, setTotal] = useState(0);
   const fileRef = useRef(null);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ page_size: '50' });
+      const qs = new URLSearchParams({ page_size: String(PAGE), page: String(Math.floor(skip / PAGE) + 1) });
       if (accountId) qs.set('account_id', accountId);
       const d = await call(`?${qs}`);
       setRows(d.data || []); setSummary(d.summary || null);
+      setTotal(d.pagination?.total ?? (d.data || []).length);
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
-  }, [accountId]);
+  }, [accountId, skip]);
+  useEffect(() => { setSkip(0); }, [accountId]);
   useEffect(() => { load(); }, [load]);
+  // Unduh: SEMUA penarikan sesuai toko terpilih (200 per permintaan, batas server).
+  const ambilSemua = async () => {
+    const out = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const qs = new URLSearchParams({ page_size: '200', page: String(page) });
+      if (accountId) qs.set('account_id', accountId);
+      const d = await call(`?${qs}`);
+      out.push(...(d.data || []));
+      if (!(d.data || []).length || out.length >= (d.pagination?.total ?? out.length)) break;
+    }
+    return out;
+  };
 
   const accName = (id) => accounts.find((a) => a.id === id)?.account_name || id || '—';
   const accCash = (id) => accounts.find((a) => a.id === id)?.coa_cash_code || '';
@@ -149,14 +175,27 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
         </Button>
       </>}
       filters={filters}
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas="penarikan-saldo-ke-bank" namaLembar="Penarikan" baris={rows} ambilSemua={ambilSemua} testId="wd-unduh"
+          kolom={[
+            { label: 'Tanggal masuk bank', nilai: (r) => formatDateID(r.withdrawal_date) },
+            { label: 'No. penarikan', nilai: (r) => r.reference || '' },
+            { label: 'Toko', nilai: (r) => accName(r.account_id) },
+            { label: 'Platform', nilai: (r) => namaPlatform(r.platform) },
+            { label: 'Nominal', nilai: (r) => Number(r.amount) || 0 },
+            { label: 'Rekening bank', nilai: (r) => { const c = r.cash_code || accCash(r.account_id); return `${c || ''} ${bankName(c)}`.trim(); } },
+            { label: 'Mutasi bank', nilai: (r) => (r.bank_txn_id ? formatDateID(r.bank_txn_date) : 'belum tertaut') },
+            { label: 'Jurnal', nilai: (r) => (r.je_number ? `${r.je_number} (${finStatus(r.je_status).label.toLowerCase()})` : 'belum') },
+            { label: 'Catatan', nilai: (r) => r.notes || '' },
+          ]} />
         <Button variant="outline" size="icon" data-testid="fin-settlement-refresh" onClick={refresh} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      }
+      </>}
+      footer={total > PAGE && <PaginationBar total={total} skip={skip} limit={PAGE} onPageChange={setSkip} />}
       summary={
         <p className="text-sm text-muted-foreground" data-testid="wd-summary">
-          Total ditarik <b className="text-foreground tabular-nums">{rp(summary?.amount || 0)}</b>
+          Total ditarik <b className="text-foreground tabular-nums">{rp(summary?.amount || 0)}</b> · {total} penarikan
           {summary ? ` · ${summary.bank_linked_count} tertaut mutasi bank` : ''}
           {' · '}jurnal: Dr Rekening pencairan / Cr Piutang toko
         </p>
@@ -170,69 +209,53 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
         onCommitted={async () => { setImportRes(null); await refresh(); }} />
 
       {formOpen ? (
-        <GlassCard className="p-4 space-y-3" data-testid="wd-form">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-medium">{editId ? 'Koreksi penarikan' : 'Catat penarikan saldo'}</h4>
-            <Button variant="outline" size="icon" data-testid="wd-form-close" onClick={() => setFormOpen(false)} title="Tutup" aria-label="Tutup">
-              <X className="w-4 h-4" />
-            </Button>
-          </div>
-          <div className="grid md:grid-cols-3 xl:grid-cols-6 gap-3">
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Toko</span>
+        <FormPopup open onClose={() => setFormOpen(false)} ukuran="pendek" testId="wd-form"
+          judul={editId ? 'Koreksi penarikan' : 'Catat penarikan saldo'}
+          keterangan="Jurnal: Dr rekening pencairan / Cr piutang toko."
+          onSimpan={save} menyimpan={busy === 'save'}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Isian label="Toko" wajib>
               <SmartNativeSelect data-testid="wd-input-account" value={form.account_id}
                 onChange={(e) => setForm({ ...form, account_id: e.target.value, cash_code: accCash(e.target.value) || form.cash_code })}
                 className="h-9 w-full">
                 <option value="">— pilih toko —</option>
-                {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>)}
+                {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {namaPlatform(a.platform)}</option>)}
               </SmartNativeSelect>
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Rekening bank tujuan</span>
+            </Isian>
+            <Isian label="Rekening bank tujuan" wajib>
               <BankSelect banks={banks} value={form.cash_code} testId="wd-input-bank"
                 onChange={(v) => setForm({ ...form, cash_code: v })} />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Tanggal masuk bank</span>
-              <GlassInput type="date" data-testid="wd-input-date" value={form.withdrawal_date}
-                onChange={(e) => setForm({ ...form, withdrawal_date: e.target.value })} className="h-9" />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Nominal (menurut mutasi bank)</span>
+            </Isian>
+            <Isian label="Tanggal masuk bank" wajib>
+              <DatePicker testId="wd-input-date" value={form.withdrawal_date}
+                onChange={(v) => setForm({ ...form, withdrawal_date: v })} />
+            </Isian>
+            <Isian label="Nominal (menurut mutasi bank)" wajib>
               <MoneyInput glass data-testid="wd-input-amount" value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 className="h-9 text-right tabular-nums font-semibold" />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">No. penarikan (platform, opsional)</span>
+            </Isian>
+            <Isian label="No. penarikan (platform, opsional)">
               <GlassInput data-testid="wd-input-reference" value={form.reference}
                 onChange={(e) => setForm({ ...form, reference: e.target.value })} className="h-9" />
-            </label>
-            <label className="text-xs space-y-1">
-              <span className="text-muted-foreground">Catatan</span>
+            </Isian>
+            <Isian label="Catatan">
               <GlassInput data-testid="wd-input-notes" value={form.notes}
                 onChange={(e) => setForm({ ...form, notes: e.target.value })} className="h-9" />
-            </label>
+            </Isian>
           </div>
           {form.account_id ? (
-            <Notice tone={over ? 'danger' : 'info'} className="text-xs" testId="wd-available">
+            <Notice tone={over ? 'danger' : 'info'} testId="wd-available">
               Saldo platform toko yang bisa ditarik: <b className="tabular-nums">{rp(available || 0)}</b>
-              {form.cash_code ? <> · masuk ke rekening {form.cash_code} {bankName(form.cash_code)}</> : <> · <span className="text-[hsl(var(--warning))]">rekening bank tujuan belum dipilih</span></>}
+              {form.cash_code ? <> · masuk ke rekening {form.cash_code} {bankName(form.cash_code)}</> : <> · <span className="text-[hsl(var(--warning-text))]">rekening bank tujuan belum dipilih</span></>}
               {over ? ' — melebihi saldo; catat dulu laporan dana dilepas yang belum masuk.' : ''}
             </Notice>
           ) : null}
-          <div className="flex gap-2">
-            <Button data-testid="wd-save" disabled={busy === 'save'} onClick={save}>
-              {busy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Simpan
-            </Button>
-            <Button variant="outline" data-testid="wd-cancel" onClick={() => setFormOpen(false)}>Batal</Button>
-          </div>
-        </GlassCard>
+        </FormPopup>
       ) : null}
-
       <GlassCard className="p-0 overflow-hidden" data-testid="platform-withdrawals-panel">
         {loading ? (
-          <div className="py-8 text-center text-xs text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> memuat penarikan…</div>
+          <div className="py-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> memuat penarikan…</div>
         ) : rows.length === 0 ? (
           <EmptyState icon={ArrowDownToLine} testId="wd-empty"
             title={accountId ? 'Belum ada penarikan saldo untuk toko ini' : 'Belum ada penarikan saldo tercatat'}
@@ -258,40 +281,48 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
                     <tr key={r.id} className="border-b border-[var(--glass-border)]" data-testid={`wd-row-${r.reference}`}>
                       <td className="whitespace-nowrap">{formatDateID(r.withdrawal_date)}</td>
                       <td className="whitespace-nowrap">{r.reference}</td>
-                      <td>{accName(r.account_id)} <span className="text-xs text-muted-foreground uppercase">{r.platform}</span></td>
+                      <td>{accName(r.account_id)} <span className="block text-xs text-muted-foreground">{namaPlatform(r.platform)}</span></td>
                       <td className="text-right tabular-nums whitespace-nowrap font-medium">{rp(r.amount)}</td>
                       <td data-testid={`wd-bank-${r.reference}`}>
-                        <div className="text-xs">{cash || '—'} {bankName(cash)}</div>
+                        <div>{cash || '—'} {bankName(cash)}</div>
                         {r.bank_txn_id
-                          ? <span className="text-[10px] text-[hsl(var(--success))] flex items-center gap-0.5 whitespace-nowrap"><Landmark className="w-3 h-3" /> mutasi {formatDateID(r.bank_txn_date)}</span>
-                          : <span className="text-[10px] text-muted-foreground">belum tertaut</span>}
+                          ? <span className="text-xs text-[hsl(var(--success-text))] flex items-center gap-0.5 whitespace-nowrap"><Landmark className="w-3 h-3" /> mutasi {formatDateID(r.bank_txn_date)}</span>
+                          : <span className="text-xs text-muted-foreground">belum tertaut</span>}
                       </td>
-                      <td className="text-xs whitespace-nowrap">
+                      <td className="whitespace-nowrap">
                         {r.je_number ? <>{r.je_number} <span className="text-muted-foreground">({finStatus(r.je_status).label.toLowerCase()})</span></>
                           : <span className="text-muted-foreground">belum</span>}
                       </td>
                       <td>
                         <div className="flex items-center justify-end gap-1">
                           {!r.je_id ? (
-                            <Button variant="ghost" size="icon-sm" title="Buat jurnal draf" aria-label="Buat jurnal draf" data-testid={`wd-journal-${r.reference}`}
-                              disabled={busy === `journal:${r.id}`} onClick={() => act(r, 'journal')}><BookCheck className="w-4 h-4" /></Button>
+                            <Button variant="outline" size="sm" title="Buat jurnal draf" data-testid={`wd-journal-${r.reference}`}
+                              disabled={busy === `journal:${r.id}`} onClick={() => act(r, 'journal')}><BookCheck className="w-3.5 h-3.5" /> Jurnal</Button>
                           ) : null}
                           {r.je_status === 'draft' ? (
-                            <Button variant="ghost" size="icon-sm" title="Posting jurnal" aria-label="Posting jurnal" data-testid={`wd-post-${r.reference}`}
-                              disabled={busy === `post:${r.id}`} onClick={() => act(r, 'post')} className="text-[hsl(var(--success))]"><Send className="w-4 h-4" /></Button>
+                            <Button variant="success" size="sm" title="Posting jurnal" data-testid={`wd-post-${r.reference}`}
+                              disabled={busy === `post:${r.id}`} onClick={() => act(r, 'post')}><Send className="w-3.5 h-3.5" /> Posting</Button>
                           ) : null}
                           {!r.je_id ? (
-                            <>
-                              <Button variant="ghost" size="icon-sm" title="Koreksi" aria-label="Koreksi" data-testid={`wd-edit-${r.reference}`}
-                                onClick={() => openEdit(r)}><Pencil className="w-4 h-4" /></Button>
-                              {!r.bank_txn_id ? (
-                                <Button variant="ghost" size="icon-sm" title="Hapus" aria-label="Hapus" data-testid={`wd-delete-${r.reference}`}
-                                  disabled={busy === `delete:${r.id}`} className="text-[hsl(var(--destructive))]"
-                                  onClick={async () => { if (await confirmDialog({ title: `Hapus penarikan ${r.reference || formatDateID(r.withdrawal_date)}?`, confirmLabel: 'Hapus', danger: true })) act(r, 'delete'); }}>
-                                  <Trash2 className="w-4 h-4" />
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`wd-more-${r.reference}`}>
+                                  <MoreHorizontal className="w-4 h-4" />
                                 </Button>
-                              ) : null}
-                            </>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem data-testid={`wd-edit-${r.reference}`} onClick={() => openEdit(r)}>
+                                  <Pencil className="w-4 h-4 mr-2" />Koreksi
+                                </DropdownMenuItem>
+                                {!r.bank_txn_id ? (
+                                  <DropdownMenuItem data-testid={`wd-delete-${r.reference}`} disabled={busy === `delete:${r.id}`}
+                                    className="text-[hsl(var(--danger-text))]"
+                                    onClick={async () => { if (await confirmDialog({ title: `Hapus penarikan ${r.reference || formatDateID(r.withdrawal_date)}?`, confirmLabel: 'Hapus', danger: true })) act(r, 'delete'); }}>
+                                    <Trash2 className="w-4 h-4 mr-2" />Hapus
+                                  </DropdownMenuItem>
+                                ) : null}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           ) : null}
                         </div>
                       </td>

@@ -12,19 +12,16 @@
  *   · CTR / CPC / CPA / ROAS / CVR TIDAK bisa diketik. Ditampilkan sebagai hasil
  *     hitungan hidup, dan yang tersimpan adalah hitungan SERVER — supaya tidak
  *     ada laporan yang mencampur angka ketikan dengan angka hitungan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): FormPopup panjang + DatePicker (dulu Dialog + input tanggal bawaan).
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Megaphone, Loader2, Calculator } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
@@ -33,8 +30,8 @@ import { todayWIB } from '@/lib/waktu';
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const AD_PLATFORM_LABEL = {
-  shopee_ads: 'Shopee Ads', tiktok_ads: 'TikTok Ads', meta_ads: 'Meta Ads',
-  google_ads: 'Google Ads', affiliate: 'Affiliate', lainnya: 'Lainnya',
+  shopee_ads: 'Iklan Shopee', tiktok_ads: 'Iklan TikTok', meta_ads: 'Iklan Meta',
+  google_ads: 'Iklan Google', affiliate: 'Afiliasi', lainnya: 'Lainnya',
 };
 const STATUS_LABEL = { active: 'Aktif', paused: 'Dijeda', ended: 'Selesai' };
 
@@ -52,9 +49,11 @@ export default function AdsEntryDialog({ open, onClose, onSaved, token, entry })
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
   const [form, setForm] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
 
   useEffect(() => {
     if (!open) return;
+    setGalat('');
     if (entry) {
       setForm({
         ...EMPTY, ...entry,
@@ -82,11 +81,10 @@ export default function AdsEntryDialog({ open, onClose, onSaved, token, entry })
   };
 
   const submit = async () => {
-    if (!form.account_id) { toast({ title: 'Pilih toko dulu', variant: 'destructive' }); return; }
-    if (!form.date || !form.campaign_name) {
-      toast({ title: 'Tanggal & nama kampanye wajib', variant: 'destructive' }); return;
-    }
+    if (!form.account_id) { setGalat('Pilih toko dulu.'); return; }
+    if (!form.date || !form.campaign_name) { setGalat('Tanggal dan nama kampanye wajib diisi.'); return; }
     setSaving(true);
+    setGalat('');
     try {
       const payload = {
         ...form,
@@ -100,122 +98,77 @@ export default function AdsEntryDialog({ open, onClose, onSaved, token, entry })
       } else {
         await axios.post(`${API}/api/marketing/ads/campaigns`, payload, { headers: authH });
       }
-      toast({ title: entry?.id ? 'Data iklan diperbarui' : 'Biaya iklan disimpan' });
+      toast({ title: entry?.id ? 'Data iklan disimpan' : 'Biaya iklan disimpan' });
       onSaved?.();
       onClose?.();
     } catch (e) {
-      toast({
-        title: 'Gagal menyimpan',
-        description: e.response?.data?.detail || e.message,
-        variant: 'destructive',
-      });
+      setGalat(e.response?.data?.detail || e.message);
     } finally { setSaving(false); }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose?.()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Megaphone className="w-4 h-4" />
-            {entry?.id ? 'Ubah Biaya Iklan' : 'Input Biaya Iklan'}
-          </DialogTitle>
-        </DialogHeader>
+    <FormPopup open={open} onClose={() => onClose?.()} ukuran="panjang" onSimpan={submit} menyimpan={saving} galat={galat}
+      labelSimpan={entry?.id ? 'Simpan perubahan' : 'Simpan'} testId="ads-entry-form"
+      judul={entry?.id ? 'Ubah biaya iklan' : 'Input biaya iklan'}
+      keterangan="Toko wajib dipilih; CTR, CPC, CPA, ROAS, dan CVR dihitung otomatis.">
+      <div className="grid gap-4 sm:grid-cols-2">
+        {entry?.id ? (
+          <Isian label="Toko / akun" petunjuk="Toko tidak bisa dipindah setelah tersimpan — buat baris baru bila salah toko.">
+            <Input value={entry.account_name || '—'} disabled />
+          </Isian>
+        ) : (
+          <MarketingAccountSelect token={token} value={form.account_id}
+            onChange={(v) => setForm((f) => ({ ...f, account_id: v }))}
+            testId="ads-account-select" />
+        )}
+        <Isian label="Tanggal" wajib>
+          <DatePicker value={form.date} onChange={set('date')} bolehKosong={false} testId="ads-date" />
+        </Isian>
+        <Isian label="Nama kampanye" wajib htmlFor="ads-campaign">
+          <Input id="ads-campaign" value={form.campaign_name} onChange={set('campaign_name')}
+            placeholder="Flash sale gamis Agustus" data-testid="ads-campaign" />
+        </Isian>
+        <Isian label="Saluran iklan">
+          <SmartNativeSelect className="w-full" value={form.ad_platform} onChange={set('ad_platform')} searchable={false}
+            data-testid="ads-platform">
+            {Object.entries(AD_PLATFORM_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </div>
 
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            {entry?.id ? (
-              <div>
-                <label className="text-xs font-medium mb-1 block">Toko / Akun</label>
-                <Input value={entry.account_name || '—'} disabled className="h-9" />
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Toko tidak bisa dipindah setelah tersimpan — buat baris baru bila salah toko.
-                </p>
-              </div>
-            ) : (
-              <MarketingAccountSelect token={token} value={form.account_id}
-                onChange={(v) => setForm((f) => ({ ...f, account_id: v }))}
-                testId="ads-account-select" />
-            )}
-            <div>
-              <label className="text-xs font-medium mb-1 block">Tanggal <span className="text-red-500">*</span></label>
-              <Input type="date" value={form.date} onChange={set('date')}
-                className="h-9" data-testid="ads-date" />
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block">Nama Kampanye <span className="text-red-500">*</span></label>
-              <Input value={form.campaign_name} onChange={set('campaign_name')}
-                placeholder="Flash Sale Gamis Agustus" className="h-9" data-testid="ads-campaign" />
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block">Saluran Iklan</label>
-              <Select value={form.ad_platform} onValueChange={set('ad_platform')}>
-                <SelectTrigger className="h-9" data-testid="ads-platform"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(AD_PLATFORM_LABEL).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
+        {[['spend', 'Biaya iklan (Rp)', true], ['revenue', 'Omzet dari iklan (Rp)', true],
+          ['impressions', 'Tayangan'], ['clicks', 'Klik'], ['conversions', 'Konversi']].map(([k, l, money]) => (
+            <Isian key={k} label={l}>
+              {money ? (
+                <MoneyInput value={form[k]} onChange={set(k)} className="tabular-nums" data-testid={`ads-${k}`} />
+              ) : (
+                <Input type="number" min="0" value={form[k]} onChange={set(k)} className="tabular-nums" data-testid={`ads-${k}`} />
+              )}
+            </Isian>
+          ))}
+        <Isian label="Status">
+          <SmartNativeSelect className="w-full" value={form.status} onChange={set('status')} searchable={false} data-testid="ads-status">
+            {Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
-            {[['spend', 'Biaya Iklan (Rp)', true], ['revenue', 'Revenue dari Iklan (Rp)', true],
-              ['impressions', 'Impresi'], ['clicks', 'Klik'], ['conversions', 'Konversi']].map(([k, l, money]) => (
-                <div key={k}>
-                  <label className="text-xs font-medium mb-1 block">{l}</label>
-                  {money ? (
-                    <MoneyInput value={form[k]} onChange={set(k)}
-                      className="h-9 tabular-nums" data-testid={`ads-${k}`} />
-                  ) : (
-                    <Input type="number" min="0" value={form[k]} onChange={set(k)}
-                      className="h-9 tabular-nums" data-testid={`ads-${k}`} />
-                  )}
-                </div>
-              ))}
-            <div>
-              <label className="text-xs font-medium mb-1 block">Status</label>
-              <Select value={form.status} onValueChange={set('status')}>
-                <SelectTrigger className="h-9" data-testid="ads-status"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+      <Isian label="Dihitung otomatis (tidak bisa diketik)">
+        <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5" data-testid="ads-derived">
+          <div><dt className="text-xs text-muted-foreground">CTR</dt><dd className="font-medium tabular-nums">{derived.ctr.toFixed(2)}%</dd></div>
+          <div><dt className="text-xs text-muted-foreground">CPC</dt><dd className="font-medium tabular-nums">{rp(derived.cpc.toFixed(0))}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">CPA</dt><dd className="font-medium tabular-nums">{rp(derived.cpa.toFixed(0))}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">ROAS</dt><dd className="font-medium tabular-nums">{derived.roas.toFixed(2)}×</dd></div>
+          <div><dt className="text-xs text-muted-foreground">CVR</dt><dd className="font-medium tabular-nums">{derived.cvr.toFixed(2)}%</dd></div>
+        </dl>
+      </Isian>
 
-          <div className="rounded-[var(--radius-sm)] border border-border bg-muted/40 p-3">
-            <p className="text-xs font-medium flex items-center gap-1.5 mb-2">
-              <Calculator className="w-3.5 h-3.5" /> Dihitung otomatis (tidak bisa diketik)
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs" data-testid="ads-derived">
-              <div><span className="text-muted-foreground">CTR</span><br /><b>{derived.ctr.toFixed(2)}%</b></div>
-              <div><span className="text-muted-foreground">CPC</span><br /><b>{rp(derived.cpc.toFixed(0))}</b></div>
-              <div><span className="text-muted-foreground">CPA</span><br /><b>{rp(derived.cpa.toFixed(0))}</b></div>
-              <div><span className="text-muted-foreground">ROAS</span><br /><b>{derived.roas.toFixed(2)}x</b></div>
-              <div><span className="text-muted-foreground">CVR</span><br /><b>{derived.cvr.toFixed(2)}%</b></div>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-medium mb-1 block">Catatan</label>
-            <Textarea value={form.notes} onChange={set('notes')} rows={2}
-              placeholder="mis. tes kreatif baru, target audiens…" data-testid="ads-notes" />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={saving} data-testid="ads-save">
-            {saving && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
-            {entry?.id ? 'Simpan perubahan' : 'Simpan'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <Isian label="Catatan" htmlFor="ads-notes">
+        <Textarea id="ads-notes" value={form.notes} onChange={set('notes')} rows={2}
+          placeholder="Contoh: tes kreatif baru, target audiens…" data-testid="ads-notes" />
+      </Isian>
+    </FormPopup>
   );
 }

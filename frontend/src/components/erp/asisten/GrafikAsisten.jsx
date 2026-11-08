@@ -64,15 +64,15 @@ function Legenda({ item, garis }) {
 
 function sumbuNilai(fmt, satuanLabel, vertikal) {
   return {
-    tick: { fontSize: 11, fill: TINTA },
+    tick: { fontSize: 12, fill: TINTA },
     tickFormatter: fmt.sumbu,
     axisLine: false,
     tickLine: false,
     width: vertikal ? 56 : undefined,
     label: satuanLabel
       ? (vertikal
-        ? { value: satuanLabel, angle: -90, position: 'insideLeft', offset: 4, style: { fontSize: 11, fill: TINTA, textAnchor: 'middle' } }
-        : { value: satuanLabel, position: 'insideBottomRight', offset: -2, style: { fontSize: 11, fill: TINTA } })
+        ? { value: satuanLabel, angle: -90, position: 'insideLeft', offset: 4, style: { fontSize: 12, fill: TINTA, textAnchor: 'middle' } }
+        : { value: satuanLabel, position: 'insideBottomRight', offset: -2, style: { fontSize: 12, fill: TINTA } })
       : undefined,
   };
 }
@@ -87,7 +87,7 @@ function GrafikKartesius({ v, fmt, sempit }) {
   const tooltip = <Tooltip content={<TooltipAsisten penuh={fmt.penuh} />} cursor={{ fill: 'hsl(var(--foreground) / 0.04)', stroke: GRID }} />;
   const grid = <CartesianGrid stroke={GRID} vertical={false} />;
   const kategori = {
-    dataKey: 'x', tick: { fontSize: 11, fill: TINTA }, axisLine: { stroke: GRID }, tickLine: false,
+    dataKey: 'x', tick: { fontSize: 12, fill: TINTA }, axisLine: { stroke: GRID }, tickLine: false,
     tickFormatter: (s) => potong(String(s), sempit ? 8 : 14), minTickGap: 4,
   };
 

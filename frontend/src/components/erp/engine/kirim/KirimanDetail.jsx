@@ -79,13 +79,13 @@ export default function KirimanDetail({ id, canDelete, onClose, onOpen, onChange
       title={`${s.shipment_number} · ${s.vendor_name || '—'}`}
       description={`PO ${s.po_number || '—'} · ${fmtDate(s.shipment_date)} · ${fmtNum(pcs)} pcs · nilai keluar gudang ${fmtRp(d.value)}`}
       actions={<>
-        <Button variant="outline" onClick={() => downloadPdf('vendor-shipment', s.id, `SJ-${s.shipment_number}.pdf`, 'Surat jalan')}
+        <Button type="button" variant="outline" onClick={() => downloadPdf('vendor-shipment', s.id, `SJ-${s.shipment_number}.pdf`, 'Surat jalan')}
           data-testid="kirim-detail-sj"><Download className="w-4 h-4" />Surat jalan</Button>
-        <Button variant="outline" size="icon" title="Panduan produk (PDF)" aria-label="Panduan produk (PDF)"
+        <Button type="button" variant="outline" size="icon" title="Panduan produk (PDF)" aria-label="Panduan produk (PDF)"
           onClick={() => downloadPdf('production-guide', s.id, `Panduan-${s.shipment_number}.pdf`, 'Panduan produk')}
           data-testid="kirim-detail-guide"><BookOpen className="w-4 h-4" /></Button>
-        <Button variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
-        {canDelete && <Button variant="outline" size="icon" title="Hapus kiriman" aria-label="Hapus kiriman" onClick={remove}
+        <Button type="button" variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
+        {canDelete && <Button type="button" variant="outline" size="icon" title="Hapus kiriman" aria-label="Hapus kiriman" onClick={remove}
           data-testid="kirim-detail-delete"><Trash2 className="w-4 h-4" /></Button>}
       </>}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -124,13 +124,13 @@ export default function KirimanDetail({ id, canDelete, onClose, onOpen, onChange
         {j ? (
           <span>
             Dokumen pengeluaran <b className="tabular-nums">{j.mi_number}</b> ·{' '}
-            {j.posted ? <span className="text-[hsl(var(--success))]">jurnal {j.je_number}</span>
-              : <span className="text-[hsl(var(--warning))]">belum dijurnal{j.error ? ` — ${j.error}` : ''}</span>}
-            {j.negative_lines > 0 && <span className="text-[hsl(var(--warning))]"> · {j.negative_lines} baris stok minus</span>}
+            {j.posted ? <span className="text-[hsl(var(--success-text))]">jurnal {j.je_number}</span>
+              : <span className="text-[hsl(var(--warning-text))]">belum dijurnal{j.error ? ` — ${j.error}` : ''}</span>}
+            {j.negative_lines > 0 && <span className="text-[hsl(var(--warning-text))]"> · {j.negative_lines} baris stok minus</span>}
           </span>
         ) : <span className="text-muted-foreground">{s.opening ? 'Saldo awal cutoff — tanpa pengeluaran gudang.' : 'Belum ada dokumen pengeluaran gudang.'}</span>}
         {j && j.status === 'issued' && (
-          <Button variant="outline" size="sm" onClick={repost} disabled={busy} data-testid="kirim-detail-repost">
+          <Button type="button" variant="outline" size="sm" onClick={repost} disabled={busy} data-testid="kirim-detail-repost">
             <Landmark className="w-3.5 h-3.5" />Posting ulang jurnal
           </Button>
         )}
@@ -146,7 +146,7 @@ export default function KirimanDetail({ id, canDelete, onClose, onOpen, onChange
             <TableBody>
               {d.children.map((c) => (
                 <TableRow key={c.id}>
-                  <TableCell><Button variant="link" size="sm" className="h-auto p-0" onClick={() => onOpen?.(c.id)}>{c.shipment_number}</Button></TableCell>
+                  <TableCell><Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => onOpen?.(c.id)}>{c.shipment_number}</Button></TableCell>
                   <TableCell><ShipTypeBadge type={c.shipment_type} /></TableCell>
                   <TableCell className="text-xs">{fmtDate(c.shipment_date)}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmtNum(c.total_pcs)}</TableCell>

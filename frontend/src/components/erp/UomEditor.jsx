@@ -158,7 +158,7 @@ export const UomEditor = ({
         </Button>
       </div>
 
-      <p className="text-[11px] text-muted-foreground mb-3 flex items-start gap-1.5">
+      <p className="text-xs text-muted-foreground mb-3 flex items-start gap-1.5">
         <Info size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
         <span>
           Satuan dasar <b className="text-foreground">{base}</b> dipakai untuk menyimpan stok
@@ -169,7 +169,7 @@ export const UomEditor = ({
 
       {/* Baris satuan dasar (read-only) */}
       <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] px-3 py-2 mb-2">
-        <span className="text-[10px] uppercase tracking-wide text-muted-foreground w-20 shrink-0">Dasar</span>
+        <span className="text-xs text-muted-foreground w-20 shrink-0">Dasar</span>
         <span className="tabular-nums text-sm text-foreground" data-testid="uom-base-code">{base}</span>
         <span className="text-xs text-muted-foreground ml-auto">faktor 1 — tidak dapat diubah di sini</span>
       </div>
@@ -182,7 +182,7 @@ export const UomEditor = ({
             className="grid grid-cols-12 gap-2 items-end mb-2"
             data-testid={`uom-row-${i}`}>
             <div className="col-span-4">
-              <label className="block text-[11px] text-muted-foreground mb-1">
+              <label className="block text-xs text-muted-foreground mb-1">
                 Nama kemasan {i + 1}
               </label>
               <input list="uom-satuan-umum" value={p.code || ''}
@@ -192,7 +192,7 @@ export const UomEditor = ({
                 data-testid={`uom-code-${i}`} />
             </div>
             <div className="col-span-5">
-              <label className="block text-[11px] text-muted-foreground mb-1">
+              <label className="block text-xs text-muted-foreground mb-1">
                 1 {p.code || `kemasan ${i + 1}`} = ? {parent}
               </label>
               <input type="number" min="0.0001" step="any" value={perParent}
@@ -201,7 +201,7 @@ export const UomEditor = ({
                 data-testid={`uom-perparent-${i}`} />
             </div>
             <div className="col-span-2">
-              <label className="block text-[11px] text-muted-foreground mb-1">= {base}</label>
+              <label className="block text-xs text-muted-foreground mb-1">= {base}</label>
               <div className="h-9 flex items-center px-2 text-sm tabular-nums text-muted-foreground truncate"
                 data-testid={`uom-factor-${i}`}>
                 {Number(p.factor || 0).toLocaleString('id-ID')}
@@ -232,7 +232,7 @@ export const UomEditor = ({
       {errors.length > 0 && (
         <ul className="mt-2 space-y-0.5" data-testid="uom-errors">
           {errors.map((e) => (
-            <li key={e} className="text-xs text-[hsl(var(--destructive))]">• {e}</li>
+            <li key={e} className="text-xs text-[hsl(var(--danger-text))]">• {e}</li>
           ))}
         </ul>
       )}
@@ -245,7 +245,7 @@ export const UomEditor = ({
             { key: 'display_uom', label: 'Satuan tampil', value: displayUom, testid: 'uom-default-display' },
           ].map((f) => (
             <div key={f.key}>
-              <label className="block text-[11px] text-muted-foreground mb-1">{f.label}</label>
+              <label className="block text-xs text-muted-foreground mb-1">{f.label}</label>
               <SmartNativeSelect value={normalizeCode(f.value) || base}
                 onChange={(e) => emit(packs, { [f.key]: e.target.value })}
                 className={inputCls}
@@ -259,7 +259,7 @@ export const UomEditor = ({
         </div>
       )}
 
-      <p className="text-[11px] text-muted-foreground mt-2">
+      <p className="text-xs text-muted-foreground mt-2">
         Harga satuan tetap disimpan <b className="text-foreground">per {base}</b>. Saat menerima
         barang dalam kemasan, sistem membagi otomatis.
       </p>
@@ -281,13 +281,13 @@ export const UomEditor = ({
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">Satuan dasar baru</label>
+                  <label className="block text-xs text-muted-foreground mb-1">Satuan dasar baru</label>
                   <input list="uom-satuan-umum" value={rebase.new_base_uom}
                     onChange={(e) => { setRebase({ ...rebase, new_base_uom: e.target.value }); setPreview(null); }}
                     placeholder="m" className={inputCls} data-testid="uom-rebase-newbase" />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-muted-foreground mb-1">
+                  <label className="block text-xs text-muted-foreground mb-1">
                     1 {base} = ? {normalizeCode(rebase.new_base_uom) || 'satuan baru'}
                   </label>
                   <input type="number" min="0.0001" step="any" value={rebase.factor}
@@ -308,15 +308,15 @@ export const UomEditor = ({
                     Min. stok <b>{preview.before.min_stock}</b> → <b>{preview.after.min_stock}</b>
                   </p>
                   <p className={preview.nilai_persediaan_tetap
-                    ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}>
+                    ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>
                     {preview.nilai_persediaan_tetap
                       ? 'Nilai persediaan tidak berubah.'
-                      : 'PERINGATAN: nilai persediaan bergeser — periksa faktornya.'}
+                      : 'Peringatan: nilai persediaan bergeser — periksa faktornya.'}
                   </p>
                 </div>
               )}
               {rebaseErr && (
-                <p className="mt-2 text-xs text-[hsl(var(--destructive))]" data-testid="uom-rebase-error">{rebaseErr}</p>
+                <p className="mt-2 text-xs text-[hsl(var(--danger-text))]" data-testid="uom-rebase-error">{rebaseErr}</p>
               )}
 
               <div className="flex gap-2 mt-3">

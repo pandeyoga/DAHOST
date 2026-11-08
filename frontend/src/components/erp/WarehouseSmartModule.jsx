@@ -1,23 +1,84 @@
-import { useState, useEffect, useCallback } from 'react';
+/**
+ * Alert & Reorder (Portal Gudang) — alert stok/rak, usulan titik pesan ulang, dan pembatalan penyesuaian stok.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): HubTabs bersama (satu kepala, tab rata kiri), tiap tab memakai PageLayout,
+ * daftar = tabel (kartu ringkas di HP), unduh Excel/CSV, label Indonesia (dulu "Smart Warehouse", "Undo Stock",
+ * "Apply", "Refresh", "Soft-Deleted").
+ *
+ * Angka yang tampil (diverifikasi 8 Nov 2026 terhadap DB uji):
+ *  • Pil "Stok (43)" / "Rak (0)" = jumlah baris /api/warehouse/alerts per `type` (sama dengan isi tabel).
+ *  • "1.683 dari 1.726 barang belum punya ambang" = metadata.materials_missing_threshold / materials_total.
+ *  • Usulan pesan ulang: server hanya menghitung paling banyak 200 barang aktif pertama (`limit` maks 200);
+ *    dulu layar meminta 100 tanpa keterangan. Kini 200 dan kalimat ringkasan menyebut batas itu.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Brain, RefreshCw, RotateCw, Search, ShoppingCart, Undo2 } from 'lucide-react';
 import apiFetch from '@/lib/apiFetch';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { AlertTriangle, RefreshCw, Package, Warehouse, RotateCcw, CheckCircle2, XCircle, Undo2, RotateCw, Brain, ShoppingCart } from 'lucide-react';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import HubTabs from './hubs/HubTabs';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
-const SEVERITY_STYLE = {
-  critical: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]',
-  warning:  'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]',
+const angka = (v) => (v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString('id-ID', { maximumFractionDigits: 2 }));
+const SMART_LIMIT = 200; // batas maksimum parameter `limit` di GET /warehouse/smart-reorder
+
+const KEPARAHAN = {
+  critical: { label: 'Kritis', tone: 'danger' },
+  warning: { label: 'Perlu perhatian', tone: 'warning' },
 };
+const STATUS_STOK = {
+  no_threshold: { label: 'Belum ada ambang', tone: 'muted' },
+  critical: { label: 'Kritis', tone: 'danger' },
+  low: { label: 'Stok menipis', tone: 'warning' },
+  ok: { label: 'Aman', tone: 'success' },
+};
+const JENIS_PENYESUAIAN = { opname: 'Opname', adjustment: 'Penyesuaian' };
 
+function bukaMenu(hash, hubTab) {
+  // Kontrak tab hub yang sudah ada (`hub_tab_<moduleId>`) supaya mendarat langsung di tab yang dituju.
+  // Hash dikosongkan dulu bila sudah sama, karena tanpa perubahan hash tidak ada `hashchange`.
+  if (hubTab) { try { sessionStorage.setItem(hubTab[0], hubTab[1]); } catch (e) { /* noop */ } }
+  if (window.location.hash === `#${hash}`) window.location.hash = '';
+  window.location.hash = `#${hash}`;
+}
+
+function TombolMuat({ onClick, memuat, testId }) {
+  return (
+    <Button variant="outline" size="icon" onClick={onClick} disabled={memuat} title="Muat ulang" aria-label="Muat ulang"
+      data-testid={testId}>
+      <RefreshCw className={memuat ? 'animate-spin' : ''} />
+    </Button>
+  );
+}
+
+function KotakCari({ value, onChange, placeholder, testId }) {
+  return (
+    <div className="relative w-full sm:w-64">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="pl-8"
+        data-testid={testId} />
+    </div>
+  );
+}
+
+// Alat (unduh, muat ulang) ditaruh di akhir `filters` dalam div ml-auto: bila `filters` dan `tools` sama-sama diisi,
+// Toolbar bersama memeras kotak cari di HP 390 px (lihat Permintaan komponen bersama di laporan).
+const Memuat = ({ teks }) => <p className="py-6 text-center text-sm text-muted-foreground">{teks}</p>;
+
+// ─── Tab 1: Alert stok & rak ──────────────────────────────────────────────────
 function AlertsTab() {
   const { toast } = useToast();
   const [alerts, setAlerts] = useState([]);
   const [meta, setMeta] = useState({});
   const [loading, setLoading] = useState(true);
+  const [jenis, setJenis] = useState('');
+  const [cari, setCari] = useState('');
 
   const loadAlerts = useCallback(async () => {
     setLoading(true);
@@ -34,125 +95,108 @@ function AlertsTab() {
 
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
 
+  const nStok = alerts.filter((a) => a.type === 'low_stock').length;
+  const nRak = alerts.filter((a) => a.type === 'rack_occupancy').length;
+  const q = cari.trim().toLowerCase();
+  const baris = alerts
+    .filter((a) => !jenis || a.type === jenis)
+    .filter((a) => !q || `${a.material_name || ''} ${a.code || a.sku || ''} ${a.message || ''}`.toLowerCase().includes(q));
+  const nama = (a) => (a.type === 'rack_occupancy' ? (a.rack_name || a.message) : (a.material_name || a.message));
+  const kode = (a) => (a.type === 'rack_occupancy' ? (a.rack_code || '') : (a.code || a.sku || ''));
+  const posisi = (a) => (a.type === 'rack_occupancy'
+    ? `${angka(a.occupied)} / ${angka(a.total)} slot (${angka(a.occupancy_pct)}%)`
+    : `${angka(a.current_qty)} ${a.unit || ''}`);
+  const ambang = (a) => (a.type === 'rack_occupancy' ? `${angka(meta.threshold_pct ?? 90)}%` : `${angka(a.alert_at ?? a.reorder_point)} ${a.unit || ''}`);
+
+  const kolom = [
+    { kunci: 'barang', label: 'Barang / rak', hp: 'judul', isi: (a) => (
+      <div className="min-w-0 md:max-w-[26rem]">
+        <p className="truncate font-medium text-foreground" title={nama(a)}>{nama(a)}</p>
+        {kode(a) && <p className="truncate text-xs text-muted-foreground">{kode(a)}</p>}
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (a) => (a.type === 'rack_occupancy' ? 'Rak' : 'Stok') },
+    { kunci: 'posisi', label: 'Sekarang', rata: 'kanan', isi: (a) => <span className="tabular-nums">{posisi(a)}</span> },
+    { kunci: 'ambang', label: 'Ambang', hp: false, rata: 'kanan', isi: (a) => <span className="tabular-nums">{ambang(a)}</span> },
+    { kunci: 'kurang', label: 'Kurang', rata: 'kanan', isi: (a) => (
+      a.type === 'low_stock' && a.shortage > 0
+        ? <span className="tabular-nums font-medium text-[hsl(var(--danger-text))]">{angka(a.shortage)} {a.unit || ''}</span>
+        : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'keparahan', label: 'Status', hp: 'keterangan', isi: (a) => {
+      const k = KEPARAHAN[a.severity] || KEPARAHAN.warning;
+      return <StatusBadge status={a.severity} label={k.label} tone={k.tone} />;
+    } },
+  ];
+
+  const belumAmbang = meta.materials_missing_threshold > 0;
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-2">
-          {meta.critical > 0 && <Badge variant="destructive">{meta.critical} Kritis</Badge>}
-          {meta.warning > 0 && <Badge className="bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]">{meta.warning} Peringatan</Badge>}
-          {meta.total_alerts === 0 && !loading && <Badge variant="outline" className="text-[hsl(var(--success))]">✅ Tidak ada alert</Badge>}
-        </div>
-        <div className="flex items-center gap-2">
-          {/* SESI #33 — alert stok tidak lagi jalan buntu: dari sini langsung ke
-              Daftar Belanja Mingguan yang mengubah kekurangan jadi usul beli + PR. */}
-          <Button size="sm" variant="outline"
-            onClick={() => {
-              if (window.location.hash === '#wh-shopping-list') window.location.hash = '';
-              window.location.hash = '#wh-shopping-list';
-            }}
-            data-testid="wh-smart-goto-shopping">
-            <ShoppingCart className="h-3.5 w-3.5 mr-1.5" />Belanja Mingguan
+    <PageLayout testId="wh-smart-alerts" title="Alert gudang"
+      subtitle="Barang di bawah ambang stok dan rak yang hampir penuh."
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" hideWhenEmpty={false} value={jenis} onChange={setJenis} testId="wh-smart-alert-jenis"
+          options={[
+            { key: '', label: 'Semua', count: alerts.length },
+            { key: 'low_stock', label: 'Stok', count: nStok },
+            { key: 'rack_occupancy', label: 'Rak', count: nRak },
+          ]} />
+        <KotakCari value={cari} onChange={setCari} placeholder="Cari barang atau kode" testId="wh-smart-alert-cari" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="alert-gudang" namaLembar="Alert" baris={baris} testId="wh-smart-alert-unduh"
+            kolom={[
+              { label: 'Barang / rak', nilai: (a) => nama(a) },
+              { label: 'Kode', nilai: (a) => kode(a) },
+              { label: 'Jenis', nilai: (a) => (a.type === 'rack_occupancy' ? 'Rak' : 'Stok') },
+              { label: 'Sekarang', nilai: (a) => (a.type === 'rack_occupancy' ? a.occupancy_pct : a.current_qty) },
+              { label: 'Ambang', nilai: (a) => (a.type === 'rack_occupancy' ? (meta.threshold_pct ?? 90) : (a.alert_at ?? a.reorder_point)) },
+              { label: 'Kurang', nilai: (a) => (a.type === 'low_stock' ? a.shortage : '') },
+              { label: 'Satuan', nilai: (a) => (a.type === 'rack_occupancy' ? '%' : (a.unit || '')) },
+              { label: 'Status', nilai: (a) => (KEPARAHAN[a.severity] || KEPARAHAN.warning).label },
+            ]} />
+          {/* SESI #33 — alert stok tidak jalan buntu: langsung ke Daftar Belanja Mingguan (usul beli + PR). */}
+          <Button variant="outline" onClick={() => bukaMenu('wh-shopping-list')} data-testid="wh-smart-goto-shopping">
+            <ShoppingCart />Belanja mingguan
           </Button>
-          <Button size="sm" variant="outline" onClick={loadAlerts} disabled={loading} data-testid="wh-smart-alerts-refresh">
-            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />Refresh
-          </Button>
+          <TombolMuat onClick={loadAlerts} memuat={loading} testId="wh-smart-alerts-refresh" />
         </div>
-      </div>
-
-      {/* W3 — kejujuran layar: "tidak ada alert" TIDAK sama dengan "stok aman"
-          kalau ambangnya belum pernah diisi. Ini akar keluhan pemilik: menu ini
-          selalu sunyi karena 333 dari 333 material tidak punya ambang. */}
-      {!loading && meta.materials_missing_threshold > 0 && (
-        <div className="mb-4 flex items-start gap-2 rounded-lg border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] px-4 py-3"
-          data-testid="wh-smart-threshold-notice">
-          <AlertTriangle className="h-4 w-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
-          <div className="text-sm text-[hsl(var(--warning))] ">
-            <strong>{meta.materials_missing_threshold} dari {meta.materials_total} material belum punya ambang stok</strong>
-            {meta.materials_with_threshold === 0
-              ? ' — selama ambangnya kosong, alert stok TIDAK akan pernah berbunyi walau stok habis.'
-              : ' — material tersebut tidak akan pernah memicu alert.'}
-            <button
-              onClick={() => {
-                // Kontrak tab hub yang sudah ada (`hub_tab_<moduleId>`) supaya
-                // mendarat LANGSUNG di tab Ambang Stok. Hash dikosongkan dulu
-                // bila sudah sama, karena tanpa perubahan hash tidak ada
-                // `hashchange` ⇒ tombolnya akan terasa "mati".
-                try { sessionStorage.setItem('hub_tab_wh-master', 'thresholds'); } catch (e) { /* noop */ }
-                if (window.location.hash === '#wh-master=thresholds') window.location.hash = '';
-                window.location.hash = '#wh-master=thresholds';
-              }}
-              className="ml-1 underline font-medium"
-              data-testid="wh-smart-goto-thresholds">
-              Isi di Master Item → Ambang Stok
-            </button>
-          </div>
-        </div>
+      </>}
+      summary={!loading && belumAmbang ? (
+        // W3 — "tidak ada alert" TIDAK sama dengan "stok aman" bila ambangnya belum diisi.
+        <Notice tone="warning" testId="wh-smart-threshold-notice"
+          title={`${angka(meta.materials_missing_threshold)} dari ${angka(meta.materials_total)} barang belum punya ambang stok`}
+          action={<Button variant="link" className="h-auto p-0" data-testid="wh-smart-goto-thresholds"
+            onClick={() => bukaMenu('wh-master=thresholds', ['hub_tab_wh-master', 'thresholds'])}>Isi ambang stok</Button>}>
+          {meta.materials_with_threshold === 0
+            ? 'Selama ambangnya kosong, alert stok tidak akan pernah muncul walau stok habis.'
+            : 'Barang tanpa ambang tidak akan pernah memicu alert. Isi di Master Item › Ambang stok.'}
+        </Notice>
+      ) : null}>
+      {loading && alerts.length === 0 ? <Memuat teks="Memuat alert…" /> : (
+        <TabelData kolom={kolom} baris={baris} kunci={(a) => `${a.type}-${a.material_id || a.rack_id || a.message}`}
+          testId="wh-smart-alert-tabel"
+          kosong={<EmptyState
+            title={alerts.length ? 'Tidak ada alert yang cocok'
+              : meta.materials_with_threshold === 0 ? 'Belum ada yang bisa dipantau' : 'Tidak ada alert'}
+            description={alerts.length ? 'Ubah saringan atau kata pencarian.'
+              : meta.materials_with_threshold === 0 ? 'Isi ambang stok dulu di Master Item › Ambang stok, baru alert bisa muncul.'
+                : `Tidak ada rak di atas 90%; ${angka(meta.materials_with_threshold)} barang berambang dan semuanya di atas ambang.`} />} />
       )}
-
-      {loading ? (
-        <div className="text-center py-8"><RefreshCw className="h-6 w-6 animate-spin mx-auto" /></div>
-      ) : alerts.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <CheckCircle2 className="h-10 w-10 text-[hsl(var(--success))] mx-auto mb-2" />
-          <p className="text-sm font-medium">
-            {meta.materials_with_threshold === 0 ? 'Belum ada yang bisa dipantau' : 'Semua sistem normal'}
-          </p>
-          <p className="text-xs mt-1">
-            {meta.materials_with_threshold === 0
-              ? 'Isi ambang stok dulu di Master Item → Ambang Stok, baru alert bisa berbunyi.'
-              : `Tidak ada rak melebihi 90%; ${meta.materials_with_threshold} material dipantau dan semuanya di atas ambang`}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {alerts.map((alert, i) => (
-            <div key={i} className={`p-3 rounded-lg border ${SEVERITY_STYLE[alert.severity]} flex items-start gap-3`}>
-              <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-medium">{alert.message}</p>
-                {alert.type === 'rack_occupancy' && (
-                  <div className="mt-1">
-                    <div className="h-1.5 bg-foreground/50 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-current rounded-full transition-all"
-                        style={{ width: `${alert.occupancy_pct}%` }}
-                      />
-                    </div>
-                    <p className="text-xs mt-0.5">{alert.occupied} / {alert.total} slot • {alert.occupancy_pct}%</p>
-                  </div>
-                )}
-                {alert.type === 'low_stock' && (
-                  <p className="text-xs mt-0.5">
-                    Stok: {alert.current_qty} {alert.unit} | Ambang: {alert.alert_at ?? alert.reorder_point} {alert.unit}
-                    {alert.min_stock_qty > 0 && <> (min {alert.min_stock_qty})</>}
-                    {alert.reorder_point > 0 && <> · pesan ulang {alert.reorder_point}</>}
-                    {alert.shortage > 0 && <> — kurang <strong>{alert.shortage} {alert.unit}</strong></>}
-                  </p>
-                )}
-              </div>
-              <Badge variant="outline" className="text-[10px] flex-shrink-0">
-                {alert.type === 'rack_occupancy' ? 'Rak' : 'Stok'}
-              </Badge>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </PageLayout>
   );
 }
 
+// ─── Tab 2: Usulan titik pesan ulang ─────────────────────────────────────────
 function SmartReorderTab() {
   const { toast } = useToast();
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState({});
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState({});
   const [saving, setSaving] = useState(null);
+  const [saring, setSaring] = useState('');
+  const [cari, setCari] = useState('');
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch('/warehouse/smart-reorder?limit=100');
+      const res = await apiFetch(`/warehouse/smart-reorder?limit=${SMART_LIMIT}`);
       setItems(res.data || []);
       setMeta(res.metadata || {});
     } catch {
@@ -171,75 +215,101 @@ function SmartReorderTab() {
         method: 'PUT',
         body: { reorder_point: item.smart_reorder_point },
       });
-      toast({ title: `Reorder point ${item.name} diperbarui ke ${item.smart_reorder_point}` });
+      toast({ title: `Titik pesan ulang ${item.name} diubah ke ${item.smart_reorder_point}` });
       loadData();
     } catch (err) {
-      toast({ title: 'Gagal update', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal menyimpan', description: err.message, variant: 'destructive' });
     } finally {
       setSaving(null);
     }
   };
 
+  const hitung = (fn) => items.filter(fn).length;
+  const PENYARING = {
+    perlu: (i) => i.needs_update,
+    kritis: (i) => i.status === 'critical' || i.status === 'low',
+    tanpa: (i) => i.status === 'no_threshold',
+  };
+  const q = cari.trim().toLowerCase();
+  const baris = items
+    .filter((i) => !saring || PENYARING[saring](i))
+    .filter((i) => !q || `${i.name || ''} ${i.sku || ''}`.toLowerCase().includes(q));
+  const status = (i) => STATUS_STOK[i.status] || { label: i.status || '—', tone: 'muted' };
+
+  const kolom = [
+    { kunci: 'barang', label: 'Barang', hp: 'judul', isi: (i) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="truncate font-medium text-foreground" title={i.name}>{i.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{i.sku}</p>
+      </div>) },
+    { kunci: 'stok', label: 'Stok', rata: 'kanan', isi: (i) => <span className="tabular-nums">{angka(i.current_qty)} {i.unit}</span> },
+    { kunci: 'rp', label: 'Titik pesan ulang', hp: false, rata: 'kanan', isi: (i) => <span className="tabular-nums">{angka(i.current_reorder_point)}</span> },
+    { kunci: 'usulan', label: 'Usulan', rata: 'kanan', isi: (i) => (i.smart_reorder_point > 0
+      ? <span className="tabular-nums font-medium text-[hsl(var(--primary))]">{angka(i.smart_reorder_point)}</span>
+      : <span className="text-muted-foreground" title="Belum ada pemakaian 30 hari terakhir">—</span>) },
+    { kunci: 'pakai', label: 'Pakai/hari', hp: false, rata: 'kanan', isi: (i) => (i.no_usage_data
+      ? <span className="text-muted-foreground" title="Belum ada pemakaian 30 hari terakhir">—</span>
+      : <span className="tabular-nums">{angka(i.avg_daily_consumption)}</span>) },
+    { kunci: 'status', label: 'Status', isi: (i) => <StatusBadge status={i.status} label={status(i).label} tone={status(i).tone} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => (i.needs_update && i.smart_reorder_point > 0 ? (
+      <Button size="sm" variant="outline" onClick={() => applySmartRP(i)} disabled={saving === i.material_id}
+        data-testid={`wh-smart-apply-${i.material_id}`}>
+        {saving === i.material_id ? <RefreshCw className="animate-spin" /> : <Brain />}Terapkan usulan
+      </Button>) : null) },
+  ];
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-muted-foreground">{meta.needs_update || 0} material perlu update reorder point</p>
-        <Button size="sm" variant="outline" onClick={loadData} disabled={loading}>
-          <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} />Refresh
-        </Button>
-      </div>
-      {loading ? (
-        <div className="text-center py-8"><RefreshCw className="h-6 w-6 animate-spin mx-auto" /></div>
-      ) : items.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground text-sm">Belum ada material terdaftar</div>
-      ) : (
-        <div className="space-y-2">
-          {items.map((item, i) => (
-            <div key={i} className="p-3 rounded-lg border border-border">
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-sm">{item.name}</p>
-                    <Badge variant="outline" className="text-[10px]">{item.sku}</Badge>
-                    {item.status === 'low' && <Badge variant="destructive" className="text-[10px]">Stok Rendah</Badge>}
-                    {item.needs_update && <Badge className="text-[10px] bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]">Update RP</Badge>}
-                  </div>
-                  <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                    <span>Stok: {item.current_qty} {item.unit}</span>
-                    <span>RP Saat Ini: {item.current_reorder_point}</span>
-                    {item.smart_reorder_point > 0 && (
-                      <span className="text-[hsl(var(--primary))] font-medium">Smart RP: {item.smart_reorder_point}</span>
-                    )}
-                    <span>Avg Harian: {item.avg_daily_consumption}</span>
-                  </div>
-                </div>
-                {item.needs_update && item.smart_reorder_point > 0 && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => applySmartRP(item)}
-                    disabled={saving === item.material_id}
-                  >
-                    {saving === item.material_id
-                      ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                      : <><Brain className="h-3.5 w-3.5 mr-1" />Apply</>
-                    }
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
+    <PageLayout testId="wh-smart-reorder" title="Usulan pesan ulang"
+      subtitle="Usulan titik pesan ulang dari pemakaian 30 hari terakhir, waktu tunggu, dan stok pengaman."
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" hideWhenEmpty={false} value={saring} onChange={setSaring} testId="wh-smart-reorder-saring"
+          options={[
+            { key: '', label: 'Semua', count: items.length },
+            { key: 'perlu', label: 'Perlu diubah', count: hitung(PENYARING.perlu) },
+            { key: 'kritis', label: 'Kritis / menipis', count: hitung(PENYARING.kritis) },
+            { key: 'tanpa', label: 'Belum ada ambang', count: hitung(PENYARING.tanpa) },
+          ]} />
+        <KotakCari value={cari} onChange={setCari} placeholder="Cari barang atau kode" testId="wh-smart-reorder-cari" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas="usulan-pesan-ulang" namaLembar="Usulan" baris={baris} testId="wh-smart-reorder-unduh"
+            kolom={[
+              { label: 'Barang', nilai: (i) => i.name },
+              { label: 'Kode', nilai: (i) => i.sku },
+              { label: 'Satuan', nilai: (i) => i.unit },
+              { label: 'Stok', nilai: (i) => i.current_qty },
+              { label: 'Titik pesan ulang', nilai: (i) => i.current_reorder_point },
+              { label: 'Usulan', nilai: (i) => i.smart_reorder_point },
+              { label: 'Pakai per hari', nilai: (i) => (i.no_usage_data ? '' : i.avg_daily_consumption) },
+              { label: 'Waktu tunggu (hari)', nilai: (i) => i.lead_time_days },
+              { label: 'Stok pengaman', nilai: (i) => i.safety_stock },
+              { label: 'Status', nilai: (i) => status(i).label },
+              { label: 'Perlu diubah', nilai: (i) => (i.needs_update ? 'Ya' : 'Tidak') },
+            ]} />
+          <TombolMuat onClick={loadData} memuat={loading} testId="wh-smart-reorder-refresh" />
         </div>
+      </>}
+      summary={!loading && items.length > 0 ? (
+        <p className="text-sm text-muted-foreground" data-testid="wh-smart-reorder-ringkas">
+          Dihitung untuk {angka(items.length)} barang aktif{items.length >= SMART_LIMIT ? ` (batas ${SMART_LIMIT} barang pertama per hitungan)` : ''};{' '}
+          {angka(meta.needs_update || 0)} perlu diubah titik pesan ulangnya.
+        </p>
+      ) : null}>
+      {loading && items.length === 0 ? <Memuat teks="Menghitung usulan…" /> : (
+        <TabelData kolom={kolom} baris={baris} kunci={(i) => i.material_id} testId="wh-smart-reorder-tabel"
+          kosong={<EmptyState title={items.length ? 'Tidak ada barang yang cocok' : 'Belum ada barang terdaftar'}
+            description={items.length ? 'Ubah saringan atau kata pencarian.' : 'Daftarkan barang di Master Item dulu.'} />} />
       )}
-    </div>
+    </PageLayout>
   );
 }
 
+// ─── Tab 3: Batalkan penyesuaian stok ────────────────────────────────────────
 function UndoStockTab() {
   const { toast } = useToast();
   const [data, setData] = useState({ undoable: [], soft_deleted: [] });
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(null);
+  const [tampil, setTampil] = useState('undoable');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -259,10 +329,10 @@ function UndoStockTab() {
     setProcessing(id);
     try {
       await apiFetch(`/warehouse/stock-adjustments/${id}/undo`, { method: 'POST' });
-      toast({ title: 'Adjustment berhasil di-undo' });
+      toast({ title: 'Penyesuaian dibatalkan' });
       loadData();
     } catch (err) {
-      toast({ title: 'Gagal undo', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal membatalkan', description: err.message, variant: 'destructive' });
     } finally {
       setProcessing(null);
     }
@@ -272,100 +342,88 @@ function UndoStockTab() {
     setProcessing(id);
     try {
       await apiFetch(`/warehouse/stock-adjustments/${id}/restore`, { method: 'POST' });
-      toast({ title: 'Adjustment berhasil di-restore' });
+      toast({ title: 'Penyesuaian dipulihkan' });
       loadData();
     } catch (err) {
-      toast({ title: 'Gagal restore', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal memulihkan', description: err.message, variant: 'destructive' });
     } finally {
       setProcessing(null);
     }
   };
 
-  return (
-    <div className="space-y-5">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground">Adjustment dalam 7 hari terakhir yang bisa di-undo</p>
-        <Button size="sm" variant="outline" onClick={loadData}><RefreshCw className="h-3.5 w-3.5 mr-1" />Refresh</Button>
-      </div>
-      {loading ? (
-        <div className="text-center py-8"><RefreshCw className="h-6 w-6 animate-spin mx-auto" /></div>
-      ) : (
-        <>
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Dapat Di-Undo ({data.undoable?.length})</p>
-            {data.undoable?.length === 0 ? (
-              <div className="text-center py-6 text-sm text-muted-foreground border-2 border-dashed border-border rounded-lg">
-                Tidak ada adjustment yang bisa di-undo
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {data.undoable.map((m, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border text-sm">
-                    <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="font-medium">{m.sku} — {m.movement_type}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Qty: {m.qty} {m.unit} · {m.created_at ? new Date(m.created_at).toLocaleString('id-ID') : '-'}
-                      </p>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => doUndo(m.id)} disabled={processing === m.id}>
-                      {processing === m.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <><Undo2 className="h-3.5 w-3.5 mr-1" />Undo</>}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+  const undoable = data.undoable || [];
+  const terhapus = data.soft_deleted || [];
+  const baris = tampil === 'undoable' ? undoable : terhapus;
+  const waktu = (m) => (m.created_at ? formatDateTimeID(m.created_at) : '—');
 
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Soft-Deleted (bisa Restore) ({data.soft_deleted?.length})</p>
-            {data.soft_deleted?.length === 0 ? (
-              <div className="text-center py-4 text-sm text-muted-foreground">Tidak ada item soft-deleted</div>
-            ) : (
-              <div className="space-y-2">
-                {data.soft_deleted.map((m, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border text-sm opacity-60">
-                    <XCircle className="h-4 w-4 text-[hsl(var(--destructive))] flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="font-medium line-through">{m.sku} — {m.movement_type}</p>
-                      <p className="text-xs text-muted-foreground">Di-undo oleh {m.deleted_by || '-'}</p>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => doRestore(m.id)} disabled={processing === m.id}>
-                      {processing === m.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <><RotateCw className="h-3.5 w-3.5 mr-1" />Restore</>}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
+  const kolom = [
+    { kunci: 'barang', label: 'Barang', hp: 'judul', isi: (m) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className={`truncate font-medium text-foreground ${tampil === 'soft_deleted' ? 'line-through' : ''}`}
+          title={m.material_name || m.sku}>{m.material_name || m.sku}</p>
+        <p className="truncate text-xs text-muted-foreground">{m.sku}</p>
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', hp: false, isi: (m) => JENIS_PENYESUAIAN[m.movement_type] || 'Penyesuaian' },
+    { kunci: 'qty', label: 'Perubahan', rata: 'kanan', isi: (m) => <span className="tabular-nums">{angka(m.qty)} {m.unit}</span> },
+    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (m) => <span className="text-sm md:whitespace-nowrap">{waktu(m)}</span> },
+    ...(tampil === 'soft_deleted'
+      ? [{ kunci: 'oleh', label: 'Dibatalkan oleh', isi: (m) => m.deleted_by || '—' }] : []),
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => (tampil === 'undoable' ? (
+      <Button size="sm" variant="outline" onClick={() => doUndo(m.id)} disabled={processing === m.id}
+        data-testid={`wh-smart-undo-${m.id}`}>
+        {processing === m.id ? <RefreshCw className="animate-spin" /> : <Undo2 />}Batalkan
+      </Button>
+    ) : (
+      <Button size="sm" variant="outline" onClick={() => doRestore(m.id)} disabled={processing === m.id}
+        data-testid={`wh-smart-restore-${m.id}`}>
+        {processing === m.id ? <RefreshCw className="animate-spin" /> : <RotateCw />}Pulihkan
+      </Button>
+    )) },
+  ];
+
+  return (
+    <PageLayout testId="wh-smart-undo" title="Batalkan penyesuaian"
+      subtitle="Penyesuaian stok 7 hari terakhir yang masih bisa dibatalkan atau dipulihkan."
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" hideWhenEmpty={false} value={tampil} onChange={setTampil} testId="wh-smart-undo-tampil"
+          options={[
+            { key: 'undoable', label: 'Bisa dibatalkan', count: undoable.length },
+            { key: 'soft_deleted', label: 'Sudah dibatalkan', count: terhapus.length },
+          ]} />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <TombolUnduh namaBerkas={tampil === 'undoable' ? 'penyesuaian-bisa-dibatalkan' : 'penyesuaian-dibatalkan'}
+          namaLembar="Penyesuaian" baris={baris} testId="wh-smart-undo-unduh"
+          kolom={[
+            { label: 'Barang', nilai: (m) => m.material_name || m.sku },
+            { label: 'Kode', nilai: (m) => m.sku },
+            { label: 'Jenis', nilai: (m) => JENIS_PENYESUAIAN[m.movement_type] || 'Penyesuaian' },
+            { label: 'Perubahan', nilai: (m) => m.qty },
+            { label: 'Satuan', nilai: (m) => m.unit },
+            { label: 'Waktu', nilai: (m) => waktu(m) },
+            { label: 'Dibatalkan oleh', nilai: (m) => m.deleted_by || '' },
+          ]} />
+        <TombolMuat onClick={loadData} memuat={loading} testId="wh-smart-undo-refresh" />
+        </div>
+      </>}>
+      {loading && undoable.length + terhapus.length === 0 ? <Memuat teks="Memuat penyesuaian…" /> : (
+        <TabelData kolom={kolom} baris={baris} kunci={(m) => m.id} testId="wh-smart-undo-tabel"
+          kosong={<EmptyState
+            title={tampil === 'undoable' ? 'Tidak ada penyesuaian yang bisa dibatalkan' : 'Belum ada penyesuaian yang dibatalkan'}
+            description="Hanya penyesuaian dan opname 7 hari terakhir yang tampil di sini." />} />
       )}
-    </div>
+    </PageLayout>
   );
 }
 
-export default function WarehouseSmartModule() {
+export default function WarehouseSmartModule(props) {
+  const tabs = useMemo(() => [
+    { key: 'alerts', label: 'Alert gudang', Component: AlertsTab },
+    { key: 'reorder', label: 'Usulan pesan ulang', Component: SmartReorderTab },
+    { key: 'undo', label: 'Batalkan penyesuaian', Component: UndoStockTab },
+  ], []);
   return (
-    <div className="p-6 space-y-4">
-      <div>
-        <h2 className="text-xl font-bold flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[hsl(var(--success)/0.1)] to-[hsl(var(--success)/0.1)] flex items-center justify-center">
-            <Warehouse className="h-4 w-4 text-foreground" />
-          </div>
-          Smart Warehouse
-        </h2>
-        <p className="text-sm text-muted-foreground mt-0.5">Alert gudang, smart reorder point & undo stock adjustment</p>
-      </div>
-      <Tabs defaultValue="alerts">
-        <TabsList className="h-9">
-          <TabsTrigger value="alerts" className="text-xs" data-testid="wh-smart-tab-alerts"><AlertTriangle className="h-3.5 w-3.5 mr-1.5" />Alert Gudang</TabsTrigger>
-          <TabsTrigger value="reorder" className="text-xs" data-testid="wh-smart-tab-reorder"><Package className="h-3.5 w-3.5 mr-1.5" />Smart Reorder</TabsTrigger>
-          <TabsTrigger value="undo" className="text-xs" data-testid="wh-smart-tab-undo"><Undo2 className="h-3.5 w-3.5 mr-1.5" />Undo Stock</TabsTrigger>
-        </TabsList>
-        <TabsContent value="alerts" className="mt-4"><AlertsTab /></TabsContent>
-        <TabsContent value="reorder" className="mt-4"><SmartReorderTab /></TabsContent>
-        <TabsContent value="undo" className="mt-4"><UndoStockTab /></TabsContent>
-      </Tabs>
-    </div>
+    <HubTabs {...props} hubId="warehouse-smart" title="Alert & Reorder"
+      subtitle="Alert stok dan rak, usulan titik pesan ulang, dan pembatalan penyesuaian stok."
+      tabs={tabs} />
   );
 }

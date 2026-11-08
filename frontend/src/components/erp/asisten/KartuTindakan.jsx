@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import DatePicker from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -32,7 +33,7 @@ import {
 } from './tindakanAsisten';
 
 const BARIS_AWAL = 8;
-const KEPALA = 'h-9 whitespace-nowrap bg-foreground/[0.03] px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+const KEPALA = 'h-9 whitespace-nowrap px-3';
 
 /** Tabel `rencana.perubahan` — dipakai kartu chat dan rincian di halaman Tindakan AI. */
 export function TabelPerubahan({ perubahan, testId = 'tindakan-perubahan' }) {
@@ -43,7 +44,7 @@ export function TabelPerubahan({ perubahan, testId = 'tindakan-perubahan' }) {
   return (
     <div className="min-w-0 space-y-1" data-testid={testId}>
       <div className="min-w-0 overflow-hidden rounded-[var(--radius-sm)] border border-[var(--glass-border)]">
-        <Table className="min-w-0 text-[13px]" wrapperClassName="max-w-full">
+        <Table className="min-w-0 text-sm" wrapperClassName="max-w-full">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className={KEPALA}>Yang berubah</TableHead>
@@ -117,7 +118,9 @@ function IsianUbah({ field, id, value, onChange, galat, disabled }) {
   } else if (jenis === 'angka') {
     kotak = <MoneyInput {...umum} decimals={2} value={value} onChange={(e) => onChange(e.target.value)} />;
   } else if (jenis === 'tanggal') {
-    kotak = <Input {...umum} type="date" value={value} onChange={(e) => onChange(e.target.value)} />;
+    // Standar UI/UX v2: pemilih tanggal seragam; nilai tetap "YYYY-MM-DD" seperti isian lama.
+    kotak = <DatePicker id={id} value={value || ''} onChange={(v) => onChange(v || '')} disabled={disabled}
+      testId={`tindakan-isian-${field.kunci}`} />;
   } else if (jenis === 'pilihan') {
     kotak = (
       <SmartNativeSelect id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}

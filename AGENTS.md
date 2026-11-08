@@ -27,8 +27,9 @@ Satu-satunya panduan: [`docs/design/PANDUAN_UI.md`](docs/design/PANDUAN_UI.md).
    | paginasi | `footer` |
 
    Isi baris tabel yang dibuka/tutup memakai `RowDetail`, di bawah barisnya.
-2. **Popup (`Dialog`/`Sheet`) hanya untuk formulir isian pendek dan konfirmasi.** Daftar, tabel, dan detail
-   dibuka di halaman (`DetailPanel` / `RowDetail`).
+2. **Standar UI/UX v2 (8 Nov 2026, lihat Revisi 3 di PANDUAN_UI):** detail = popup (`DetailPanel` dengan `onClose`
+   otomatis popup, atau `DetailPopup`); form SELALU popup (`FormPopup` pendek/panjang); rincian kecil boleh `RowDetail`.
+   Semua tabel punya `TombolUnduh` (Excel & CSV). Tanggal pakai `DatePicker`/`PeriodPicker`. **Hanya tampilan — fitur tidak diubah.**
 3. **Komponen**: `Button` (utama · outline · ikon · link), `SmartNativeSelect`, `PeriodPicker`, `FilterChips`
    (hanya untuk penyaring), `ViewToggle` (Tabel/Kartu), `EmptyState`, `StatusBadge`, `StatTile`, `StatementTable`,
    `DataTable` / `ui/table`. Jangan memakai `<button>`, `<select>`, `<table>`, `<h1>` buatan sendiri, input

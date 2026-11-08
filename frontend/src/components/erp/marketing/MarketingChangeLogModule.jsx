@@ -19,45 +19,56 @@
  *  · catatan kejujuran data: staf berlingkup hanya melihat tokonya, dan itu
  *    DIKATAKAN — bukan dibiarkan tampak seperti "tidak ada perubahan".
  *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris (periode lewat PeriodPicker — dulu dua
+ * <input type="date">), 4 kartu StatTile, tabel standar, unduh Excel + CSV (dulu CSV saja) berisi SELURUH hasil
+ * saringan, label jenis/peran berbahasa biasa, catatan kejujuran data dalam Notice.
+ *
  * Semua penyaringan & paginasi dilakukan BACKEND (`/api/marketing/change-log`)
  * supaya jumlah "total" di layar tidak pernah berarti "20 baris pertama".
  */
 import { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, Loader2, Search, Info } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import {
-  History, RefreshCw, Loader2, Search, Download, ShieldCheck, Sigma,
-  Info, Users, Store, Filter, X,
-} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
+import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite from '@/components/ui/pagination-lite';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
-import { downloadCsv } from '@/lib/csv';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS } from '../finance/PeriodPicker';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
 import NoStoreScopeNotice from './NoStoreScopeNotice';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
-
-const KIND_STYLE = {
-  kewenangan: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
-  angka: 'bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30',
+const JENIS = {
+  kewenangan: { label: 'Kewenangan', tone: 'warning' },
+  angka: { label: 'Angka', tone: 'info' },
 };
+const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+/** "2026-11-05T06:53:50" → "05 Nov 2026 06.53" (tampilan saja). */
+const waktu = (v) => {
+  const s = String(v || '');
+  if (!/^\d{4}-\d{2}-\d{2}/.test(s)) return s || '—';
+  const [y, m, d] = s.slice(0, 10).split('-').map(Number);
+  const jam = s.slice(11, 16);
+  return `${String(d).padStart(2, '0')} ${BLN[m - 1]} ${y}${jam ? ` ${jam.replace(':', '.')}` : ''}`;
+};
+const peran = (r) => { const t = String(r || '').replace(/_/g, ' ').trim(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; };
 
-/* Nilai bisa berupa angka uang, daftar nama, boolean, atau kosong. Menampilkan
-   "null" apa adanya membuat pembacanya menebak; "belum ada" menjawabnya. */
+/* Nilai bisa berupa angka uang, daftar nama, boolean, atau kosong. Menampilkan "null" apa adanya membuat
+   pembacanya menebak; "belum ada" menjawabnya. */
 function Val({ v, money }) {
   if (v === null || v === undefined || v === '') {
-    return <span className="text-muted-foreground italic">belum ada</span>;
+    return <span className="italic text-muted-foreground">belum ada</span>;
   }
   if (Array.isArray(v)) {
-    return v.length
-      ? <span>{v.join(', ')}</span>
-      : <span className="text-muted-foreground italic">kosong</span>;
+    return v.length ? <span>{v.join(', ')}</span> : <span className="italic text-muted-foreground">kosong</span>;
   }
   if (typeof v === 'boolean') return <span>{v ? 'ya' : 'tidak'}</span>;
   if (money && typeof v === 'number') return <span>{formatRupiah(v)}</span>;
@@ -83,6 +94,7 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
   const [q, setQ] = useState('');
   const [onlyPerm, setOnlyPerm] = useState(false);
   const [page, setPage] = useState(1);
+  const [periode, setPeriode] = useState({ preset: 'all', from: '', to: '' });
 
   const params = useCallback((extra = {}) => {
     const p = new URLSearchParams({ page: String(page), page_size: '20', ...extra });
@@ -137,282 +149,177 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
   const hasFilter = Boolean(accountId || entity || action || actorId || dateFrom
     || dateTo || q.trim() || onlyPerm);
 
-  /* Unduh CSV — bahan audit. Mengambil ulang dengan page_size besar supaya
-     berkasnya memuat SELURUH hasil filter, bukan hanya halaman yang terlihat.
-     Batasnya disebut apa adanya di toast (bukan dipotong diam-diam). */
-  const exportCsv = async () => {
-    try {
-      const res = await fetch(`${API}/api/marketing/change-log?${params({ page: '1', page_size: '500' })}`,
-        { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const j = await res.json();
-      const head = ['Waktu', 'Toko', 'Kode toko', 'Jenis', 'Yang diubah', 'Aksi',
-        'Periode', 'Pelaku', 'Peran', 'Alasan', 'Field', 'Nilai lama', 'Nilai baru'];
-      const lines = [];
-      (j.rows || []).forEach((r) => {
-        const base = [r.at, r.account_name, r.account_code, r.kind, r.entity_label,
-          r.action_label, r.period, r.actor_name, r.actor_role, r.reason];
-        if (!r.changes?.length) lines.push([...base, '', '', '']);
-        r.changes?.forEach((c) => lines.push([...base, c.field_label,
-          Array.isArray(c.before) ? c.before.join('|') : c.before,
-          Array.isArray(c.after) ? c.after.join('|') : c.after]));
-      });
-      downloadCsv('jejak-perubahan-marketing', head, lines);
-      toast.success(`CSV terunduh — ${j.rows?.length || 0} perubahan`
-        + (j.total > (j.rows?.length || 0) ? ` dari ${j.total} (batas 500 baris per unduhan)` : ''));
-    } catch (e) {
-      toast.error(`Gagal mengunduh CSV: ${e.message}`);
-    }
+  /* Unduh (Excel/CSV) — bahan audit. Mengambil ulang dengan page_size besar supaya berkas memuat SELURUH hasil
+     saringan, bukan hanya halaman yang terlihat (batas 500 perubahan per unduhan, disebut di toast). */
+  const ambilSemua = async () => {
+    const res = await fetch(`${API}/api/marketing/change-log?${params({ page: '1', page_size: '500' })}`,
+      { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`kode ${res.status}`);
+    const j = await res.json();
+    const out = [];
+    (j.rows || []).forEach((r) => {
+      if (!r.changes?.length) out.push({ r, c: null });
+      r.changes?.forEach((c) => out.push({ r, c }));
+    });
+    if (j.total > (j.rows?.length || 0)) toast.info(`Unduhan berisi ${j.rows?.length || 0} dari ${j.total} perubahan (batas 500 per unduhan).`);
+    return out;
   };
+  const nilaiTeks = (v) => (Array.isArray(v) ? v.join(' | ') : (v ?? ''));
+
+  const gantiPeriode = (p) => { setPeriode(p); setDateFrom(p.from || ''); setDateTo(p.to || ''); };
+  const bersihkan = () => { resetFilters(); setPeriode({ preset: 'all', from: '', to: '' }); };
 
   return (
-    <div className="space-y-4" data-testid="marketing-changelog">
-      {/* ── Judul ────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold flex items-center gap-2 text-foreground">
-            <History size={18} className="text-primary" /> Jejak Perubahan Marketing
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Siapa mengubah apa — target, rencana anggaran, kunci periode, dan
-            kewenangan toko. Hanya bisa dibaca{scope === 'management' ? ' (Portal Manajemen)' : ''}.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" className="h-9" onClick={exportCsv}
-            disabled={!rows.length} data-testid="changelog-export-csv">
-            <Download size={13} className="mr-1.5" /> CSV
-          </Button>
-          <Button size="sm" variant="outline" className="h-9" onClick={() => { load(); loadStats(); }}
-            disabled={loading} data-testid="changelog-refresh">
-            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-          </Button>
-        </div>
-      </div>
-
-      <NoStoreScopeNotice token={token} what="Jejak & angka di layar ini" />
-
-      {/* ── Kartu ringkas 30 hari ────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3" data-testid="changelog-stats">
-        <GlassCard className="p-3">
-          <p className="text-[11px] text-muted-foreground">Perubahan 30 hari</p>
-          <p className="text-base font-bold">{fmtNum(stats?.total)}</p>
-          <p className="text-[10px] text-muted-foreground">total baris jejak</p>
-        </GlassCard>
-        <GlassCard className="p-3">
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <Sigma size={11} /> Perubahan angka
-          </p>
-          <p className="text-base font-bold">{fmtNum(stats?.number_changes)}</p>
-          <p className="text-[10px] text-muted-foreground">target · anggaran · kunci periode</p>
-        </GlassCard>
-        <GlassCard className="p-3">
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <ShieldCheck size={11} /> Perubahan kewenangan
-          </p>
-          <p className="text-base font-bold">{fmtNum(stats?.permission_changes)}</p>
-          <p className="text-[10px] text-muted-foreground">siapa pemegang toko</p>
-        </GlassCard>
-        <GlassCard className="p-3">
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <Users size={11} /> Pelaku
-          </p>
-          <p className="text-base font-bold">{fmtNum(stats?.actors)}</p>
-          <p className="text-[10px] text-muted-foreground">orang yang mengubah</p>
-        </GlassCard>
-        <GlassCard className="p-3">
-          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <Store size={11} /> Toko tersentuh
-          </p>
-          <p className="text-base font-bold">{fmtNum(stats?.accounts_touched)}</p>
-          <p className="text-[10px] text-muted-foreground">
-            {fmtNum(stats?.without_reason)} tanpa alasan
-          </p>
-        </GlassCard>
-      </div>
-
-      {/* ── Penyaring ────────────────────────────────────────────────────── */}
-      <div className="rounded-lg border border-border bg-background p-3 space-y-3"
-        data-testid="changelog-filters">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <div className="md:col-span-1">
-            <MarketingAccountSelect token={token} value={accountId}
-              onChange={setAccountId} required={false} includeAll allLabel="Semua toko"
-              label="Toko" testId="changelog-account-select" />
+    <PageLayout
+      testId="marketing-changelog"
+      title={scope === 'management' ? 'Jejak Marketing' : 'Jejak perubahan marketing'}
+      subtitle="Siapa mengubah target, anggaran, kunci periode, dan kewenangan toko (hanya baca)."
+      filters={(
+        <>
+          <div className="relative w-full sm:w-56">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="h-9 pl-8" placeholder="Cari alasan, pelaku, jenis" aria-label="Cari"
+              value={q} onChange={(e) => setQ(e.target.value)} data-testid="changelog-search" />
           </div>
-          <div>
-            <Label className="text-xs">Yang diubah</Label>
-            <SmartNativeSelect className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
-              value={entity} onChange={(e) => setEntity(e.target.value)}
-              data-testid="changelog-entity-select">
-              <option value="">Semua jenis</option>
-              {filters.entities.map((e) => (
-                <option key={e.value} value={e.value}>{e.label}</option>
-              ))}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <Label className="text-xs">Aksi</Label>
-            <SmartNativeSelect className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
-              value={action} onChange={(e) => setAction(e.target.value)}
-              data-testid="changelog-action-select">
-              <option value="">Semua aksi</option>
-              {filters.actions.map((a) => (
-                <option key={a.value} value={a.value}>{a.label}</option>
-              ))}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <Label className="text-xs">Pelaku</Label>
-            <SmartNativeSelect className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
-              value={actorId} onChange={(e) => setActorId(e.target.value)}
-              data-testid="changelog-actor-select">
-              <option value="">Semua orang</option>
-              {filters.actors.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}{a.role ? ` (${a.role})` : ''} — {a.count}×
-                </option>
-              ))}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <Label className="text-xs">Dari tanggal</Label>
-            <Input type="date" className="mt-1 h-9" value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              data-testid="changelog-date-from" />
-          </div>
-          <div>
-            <Label className="text-xs">Sampai tanggal</Label>
-            <Input type="date" className="mt-1 h-9" value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              data-testid="changelog-date-to" />
-          </div>
-          <div className="xl:col-span-2">
-            <Label className="text-xs">Cari (alasan · pelaku · jenis)</Label>
-            <div className="relative mt-1">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input className="h-9 pl-8" placeholder="mis. rotasi shift"
-                value={q} onChange={(e) => setQ(e.target.value)}
-                data-testid="changelog-search" />
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-            <input type="checkbox" checked={onlyPerm}
-              onChange={(e) => setOnlyPerm(e.target.checked)}
-              data-testid="changelog-only-permissions" />
-            Hanya perubahan <b>kewenangan</b> (siapa pemegang toko)
-          </label>
+          <MarketingAccountSelect token={token} value={accountId} onChange={setAccountId} required={false} includeAll
+            allLabel="Semua toko" label="" className="w-44" testId="changelog-account-select" />
+          <SmartNativeSelect className="h-9 w-40" value={entity} onChange={(e) => setEntity(e.target.value)}
+            aria-label="Yang diubah" data-testid="changelog-entity-select">
+            <option value="">Semua jenis</option>
+            {filters.entities.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect className="h-9 w-36" value={action} onChange={(e) => setAction(e.target.value)}
+            aria-label="Aksi" data-testid="changelog-action-select">
+            <option value="">Semua aksi</option>
+            {filters.actions.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect className="h-9 w-44" value={actorId} onChange={(e) => setActorId(e.target.value)}
+            aria-label="Pelaku" data-testid="changelog-actor-select">
+            <option value="">Semua orang</option>
+            {filters.actors.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}{a.role ? ` (${peran(a.role)})` : ''} — {a.count}×</option>
+            ))}
+          </SmartNativeSelect>
+          <PeriodPicker value={periode} onChange={gantiPeriode} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="changelog-period" />
+          <FilterChips testId="changelog-only-permissions" hideWhenEmpty={false} value={onlyPerm ? 'kewenangan' : ''}
+            onChange={(k) => setOnlyPerm(k === 'kewenangan')} ariaLabel="Jenis perubahan"
+            options={[{ key: '', label: 'Semua perubahan' }, { key: 'kewenangan', label: 'Hanya kewenangan' }]} />
           {hasFilter && (
-            <Button size="sm" variant="ghost" className="h-7 text-[11px]"
-              onClick={resetFilters} data-testid="changelog-reset">
-              <X size={11} className="mr-1" /> Bersihkan filter
-            </Button>
+            <Button variant="link" size="sm" onClick={bersihkan} data-testid="changelog-reset">Hapus saringan</Button>
           )}
-          <span className="text-[11px] text-muted-foreground ml-auto flex items-center gap-1">
-            <Filter size={11} /> {fmtNum(meta.total)} perubahan cocok
-          </span>
-        </div>
-      </div>
-
-      {/* ── Tabel ────────────────────────────────────────────────────────── */}
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
-          <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Membaca jejak perubahan…
-        </div>
-      ) : !rows.length ? (
-        <div className="py-10 text-center text-muted-foreground text-sm" data-testid="changelog-empty">
-          {hasFilter
-            ? 'Tidak ada perubahan yang cocok dengan filter ini — longgarkan filternya.'
-            : 'Belum ada perubahan tercatat. Jejak lahir saat target, anggaran, kunci periode, atau pemegang toko diubah.'}
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border overflow-x-auto bg-background">
-          <table className="w-full text-xs" data-testid="changelog-table">
-            <thead className="bg-muted/60">
-              <tr>
-                {['Waktu', 'Toko', 'Jenis', 'Yang diubah', 'Nilai lama → baru',
-                  'Pelaku', 'Alasan'].map((h) => (
-                    <th key={h} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                  ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y [&_td]:align-top">
-              {rows.map((r) => (
-                <tr key={r.id} className="hover:bg-muted/30" data-testid={`changelog-row-${r.id}`}>
-                  <td className="px-2.5 py-2 whitespace-nowrap">
-                    {String(r.at || '').slice(0, 10)}
-                    <div className="text-[10px] text-muted-foreground">
-                      {String(r.at || '').slice(11, 16)} · {r.period || 'tanpa periode'}
-                    </div>
-                  </td>
-                  <td className="px-2.5 py-2">
-                    <div className="font-semibold text-foreground">{r.account_name}</div>
-                    {r.account_code ? (
-                      <div className="text-[10px] text-muted-foreground">{r.account_code}</div>
-                    ) : null}
-                  </td>
-                  <td className="px-2.5 py-2">
-                    <Badge variant="outline" className={`text-[9px] ${KIND_STYLE[r.kind] || ''}`}>
-                      {r.kind}
-                    </Badge>
-                  </td>
-                  <td className="px-2.5 py-2">
-                    <div className="font-medium">{r.action_label}</div>
-                    <div className="text-[10px] text-muted-foreground">{r.entity_label}</div>
-                  </td>
-                  <td className="px-2.5 py-2 min-w-[260px]">
-                    {r.changes?.length ? (
-                      <ul className="space-y-0.5">
-                        {r.changes.map((c, i) => (
-                          <li key={i} className="text-[11px]">
-                            <span className="text-muted-foreground">{c.field_label}: </span>
-                            <Val v={c.before} money={c.is_money} />
-                            <span className="text-muted-foreground"> → </span>
-                            <b><Val v={c.after} money={c.is_money} /></b>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <span className="text-muted-foreground italic text-[11px]">
-                        tidak ada nilai yang berubah
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">
-                    {r.actor_name}
-                    {r.actor_role ? (
-                      <div className="text-[10px] text-muted-foreground">{r.actor_role}</div>
-                    ) : null}
-                  </td>
-                  <td className="px-2.5 py-2 max-w-[240px]">
-                    {r.reason
-                      ? <span>{r.reason}</span>
-                      : <span className="text-muted-foreground italic">tidak diisi</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="px-2 py-1">
-            <PaginationLite page={meta.page} totalPages={meta.total_pages}
-              total={meta.total} pageSize={meta.page_size} onPageChange={setPage} />
+        </>
+      )}
+      tools={(
+        <>
+          <TombolUnduh namaBerkas="jejak-perubahan-marketing" namaLembar="Jejak perubahan" baris={rows} ambilSemua={ambilSemua}
+            testId="changelog-export-csv"
+            kolom={[
+              { label: 'Waktu', nilai: (x) => waktu(x.r.at) }, { label: 'Toko', nilai: (x) => x.r.account_name || '' },
+              { label: 'Kode toko', nilai: (x) => x.r.account_code || '' }, { label: 'Jenis', nilai: (x) => JENIS[x.r.kind]?.label || x.r.kind || '' },
+              { label: 'Yang diubah', nilai: (x) => x.r.entity_label || '' }, { label: 'Aksi', nilai: (x) => x.r.action_label || '' },
+              { label: 'Periode', nilai: (x) => x.r.period || '' }, { label: 'Pelaku', nilai: (x) => x.r.actor_name || '' },
+              { label: 'Peran', nilai: (x) => peran(x.r.actor_role) }, { label: 'Alasan', nilai: (x) => x.r.reason || '' },
+              { label: 'Isian', nilai: (x) => x.c?.field_label || '' }, { label: 'Nilai lama', nilai: (x) => (x.c ? nilaiTeks(x.c.before) : '') },
+              { label: 'Nilai baru', nilai: (x) => (x.c ? nilaiTeks(x.c.after) : '') },
+            ]} />
+          <Button variant="outline" size="icon" onClick={() => { load(); loadStats(); }} disabled={loading}
+            title="Muat ulang" aria-label="Muat ulang" data-testid="changelog-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </>
+      )}
+      summary={(
+        <div className="space-y-3">
+          <NoStoreScopeNotice token={token} what="Jejak & angka di layar ini" />
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="changelog-stats" data-konten-utama="">
+            <StatTile label="Perubahan 30 hari" value={fmtNum(stats?.total)} sub={`${fmtNum(stats?.without_reason)} tanpa alasan`} />
+            <StatTile label="Perubahan angka" value={fmtNum(stats?.number_changes)} sub="Target, anggaran, kunci periode" />
+            <StatTile label="Perubahan kewenangan" value={fmtNum(stats?.permission_changes)} sub="Siapa pemegang toko" />
+            <StatTile label="Pelaku" value={fmtNum(stats?.actors)} sub={`${fmtNum(stats?.accounts_touched)} toko tersentuh`} />
           </div>
         </div>
       )}
-
-      {/* ── Catatan kejujuran data ───────────────────────────────────────── */}
-      {notes.length > 0 && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="changelog-notes">
-          <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
-            <Info size={12} /> Catatan kejujuran data
-          </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
-            {notes.map((n, i) => <li key={i}>{n}</li>)}
-          </ul>
+      footer={!loading && rows.length > 0 && meta.total_pages > 1 ? (
+        <PaginationLite page={meta.page} totalPages={meta.total_pages} total={meta.total} pageSize={meta.page_size} onPageChange={setPage} />
+      ) : null}
+    >
+      <GlassCard className="p-0" data-testid="changelog-filters">
+        <div className="border-b border-[var(--glass-border)] px-4 py-2 text-sm text-muted-foreground">
+          {fmtNum(meta.total)} perubahan cocok
         </div>
+        {loading ? (
+          <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />Membaca jejak perubahan…
+          </p>
+        ) : !rows.length ? (
+          <EmptyState className="py-6" testId="changelog-empty"
+            title={hasFilter ? 'Tidak ada perubahan yang cocok' : 'Belum ada perubahan tercatat'}
+            description={hasFilter ? 'Longgarkan saringannya.' : 'Jejak lahir saat target, anggaran, kunci periode, atau pemegang toko diubah.'} />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table data-testid="changelog-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Waktu</TableHead>
+                  <TableHead>Toko</TableHead>
+                  <TableHead>Perubahan</TableHead>
+                  <TableHead className="min-w-[220px]">Nilai lama → baru</TableHead>
+                  <TableHead className="hidden md:table-cell">Pelaku</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((r) => (
+                  <TableRow key={r.id} data-testid={`changelog-row-${r.id}`} className="align-top">
+                    <TableCell className="whitespace-nowrap">
+                      {waktu(r.at)}
+                      <div className="text-xs text-muted-foreground">{r.period ? `Periode ${r.period}` : 'Tanpa periode'}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium text-foreground">{r.account_name}</div>
+                      {r.account_code ? <div className="text-xs text-muted-foreground">{r.account_code}</div> : null}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-medium">{r.action_label}</span>
+                        <StatusBadge status={r.kind} label={JENIS[r.kind]?.label || r.kind} tone={JENIS[r.kind]?.tone || 'default'} />
+                      </div>
+                      <div className="text-xs text-muted-foreground">{r.entity_label}</div>
+                      <div className="text-xs text-muted-foreground md:hidden">oleh {r.actor_name}</div>
+                      <div className="mt-0.5 max-w-[260px] whitespace-normal text-xs text-muted-foreground">
+                        Alasan: {r.reason ? <span className="text-foreground">{r.reason}</span> : <span className="italic">tidak diisi</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      {r.changes?.length ? (
+                        <ul className="space-y-0.5">
+                          {r.changes.map((c, i) => (
+                            <li key={i}>
+                              <span className="text-muted-foreground">{c.field_label}: </span>
+                              <Val v={c.before} money={c.is_money} />
+                              <span className="text-muted-foreground"> → </span>
+                              <span className="font-medium"><Val v={c.after} money={c.is_money} /></span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : <span className="italic text-muted-foreground">tidak ada nilai yang berubah</span>}
+                    </TableCell>
+                    <TableCell className="hidden whitespace-nowrap md:table-cell">
+                      {r.actor_name}
+                      {r.actor_role ? <div className="text-xs text-muted-foreground">{peran(r.actor_role)}</div> : null}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </GlassCard>
+
+      {notes.length > 0 && (
+        <Notice tone="info" icon={Info} title="Catatan kejujuran data" testId="changelog-notes">
+          <ul className="list-disc space-y-0.5 pl-4">{notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+        </Notice>
       )}
-    </div>
+    </PageLayout>
   );
 }

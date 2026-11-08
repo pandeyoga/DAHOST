@@ -10,17 +10,19 @@
  *   POST /api/rahaza/intercompany/transactions           simpan (dua jurnal)
  *   POST /api/rahaza/intercompany/transactions/{id}/void batalkan (dua jurnal di-void)
  *
- * PANDUAN_UI: PageLayout; formulir isian pendek di Dialog; jurnal dibuka di bawah barisnya (RowDetail).
+ * PANDUAN_UI: PageLayout; jurnal dibuka di bawah barisnya (RowDetail).
+ * 2026-11-08 (Standar UI/UX v2): form = FormPopup standar + DatePicker; daftar bisa diunduh Excel/CSV.
  */
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowRightLeft, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
-import { Label } from '@/components/ui/label';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { formatDateID, formatRupiah } from '@/lib/format';
@@ -86,56 +88,36 @@ function TransactionDialog({ open, cv, status, onClose, onSaved }) {
     finally { setSaving(false); }
   };
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg" data-testid="ic-txn-dialog">
-        <DialogHeader>
-          <DialogTitle>Transaksi antar CV baru</DialogTitle>
-          <DialogDescription>
-            Dicatat dari {cvLabel(cv)}. Jurnal pasangan di {cvLabel(oth)} dibuat otomatis memakai piutang/hutang antar CV.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          {err && <Notice tone="danger" icon={AlertCircle} testId="ic-txn-error">{err}</Notice>}
-          <div className="space-y-1">
-            <Label>Jenis</Label>
-            <SmartNativeSelect value={form.kind} onChange={(e) => set('kind', e.target.value)} className="w-full h-9" data-testid="ic-txn-kind">
-              {kinds.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Jumlah (Rp)</Label>
-              <MoneyInput value={form.amount} onChange={(e) => set('amount', e.target.value)} data-testid="ic-txn-amount" />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ic-txn-date">Tanggal</Label>
-              <GlassInput id="ic-txn-date" type="date" value={form.date} onChange={(e) => set('date', e.target.value)} data-testid="ic-txn-date" />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>Akun {cvLabel(cv)} ({kind.source_hint || 'akun asal'})</Label>
-            <AccountSelect cv={cv} value={form.source_account_code} onChange={(v) => set('source_account_code', v)}
-              exclude={exclude} testId="ic-txn-source-account" placeholder="— Pilih akun —" />
-          </div>
-          <div className="space-y-1">
-            <Label>Akun {cvLabel(oth)} ({kind.other_hint || 'akun lawan'})</Label>
-            <AccountSelect cv={oth} value={form.other_account_code} onChange={(v) => set('other_account_code', v)}
-              exclude={exclude} testId="ic-txn-other-account" placeholder="— Pilih akun —" />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ic-txn-desc">Keterangan</Label>
-            <GlassInput id="ic-txn-desc" value={form.description} onChange={(e) => set('description', e.target.value)}
-              placeholder="mis. talangan listrik Oktober" data-testid="ic-txn-desc" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="ic-txn-submit">
-            {saving && <Loader2 className="w-4 h-4 animate-spin" />}Simpan & catat dua jurnal
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="ic-txn-dialog"
+      judul="Transaksi antar CV baru"
+      keterangan={`Dicatat dari ${cvLabel(cv)}. Jurnal pasangan di ${cvLabel(oth)} dibuat otomatis memakai piutang/hutang antar CV.`}
+      onSimpan={save} menyimpan={saving} galat={err} labelSimpan="Simpan & catat dua jurnal">
+      <Isian label="Jenis">
+        <SmartNativeSelect value={form.kind} onChange={(e) => set('kind', e.target.value)} className="w-full h-9" data-testid="ic-txn-kind">
+          {kinds.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Jumlah (Rp)" wajib>
+          <MoneyInput value={form.amount} onChange={(e) => set('amount', e.target.value)} data-testid="ic-txn-amount" />
+        </Isian>
+        <Isian label="Tanggal">
+          <DatePicker id="ic-txn-date" value={form.date} onChange={(v) => set('date', v)} bolehKosong={false} testId="ic-txn-date" />
+        </Isian>
+      </div>
+      <Isian label={`Akun ${cvLabel(cv)} (${kind.source_hint || 'akun asal'})`} wajib>
+        <AccountSelect cv={cv} value={form.source_account_code} onChange={(v) => set('source_account_code', v)}
+          exclude={exclude} testId="ic-txn-source-account" placeholder="— Pilih akun —" />
+      </Isian>
+      <Isian label={`Akun ${cvLabel(oth)} (${kind.other_hint || 'akun lawan'})`} wajib>
+        <AccountSelect cv={oth} value={form.other_account_code} onChange={(v) => set('other_account_code', v)}
+          exclude={exclude} testId="ic-txn-other-account" placeholder="— Pilih akun —" />
+      </Isian>
+      <Isian label="Keterangan" wajib htmlFor="ic-txn-desc">
+        <GlassInput id="ic-txn-desc" value={form.description} onChange={(e) => set('description', e.target.value)}
+          placeholder="mis. talangan listrik Oktober" data-testid="ic-txn-desc" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -176,9 +158,24 @@ export default function IntercompanyTransactionsModule() {
     <PageLayout
       testId="ic-txn-page"
       title="Transaksi antar CV"
-      subtitle="Talangan, pinjaman, uang nyasar, dan pelunasan antara CV Dewi Aditya dan CV Sukma — diinput sekali, jurnal di dua buku otomatis."
+      subtitle="Talangan, pinjaman, uang nyasar, dan pelunasan antar CV — diinput sekali, jurnal di dua buku."
       actions={<Button onClick={() => setDialog(true)} disabled={!!missing || !status} data-testid="ic-txn-new"><Plus className="w-4 h-4" />Transaksi baru</Button>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="transaksi-antar-cv" namaLembar="Antar CV" baris={rows} testId="ic-txn-unduh"
+          kolom={[
+            { label: 'Nomor', nilai: (t) => t.number },
+            { label: 'Tanggal', nilai: (t) => formatDateID(t.date) },
+            { label: 'Jenis', nilai: (t) => (t.kind_label || t.kind || '').split(' — ')[0] },
+            { label: 'Dari', nilai: (t) => cvLabel(t.source_entity) },
+            { label: 'Ke', nilai: (t) => cvLabel(t.other_entity) },
+            { label: 'Keterangan', nilai: (t) => t.description || '' },
+            { label: 'Jumlah', nilai: (t) => Number(t.amount) || 0 },
+            { label: 'Status', nilai: (t) => (t.status === 'voided' ? 'Dibatalkan' : 'Terjurnal') },
+            { label: 'Jurnal CV asal', nilai: (t) => t.source_je_number || '' },
+            { label: 'Jurnal CV lawan', nilai: (t) => t.other_je_number || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
+      </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {missing && (
@@ -202,7 +199,7 @@ export default function IntercompanyTransactionsModule() {
           <EmptyState icon={ArrowRightLeft} title="Belum ada transaksi antar CV"
             description="Tekan “Transaksi baru” untuk mencatat talangan, pinjaman, uang nyasar, atau pelunasan." testId="ic-txn-empty" />
         ) : (
-          <Table className="min-w-[760px]">
+          <Table className="min-w-[760px] md:min-w-0">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />
@@ -223,16 +220,16 @@ export default function IntercompanyTransactionsModule() {
                   <Fragment key={t.id}>
                     <TableRow data-testid={`ic-txn-row-${t.number}`}>
                       <TableCell><RowToggle open={open} onClick={() => setOpenId(open ? null : t.id)} testId={`ic-txn-toggle-${t.number}`} /></TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">{t.number}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateID(t.date)}</TableCell>
-                      <TableCell className="text-sm">{(t.kind_label || t.kind).split(' — ')[0]}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm">{cvLabel(t.source_entity)} → {cvLabel(t.other_entity)}</TableCell>
-                      <TableCell className="text-sm">{t.description}</TableCell>
+                      <TableCell className="whitespace-nowrap">{t.number}</TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateID(t.date)}</TableCell>
+                      <TableCell>{(t.kind_label || t.kind).split(' — ')[0]}</TableCell>
+                      <TableCell className="whitespace-nowrap">{cvLabel(t.source_entity)} → {cvLabel(t.other_entity)}</TableCell>
+                      <TableCell className="min-w-[12rem]">{t.description}</TableCell>
                       <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(t.amount)}</TableCell>
                       <TableCell>{t.status === 'voided' ? <StatusBadge status="voided" label="Dibatalkan" tone="muted" /> : <StatusBadge status="posted" label="Terjurnal" tone="success" />}</TableCell>
                       <TableCell className="text-right">
                         {t.status !== 'voided' && (
-                          <Button size="sm" variant="outline" onClick={() => voidTxn(t)} data-testid={`ic-txn-void-${t.number}`}>Batalkan</Button>
+                          <Button size="sm" variant="destructive" onClick={() => voidTxn(t)} data-testid={`ic-txn-void-${t.number}`}>Batalkan</Button>
                         )}
                       </TableCell>
                     </TableRow>

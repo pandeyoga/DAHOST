@@ -18,34 +18,40 @@
  *   POST /api/rahaza/attendance/permits/{id}/approve | /reject
  *   GET  /api/rahaza/attendance/sessions?from_date&to_date&employee_id&kind&status
  *   GET  /api/rahaza/attendance/sessions/export.xlsx
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu kepala buatan sendiri + "PORTAL SDM › KEHADIRAN"),
+ * tab buatan sendiri → pil penyaring, penyaring satu baris (dulu 6 kotak selebar layar), periode lewat
+ * PeriodPicker, tabel standar + unduh Excel/CSV, kartu angka standar (disembunyikan bila semua 0),
+ * setujui = popup form hijau, tolak = konfirmasi merah dengan alasan wajib (sama seperti dulu).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { EmployeeSelect } from './hr/hrPickers';
-import {
-  Coffee, DoorOpen, Download, Loader2, RefreshCw, CheckCircle2, XCircle,
-  Hourglass, Users, Timer, AlertCircle, Search,
-} from 'lucide-react';
+import { CheckCircle2, Download, Loader2, RefreshCw, Search, Timer, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { formatTanggalID } from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
-import { todayWIB, daysAgoWIB } from '@/lib/waktu';
+import { todayWIB, daysAgoWIB, parseServerTime } from '@/lib/waktu';
+import PageLayout from './layout/PageLayout';
+import PeriodPicker from './finance/PeriodPicker';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
+// Jam dari server tanpa zona = UTC (parseServerTime), ditampilkan WIB.
 const fmtTime = (v) => {
-  if (!v) return '—';
+  const d = parseServerTime(v);
+  if (!d) return '—';
   try {
-    return new Date(v).toLocaleTimeString('id-ID', {
+    return d.toLocaleTimeString('id-ID', {
       hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
     });
   } catch { return '—'; }
@@ -56,17 +62,15 @@ const fmtDur = (m) => {
   return x < 60 ? `${x} mnt` : `${Math.floor(x / 60)} j ${x % 60} mnt`;
 };
 
-const STATUS_BADGE = {
-  pending: 'bg-amber-100 text-amber-800 border-amber-300',
-  approved: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-  rejected: 'bg-red-100 text-red-800 border-red-300',
-  cancelled: 'bg-slate-100 text-slate-700 border-slate-300',
-  not_required: 'bg-blue-100 text-blue-800 border-blue-300',
+const STATUS = {
+  pending: { label: 'Menunggu', tone: 'warning' },
+  approved: { label: 'Disetujui', tone: 'success' },
+  rejected: { label: 'Ditolak', tone: 'danger' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
+  not_required: { label: 'Tercatat', tone: 'info' },
 };
-const STATUS_TEXT = {
-  pending: 'Menunggu', approved: 'Disetujui', rejected: 'Ditolak',
-  cancelled: 'Dibatalkan', not_required: 'Tercatat',
-};
+const JENIS = { istirahat: 'Istirahat', izin: 'Izin' };
+const statusLabel = (s) => STATUS[s]?.label || s || '—';
 
 export default function HRAttendanceSessionsModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -85,7 +89,7 @@ export default function HRAttendanceSessionsModule({ token }) {
     employee_id: '', kind: '', status: '', q: '',
   });
 
-  const [decide, setDecide] = useState(null);   // { item, mode: 'approve'|'reject' }
+  const [approve, setApprove] = useState(null);   // item yang sedang disetujui (popup form)
   const [notes, setNotes] = useState('');
 
   const loadPending = useCallback(async () => {
@@ -131,10 +135,8 @@ export default function HRAttendanceSessionsModule({ token }) {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const submitDecision = async () => {
-    if (!decide) return;
-    const { item, mode } = decide;
-    if (mode === 'reject' && !notes.trim()) {
+  const submitDecision = async (item, mode, catatan) => {
+    if (mode === 'reject' && !catatan.trim()) {
       toast.error('Alasan penolakan wajib diisi.');
       return;
     }
@@ -142,16 +144,27 @@ export default function HRAttendanceSessionsModule({ token }) {
     try {
       await axios.post(
         `${API}/api/rahaza/attendance/permits/${item.id}/${mode}`,
-        { notes: notes.trim() }, { headers },
+        { notes: catatan.trim() }, { headers },
       );
       toast.success(mode === 'approve'
         ? `Izin ${item.employee_name} disetujui — durasi dihitung mulai sekarang.`
         : `Izin ${item.employee_name} ditolak.`);
-      setDecide(null); setNotes('');
+      setApprove(null); setNotes('');
       await loadAll();
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Gagal memproses keputusan');
     } finally { setBusy(''); }
+  };
+
+  const tolak = async (item) => {
+    const alasan = await confirmDialog({
+      title: 'Tolak izin keluar?',
+      body: `${item.employee_name} (${item.employee_code}) — "${item.reason}". Alasan penolakan dikirim ke karyawan.`,
+      confirmLabel: 'Tolak', danger: true,
+      input: { label: 'Alasan penolakan', placeholder: 'mis. sedang tenggat produksi' },
+    });
+    if (!alasan) return;
+    await submitDecision(item, 'reject', alasan);
   };
 
   const exportExcel = async () => {
@@ -177,283 +190,171 @@ export default function HRAttendanceSessionsModule({ token }) {
     } finally { setExporting(false); }
   };
 
+  const setF = (patch) => setFilters((f) => ({ ...f, ...patch }));
+  const q = filters.q.trim().toLowerCase();
   const filtered = rows.filter((r) => {
-    const q = filters.q.trim().toLowerCase();
     if (!q) return true;
     return [r.employee_name, r.employee_code, r.reason, r.decision_notes]
       .some((v) => String(v || '').toLowerCase().includes(q));
   });
+  const pendingShown = pending.filter((it) => !q
+    || [it.employee_name, it.employee_code, it.reason].some((v) => String(v || '').toLowerCase().includes(q)));
 
-  return (
-    <div className="p-6 space-y-5" data-testid="hr-attendance-sessions">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-            <span>PORTAL SDM</span><span>›</span><span>KEHADIRAN</span>
-          </div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Timer className="w-6 h-6 text-primary" /> Istirahat &amp; Izin
-          </h2>
-          <p className="text-muted-foreground text-sm mt-1">
-            Setujui izin keluar karyawan dan lihat rekap keluar-masuk jam kerja.
-            Hanya izin yang <b>disetujui</b> yang memotong jam kerja.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={loadAll} data-testid="sessions-refresh">
-          <RefreshCw className="w-4 h-4 mr-1.5" /> Muat ulang
+  const ditolakBatal = (summary.rejected || 0) + (summary.cancelled || 0);
+  const adaRingkasan = (summary.istirahat_count || 0) + (summary.izin_count || 0) + (summary.pending || 0) + ditolakBatal > 0;
+
+  const kolomPending = [
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (it) => (
+      <div className="min-w-0"><p className="font-medium text-foreground">{it.employee_name}</p>
+        <p className="text-xs text-muted-foreground">{it.employee_code}</p></div>) },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (it) => <span className="whitespace-nowrap">{formatTanggalID(it.date)}</span> },
+    { kunci: 'diajukan', label: 'Diajukan', rata: 'kanan', isi: (it) => <span className="tabular-nums">{fmtTime(it.requested_at)}</span> },
+    { kunci: 'alasan', label: 'Alasan', isi: (it) => <span className="block max-w-[22rem] truncate" title={it.reason || ''}>{it.reason || '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="success" disabled={busy === it.id}
+          onClick={() => { setApprove(it); setNotes(''); }} data-testid={`permit-approve-${it.id}`}>
+          <CheckCircle2 /> Setujui
         </Button>
-      </div>
+        <Button size="sm" variant="destructive" disabled={busy === it.id}
+          onClick={() => tolak(it)} data-testid={`permit-reject-${it.id}`}>
+          <XCircle /> Tolak
+        </Button>
+      </div>) },
+  ];
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit">
-        <button onClick={() => setTab('pending')} data-testid="tab-pending"
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            tab === 'pending' ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-          ⏳ Menunggu Persetujuan
-          {pending.length > 0 && (
-            <span className="ml-2 rounded-full bg-amber-500 text-white text-[11px] px-1.5 py-0.5"
-              data-testid="pending-badge">{pending.length}</span>
-          )}
-        </button>
-        <button onClick={() => setTab('rekap')} data-testid="tab-rekap"
-          className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            tab === 'rekap' ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-          📋 Rekap Istirahat &amp; Izin
-        </button>
-      </div>
+  const kolomRekap = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (r) => <span className="whitespace-nowrap">{formatTanggalID(r.date)}</span> },
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (r) => (
+      <div className="min-w-0"><p className="font-medium text-foreground">{r.employee_name}</p>
+        <p className="text-xs text-muted-foreground">{r.employee_code}</p></div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (r) => JENIS[r.kind] || r.kind },
+    { kunci: 'keluar', label: 'Keluar', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtTime(r.out_at)}</span> },
+    { kunci: 'kembali', label: 'Kembali', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtTime(r.in_at)}</span> },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (r) => <span className="whitespace-nowrap tabular-nums">{r.minutes ? fmtDur(r.minutes) : '—'}</span> },
+    { kunci: 'alasan', label: 'Alasan', isi: (r) => <span className="block max-w-[14rem] truncate" title={r.reason || ''}>{r.reason || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.approval_status} label={statusLabel(r.approval_status)} tone={STATUS[r.approval_status]?.tone} /> },
+    { kunci: 'diputuskan', label: 'Diputuskan', isi: (r) => (
+      <span className="text-sm text-muted-foreground">{r.approved_by_name || '—'}{r.decision_notes ? ` · ${r.decision_notes}` : ''}</span>) },
+  ];
 
-      {loading && <Skeleton className="h-52 w-full" />}
+  const unduhRekap = [
+    { label: 'Tanggal', nilai: (r) => formatTanggalID(r.date) },
+    { label: 'Kode karyawan', nilai: (r) => r.employee_code },
+    { label: 'Nama karyawan', nilai: (r) => r.employee_name },
+    { label: 'Jenis', nilai: (r) => JENIS[r.kind] || r.kind },
+    { label: 'Keluar', nilai: (r) => fmtTime(r.out_at) },
+    { label: 'Kembali', nilai: (r) => fmtTime(r.in_at) },
+    { label: 'Durasi (menit)', nilai: (r) => Math.round(Number(r.minutes) || 0) },
+    { label: 'Alasan', nilai: (r) => r.reason || '' },
+    { label: 'Status', nilai: (r) => statusLabel(r.approval_status) },
+    { label: 'Diputuskan oleh', nilai: (r) => r.approved_by_name || '' },
+    { label: 'Catatan keputusan', nilai: (r) => r.decision_notes || '' },
+  ];
+  const unduhPending = [
+    { label: 'Tanggal', nilai: (it) => formatTanggalID(it.date) },
+    { label: 'Kode karyawan', nilai: (it) => it.employee_code },
+    { label: 'Nama karyawan', nilai: (it) => it.employee_name },
+    { label: 'Diajukan', nilai: (it) => fmtTime(it.requested_at) },
+    { label: 'Alasan', nilai: (it) => it.reason || '' },
+  ];
 
-      {/* ── ANTREAN PERSETUJUAN ─────────────────────────────────────────── */}
-      {!loading && tab === 'pending' && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Hourglass className="w-4 h-4" /> Pengajuan izin menunggu keputusan
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {pending.length === 0 ? (
-              <div className="py-10 text-center text-muted-foreground" data-testid="pending-empty">
-                <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500" />
-                Tidak ada pengajuan izin yang menunggu.
-              </div>
-            ) : (
-              <div className="divide-y" data-testid="pending-list">
-                {pending.map((it) => (
-                  <div key={it.id} className="py-3 flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-[240px]">
-                      <p className="font-semibold flex items-center gap-2">
-                        <Users className="w-4 h-4 text-muted-foreground" />
-                        {it.employee_name}
-                        <span className="text-xs text-muted-foreground">({it.employee_code})</span>
-                      </p>
-                      <p className="text-sm text-muted-foreground mt-0.5">
-                        {it.date} · diajukan {fmtTime(it.requested_at)} · &quot;{it.reason}&quot;
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" disabled={busy === it.id}
-                        onClick={() => { setDecide({ item: it, mode: 'approve' }); setNotes(''); }}
-                        data-testid={`permit-approve-${it.id}`}>
-                        <CheckCircle2 className="w-4 h-4 mr-1.5" /> Setujui
-                      </Button>
-                      <Button size="sm" variant="destructive" disabled={busy === it.id}
-                        onClick={() => { setDecide({ item: it, mode: 'reject' }); setNotes(''); }}
-                        data-testid={`permit-reject-${it.id}`}>
-                        <XCircle className="w-4 h-4 mr-1.5" /> Tolak
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── REKAP ───────────────────────────────────────────────────────── */}
-      {!loading && tab === 'rekap' && (
-        <>
-          <Card>
-            <CardContent className="pt-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
-                <div>
-                  <Label htmlFor="f-from" className="text-xs">Dari tanggal</Label>
-                  <Input id="f-from" type="date" value={filters.from_date} data-testid="filter-from"
-                    onChange={(e) => setFilters((f) => ({ ...f, from_date: e.target.value }))} />
-                </div>
-                <div>
-                  <Label htmlFor="f-to" className="text-xs">Sampai tanggal</Label>
-                  <Input id="f-to" type="date" value={filters.to_date} data-testid="filter-to"
-                    onChange={(e) => setFilters((f) => ({ ...f, to_date: e.target.value }))} />
-                </div>
-                <div>
-                  <Label htmlFor="f-emp" className="text-xs">Karyawan</Label>
-                  <EmployeeSelect employees={employees} value={filters.employee_id} allLabel="Semua karyawan"
-                    onChange={(v) => setFilters((f) => ({ ...f, employee_id: v }))} testId="filter-employee"
-                    className="w-full h-9 border rounded-md px-2 text-sm bg-background" />
-                </div>
-                <div>
-                  <Label htmlFor="f-kind" className="text-xs">Jenis</Label>
-                  <SmartNativeSelect id="f-kind" data-testid="filter-kind" searchable={false}
-                    className="w-full h-9 border rounded-md px-2 text-sm bg-background"
-                    value={filters.kind}
-                    onChange={(e) => setFilters((f) => ({ ...f, kind: e.target.value }))}>
-                    <option value="">Semua</option>
-                    <option value="istirahat">Istirahat</option>
-                    <option value="izin">Izin</option>
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <Label htmlFor="f-status" className="text-xs">Status</Label>
-                  <SmartNativeSelect id="f-status" data-testid="filter-status" searchable={false}
-                    className="w-full h-9 border rounded-md px-2 text-sm bg-background"
-                    value={filters.status}
-                    onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-                    <option value="">Semua</option>
-                    <option value="pending">Menunggu</option>
-                    <option value="approved">Disetujui</option>
-                    <option value="rejected">Ditolak</option>
-                    <option value="cancelled">Dibatalkan</option>
-                    <option value="not_required">Istirahat (tercatat)</option>
-                  </SmartNativeSelect>
-                </div>
-                <Button onClick={exportExcel} disabled={exporting} data-testid="export-excel">
-                  {exporting ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                    : <Download className="w-4 h-4 mr-1.5" />}
-                  Export Excel
-                </Button>
-              </div>
-              <div className="mt-3 relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input className="pl-9" placeholder="Cari nama / NIK / alasan…" data-testid="filter-q"
-                  value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={Coffee} label="Sesi istirahat" value={summary.istirahat_count || 0}
-              sub={fmtDur(summary.istirahat_minutes)} testid="stat-istirahat" />
-            <StatCard icon={DoorOpen} label="Sesi izin" value={summary.izin_count || 0}
-              sub={`${fmtDur(summary.izin_minutes)} disetujui`} testid="stat-izin" />
-            <StatCard icon={Hourglass} label="Menunggu" value={summary.pending || 0}
-              sub="perlu keputusan" testid="stat-pending" />
-            <StatCard icon={XCircle} label="Ditolak/Batal"
-              value={(summary.rejected || 0) + (summary.cancelled || 0)}
-              sub="tidak memotong jam" testid="stat-rejected" />
-          </div>
-
-          <Card>
-            <CardContent className="pt-5 overflow-x-auto">
-              {filtered.length === 0 ? (
-                <div className="py-10 text-center text-muted-foreground" data-testid="rekap-empty">
-                  <AlertCircle className="w-8 h-8 mx-auto mb-2" />
-                  Tidak ada sesi istirahat/izin pada rentang ini.
-                </div>
-              ) : (
-                <table className="w-full text-sm" data-testid="rekap-table">
-                  <thead>
-                    <tr className="border-b text-left text-xs uppercase text-muted-foreground">
-                      <th className="py-2 pr-3">Tanggal</th>
-                      <th className="py-2 pr-3">Karyawan</th>
-                      <th className="py-2 pr-3">Jenis</th>
-                      <th className="py-2 pr-3">Keluar</th>
-                      <th className="py-2 pr-3">Kembali</th>
-                      <th className="py-2 pr-3">Durasi</th>
-                      <th className="py-2 pr-3">Alasan</th>
-                      <th className="py-2 pr-3">Status</th>
-                      <th className="py-2">Diputuskan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((r) => (
-                      <tr key={`${r.id}`} className="border-b last:border-0 hover:bg-muted/40">
-                        <td className="py-2 pr-3 whitespace-nowrap">{r.date}</td>
-                        <td className="py-2 pr-3">
-                          <div className="font-medium">{r.employee_name}</div>
-                          <div className="text-xs text-muted-foreground">{r.employee_code}</div>
-                        </td>
-                        <td className="py-2 pr-3">
-                          <Badge variant="outline" className="gap-1">
-                            {r.kind === 'izin' ? <DoorOpen className="w-3 h-3" /> : <Coffee className="w-3 h-3" />}
-                            {r.kind}
-                          </Badge>
-                        </td>
-                        <td className="py-2 pr-3">{fmtTime(r.out_at)}</td>
-                        <td className="py-2 pr-3">{fmtTime(r.in_at)}</td>
-                        <td className="py-2 pr-3">{r.minutes ? fmtDur(r.minutes) : '—'}</td>
-                        <td className="py-2 pr-3 max-w-[220px] truncate" title={r.reason || ''}>
-                          {r.reason || '—'}
-                        </td>
-                        <td className="py-2 pr-3">
-                          <span className={`text-[11px] px-1.5 py-0.5 rounded border ${STATUS_BADGE[r.approval_status] || ''}`}>
-                            {STATUS_TEXT[r.approval_status] || r.approval_status}
-                          </span>
-                        </td>
-                        <td className="py-2 text-xs text-muted-foreground">
-                          {r.approved_by_name || '—'}
-                          {r.decision_notes ? ` · ${r.decision_notes}` : ''}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </CardContent>
-          </Card>
-        </>
-      )}
-
-      {/* Dialog keputusan */}
-      <Dialog open={Boolean(decide)} onOpenChange={(v) => { if (!v) { setDecide(null); setNotes(''); } }}>
-        <DialogContent data-testid="decide-dialog">
-          <DialogHeader>
-            <DialogTitle>
-              {decide?.mode === 'approve' ? 'Setujui Izin Keluar' : 'Tolak Izin Keluar'}
-            </DialogTitle>
-            <DialogDescription>
-              {decide?.item?.employee_name} ({decide?.item?.employee_code}) — &quot;{decide?.item?.reason}&quot;.
-              {decide?.mode === 'approve'
-                ? ' Durasi izin dihitung MULAI SAAT DISETUJUI dan tidak dibayar sebagai jam kerja.'
-                : ' Alasan penolakan wajib diisi dan akan dikirim ke karyawan.'}
-            </DialogDescription>
-          </DialogHeader>
-          <div>
-            <Label htmlFor="decide-notes">
-              {decide?.mode === 'approve' ? 'Catatan (opsional)' : 'Alasan penolakan'}
-            </Label>
-            <Textarea id="decide-notes" rows={3} className="mt-1" value={notes}
-              onChange={(e) => setNotes(e.target.value)} data-testid="decide-notes"
-              placeholder={decide?.mode === 'approve' ? 'mis. maksimal 1 jam' : 'mis. sedang deadline produksi'} />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setDecide(null); setNotes(''); }}
-              data-testid="decide-cancel">Batal</Button>
-            <Button onClick={submitDecision} disabled={Boolean(busy)}
-              variant={decide?.mode === 'approve' ? 'default' : 'destructive'}
-              data-testid="decide-confirm">
-              {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
-              {decide?.mode === 'approve' ? 'Setujui' : 'Tolak'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+  const cari = (
+    <div className="relative w-full sm:w-64">
+      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <Input className="pl-8" placeholder="Cari nama, NIK, alasan" data-testid="filter-q" aria-label="Cari"
+        value={filters.q} onChange={(e) => setF({ q: e.target.value })} />
     </div>
   );
-}
 
-function StatCard({ icon: Icon, label, value, sub, testid }) {
   return (
-    <Card data-testid={testid}>
-      <CardContent className="pt-5">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Icon className="w-4 h-4" /> {label}
+    <PageLayout testId="hr-attendance-sessions" title="Istirahat & izin"
+      subtitle="Setujui izin keluar karyawan dan lihat rekap istirahat. Hanya izin disetujui yang memotong jam kerja."
+      filters={<>
+        <FilterChips hideWhenEmpty={false} value={tab} onChange={setTab} testId="tab" ariaLabel="Tampilan"
+          options={[
+            { key: 'pending', label: 'Menunggu persetujuan', count: pending.length },
+            { key: 'rekap', label: 'Rekap' },
+          ]} />
+        {cari}
+        {tab === 'rekap' && <>
+          <PeriodPicker testId="filter-period"
+            value={{ preset: filters.preset || 'custom', from: filters.from_date, to: filters.to_date }}
+            onChange={(p) => setF({ preset: p.preset, from_date: p.from, to_date: p.to })} />
+          <EmployeeSelect employees={employees} value={filters.employee_id} allLabel="Semua karyawan"
+            onChange={(v) => setF({ employee_id: v })} testId="filter-employee" className="h-9 w-56" />
+          <SmartNativeSelect id="f-kind" data-testid="filter-kind" searchable={false} aria-label="Jenis"
+            className="h-9 w-40" value={filters.kind} onChange={(e) => setF({ kind: e.target.value })}>
+            <option value="">Semua jenis</option>
+            <option value="istirahat">Istirahat</option>
+            <option value="izin">Izin</option>
+          </SmartNativeSelect>
+          <SmartNativeSelect id="f-status" data-testid="filter-status" searchable={false} aria-label="Status"
+            className="h-9 w-44" value={filters.status} onChange={(e) => setF({ status: e.target.value })}>
+            <option value="">Semua status</option>
+            <option value="pending">Menunggu</option>
+            <option value="approved">Disetujui</option>
+            <option value="rejected">Ditolak</option>
+            <option value="cancelled">Dibatalkan</option>
+            <option value="not_required">Istirahat (tercatat)</option>
+          </SmartNativeSelect>
+        </>}
+        {/* Unduh & muat ulang di ujung kanan; di HP turun ke baris sendiri (tidak menimpa penyaring) */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {tab === 'rekap' ? <>
+            <TombolUnduh namaBerkas={`rekap-istirahat-izin-${filters.from_date}-${filters.to_date}`} namaLembar="Rekap"
+              baris={filtered} kolom={unduhRekap} testId="rekap-unduh" />
+            <Button variant="outline" onClick={exportExcel} disabled={exporting} data-testid="export-excel"
+              title="Rekap Excel dari server, sesuai penyaring periode, karyawan, jenis, dan status">
+              {exporting ? <Loader2 className="animate-spin" /> : <Download />}
+              Rekap Excel
+            </Button>
+          </> : (
+            <TombolUnduh namaBerkas="izin-menunggu-persetujuan" namaLembar="Menunggu" baris={pendingShown}
+              kolom={unduhPending} testId="pending-unduh" />
+          )}
+          <Button variant="outline" size="icon" onClick={loadAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="sessions-refresh">
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
         </div>
-        <p className="text-2xl font-bold mt-1">{value}</p>
-        <p className="text-xs text-muted-foreground">{sub}</p>
-      </CardContent>
-    </Card>
+      </>}
+      summary={tab === 'rekap' && !loading && adaRingkasan && (
+        /* Angka dari server untuk periode & penyaring yang sama dengan tabel (kata cari tidak ikut dihitung). */
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" data-testid="rekap-ringkasan">
+          <StatTile label="Sesi istirahat" value={summary.istirahat_count || 0} sub={`${fmtDur(summary.istirahat_minutes)} total`}
+            testId="stat-istirahat" />
+          <StatTile label="Sesi izin" value={summary.izin_count || 0} sub={`${fmtDur(summary.izin_minutes)} disetujui`}
+            testId="stat-izin" />
+          <StatTile label="Menunggu" value={summary.pending || 0} accent={summary.pending ? 'warning' : 'muted'}
+            sub="Izin menunggu keputusan dalam periode ini" testId="stat-pending" />
+          <StatTile label="Ditolak / batal" value={ditolakBatal} sub="Tidak memotong jam kerja" testId="stat-rejected" />
+        </div>
+      )}>
+      {loading ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
+      ) : tab === 'pending' ? (
+        <TabelData kolom={kolomPending} baris={pendingShown} testId="pending-list"
+          kosong={<EmptyState icon={CheckCircle2} testId="pending-empty"
+            title={pending.length ? 'Tidak ada izin yang cocok' : 'Tidak ada pengajuan izin yang menunggu'}
+            description={pending.length ? 'Ubah kata pencarian.' : 'Pengajuan izin keluar dari karyawan akan tampil di sini.'} />} />
+      ) : (
+        <div className="overflow-x-auto">
+          <TabelData kolom={kolomRekap} baris={filtered} kunci={(r) => `${r.id}`} testId="rekap-table"
+            kosong={<EmptyState icon={Timer} testId="rekap-empty" title="Tidak ada sesi istirahat atau izin"
+              description={rows.length ? 'Ubah kata pencarian.' : 'Ubah periode atau penyaring lain.'} />} />
+        </div>
+      )}
+
+      {/* Popup setujui izin (catatan opsional) */}
+      <FormPopup open={Boolean(approve)} onClose={() => { setApprove(null); setNotes(''); }} ukuran="pendek"
+        judul="Setujui izin keluar" testId="decide-dialog" labelSimpan="Setujui" menyimpan={Boolean(busy)}
+        keterangan={approve ? `${approve.employee_name} (${approve.employee_code}) — "${approve.reason}". Durasi izin dihitung mulai saat disetujui dan tidak dibayar sebagai jam kerja.` : ''}
+        onSimpan={() => submitDecision(approve, 'approve', notes)}>
+        <Isian label="Catatan (opsional)" htmlFor="decide-notes">
+          <Textarea id="decide-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
+            data-testid="decide-notes" placeholder="mis. maksimal 1 jam" />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }

@@ -3,12 +3,14 @@
  * setor, hari di CMT. Kini untuk PO internal DAN maklon (dulu hanya maklon). Sumber: /api/pantau/kejar
  * (services.cmt_kejar, angka qty dari core.pantau_produksi).
  */
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Fragment, useState } from 'react';
 import { AlertCircle, ListChecks } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { RowDetail, RowToggle } from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from '../engine/DataTable';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import {
@@ -27,7 +29,7 @@ export default function KejarCMTTab(props) {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
 
   return (
-    <PageLayout
+    <PageLayoutSatuBaris
       testId="pantau-kejar"
       title="Kejar CMT"
       filters={<>
@@ -36,7 +38,17 @@ export default function KejarCMTTab(props) {
             ...Object.entries(BUCKET_META).map(([k, m]) => ({ key: k, label: m.label, count: bc[k] || 0 }))]} />
         <ScopeChips value={scope} onChange={setScope} testId="pantau-kejar-scope" />
       </>}
-      tools={<RefreshButton onClick={reload} loading={loading} testId="pantau-kejar-refresh" />}
+      tools={<><TombolUnduh namaBerkas="kejar-cmt" baris={rows} kolom={[
+          { label: 'PO', nilai: (r) => r.po_number }, { label: 'Pemesan', nilai: (r) => r.customer_name || '' },
+          { label: 'Vendor CMT', nilai: (r) => r.vendor_name || '' }, { label: 'Keadaan', nilai: (r) => (BUCKET_META[r.bucket] || {}).label || r.bucket || '' },
+          { label: 'Target CMT', nilai: (r) => formatDateID(r.target_cmt_date, { fallback: '' }) },
+          { label: 'Batas kirim', nilai: (r) => formatDateID(r.delivery_deadline, { fallback: '' }) },
+          { label: 'Dipesan', nilai: (r) => Number(r.qty_ordered) || 0 }, { label: 'Potongan ke CMT', nilai: (r) => Number(r.qty_sent_cmt) || 0 },
+          { label: 'Di CMT', nilai: (r) => Number(r.qty_outstanding_cmt) || 0 }, { label: 'Sedang QC', nilai: (r) => Number(r.qty_in_qc) || 0 },
+          { label: 'Lolos QC', nilai: (r) => Number(r.qty_accepted) || 0 }, { label: 'Kali setor', nilai: (r) => Number(r.kali_setor) || 0 },
+          { label: 'Hari di CMT', nilai: (r) => Number(r.days_at_cmt) || 0 },
+        ]} />
+        <RefreshButton onClick={reload} loading={loading} testId="pantau-kejar-refresh" /></>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {data && <p className="text-xs text-muted-foreground">Target CMT = batas kirim − {n(cfg.buffer_days)} hari. Telat = lewat target lebih dari {n(cfg.late_grace_days)} hari.</p>}
@@ -63,10 +75,10 @@ export default function KejarCMTTab(props) {
                   <Fragment key={r.po_id}>
                     <TableRow data-testid={`pantau-kejar-row-${r.po_number}`}>
                       <TableCell><RowToggle open={isOpen} onClick={() => setOpen(isOpen ? '' : r.po_id)} testId={`pantau-kejar-toggle-${r.po_number}`} /></TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-[11px] text-muted-foreground">{r.customer_name || '—'}</div></TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{r.po_number}<div className="text-xs text-muted-foreground">{r.customer_name || '—'}</div></TableCell>
                       <TableCell>{r.vendor_name || '—'}</TableCell>
                       <TableCell><Badge meta={BUCKET_META[r.bucket]} />
-                        {r.bucket === 'telat' || r.bucket === 'jatuh_tempo' ? <div className="text-[11px] text-[hsl(var(--destructive))]">lewat {n(r.overdue_days)} hari</div> : null}</TableCell>
+                        {r.bucket === 'telat' || r.bucket === 'jatuh_tempo' ? <div className="text-xs text-[hsl(var(--danger-text))]">lewat {n(r.overdue_days)} hari</div> : null}</TableCell>
                       <TableCell className="whitespace-nowrap">{r.target_cmt_date ? formatDateID(r.target_cmt_date) : '—'}</TableCell>
                       <TableCell className="whitespace-nowrap">{r.delivery_deadline || r.internal_deadline ? formatDateID(r.delivery_deadline || r.internal_deadline) : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(r.qty_ordered)}</TableCell>
@@ -101,7 +113,7 @@ export default function KejarCMTTab(props) {
           </Table>
         )}
       </Section>
-    </PageLayout>
+    </PageLayoutSatuBaris>
   );
 }
 

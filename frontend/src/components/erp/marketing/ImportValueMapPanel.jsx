@@ -49,7 +49,7 @@ function ValueMapTable({ vr, onChange, busy }) {
               <TableCell className="max-w-[280px]">
                 <span className="break-words">{v.raw}</span>
                 {v.variants > 1 && (
-                  <span className="block text-[10px] text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     dan {v.variants - 1} variasi lain (beda tanggal/angka)
                   </span>
                 )}
@@ -59,7 +59,7 @@ function ValueMapTable({ vr, onChange, busy }) {
                 {known ? (
                   <span>
                     {v.auto_label}
-                    <span className="block text-[10px] text-muted-foreground">
+                    <span className="block text-xs text-muted-foreground">
                       menurut {VALUE_HOW[v.auto_how] || 'kamus sistem'}
                     </span>
                   </span>
@@ -105,14 +105,14 @@ export default function ImportValueMapPanel({ report, onChange, busy }) {
       <p className="text-xs font-semibold flex items-center gap-1.5">
         <ListChecks className="w-4 h-4" /> Arti nilai di berkas
       </p>
-      <p className="text-[11px] text-muted-foreground">
+      <p className="text-xs text-muted-foreground">
         Untuk kolom pilihan (status, kurir, kanal) setiap nilai yang berbeda ditampilkan beserta
         artinya. Nilai yang belum dikenal membuat barisnya ditolak — pilih artinya di kolom
         “Pilihan Anda”. Pilihan ini ikut diingat untuk berkas berikutnya dengan susunan kolom yang sama.
       </p>
       {report.map((vr) => (
         <div key={vr.field} className="space-y-1" data-testid={`value-map-${vr.field}`}>
-          <p className="text-[11px] flex flex-wrap items-center gap-1.5">
+          <p className="text-xs flex flex-wrap items-center gap-1.5">
             <b>{vr.label}</b>
             <span className="text-muted-foreground">
               dari kolom “{vr.column}” · {vr.distinct} nilai berbeda
@@ -128,14 +128,14 @@ export default function ImportValueMapPanel({ report, onChange, busy }) {
             <ValueMapTable vr={vr} onChange={onChange} busy={busy} />
           ) : (
             <details className="rounded-[var(--radius-sm)] border border-border">
-              <summary className="px-3 py-1.5 text-[11px] cursor-pointer text-muted-foreground">
+              <summary className="px-3 py-1.5 text-xs cursor-pointer text-muted-foreground">
                 Lihat atau ubah arti {vr.distinct} nilai
               </summary>
               <ValueMapTable vr={vr} onChange={onChange} busy={busy} />
             </details>
           )}
           {vr.truncated && (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Hanya {vr.values.length} nilai pertama yang ditampilkan.
             </p>
           )}

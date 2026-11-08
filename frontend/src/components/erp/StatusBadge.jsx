@@ -1,33 +1,50 @@
-const statusColors = {
-  // General
-  active: 'bg-emerald-400/15 text-emerald-300 dark:text-emerald-300 border border-emerald-300/20',
-  inactive: 'bg-secondary text-muted-foreground border border-border',
-  // PO Status
-  Draft: 'bg-secondary text-muted-foreground border border-border',
-  Confirmed: 'bg-sky-400/15 text-sky-400 border border-sky-300/20',
-  Distributed: 'bg-blue-400/15 text-blue-400 border border-blue-300/20',
-  'In Production': 'bg-amber-400/15 text-amber-400 border border-amber-300/20',
-  'Production Complete': 'bg-teal-400/15 text-teal-400 border border-teal-300/20',
-  Completed: 'bg-emerald-400/15 text-emerald-300 border border-emerald-300/20',
-  Closed: 'bg-secondary text-muted-foreground border border-border',
-  // Work Order Status
-  Waiting: 'bg-secondary text-muted-foreground border border-border',
-  'In Progress': 'bg-sky-400/15 text-sky-400 border border-sky-300/20',
-  // Invoice Status
-  Unpaid: 'bg-red-400/15 text-red-400 border border-red-300/20',
-  Partial: 'bg-amber-400/15 text-amber-400 border border-amber-300/20',
-  Paid: 'bg-emerald-400/15 text-emerald-300 border border-emerald-300/20',
-  // Variance
-  'Variance Review': 'bg-purple-400/15 text-purple-400 border border-purple-300/20',
-  'Return Review': 'bg-orange-400/15 text-orange-400 border border-orange-300/20',
-  'Ready to Close': 'bg-teal-400/15 text-teal-400 border border-teal-300/20',
+/**
+ * StatusBadge (lama) — lencana status untuk layar PO/WO/faktur lama. Props tetap `{ status }`.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): warna memakai token tema (dulu palet mentah emerald/sky/amber/red… dengan kontras
+ * rendah di tema terang) dan teks status berbahasa Indonesia (dulu "Draft", "In Production", "Unpaid"…).
+ * Status yang tidak dikenal tampil apa adanya dengan gaya netral.
+ */
+const NETRAL = 'bg-[var(--glass-bg)] text-muted-foreground border border-[var(--glass-border)]';
+const NADA = {
+  sukses: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border border-[hsl(var(--success)/0.3)]',
+  info: 'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info-text))] border border-[hsl(var(--info)/0.3)]',
+  peringatan: 'bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))] border border-[hsl(var(--warning)/0.35)]',
+  bahaya: 'bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))] border border-[hsl(var(--destructive)/0.3)]',
+  utama: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border border-[hsl(var(--primary)/0.25)]',
+  netral: NETRAL,
+};
+
+const STATUS = {
+  // Umum
+  active: ['Aktif', 'sukses'],
+  inactive: ['Nonaktif', 'netral'],
+  // Status PO
+  Draft: ['Draf', 'netral'],
+  Confirmed: ['Dikonfirmasi', 'info'],
+  Distributed: ['Didistribusikan', 'info'],
+  'In Production': ['Sedang diproduksi', 'peringatan'],
+  'Production Complete': ['Produksi selesai', 'sukses'],
+  Completed: ['Selesai', 'sukses'],
+  Closed: ['Ditutup', 'netral'],
+  // Status perintah kerja
+  Waiting: ['Menunggu', 'netral'],
+  'In Progress': ['Sedang berjalan', 'info'],
+  // Status faktur
+  Unpaid: ['Belum dibayar', 'bahaya'],
+  Partial: ['Dibayar sebagian', 'peringatan'],
+  Paid: ['Lunas', 'sukses'],
+  // Selisih
+  'Variance Review': ['Tinjau selisih', 'utama'],
+  'Return Review': ['Tinjau retur', 'peringatan'],
+  'Ready to Close': ['Siap ditutup', 'sukses'],
 };
 
 export default function StatusBadge({ status }) {
-  const color = statusColors[status] || 'bg-secondary text-muted-foreground border border-border';
+  const [label, nada] = STATUS[status] || [status, 'netral'];
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${color}`}>
-      {status}
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${NADA[nada] || NETRAL}`}>
+      {label}
     </span>
   );
 }

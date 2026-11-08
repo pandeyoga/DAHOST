@@ -11,10 +11,12 @@ export default function MarketingLiveHub(props) {
   return (
     <HubTabs
       hubId="marketing-live-hub"
+      title="Live Selling"
+      subtitle="Sesi live, analitik live, dan pengelolaan host live."
       tabs={[
-        { key: 'sessions', label: 'Live Sessions', Component: LiveSessionModule },
-        { key: 'analytics', label: 'Analytics', Component: LiveSessionAnalyticsDashboard },
-        { key: 'livehost', label: 'LiveHost Mgmt', Component: LiveHostModule },
+        { key: 'sessions', label: 'Sesi live', Component: LiveSessionModule },
+        { key: 'analytics', label: 'Analitik', Component: LiveSessionAnalyticsDashboard },
+        { key: 'livehost', label: 'Host live', Component: LiveHostModule },
       ]}
       {...props}
     />

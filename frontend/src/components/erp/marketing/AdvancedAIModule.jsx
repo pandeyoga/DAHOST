@@ -1,26 +1,30 @@
+/**
+ * AI lanjutan (tab di AI Marketing, Portal Toko) — harga dinamis, prediksi pelanggan berhenti, uji A/B.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub); tiga tampilan dipilih dengan pil (dulu deret
+ * tombol buatan sendiri); kartu warna jadi kalimat ringkas/Notice; usulan harga, riwayat, pelanggan, eksperimen =
+ * tabel + unduh (eksperimen dulu kartu besar berisi grid varian → kini rincian popup); form = FormPopup; label Indonesia
+ * tanpa emoji. Panggilan API & isi yang dikirim tidak berubah; panggilan AI hanya saat tombol ditekan.
+ */
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Brain, TrendingUp, TrendingDown, DollarSign, Settings, Power, PowerOff,
-  Zap, RefreshCw, Loader2, ChevronDown, ChevronUp, CheckCircle2,
-  XCircle, AlertTriangle, Clock, FlaskConical, Users, BarChart3,
-  Sparkles, ChevronRight, Plus, Pencil, Save, X, Info, Shield, History,
-  Play, Pause, Trophy, ArrowUp, ArrowDown, Target
+  Brain, DollarSign, Settings, Power, PowerOff, Zap, RefreshCw, Loader2, CheckCircle2, XCircle, AlertTriangle, Clock,
+  FlaskConical, Users, Sparkles, Plus, Pencil, Info, Shield, History, Play, Pause, Trophy, ArrowUp, ArrowDown, Target,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription
-} from '@/components/ui/dialog';
-import { Textarea } from '@/components/ui/textarea';
-import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { useToast } from '@/hooks/use-toast';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { CatalogSkuMultiSelect } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -29,30 +33,30 @@ function fmtRp(n) { return `Rp ${fmt(n)}`; }
 function fmtPct(n) { return `${(n || 0).toFixed(1)}%`; }
 
 const RISK_CONFIG = {
-  critical: { label: 'Kritis',  color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',       dot: 'bg-red-500',    icon: AlertTriangle },
-  high:     { label: 'Tinggi',  color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300', dot: 'bg-orange-500', icon: AlertTriangle },
-  medium:   { label: 'Sedang',  color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',   dot: 'bg-amber-400',  icon: Clock },
-  low:      { label: 'Rendah',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', dot: 'bg-emerald-500', icon: CheckCircle2 }
+  critical: { label: 'Kritis',  color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ',       dot: 'bg-[hsl(var(--destructive-strong))]',    icon: AlertTriangle },
+  high:     { label: 'Tinggi',  color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ', dot: 'bg-[hsl(var(--warning))]', icon: AlertTriangle },
+  medium:   { label: 'Sedang',  color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ',   dot: 'bg-[hsl(var(--warning))]',  icon: Clock },
+  low:      { label: 'Rendah',  color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ', dot: 'bg-[hsl(var(--success-strong))]', icon: CheckCircle2 }
 };
 
 const DIR_CONFIG = {
-  increase: { icon: ArrowUp,   color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-  decrease: { icon: ArrowDown, color: 'text-red-600',     bg: 'bg-red-50 dark:bg-red-900/20' },
-  hold:     { icon: Target,    color: 'text-muted-foreground',   bg: 'bg-muted dark:bg-slate-800/50' }
+  increase: { icon: ArrowUp,   color: 'text-[hsl(var(--success-text))]', bg: 'bg-[hsl(var(--success)/0.08)] ' },
+  decrease: { icon: ArrowDown, color: 'text-[hsl(var(--danger-text))]',     bg: 'bg-[hsl(var(--destructive)/0.08)] ' },
+  hold:     { icon: Target,    color: 'text-muted-foreground',   bg: 'bg-muted ' }
 };
 
 const STATUS_CONFIG = {
-  pending:  { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  approved: { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  applied:  { label: 'Diterapkan', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  rejected: { label: 'Ditolak', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' }
+  pending:  { label: 'Menunggu', color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
+  approved: { label: 'Disetujui', color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' },
+  applied:  { label: 'Diterapkan', color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+  rejected: { label: 'Ditolak', color: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] ' }
 };
 
 const AB_STATUS = {
-  draft:     { label: 'Draft',    color: 'bg-muted text-muted-foreground dark:bg-slate-800 dark:text-foreground/70' },
-  running:   { label: 'Running',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-  paused:    { label: 'Paused',   color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-  concluded: { label: 'Selesai',  color: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300' }
+  draft:     { label: 'Draf',    color: 'bg-muted text-muted-foreground dark:text-foreground/70' },
+  running:   { label: 'Berjalan',  color: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] ' },
+  paused:    { label: 'Dijeda',   color: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] ' },
+  concluded: { label: 'Selesai',  color: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] ' }
 };
 
 
@@ -82,7 +86,7 @@ function DynamicPricingTab({ authH }) {
     try {
       const res = await axios.get(`${API}/api/marketing/advanced-ai/pricing/settings`, { headers: authH });
       if (res.data.success) { setSettings(res.data.data); setDraft(res.data.data); }
-    } catch (e) { toast({ title: 'Gagal load settings', variant: 'destructive' }); }
+    } catch (e) { toast({ title: 'Gagal memuat pengaturan', variant: 'destructive' }); }
     finally { setSettingsLoading(false); }
   }, [authH]); // eslint-disable-line
 
@@ -90,8 +94,8 @@ function DynamicPricingTab({ authH }) {
     setSavingSettings(true);
     try {
       const res = await axios.put(`${API}/api/marketing/advanced-ai/pricing/settings`, draft, { headers: authH });
-      if (res.data.success) { setSettings(res.data.data); toast({ title: 'Settings disimpan ✓' }); setShowSettings(false); }
-    } catch (e) { toast({ title: 'Gagal simpan', variant: 'destructive' }); }
+      if (res.data.success) { setSettings(res.data.data); toast({ title: 'Pengaturan disimpan.' }); setShowSettings(false); }
+    } catch (e) { toast({ title: 'Gagal menyimpan', variant: 'destructive' }); }
     finally { setSavingSettings(false); }
   };
 
@@ -100,8 +104,8 @@ function DynamicPricingTab({ authH }) {
     try {
       const res = await axios.put(`${API}/api/marketing/advanced-ai/pricing/settings`, { enabled: val }, { headers: authH });
       if (res.data.success) { setSettings(updated); setDraft(updated); }
-      toast({ title: val ? '✅ Dynamic Pricing AKTIF' : '⏸️ Dynamic Pricing NONAKTIF' });
-    } catch (e) { toast({ title: 'Gagal toggle', variant: 'destructive' }); }
+      toast({ title: val ? 'Harga dinamis aktif.' : 'Harga dinamis nonaktif.' });
+    } catch (e) { toast({ title: 'Gagal mengubah status', variant: 'destructive' }); }
   };
 
   const runSuggestions = async () => {
@@ -109,11 +113,11 @@ function DynamicPricingTab({ authH }) {
     try {
       const res = await axios.post(`${API}/api/marketing/advanced-ai/pricing/run`, {}, { headers: authH });
       if (res.data.success) {
-        toast({ title: `✨ ${res.data.metadata?.count || 0} suggestion dibuat!` });
+        toast({ title: `${res.data.metadata?.count || 0} usulan harga dibuat.` });
         fetchSuggestions();
       }
     } catch (e) {
-      toast({ title: 'Run gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      toast({ title: 'Gagal membuat usulan', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally { setRunning(false); }
   };
 
@@ -134,7 +138,7 @@ function DynamicPricingTab({ authH }) {
       if (reason) url += `?reason=${encodeURIComponent(reason)}`;
       const res = await axios.post(url, {}, { headers: authH });
       if (res.data.success) {
-        toast({ title: `Suggestion ${action === 'approve' ? 'disetujui' : action === 'reject' ? 'ditolak' : 'diterapkan'} ✓` });
+        toast({ title: `Usulan ${action === 'approve' ? 'disetujui' : action === 'reject' ? 'ditolak' : 'diterapkan'}.` });
         fetchSuggestions();
       }
     } catch (e) {
@@ -160,319 +164,158 @@ function DynamicPricingTab({ authH }) {
   useEffect(() => { fetchSettings(); }, [fetchSettings]);
   useEffect(() => { fetchSuggestions(); }, [fetchSuggestions]);
 
-  if (settingsLoading) return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-muted-foreground" size={28} /></div>;
+  if (settingsLoading) return <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengaturan harga dinamis…</p>;
 
   const isEnabled = settings?.enabled;
+  const YAKIN = { high: ['Tinggi', 'success'], medium: ['Sedang', 'warning'], low: ['Rendah', 'muted'] };
+  const EVENT = { apply: ['Diterapkan', 'success'], approve: ['Disetujui', 'info'], reject: ['Ditolak', 'danger'], run: ['Usulan dibuat', 'muted'] };
+  const perubahan = (s) => `${s.direction === 'increase' ? '+' : s.direction === 'decrease' ? '−' : ''}${Math.abs(s.change_pct || 0).toFixed(1).replace('.', ',')}%`;
+  const waktuEv = (v) => { try { return new Date(v).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return v || '—'; } };
+  const kolom = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (s) => <p className="truncate font-medium md:max-w-[14rem]" title={s.product}>{s.product}</p> },
+    { kunci: 'kini', label: 'Harga kini', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmtRp(s.current_price_rp)}</span> },
+    { kunci: 'saran', label: 'Harga saran', rata: 'kanan', isi: (s) => (
+      <span className="tabular-nums font-semibold md:whitespace-nowrap">{fmtRp(s.suggested_price_rp)}
+        <span className={`block text-xs ${(DIR_CONFIG[s.direction] || DIR_CONFIG.hold).color}`}>{perubahan(s)}</span></span>) },
+    { kunci: 'yakin', label: 'Keyakinan', isi: (s) => <StatusBadge status={s.confidence} label={(YAKIN[s.confidence] || [s.confidence || '—'])[0]} tone={(YAKIN[s.confidence] || [])[1]} /> },
+    { kunci: 'alasan', label: 'Alasan utama', isi: (s) => <p className="truncate text-sm text-muted-foreground md:max-w-[16rem]" title={s.primary_reason}>{s.primary_reason}</p> },
+    { kunci: 'status', label: 'Status', isi: (s) => <StatusBadge status={s.status} label={(STATUS_CONFIG[s.status] || STATUS_CONFIG.pending).label} tone={{ pending: 'warning', approved: 'info', applied: 'success', rejected: 'danger' }[s.status]} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex justify-end gap-1">
+        {s.status === 'pending' && <>
+          <Button size="sm" variant="success" onClick={() => doAction(s.id, 'approve')} disabled={actionLoading[s.id + 'approve']}>
+            {actionLoading[s.id + 'approve'] ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}Setujui
+          </Button>
+          {/* 2026-11-02: tombol Terapkan TIDAK ada di baris menunggu — hanya untuk usulan yang sudah disetujui. */}
+          <Button size="sm" variant="destructive" onClick={() => doAction(s.id, 'reject')} disabled={actionLoading[s.id + 'reject']}>
+            {actionLoading[s.id + 'reject'] ? <Loader2 className="animate-spin" /> : <XCircle />}Tolak
+          </Button>
+        </>}
+        {s.status === 'approved' && (
+          <Button size="sm" onClick={() => doAction(s.id, 'apply')} disabled={actionLoading[s.id + 'apply']}>
+            {actionLoading[s.id + 'apply'] ? <Loader2 className="animate-spin" /> : null}Terapkan
+          </Button>
+        )}
+      </div>) },
+  ];
+  const kolomEvent = [
+    { kunci: 'w', label: 'Waktu', hp: 'keterangan', isi: (ev) => <span className="tabular-nums">{waktuEv(ev.created_at)}</span> },
+    { kunci: 'e', label: 'Kejadian', isi: (ev) => <StatusBadge status={ev.event_type} label={(EVENT[ev.event_type] || ['Lainnya'])[0]} tone={(EVENT[ev.event_type] || [])[1]} /> },
+    { kunci: 'p', label: 'Produk', hp: 'judul', isi: (ev) => ev.product || '—' },
+    { kunci: 'd', label: 'Rincian', isi: (ev) => <span className="text-muted-foreground">{ev.event_type === 'apply' && ev.old_price_rp
+      ? `${fmtRp(ev.old_price_rp)} → ${fmtRp(ev.new_price_rp)}` : ev.reason ? `Alasan: ${ev.reason}` : `${ev.suggestions_count || ''} usulan`}</span> },
+    { kunci: 'a', label: 'Oleh', isi: (ev) => ev.actor || '—' },
+  ];
 
   return (
-    <div className="space-y-5">
-      {/* Control Card */}
-      <Card className={`border-2 transition-colors ${isEnabled ? 'border-emerald-400 dark:border-emerald-600' : 'border-border dark:border-slate-700'}`}>
-        <CardContent className="pt-5">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-            <div className="flex items-center gap-4 flex-1">
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${ isEnabled ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-muted dark:bg-slate-800' }`}>
-                {isEnabled ? <Power size={22} className="text-emerald-600" /> : <PowerOff size={22} className="text-muted-foreground" />}
-              </div>
-              <div>
-                <div className="flex items-center gap-3">
-                  <h3 className="font-bold text-lg">Dynamic Pricing</h3>
-                  <Switch
-                    checked={isEnabled || false}
-                    onCheckedChange={toggleEnabled}
-                    className="data-[state=checked]:bg-emerald-500"
-                    data-testid="pricing-toggle"
-                  />
-                  <Badge className={isEnabled ? 'bg-emerald-100 text-emerald-700' : 'bg-muted text-muted-foreground'}>
-                    {isEnabled ? 'AKTIF' : 'NONAKTIF'}
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  Mode: <span className="font-medium capitalize">{settings?.mode?.replace('_', ' ')}</span>
-                  {' · '} Min margin: <span className="font-medium">{settings?.min_margin_pct_global}%</span>
-                  {' · '} Max perubahan: <span className="font-medium">↑{settings?.max_price_increase_pct_per_run}% / ↓{settings?.max_price_decrease_pct_per_run}%</span>
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowSettings(true)} data-testid="pricing-settings-btn">
-                <Settings size={13} className="mr-1" /> Konfigurasi
-              </Button>
-              <Button size="sm" onClick={runSuggestions} disabled={!isEnabled || running} data-testid="run-pricing-btn">
-                {running ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Zap size={13} className="mr-1" />}
-                {running ? 'Menganalisis...' : 'Generate Suggestions'}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      <Notice tone={isEnabled ? 'success' : 'info'} icon={isEnabled ? Power : PowerOff}
+        title={<span className="flex flex-wrap items-center gap-2">Harga dinamis
+          <Switch checked={isEnabled || false} onCheckedChange={toggleEnabled} data-testid="pricing-toggle" aria-label="Aktifkan harga dinamis" />
+          <StatusBadge status={isEnabled ? 'aktif' : 'nonaktif'} label={isEnabled ? 'Aktif' : 'Nonaktif'} tone={isEnabled ? 'success' : 'muted'} /></span>}
+        action={<div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => setShowSettings(true)} data-testid="pricing-settings-btn"><Settings />Konfigurasi</Button>
+          <Button size="sm" onClick={runSuggestions} disabled={!isEnabled || running} data-testid="run-pricing-btn">
+            {running ? <Loader2 className="animate-spin" /> : <Zap />}{running ? 'Menganalisis…' : 'Buat usulan harga'}
+          </Button>
+        </div>}>
+        Mode: wajib disetujui manual · margin minimum {settings?.min_margin_pct_global}% · perubahan maks. naik {settings?.max_price_increase_pct_per_run}% / turun {settings?.max_price_decrease_pct_per_run}% per putaran · pembulatan Rp {fmt(settings?.rounding_rule)}.
+      </Notice>
 
-      {/* Guardrails Info */}
-      {isEnabled && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Min Margin', value: `${settings?.min_margin_pct_global}%`, icon: Shield, color: 'text-blue-600' },
-            { label: 'Max Naik/Run', value: `+${settings?.max_price_increase_pct_per_run}%`, icon: ArrowUp, color: 'text-emerald-600' },
-            { label: 'Max Turun/Run', value: `-${settings?.max_price_decrease_pct_per_run}%`, icon: ArrowDown, color: 'text-red-600' },
-            { label: 'Pembulatan', value: `Rp ${fmt(settings?.rounding_rule)}`, icon: Target, color: 'text-violet-600' },
-          ].map(item => (
-            <div key={item.label} className="rounded-lg border p-3 bg-muted/30">
-              <div className="flex items-center gap-2 mb-1">
-                <item.icon size={14} className={item.color} />
-                <span className="text-xs text-muted-foreground">{item.label}</span>
-              </div>
-              <p className={`text-lg font-bold ${item.color}`}>{item.value}</p>
-            </div>
-          ))}
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-base font-semibold">Usulan harga{sugMeta?.total ? ` · ${sugMeta.total}` : ''}</p>
+          <SmartNativeSelect value={sugFilter} onChange={(e) => setSugFilter(e.target.value)} className="w-40" searchable={false} data-testid="pricing-filter">
+            <option value="all">Semua status</option>
+            <option value="pending">Menunggu</option>
+            <option value="approved">Disetujui</option>
+            <option value="applied">Diterapkan</option>
+            <option value="rejected">Ditolak</option>
+          </SmartNativeSelect>
+          <TombolUnduh namaBerkas="usulan-harga" namaLembar="Usulan" baris={suggestions} testId="pricing-unduh"
+            kolom={[
+              { label: 'Produk', nilai: (s) => s.product }, { label: 'Harga kini', nilai: (s) => Number(s.current_price_rp) || 0 },
+              { label: 'Harga saran', nilai: (s) => Number(s.suggested_price_rp) || 0 }, { label: 'Perubahan (%)', nilai: (s) => Number(s.change_pct) || 0 },
+              { label: 'Keyakinan', nilai: (s) => (YAKIN[s.confidence] || [s.confidence || ''])[0] }, { label: 'Alasan utama', nilai: (s) => s.primary_reason || '' },
+              { label: 'Status', nilai: (s) => (STATUS_CONFIG[s.status] || STATUS_CONFIG.pending).label },
+            ]} />
+          <Button variant="outline" size="icon" onClick={fetchSuggestions} title="Muat ulang usulan" aria-label="Muat ulang usulan">
+            <RefreshCw className={sugLoading ? 'animate-spin' : ''} />
+          </Button>
         </div>
-      )}
+        {sugLoading && suggestions.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat usulan…</p>
+        ) : (
+          <TabelData kolom={kolom} baris={suggestions} testId="pricing-table"
+            kosong={<EmptyState icon={DollarSign} title="Belum ada usulan harga"
+              description={isEnabled ? 'Klik "Buat usulan harga" untuk memulai.' : 'Aktifkan harga dinamis untuk membuat usulan.'} />} />
+        )}
+      </section>
 
-      {/* Suggestions Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <CardTitle className="flex-1">Pricing Suggestions</CardTitle>
-            <div className="flex items-center gap-2">
-              <Select value={sugFilter} onValueChange={setSugFilter}>
-                <SelectTrigger className="w-[140px] h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua</SelectItem>
-                  <SelectItem value="pending">Menunggu</SelectItem>
-                  <SelectItem value="approved">Disetujui</SelectItem>
-                  <SelectItem value="applied">Diterapkan</SelectItem>
-                  <SelectItem value="rejected">Ditolak</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="ghost" size="sm" className="h-8" onClick={fetchSuggestions}>
-                <RefreshCw size={13} />
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {sugLoading ? (
-            <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>
-          ) : suggestions.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
-              <DollarSign size={32} className="opacity-30" />
-              <p className="text-sm">
-                {isEnabled ? 'Belum ada suggestions. Klik "Generate Suggestions" untuk memulai.' : 'Aktifkan Dynamic Pricing untuk generate suggestions.'}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    {['Produk', 'Harga Saat Ini', 'Harga Saran', 'Perubahan', 'Confidence', 'Alasan Utama', 'Status', 'Aksi'].map(h => (
-                      <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {suggestions.map(s => {
-                    const dirCfg = DIR_CONFIG[s.direction] || DIR_CONFIG.hold;
-                    const stsCfg = STATUS_CONFIG[s.status] || STATUS_CONFIG.pending;
-                    const DirIcon = dirCfg.icon;
-                    return (
-                      <tr key={s.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-3 py-2.5 font-medium text-sm max-w-[180px] truncate" title={s.product}>{s.product}</td>
-                        <td className="px-3 py-2.5 tabular-nums text-sm">{fmtRp(s.current_price_rp)}</td>
-                        <td className="px-3 py-2.5">
-                          <span className={`font-bold tabular-nums ${dirCfg.color}`}>{fmtRp(s.suggested_price_rp)}</span>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${dirCfg.bg} ${dirCfg.color}`}>
-                            <DirIcon size={11} />{s.direction === 'increase' ? '+' : s.direction === 'decrease' ? '-' : ''}{Math.abs(s.change_pct || 0).toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <Badge variant="outline" className={`text-xs ${
-                            s.confidence === 'high' ? 'border-emerald-400 text-emerald-600' :
-                            s.confidence === 'low' ? 'border-border text-muted-foreground/60' : 'border-amber-400 text-amber-600'
-                          }`}>{s.confidence}</Badge>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[200px]">
-                          <span className="truncate block" title={s.primary_reason}>{s.primary_reason}</span>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <Badge className={`text-xs ${stsCfg.color}`}>{stsCfg.label}</Badge>
-                        </td>
-                        <td className="px-3 py-2.5">
-                          {s.status === 'pending' && (
-                            <div className="flex items-center gap-1">
-                              <Button size="sm" variant="ghost" className="h-7 px-2 text-emerald-600 hover:bg-emerald-50"
-                                onClick={() => doAction(s.id, 'approve')} disabled={actionLoading[s.id + 'approve']}>
-                                {actionLoading[s.id + 'approve'] ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={13} />}
-                              </Button>
-                              {/* 2026-11-02: tombol Apply (⚡) DIHAPUS dari baris pending — Apply
-                                  hanya untuk usulan yang sudah disetujui (izin sama dengan Approve). */}
-                              <Button size="sm" variant="ghost" className="h-7 px-2 text-red-500 hover:bg-red-50"
-                                onClick={() => doAction(s.id, 'reject')} disabled={actionLoading[s.id + 'reject']}>
-                                {actionLoading[s.id + 'reject'] ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={13} />}
-                              </Button>
-                            </div>
-                          )}
-                          {s.status === 'approved' && (
-                            <Button size="sm" className="h-7 px-2 text-xs" onClick={() => doAction(s.id, 'apply')} disabled={actionLoading[s.id + 'apply']}>
-                              {actionLoading[s.id + 'apply'] ? <Loader2 size={11} className="animate-spin" /> : 'Terapkan'}
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => { setShowEvents(v => !v); if (!showEvents) fetchEvents(); }}>
+            <History />{showEvents ? 'Sembunyikan' : 'Lihat'} riwayat perubahan
+          </Button>
+          {showEvents && events.length > 0 && (
+            <TombolUnduh namaBerkas="riwayat-harga-dinamis" namaLembar="Riwayat" baris={events} testId="pricing-events-unduh"
+              kolom={[
+                { label: 'Waktu', nilai: (ev) => waktuEv(ev.created_at) }, { label: 'Kejadian', nilai: (ev) => (EVENT[ev.event_type] || ['Lainnya'])[0] },
+                { label: 'Produk', nilai: (ev) => ev.product || '' }, { label: 'Harga lama', nilai: (ev) => ev.old_price_rp ?? '' },
+                { label: 'Harga baru', nilai: (ev) => ev.new_price_rp ?? '' }, { label: 'Alasan', nilai: (ev) => ev.reason || '' }, { label: 'Oleh', nilai: (ev) => ev.actor || '' },
+              ]} />
           )}
-          {sugMeta && sugMeta.total > 0 && (
-            <div className="px-4 py-2 border-t">
-              <span className="text-xs text-muted-foreground">{sugMeta.total} total suggestions</span>
+        </div>
+        {showEvents && (
+          <TabelData kolom={kolomEvent} baris={events} testId="pricing-events-table" kosong={<EmptyState title="Belum ada riwayat" />} />
+        )}
+      </section>
+
+      <FormPopup open={showSettings} onClose={() => setShowSettings(false)} ukuran="panjang" onSimpan={saveSettings} menyimpan={savingSettings}
+        judul="Konfigurasi harga dinamis" keterangan="Atur batas pengaman dan mode. Perubahan berlaku langsung." testId="pricing-settings-form">
+        {draft && (
+          <>
+            <Isian label="Mode operasional" htmlFor="pr-mode">
+              {/* K28 (2026-11-02): harga dinamis WAJIB disetujui — opsi terapkan otomatis dicabut. */}
+              <SmartNativeSelect id="pr-mode" value={draft.mode || 'suggest_only'} searchable={false} onChange={(e) => setDraft(d => ({ ...d, mode: e.target.value }))}>
+                <option value="suggest_only">Hanya usulan (wajib disetujui manual)</option>
+              </SmartNativeSelect>
+            </Isian>
+            <p className="flex items-center gap-1 border-t border-[var(--glass-border)] pt-3 text-sm font-medium"><Shield className="h-4 w-4" />Batas pengaman</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Isian label="Margin minimum (%)" petunjuk="Margin yang tidak boleh dilanggar." htmlFor="pr-margin">
+                <Input id="pr-margin" type="number" step="1" value={draft.min_margin_pct_global || ''}
+                  onChange={e => setDraft(d => ({ ...d, min_margin_pct_global: Number(e.target.value) }))} />
+              </Isian>
+              <Isian label="Pembulatan harga" htmlFor="pr-round">
+                <SmartNativeSelect id="pr-round" value={String(draft.rounding_rule || 500)} searchable={false}
+                  onChange={(e) => setDraft(d => ({ ...d, rounding_rule: Number(e.target.value) }))}>
+                  {[100, 500, 1000, 5000].map((v) => <option key={v} value={String(v)}>{`Rp ${fmt(v)}`}</option>)}
+                </SmartNativeSelect>
+              </Isian>
+              <Isian label="Kenaikan maks. per putaran (%)" htmlFor="pr-up">
+                <Input id="pr-up" type="number" step="1" value={draft.max_price_increase_pct_per_run || ''}
+                  onChange={e => setDraft(d => ({ ...d, max_price_increase_pct_per_run: Number(e.target.value) }))} />
+              </Isian>
+              <Isian label="Penurunan maks. per putaran (%)" htmlFor="pr-down">
+                <Input id="pr-down" type="number" step="1" value={draft.max_price_decrease_pct_per_run || ''}
+                  onChange={e => setDraft(d => ({ ...d, max_price_decrease_pct_per_run: Number(e.target.value) }))} />
+              </Isian>
+              <Isian label="Jeda antar putaran (menit)" htmlFor="pr-cool">
+                <Input id="pr-cool" type="number" step="5" value={draft.run_cooldown_minutes || ''}
+                  onChange={e => setDraft(d => ({ ...d, run_cooldown_minutes: Number(e.target.value) }))} />
+              </Isian>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Audit Log Toggle */}
-      <Button
-        variant="ghost" size="sm" className="text-muted-foreground"
-        onClick={() => { setShowEvents(v => !v); if (!showEvents) fetchEvents(); }}
-      >
-        <History size={13} className="mr-1" />
-        {showEvents ? 'Sembunyikan' : 'Lihat'} Audit Log
-        {showEvents ? <ChevronUp size={13} className="ml-1" /> : <ChevronDown size={13} className="ml-1" />}
-      </Button>
-      {showEvents && (
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Audit Log</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            {events.length === 0 ? <p className="text-xs text-muted-foreground text-center py-6">Belum ada event</p> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead><tr className="border-b bg-muted/30">
-                    {['Waktu', 'Event', 'Produk', 'Detail', 'Actor'].map(h => (
-                      <th key={h} className="px-3 py-1.5 text-left font-semibold text-muted-foreground">{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody className="divide-y">
-                    {events.map(ev => (
-                      <tr key={ev.id} className="hover:bg-muted/20">
-                        <td className="px-3 py-1.5 text-muted-foreground">{new Date(ev.created_at).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}</td>
-                        <td className="px-3 py-1.5">
-                          <Badge className={`text-xs ${
-                            ev.event_type === 'apply' ? 'bg-emerald-100 text-emerald-700' :
-                            ev.event_type === 'approve' ? 'bg-blue-100 text-blue-700' :
-                            ev.event_type === 'reject' ? 'bg-red-100 text-red-700' : 'bg-muted text-muted-foreground'
-                          }`}>{ev.event_type}</Badge>
-                        </td>
-                        <td className="px-3 py-1.5 font-medium">{ev.product || '—'}</td>
-                        <td className="px-3 py-1.5 text-muted-foreground">
-                          {ev.event_type === 'apply' && ev.old_price_rp ? `${fmtRp(ev.old_price_rp)} → ${fmtRp(ev.new_price_rp)}` :
-                           ev.reason ? `Alasan: ${ev.reason}` : `${ev.suggestions_count || ''} suggestions`}
-                        </td>
-                        <td className="px-3 py-1.5 text-muted-foreground">{ev.actor}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Settings Dialog */}
-      <Dialog open={showSettings} onOpenChange={setShowSettings}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Settings size={18} className="text-primary" /> Konfigurasi Dynamic Pricing</DialogTitle>
-            <DialogDescription>Atur guardrails dan mode operasional. Perubahan berlaku langsung.</DialogDescription>
-          </DialogHeader>
-          {draft && (
-            <div className="space-y-4">
-              {/* Mode */}
-              <div>
-                <Label className="text-xs font-semibold">Mode Operasional</Label>
-                <Select value={draft.mode || 'suggest_only'} onValueChange={v => setDraft(d => ({ ...d, mode: v }))}>
-                  <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {/* K28 (2026-11-02): harga dinamis WAJIB disetujui — opsi Auto Apply dicabut. */}
-                    <SelectItem value="suggest_only">Suggest Only (wajib approval manual)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Guardrails */}
-              <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg space-y-3">
-                <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1"><Shield size={12} /> Guardrails Keamanan</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label className="text-xs">Min Margin (%)</Label>
-                    <Input type="number" step="1" className="h-8 mt-0.5 text-sm" value={draft.min_margin_pct_global || ''}
-                      onChange={e => setDraft(d => ({ ...d, min_margin_pct_global: Number(e.target.value) }))} />
-                    <p className="text-xs text-muted-foreground mt-0.5">Margin minimum yang tidak boleh dilanggar</p>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Pembulatan Harga</Label>
-                    <Select value={String(draft.rounding_rule || 500)} onValueChange={v => setDraft(d => ({ ...d, rounding_rule: Number(v) }))}>
-                      <SelectTrigger className="h-8 mt-0.5 text-sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="100">Rp 100</SelectItem>
-                        <SelectItem value="500">Rp 500</SelectItem>
-                        <SelectItem value="1000">Rp 1.000</SelectItem>
-                        <SelectItem value="5000">Rp 5.000</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Max Kenaikan per Run (%)</Label>
-                    <Input type="number" step="1" className="h-8 mt-0.5 text-sm" value={draft.max_price_increase_pct_per_run || ''}
-                      onChange={e => setDraft(d => ({ ...d, max_price_increase_pct_per_run: Number(e.target.value) }))} />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Max Penurunan per Run (%)</Label>
-                    <Input type="number" step="1" className="h-8 mt-0.5 text-sm" value={draft.max_price_decrease_pct_per_run || ''}
-                      onChange={e => setDraft(d => ({ ...d, max_price_decrease_pct_per_run: Number(e.target.value) }))} />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Cooldown antar Run (menit)</Label>
-                    <Input type="number" step="5" className="h-8 mt-0.5 text-sm" value={draft.run_cooldown_minutes || ''}
-                      onChange={e => setDraft(d => ({ ...d, run_cooldown_minutes: Number(e.target.value) }))} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Exclude SKU */}
-              <div>
-                <Label className="text-xs font-semibold">Exclude SKU (dari katalog)</Label>
-                <CatalogSkuMultiSelect value={draft.exclude_skus || []} testId="ai-exclude-skus"
-                  onChange={v => setDraft(d => ({ ...d, exclude_skus: v }))} />
-              </div>
-
-              <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg">
-                <Info size={14} className="text-amber-600 shrink-0" />
-                <p className="text-xs text-amber-700 dark:text-amber-300">
-                  Perubahan harga tidak otomatis ke platform marketplace sampai Phase 4 (Direct API) aktif. Saat ini bersifat <strong>internal suggestion only</strong>.
-                </p>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSettings(false)}>Batal</Button>
-            <Button onClick={saveSettings} disabled={savingSettings}>
-              {savingSettings ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Save size={13} className="mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <Isian label="SKU yang dikecualikan (dari katalog)">
+              <CatalogSkuMultiSelect value={draft.exclude_skus || []} testId="ai-exclude-skus" onChange={v => setDraft(d => ({ ...d, exclude_skus: v }))} />
+            </Isian>
+            <Notice tone="warning" icon={Info}>Perubahan harga belum dikirim otomatis ke marketplace; saat ini hanya usulan internal.</Notice>
+          </>
+        )}
+      </FormPopup>
     </div>
   );
 }
-
 
 // ─────────────────────────────────────────────────────────────────
 // TAB 2: CHURN PREDICTION
@@ -505,7 +348,7 @@ function ChurnPredictionTab({ authH }) {
         // 2026-11-02: tanpa data order → hasil kosong yang jujur (dulu 15 pelanggan fiktif).
         toast({ title: res.data.data.summary?.no_data
           ? (res.data.metadata?.message || 'Belum ada data order pelanggan untuk dianalisis.')
-          : `✨ Analisis selesai! ${res.data.data.customers?.length || 0} customer dianalisis.` });
+          : `Analisis selesai: ${res.data.data.customers?.length || 0} pelanggan dianalisis.` });
         fetchSavedScores();
       }
     } catch (e) {
@@ -518,172 +361,71 @@ function ChurnPredictionTab({ authH }) {
   const customers = result?.customers || savedScores;
   const summary = result?.summary;
   const filtered = riskFilter === 'all' ? customers : customers.filter(c => c.churn_risk === riskFilter);
+  const RISK_TONE = { critical: 'danger', high: 'warning', medium: 'warning', low: 'success' };
+  const rfm = (c) => `${c.r_score ?? '—'}-${c.f_score ?? '—'}-${c.m_score ?? '—'}`;
+  const opsiRisiko = [
+    { key: 'all', label: 'Semua', count: summary ? Object.values(summary.segments || {}).reduce((a, b) => a + b, 0) : undefined },
+    ...['critical', 'high', 'medium', 'low'].map((k) => ({ key: k, label: RISK_CONFIG[k].label, count: summary ? (summary.segments || {})[k] || 0 : undefined })),
+  ];
+  const kolom = [
+    { kunci: 'c', label: 'Pelanggan', hp: 'judul', isi: (c) => <span className="font-medium">{c.customer}</span> },
+    { kunci: 'r', label: 'Risiko berhenti', isi: (c) => <StatusBadge status={c.churn_risk} label={(RISK_CONFIG[c.churn_risk] || RISK_CONFIG.low).label} tone={RISK_TONE[c.churn_risk]} /> },
+    { kunci: 'rec', label: 'Terakhir belanja', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.recency_days} hari lalu</span> },
+    { kunci: 'o', label: 'Pesanan', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.order_count}<span className="block text-xs text-muted-foreground">{String(c.freq_per_month ?? '—').replace('.', ',')}× / bulan</span></span> },
+    { kunci: 'b', label: 'Total belanja', rata: 'kanan', isi: (c) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(c.total_spent_rp)}</span> },
+    { kunci: 'rfm', label: 'Skor RFM', rata: 'tengah', isi: (c) => <span className="tabular-nums" title="Skor kebaruan-frekuensi-nilai (1–5)">{rfm(c)}</span> },
+    { kunci: 'ai', label: 'Saran AI', isi: (c) => <p className="truncate text-sm text-muted-foreground md:max-w-[18rem]" title={c.ai_action}>{c.ai_action || '—'}</p> },
+  ];
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">Deteksi customer berisiko churn menggunakan RFM scoring + AI explanation</p>
-        </div>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChips options={opsiRisiko} value={riskFilter} onChange={setRiskFilter} hideWhenEmpty={false} testId="churn-filter" ariaLabel="Risiko" />
+        <p className="flex-1 text-sm text-muted-foreground">Pelanggan berisiko berhenti belanja dari skor RFM + penjelasan AI.</p>
+        <TombolUnduh namaBerkas="risiko-pelanggan" namaLembar="Pelanggan" baris={filtered} testId="churn-unduh"
+          kolom={[
+            { label: 'Pelanggan', nilai: (c) => c.customer }, { label: 'Risiko', nilai: (c) => (RISK_CONFIG[c.churn_risk] || RISK_CONFIG.low).label },
+            { label: 'Terakhir belanja (hari)', nilai: (c) => Number(c.recency_days) || 0 }, { label: 'Pesanan', nilai: (c) => Number(c.order_count) || 0 },
+            { label: 'Total belanja', nilai: (c) => Number(c.total_spent_rp) || 0 }, { label: 'Skor RFM', nilai: rfm },
+            { label: 'Frekuensi per bulan', nilai: (c) => Number(c.freq_per_month) || 0 }, { label: 'Saran AI', nilai: (c) => c.ai_action || '' },
+            { label: 'Templat pesan', nilai: (c) => c.ai_template || '' },
+          ]} />
         <Button onClick={runAnalysis} disabled={analyzing} data-testid="run-churn-btn">
-          {analyzing ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Sparkles size={13} className="mr-1" />}
-          {analyzing ? 'Menganalisis...' : result ? 'Refresh Analisis' : 'Jalankan Analisis'}
+          {analyzing ? <Loader2 className="animate-spin" /> : <Sparkles />}{analyzing ? 'Menganalisis…' : result ? 'Analisis ulang' : 'Jalankan analisis'}
         </Button>
       </div>
-
-      {/* Summary Cards */}
-      {summary && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {Object.entries(summary.segments || {}).map(([risk, count]) => {
-              const cfg = RISK_CONFIG[risk];
-              const Icon = cfg.icon;
-              return (
-                <div key={risk} className={`rounded-xl border p-4 cursor-pointer transition-all ${cfg.color} ${ riskFilter === risk ? 'ring-2 ring-offset-1 ring-current' : '' }`}
-                  onClick={() => setRiskFilter(riskFilter === risk ? 'all' : risk)}>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium capitalize">{cfg.label}</span>
-                    <Icon size={14} />
-                  </div>
-                  <p className="text-3xl font-bold tabular-nums">{count}</p>
-                  <p className="text-xs opacity-70">customer</p>
-                </div>
-              );
-            })}
-          </div>
-
-          {summary.general_strategy && (
-            <Card className="bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 border-violet-200 dark:border-violet-800">
-              <CardContent className="pt-4">
-                <div className="flex items-start gap-3">
-                  <Brain size={18} className="text-violet-600 mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-violet-900 dark:text-violet-100">{summary.general_strategy}</p>
-                    {summary.quick_wins?.length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {summary.quick_wins.map((w, i) => (
-                          <li key={i} className="flex items-center gap-1.5 text-xs text-violet-700 dark:text-violet-300">
-                            <ChevronRight size={11} /> {w}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+      {summary?.general_strategy && (
+        <Notice tone="info" icon={Brain} title={summary.general_strategy}>
+          {summary.quick_wins?.length > 0 && <ul className="list-disc space-y-0.5 pl-4">{summary.quick_wins.map((w, i) => <li key={i}>{w}</li>)}</ul>}
+        </Notice>
       )}
-
-      {/* Customer Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-3">
-            <CardTitle className="flex-1">Daftar Customer
-              {riskFilter !== 'all' && (
-                <Badge className={`ml-2 text-xs ${RISK_CONFIG[riskFilter]?.color}`} onClick={() => setRiskFilter('all')} style={{ cursor: 'pointer' }}>
-                  {RISK_CONFIG[riskFilter]?.label} <X size={10} className="ml-1" />
-                </Badge>
-              )}
-            </CardTitle>
-            <Select value={riskFilter} onValueChange={setRiskFilter}>
-              <SelectTrigger className="w-[130px] h-8 text-xs"><SelectValue placeholder="Filter risk" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Semua</SelectItem>
-                <SelectItem value="critical">Kritis</SelectItem>
-                <SelectItem value="high">Tinggi</SelectItem>
-                <SelectItem value="medium">Sedang</SelectItem>
-                <SelectItem value="low">Rendah</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {scoresLoading || analyzing ? (
-            <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" size={22} /></div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground">
-              <Users size={32} className="opacity-30" />
-              <p className="text-sm">{customers.length === 0 ? 'Klik "Jalankan Analisis" untuk memulai' : 'Tidak ada customer di filter ini'}</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    {['Customer', 'Risk', 'Recency', 'Order', 'Total Belanja', 'RFM', 'Freq/Bulan', 'Rekomendasi AI'].map(h => (
-                      <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filtered.map(c => {
-                    const rCfg = RISK_CONFIG[c.churn_risk] || RISK_CONFIG.low;
-                    return (
-                      <React.Fragment key={c.customer}>
-                        <tr
-                          className="hover:bg-muted/30 transition-colors cursor-pointer"
-                          onClick={() => setExpandedCustomer(expandedCustomer === c.customer ? null : c.customer)}
-                        >
-                          <td className="px-3 py-2.5 font-medium">{c.customer}</td>
-                          <td className="px-3 py-2.5">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${rCfg.color}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${rCfg.dot}`} />{rCfg.label}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 tabular-nums text-xs">{c.recency_days}h lalu</td>
-                          <td className="px-3 py-2.5 tabular-nums">{c.order_count}</td>
-                          <td className="px-3 py-2.5 tabular-nums text-xs">{fmtRp(c.total_spent_rp)}</td>
-                          <td className="px-3 py-2.5">
-                            <div className="flex items-center gap-0.5">
-                              {['R', 'F', 'M'].map((l, i) => (
-                                <span key={l} className={`w-5 h-5 rounded text-xs flex items-center justify-center font-bold ${
-                                  [c.r_score, c.f_score, c.m_score][i] >= 4 ? 'bg-emerald-100 text-emerald-700' :
-                                  [c.r_score, c.f_score, c.m_score][i] >= 3 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
-                                }`}>{[c.r_score, c.f_score, c.m_score][i]}</span>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5 tabular-nums text-xs">{c.freq_per_month}x</td>
-                          <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[200px]">
-                            {c.ai_action ? (
-                              <span className="truncate block" title={c.ai_action}>{c.ai_action}</span>
-                            ) : <span className="text-muted-foreground">—</span>}
-                          </td>
-                        </tr>
-                        {/* Expanded Row */}
-                        {expandedCustomer === c.customer && c.ai_template && (
-                          <tr>
-                            <td colSpan={8} className="px-3 py-3 bg-muted/20">
-                              <div className="flex items-start gap-2">
-                                <div className="p-2 rounded bg-violet-100 dark:bg-violet-900/30">
-                                  <Brain size={14} className="text-violet-600" />
-                                </div>
-                                <div className="flex-1">
-                                  <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 mb-1">
-                                    Template Pesan — via {c.ai_channel || 'WA'}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground italic whitespace-pre-wrap">{c.ai_template}</p>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {(scoresLoading || analyzing) && customers.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={filtered} kunci={(c) => c.customer} onKlikBaris={(c) => setExpandedCustomer(c.customer)} testId="churn-table"
+          kosong={<EmptyState icon={Users} title={customers.length === 0 ? 'Belum ada hasil analisis' : 'Tidak ada pelanggan di penyaring ini'}
+            description={customers.length === 0 ? 'Klik "Jalankan analisis" untuk memulai.' : 'Pilih tingkat risiko lain.'} />} />
+      )}
+      {(() => {
+        const c = customers.find((x) => x.customer === expandedCustomer);
+        if (!c) return null;
+        return (
+          <DetailPopup open onClose={() => setExpandedCustomer(null)} judul={c.customer} testId="churn-detail"
+            status={<StatusBadge status={c.churn_risk} label={(RISK_CONFIG[c.churn_risk] || RISK_CONFIG.low).label} tone={RISK_TONE[c.churn_risk]} />}>
+            <dl className="divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Terakhir belanja">{c.recency_days} hari lalu</BarisDetail>
+              <BarisDetail label="Pesanan">{c.order_count} ({String(c.freq_per_month ?? '—').replace('.', ',')}× per bulan)</BarisDetail>
+              <BarisDetail label="Total belanja">{fmtRp(c.total_spent_rp)}</BarisDetail>
+              <BarisDetail label="Skor RFM">{rfm(c)}</BarisDetail>
+              <BarisDetail label="Saran AI">{c.ai_action || '—'}</BarisDetail>
+              {c.ai_template && <BarisDetail label={`Templat pesan (${c.ai_channel || 'WA'})`}><span className="whitespace-pre-wrap italic text-muted-foreground">{c.ai_template}</span></BarisDetail>}
+            </dl>
+          </DetailPopup>
+        );
+      })()}
     </div>
   );
 }
-
 
 // ─────────────────────────────────────────────────────────────────
 // TAB 3: A/B TESTING
@@ -739,12 +481,12 @@ function ABTestingTab({ authH }) {
         duration_days: form.duration_days, variants
       }, { headers: authH });
       if (res.data.success) {
-        toast({ title: 'Eksperimen dibuat!' });
+        toast({ title: 'Eksperimen dibuat.' });
         setShowCreate(false);
         setForm({ name: '', hypothesis: '', test_type: 'content_hook', platform: 'tiktok', goal_metric: 'conversion', duration_days: 7, variantA: '', variantB: '', variantC: '' });
         fetchExperiments();
       }
-    } catch (e) { toast({ title: 'Gagal buat eksperimen', description: e.response?.data?.detail, variant: 'destructive' }); }
+    } catch (e) { toast({ title: 'Gagal membuat eksperimen', description: e.response?.data?.detail, variant: 'destructive' }); }
     finally { setCreating(false); }
   };
 
@@ -752,7 +494,7 @@ function ABTestingTab({ authH }) {
     setStatusLoading(l => ({ ...l, [exp.id]: true }));
     try {
       await axios.patch(`${API}/api/marketing/advanced-ai/ab-tests/${exp.id}/status?new_status=${newStatus}`, {}, { headers: authH });
-      toast({ title: `Status diubah ke ${newStatus}` });
+      toast({ title: `Status diubah: ${(AB_STATUS[newStatus] || {}).label || newStatus}` });
       fetchExperiments();
     } catch (e) { toast({ title: 'Gagal', description: e.response?.data?.detail, variant: 'destructive' }); }
     finally { setStatusLoading(l => ({ ...l, [exp.id]: false })); }
@@ -763,10 +505,10 @@ function ABTestingTab({ authH }) {
     try {
       const res = await axios.post(`${API}/api/marketing/advanced-ai/ab-tests/${exp.id}/conclude`, {}, { headers: authH });
       if (res.data.success) {
-        toast({ title: `🏆 Pemenang: ${res.data.data?.winner_label}!` });
+        toast({ title: `Pemenang: ${res.data.data?.winner_label}` });
         fetchExperiments();
       }
-    } catch (e) { toast({ title: 'Conclude gagal', description: e.response?.data?.detail, variant: 'destructive' }); }
+    } catch (e) { toast({ title: 'Gagal menentukan pemenang', description: e.response?.data?.detail, variant: 'destructive' }); }
     finally { setConcluding(l => ({ ...l, [exp.id]: false })); }
   };
 
@@ -784,325 +526,192 @@ function ABTestingTab({ authH }) {
       for (const [variantId, data] of Object.entries(recordData)) {
         await axios.post(`${API}/api/marketing/advanced-ai/ab-tests/${showRecord.id}/record`, { variant_id: variantId, ...data }, { headers: authH });
       }
-      toast({ title: 'Hasil disimpan!' });
+      toast({ title: 'Hasil disimpan.' });
       setShowRecord(null);
       fetchExperiments();
-    } catch (e) { toast({ title: 'Gagal simpan hasil', variant: 'destructive' }); }
+    } catch (e) { toast({ title: 'Gagal menyimpan hasil', variant: 'destructive' }); }
     finally { setRecording(false); }
   };
 
+  const TIPE_UJI = { content_hook: 'Hook konten', product_title: 'Judul produk', pricing: 'Harga', discount: 'Diskon' };
+  const PLAT = { tiktok: 'TikTok', shopee: 'Shopee', tokopedia: 'Tokopedia', instagram: 'Instagram' };
+  const TUJUAN = { conversion: 'Tingkat konversi', ctr: 'Rasio klik (CTR)', engagement: 'Interaksi' };
+  const AB_TONE = { draft: 'muted', running: 'success', paused: 'warning', concluded: 'info' };
+  const opsiStatus = [{ key: 'all', label: 'Semua' }, ...['draft', 'running', 'paused', 'concluded'].map((k) => ({ key: k, label: AB_STATUS[k].label }))];
+  const [rincian, setRincian] = useState(null);
+  const aksiEksperimen = (exp) => {
+    const hasData = exp.variants?.some(v => v.views > 0);
+    return (
+      <div className="flex flex-wrap justify-end gap-1">
+        {exp.status === 'draft' && (
+          <Button size="sm" variant="outline" onClick={() => changeStatus(exp, 'running')} disabled={statusLoading[exp.id]}>
+            {statusLoading[exp.id] ? <Loader2 className="animate-spin" /> : <Play />}Mulai
+          </Button>
+        )}
+        {exp.status === 'running' && <>
+          <Button size="sm" variant="outline" onClick={() => changeStatus(exp, 'paused')} disabled={statusLoading[exp.id]}><Pause />Jeda</Button>
+          <Button size="sm" variant="outline" onClick={() => openRecord(exp)}><Pencil />Isi hasil</Button>
+          {hasData && (
+            <Button size="sm" onClick={() => concludeExp(exp)} disabled={concluding[exp.id]}>
+              {concluding[exp.id] ? <Loader2 className="animate-spin" /> : <Trophy />}Tentukan pemenang
+            </Button>
+          )}
+        </>}
+        {exp.status === 'paused' && <>
+          <Button size="sm" variant="outline" onClick={() => changeStatus(exp, 'running')} disabled={statusLoading[exp.id]}><Play />Lanjutkan</Button>
+          <Button size="sm" variant="outline" onClick={() => openRecord(exp)}><Pencil />Isi hasil</Button>
+        </>}
+      </div>
+    );
+  };
+  const kolom = [
+    { kunci: 'nama', label: 'Eksperimen', hp: 'judul', isi: (e) => (
+      <div className="min-w-0 md:max-w-[22rem]"><p className="font-medium">{e.name}</p><p className="line-clamp-2 text-xs text-muted-foreground">{e.hypothesis}</p></div>) },
+    { kunci: 'tipe', label: 'Jenis · platform', isi: (e) => <span className="text-sm">{TIPE_UJI[e.test_type] || 'Lainnya'} · {PLAT[e.platform] || e.platform}</span> },
+    { kunci: 'varian', label: 'Varian', rata: 'kanan', isi: (e) => <span className="tabular-nums">{(e.variants || []).length}</span> },
+    { kunci: 'menang', label: 'Pemenang', isi: (e) => (e.status === 'concluded' && e.winner_label
+      ? <span className="flex items-center gap-1"><Trophy className="h-3.5 w-3.5 text-primary" />{e.winner_label}</span> : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'status', label: 'Status', isi: (e) => <StatusBadge status={e.status} label={(AB_STATUS[e.status] || AB_STATUS.draft).label} tone={AB_TONE[e.status]} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiEksperimen },
+  ];
+  const kolomVarian = (exp) => [
+    { kunci: 'l', label: 'Varian', hp: 'judul', isi: (v) => (
+      <span className="font-medium">{v.label}{exp.status === 'concluded' && exp.winner_variant_id === v.id ? ' (pemenang)' : ''}
+        {v.content && <span className="block text-xs font-normal text-muted-foreground">{v.content}</span>}</span>) },
+    { kunci: 'v', label: 'Tayangan', rata: 'kanan', isi: (v) => fmt(v.views) },
+    { kunci: 'c', label: 'Klik', rata: 'kanan', isi: (v) => fmt(v.clicks) },
+    { kunci: 'o', label: 'Pesanan', rata: 'kanan', isi: (v) => fmt(v.orders) },
+    { kunci: 'ctr', label: 'CTR', rata: 'kanan', isi: (v) => fmtPct(v.ctr).replace('.', ',') },
+    { kunci: 'cv', label: 'Konversi', rata: 'kanan', isi: (v) => fmtPct(v.conversion_rate).replace('.', ',') },
+    { kunci: 'r', label: 'Omzet', rata: 'kanan', isi: (v) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(v.revenue_rp)}</span> },
+  ];
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Eksperimen konten & creative untuk menemukan kombinasi terbaik</p>
-        <Button size="sm" onClick={() => setShowCreate(true)} data-testid="create-ab-btn">
-          <Plus size={13} className="mr-1" /> Buat Eksperimen
-        </Button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <FilterChips options={opsiStatus} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false} testId="ab-filter" ariaLabel="Status eksperimen" />
+        <p className="flex-1 text-sm text-muted-foreground">Uji konten & materi iklan untuk menemukan kombinasi terbaik.</p>
+        <TombolUnduh namaBerkas="eksperimen-ab" namaLembar="Eksperimen" baris={experiments} testId="ab-unduh"
+          kolom={[
+            { label: 'Eksperimen', nilai: (e) => e.name }, { label: 'Hipotesis', nilai: (e) => e.hypothesis || '' },
+            { label: 'Jenis', nilai: (e) => TIPE_UJI[e.test_type] || '' }, { label: 'Platform', nilai: (e) => PLAT[e.platform] || e.platform || '' },
+            { label: 'Tujuan', nilai: (e) => TUJUAN[e.goal_metric] || '' }, { label: 'Durasi (hari)', nilai: (e) => e.duration_days || '' },
+            { label: 'Jumlah varian', nilai: (e) => (e.variants || []).length }, { label: 'Pemenang', nilai: (e) => e.winner_label || '' },
+            { label: 'Status', nilai: (e) => (AB_STATUS[e.status] || AB_STATUS.draft).label },
+          ]} />
+        <Button onClick={() => setShowCreate(true)} data-testid="create-ab-btn"><Plus />Buat eksperimen</Button>
       </div>
 
-      {/* Filter */}
-      <div className="flex items-center gap-2">
-        {['all', 'draft', 'running', 'paused', 'concluded'].map(s => (
-          <button key={s}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-              filterStatus === s ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
-            }`}
-            onClick={() => setFilterStatus(s)}
-          >
-            {s === 'all' ? 'Semua' : AB_STATUS[s]?.label || s}
-          </button>
-        ))}
-      </div>
-
-      {/* Experiments List */}
-      {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="animate-spin text-muted-foreground" size={24} /></div>
-      ) : experiments.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-            <FlaskConical size={40} className="text-muted-foreground opacity-40" />
-            <p className="font-medium">Belum ada eksperimen</p>
-            <p className="text-sm text-muted-foreground">Buat eksperimen pertama untuk mulai mengoptimasi konten</p>
-            <Button size="sm" onClick={() => setShowCreate(true)}><Plus size={13} className="mr-1" /> Buat Sekarang</Button>
-          </CardContent>
-        </Card>
+      {loading && experiments.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat eksperimen…</p>
       ) : (
-        <div className="space-y-4">
-          {experiments.map(exp => {
-            const stsCfg = AB_STATUS[exp.status] || AB_STATUS.draft;
-            const hasConcluded = exp.status === 'concluded';
-            const hasData = exp.variants?.some(v => v.views > 0);
-            return (
-              <Card key={exp.id} className={hasConcluded ? 'border-violet-300 dark:border-violet-700' : ''}>
-                <CardHeader className="pb-2">
-                  <div className="flex flex-col sm:flex-row sm:items-start gap-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-semibold">{exp.name}</h3>
-                        <Badge className={`text-xs ${stsCfg.color}`}>{stsCfg.label}</Badge>
-                        <Badge variant="outline" className="text-xs capitalize">{exp.test_type?.replace(/_/g,' ')}</Badge>
-                        <Badge variant="outline" className="text-xs">{exp.platform}</Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-0.5">{exp.hypothesis}</p>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {exp.status === 'draft' && (
-                        <Button size="sm" variant="outline" className="h-8" onClick={() => changeStatus(exp, 'running')} disabled={statusLoading[exp.id]}>
-                          {statusLoading[exp.id] ? <Loader2 size={11} className="animate-spin" /> : <Play size={12} className="mr-1" />}
-                          Start
-                        </Button>
-                      )}
-                      {exp.status === 'running' && (
-                        <>
-                          <Button size="sm" variant="outline" className="h-8" onClick={() => changeStatus(exp, 'paused')} disabled={statusLoading[exp.id]}>
-                            <Pause size={12} className="mr-1" /> Pause
-                          </Button>
-                          <Button size="sm" variant="outline" className="h-8" onClick={() => openRecord(exp)}>
-                            <Pencil size={12} className="mr-1" /> Input Hasil
-                          </Button>
-                          {hasData && (
-                            <Button size="sm" className="h-8" onClick={() => concludeExp(exp)} disabled={concluding[exp.id]}>
-                              {concluding[exp.id] ? <Loader2 size={11} className="animate-spin mr-1" /> : <Trophy size={12} className="mr-1" />}
-                              Tentukan Pemenang
-                            </Button>
-                          )}
-                        </>
-                      )}
-                      {exp.status === 'paused' && (
-                        <>
-                          <Button size="sm" variant="outline" className="h-8" onClick={() => changeStatus(exp, 'running')} disabled={statusLoading[exp.id]}>
-                            <Play size={12} className="mr-1" /> Resume
-                          </Button>
-                          <Button size="sm" variant="outline" className="h-8" onClick={() => openRecord(exp)}>
-                            <Pencil size={12} className="mr-1" /> Input Hasil
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  {/* Concluded Winner */}
-                  {hasConcluded && exp.winner_label && (
-                    <div className="mb-3 p-3 bg-violet-50 dark:bg-violet-950/20 rounded-lg flex items-start gap-2">
-                      <Trophy size={16} className="text-violet-600 mt-0.5 shrink-0" />
-                      <div>
-                        <p className="text-sm font-bold text-violet-700 dark:text-violet-300">
-                          Pemenang: {exp.winner_label}
-                          {exp.improvement_pct && <span className="text-xs font-normal ml-2">({exp.improvement_pct}% lebih baik)</span>}
-                        </p>
-                        <p className="text-xs text-violet-600 dark:text-violet-400 mt-0.5">{exp.winner_reason}</p>
-                        {exp.recommendation && (
-                          <p className="text-xs text-muted-foreground mt-1 italic">Rekomendasi: {exp.recommendation}</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Variants Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {exp.variants?.map(v => (
-                      <div key={v.id}
-                        className={`rounded-lg border p-3 ${
-                          hasConcluded && exp.winner_variant_id === v.id
-                            ? 'border-violet-400 bg-violet-50 dark:bg-violet-950/20'
-                            : 'bg-muted/20'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5 mb-2">
-                          <span className="font-semibold text-sm">{v.label}</span>
-                          {hasConcluded && exp.winner_variant_id === v.id && (
-                            <Trophy size={12} className="text-violet-600" />
-                          )}
-                        </div>
-                        {v.content && (
-                          <p className="text-xs text-muted-foreground mb-2 line-clamp-2" title={v.content}>{v.content}</p>
-                        )}
-                        <div className="grid grid-cols-3 gap-1 text-xs">
-                          <div><p className="text-muted-foreground">Views</p><p className="font-bold tabular-nums">{fmt(v.views)}</p></div>
-                          <div><p className="text-muted-foreground">Clicks</p><p className="font-bold tabular-nums">{fmt(v.clicks)}</p></div>
-                          <div><p className="text-muted-foreground">Orders</p><p className="font-bold tabular-nums">{fmt(v.orders)}</p></div>
-                          <div><p className="text-muted-foreground">CTR</p><p className="font-bold tabular-nums">{fmtPct(v.ctr)}</p></div>
-                          <div><p className="text-muted-foreground">Conv</p><p className="font-bold tabular-nums">{fmtPct(v.conversion_rate)}</p></div>
-                          <div><p className="text-muted-foreground">Revenue</p><p className="font-bold tabular-nums text-xs">{fmtRp(v.revenue_rp)}</p></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        <TabelData kolom={kolom} baris={experiments} onKlikBaris={setRincian} testId="ab-table"
+          kosong={<EmptyState icon={FlaskConical} title="Belum ada eksperimen" description="Buat eksperimen pertama untuk mulai mengoptimalkan konten."
+            action={<Button onClick={() => setShowCreate(true)}><Plus />Buat sekarang</Button>} />} />
       )}
 
-      {/* Create Experiment Dialog */}
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><FlaskConical size={18} className="text-primary" /> Buat Eksperimen A/B</DialogTitle>
-            <DialogDescription>Definisikan hipotesis, variants, dan goal metric.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label className="text-xs font-semibold">Nama Eksperimen *</Label>
-              <Input className="mt-1 h-9" placeholder="cth: Hook Ramadan vs Generic" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+      {rincian && (() => {
+        const exp = experiments.find((x) => x.id === rincian.id) || rincian;
+        return (
+          <DetailPopup open onClose={() => setRincian(null)} judul={exp.name} testId="ab-detail"
+            status={<StatusBadge status={exp.status} label={(AB_STATUS[exp.status] || AB_STATUS.draft).label} tone={AB_TONE[exp.status]} />}
+            keterangan={`${TIPE_UJI[exp.test_type] || 'Lainnya'} · ${PLAT[exp.platform] || exp.platform} · tujuan ${(TUJUAN[exp.goal_metric] || '').toLowerCase()}`}
+            aksi={aksiEksperimen(exp)}>
+            <p className="text-sm">{exp.hypothesis}</p>
+            {exp.status === 'concluded' && exp.winner_label && (
+              <Notice tone="success" icon={Trophy} title={`Pemenang: ${exp.winner_label}${exp.improvement_pct ? ` (${exp.improvement_pct}% lebih baik)` : ''}`}>
+                {exp.winner_reason}{exp.recommendation ? ` Rekomendasi: ${exp.recommendation}` : ''}
+              </Notice>
+            )}
+            <div className="flex justify-end">
+              <TombolUnduh namaBerkas="varian-eksperimen-ab" namaLembar="Varian" baris={exp.variants || []} testId="ab-variants-unduh"
+                kolom={[{ label: 'Varian', nilai: (v) => v.label || '' }, { label: 'Isi', nilai: (v) => v.content || '' },
+                  { label: 'Tayangan', nilai: (v) => Number(v.views) || 0 }, { label: 'Klik', nilai: (v) => Number(v.clicks) || 0 },
+                  { label: 'Pesanan', nilai: (v) => Number(v.orders) || 0 }, { label: 'CTR (%)', nilai: (v) => Number(v.ctr) || 0 },
+                  { label: 'Konversi (%)', nilai: (v) => Number(v.conversion_rate) || 0 }, { label: 'Omzet', nilai: (v) => Number(v.revenue_rp) || 0 }]} />
             </div>
-            <div>
-              <Label className="text-xs font-semibold">Hipotesis *</Label>
-              <Textarea className="mt-1 text-sm" rows={2} placeholder="cth: Hook yang menyebutkan nama hari raya akan meningkatkan CTR 20% vs hook generic"
-                value={form.hypothesis} onChange={e => setForm(f => ({ ...f, hypothesis: e.target.value }))} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Tipe Test</Label>
-                <Select value={form.test_type} onValueChange={v => setForm(f => ({ ...f, test_type: v }))}>
-                  <SelectTrigger className="mt-1 h-9 text-sm"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="content_hook">Content Hook</SelectItem>
-                    <SelectItem value="product_title">Judul Produk</SelectItem>
-                    <SelectItem value="pricing">Harga</SelectItem>
-                    <SelectItem value="discount">Diskon</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Platform</Label>
-                <Select value={form.platform} onValueChange={v => setForm(f => ({ ...f, platform: v }))}>
-                  <SelectTrigger className="mt-1 h-9 text-sm"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="tiktok">🎵 TikTok</SelectItem>
-                    <SelectItem value="shopee">🛒 Shopee</SelectItem>
-                    <SelectItem value="tokopedia">🟢 Tokopedia</SelectItem>
-                    <SelectItem value="instagram">📸 Instagram</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Goal Metric</Label>
-                <Select value={form.goal_metric} onValueChange={v => setForm(f => ({ ...f, goal_metric: v }))}>
-                  <SelectTrigger className="mt-1 h-9 text-sm"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="conversion">Conversion Rate</SelectItem>
-                    <SelectItem value="ctr">CTR</SelectItem>
-                    <SelectItem value="engagement">Engagement</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Durasi (hari)</Label>
-                <Input type="number" min={1} max={30} className="mt-1 h-9 text-sm" value={form.duration_days}
-                  onChange={e => setForm(f => ({ ...f, duration_days: Number(e.target.value) }))} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold">Variants (min 2)</Label>
-              {['A', 'B', 'C'].map((l, i) => (
-                <div key={l}>
-                  <Label className="text-xs text-muted-foreground">Variant {l}{i >= 2 ? ' (opsional)' : ' *'}</Label>
-                  <Textarea rows={2} className="mt-0.5 text-sm" placeholder={`Isi konten / hook / judul variant ${l}`}
-                    value={form[`variant${l}`]}
-                    onChange={e => setForm(f => ({ ...f, [`variant${l}`]: e.target.value }))} />
-                </div>
+            <TabelData kolom={kolomVarian(exp)} baris={exp.variants || []} testId="ab-variants-table" />
+          </DetailPopup>
+        );
+      })()}
+
+      <FormPopup open={showCreate} onClose={() => setShowCreate(false)} ukuran="panjang" onSimpan={createExperiment} menyimpan={creating}
+        judul="Buat eksperimen A/B" keterangan="Tentukan hipotesis, varian, dan ukuran keberhasilan." labelSimpan="Buat eksperimen" testId="ab-form">
+        <Isian label="Nama eksperimen" wajib htmlFor="ab-name">
+          <Input id="ab-name" placeholder="cth: Hook Ramadan vs umum" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+        </Isian>
+        <Isian label="Hipotesis" wajib htmlFor="ab-hyp">
+          <Textarea id="ab-hyp" rows={2} placeholder="cth: Hook yang menyebut hari raya menaikkan CTR 20% dibanding hook umum"
+            value={form.hypothesis} onChange={e => setForm(f => ({ ...f, hypothesis: e.target.value }))} />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Jenis uji" htmlFor="ab-type">
+            <SmartNativeSelect id="ab-type" value={form.test_type} searchable={false} onChange={(e) => setForm(f => ({ ...f, test_type: e.target.value }))}>
+              {Object.entries(TIPE_UJI).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Platform" htmlFor="ab-plat">
+            <SmartNativeSelect id="ab-plat" value={form.platform} searchable={false} onChange={(e) => setForm(f => ({ ...f, platform: e.target.value }))}>
+              {Object.entries(PLAT).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Ukuran keberhasilan" htmlFor="ab-goal">
+            <SmartNativeSelect id="ab-goal" value={form.goal_metric} searchable={false} onChange={(e) => setForm(f => ({ ...f, goal_metric: e.target.value }))}>
+              {Object.entries(TUJUAN).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Durasi (hari)" htmlFor="ab-dur">
+            <Input id="ab-dur" type="number" min={1} max={30} value={form.duration_days} onChange={e => setForm(f => ({ ...f, duration_days: Number(e.target.value) }))} />
+          </Isian>
+        </div>
+        {['A', 'B', 'C'].map((l, i) => (
+          <Isian key={l} label={`Varian ${l}`} wajib={i < 2} petunjuk={i >= 2 ? 'Opsional.' : undefined} htmlFor={`ab-var-${l}`}>
+            <Textarea id={`ab-var-${l}`} rows={2} placeholder={`Isi konten / hook / judul varian ${l}`}
+              value={form[`variant${l}`]} onChange={e => setForm(f => ({ ...f, [`variant${l}`]: e.target.value }))} />
+          </Isian>
+        ))}
+      </FormPopup>
+
+      <FormPopup open={!!showRecord} onClose={() => setShowRecord(null)} ukuran="panjang" onSimpan={saveRecord} menyimpan={recording}
+        judul="Isi hasil eksperimen" keterangan={showRecord?.name} labelSimpan="Simpan hasil" testId="ab-record-form">
+        {showRecord && showRecord.variants.map(v => (
+          <div key={v.id} className="space-y-2 border-b border-[var(--glass-border)] pb-3">
+            <p className="text-sm font-medium">{v.label}{v.content ? <span className="block text-xs font-normal italic text-muted-foreground">{v.content}</span> : null}</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {ISIAN_HASIL_AB.map(([key, lbl]) => (
+                <Isian key={key} label={lbl} htmlFor={`rec-${v.id}-${key}`}>
+                  <Input id={`rec-${v.id}-${key}`} type="number" min={0} value={recordData[v.id]?.[key] ?? ''}
+                    onChange={e => setRecordData(d => ({ ...d, [v.id]: { ...d[v.id], [key]: Number(e.target.value) } }))} />
+                </Isian>
               ))}
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Batal</Button>
-            <Button onClick={createExperiment} disabled={creating}>
-              {creating ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Plus size={13} className="mr-1" />}
-              Buat Eksperimen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Record Results Dialog */}
-      <Dialog open={!!showRecord} onOpenChange={() => setShowRecord(null)}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><BarChart3 size={18} className="text-primary" /> Input Hasil Eksperimen</DialogTitle>
-            <DialogDescription>{showRecord?.name}</DialogDescription>
-          </DialogHeader>
-          {showRecord && (
-            <div className="space-y-4">
-              {showRecord.variants.map(v => (
-                <div key={v.id} className="border rounded-lg p-3">
-                  <p className="font-semibold text-sm mb-2">{v.label}</p>
-                  {v.content && <p className="text-xs text-muted-foreground mb-2 italic line-clamp-2">{v.content}</p>}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {[['views', 'Views'], ['clicks', 'Clicks'], ['orders', 'Orders'], ['revenue_rp', 'Revenue (Rp)'], ['engagement', 'Engagement']].map(([key, lbl]) => (
-                      <div key={key}>
-                        <Label className="text-xs">{lbl}</Label>
-                        <Input type="number" min={0} className="h-8 mt-0.5 text-sm"
-                          value={recordData[v.id]?.[key] ?? ''}
-                          onChange={e => setRecordData(d => ({ ...d, [v.id]: { ...d[v.id], [key]: Number(e.target.value) } }))} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRecord(null)}>Batal</Button>
-            <Button onClick={saveRecord} disabled={recording}>
-              {recording ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Save size={13} className="mr-1" />}
-              Simpan Hasil
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        ))}
+      </FormPopup>
     </div>
   );
 }
 
-
 // ─────────────────────────────────────────────────────────────────
 // MAIN MODULE
 // ─────────────────────────────────────────────────────────────────
+const ISIAN_HASIL_AB = [['views', 'Tayangan'], ['clicks', 'Klik'], ['orders', 'Pesanan'], ['revenue_rp', 'Omzet (Rp)'], ['engagement', 'Interaksi']];
+
 export default function AdvancedAIModule({ token }) {
   const [activeTab, setActiveTab] = useState('pricing');
   const authH = useMemo(() => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
-  const tabs = [
-    { id: 'pricing',  label: 'Dynamic Pricing',    icon: DollarSign,   badge: null },
-    { id: 'churn',    label: 'Churn Prediction',   icon: Users,        badge: null },
-    { id: 'abtest',   label: 'A/B Testing',        icon: FlaskConical, badge: null }
+  const TAMPILAN = [
+    { key: 'pricing', label: 'Harga dinamis', icon: DollarSign },
+    { key: 'churn', label: 'Pelanggan berisiko berhenti', icon: Users },
+    { key: 'abtest', label: 'Uji A/B', icon: FlaskConical },
   ];
-
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="advanced-ai-module">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Sparkles size={24} className="text-primary" />
-          Advanced AI Features
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Dynamic Pricing, Churn Prediction, A/B Testing</p>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-muted rounded-xl mb-6 overflow-x-auto">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex-1 justify-center whitespace-nowrap ${
-              activeTab === t.id
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            data-testid={`tab-${t.id}`}
-          >
-            <t.icon size={15} />{t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
+    <PageLayout testId="advanced-ai-module" title="AI lanjutan"
+      subtitle="Harga dinamis, prediksi pelanggan berhenti, dan uji A/B konten."
+      filters={<FilterChips options={TAMPILAN} value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="advanced-ai-view" ariaLabel="Tampilan" />}>
       {activeTab === 'pricing' && <DynamicPricingTab authH={authH} />}
       {activeTab === 'churn' && <ChurnPredictionTab authH={authH} />}
       {activeTab === 'abtest' && <ABTestingTab authH={authH} />}
-    </div>
+    </PageLayout>
   );
 }

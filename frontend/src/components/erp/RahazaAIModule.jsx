@@ -1,21 +1,35 @@
+/**
+ * Wawasan AI (Portal SDM › AI SDM) — ringkasan harian, analisis akar masalah, pencarian, prediksi keterlambatan WO.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (di hub: judul hub, bagian jadi pil), hasil pencarian &
+ * prediksi = tabel + unduh Excel/CSV (dulu kartu berulang), simpan sebagai tugas = FormPopup, tanggal =
+ * DatePicker (dulu input tanggal bawaan), kartu angka StatTile, warna token, bahasa Indonesia.
+ * Angka: efisiensi dulu dibagi target 1 bila target kosong (bisa 5000%) dan rasio gagal QC "0%" walau belum ada
+ * pemeriksaan — kini "—" dengan alasan.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { Brain, CheckSquare, Loader2, RefreshCw, Search, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Brain, RefreshCw, Loader2, TrendingDown, Search, AlertTriangle,
-  FileText, Sparkles, BarChart3, MessageSquare, CheckSquare, Save,
-} from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { useToast } from '@/hooks/use-toast';
 import { todayWIB } from '@/lib/waktu';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { formatDateID, formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const RISIKO = { high: { label: 'Risiko tinggi', tone: 'danger' }, medium: { label: 'Risiko sedang', tone: 'warning' }, low: { label: 'Risiko rendah', tone: 'success' } };
+const JENIS_HASIL = { wo: 'WO', order: 'Order', employee: 'Karyawan', karyawan: 'Karyawan' };
+const CONTOH_PERTANYAAN = ['Kenapa QC fail rate tinggi?', 'Apa penyebab downtime terbanyak?', 'Mengapa output turun minggu ini?'];
 
 export default function RahazaAIModule({ headers }) {
   const { toast } = useToast();
@@ -54,10 +68,10 @@ export default function RahazaAIModule({ headers }) {
     setSavingTask(true);
     try {
       await axios.post(`${API}/api/dewi/ai-actions`, taskDialog, { headers });
-      toast({ title: 'Tersimpan sebagai Task', description: 'Buka menu "AI Action Items" untuk tracking.' });
+      toast({ title: 'Tersimpan sebagai tugas', description: 'Buka tab "Tindak lanjut" untuk memantau.' });
       setTaskDialog(null);
     } catch (e) {
-      toast({ title: 'Gagal simpan task', variant: 'destructive' });
+      toast({ title: 'Gagal menyimpan tugas', variant: 'destructive' });
     } finally { setSavingTask(false); }
   };
 
@@ -107,246 +121,194 @@ export default function RahazaAIModule({ headers }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, loadSummary, loadDelays]);
 
-  const RISK_COLORS = { high: 'text-red-600 bg-red-50', medium: 'text-yellow-600 bg-yellow-50', low: 'text-green-600 bg-green-50' };
+  const ctx = summary?.context || {};
+  const adaTarget = (ctx.target_output_pcs || 0) > 0;
+  const adaQc = (ctx.total_qc_checked || 0) > 0;
+
+  const kolomCari = [
+    { kunci: 'jenis', label: 'Jenis', isi: (r) => <StatusBadge status={r.type} label={JENIS_HASIL[r.type] || r.type} tone="default" /> },
+    { kunci: 'label', label: 'Hasil', hp: 'judul', isi: (r) => <span className="font-medium text-foreground">{r.label}</span> },
+    { kunci: 'kode', label: 'Kode', isi: (r) => <span className="text-sm">{r.code || '—'}</span> },
+    { kunci: 'pelanggan', label: 'Pelanggan', isi: (r) => <span className="text-sm">{r.customer || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <span className="text-sm">{r.status || '—'}</span> },
+  ];
+  const kolomDelay = [
+    { kunci: 'wo', label: 'WO', hp: 'judul', isi: (wo) => (
+      <div className="min-w-0 md:max-w-[26rem]"><p className="font-medium text-foreground">{wo.wo_number}</p><p className="text-xs text-muted-foreground">{wo.message}</p></div>) },
+    { kunci: 'risiko', label: 'Risiko', isi: (wo) => {
+      const r = RISIKO[wo.risk_level] || { label: wo.risk_level || '—', tone: 'default' };
+      return <StatusBadge status={wo.risk_level} label={r.label} tone={r.tone} />;
+    } },
+    { kunci: 'tenggat', label: 'Jatuh tempo', isi: (wo) => <span className="text-sm md:whitespace-nowrap">{formatDateID(wo.due_date)}</span> },
+    { kunci: 'sisa', label: 'Sisa hari', rata: 'kanan', isi: (wo) => <span className="tabular-nums">{wo.days_left}</span> },
+    { kunci: 'peluang', label: 'Peluang terlambat', rata: 'kanan', isi: (wo) => <span className="font-medium tabular-nums">{wo.prob_delay_pct}%</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (wo) => ((wo.risk_level === 'high' || wo.risk_level === 'medium') ? (
+      <Button size="sm" variant="outline" data-testid={`save-delay-task-${wo.wo_id}`}
+        onClick={() => openSaveTask('predictive-delay', `Cegah delay WO ${wo.wo_number}`, wo.message + `\n\nProb delay: ${wo.prob_delay_pct}%, due ${wo.due_date}, sisa ${wo.days_left} hari, butuh ${wo.days_needed} hari lagi.`, wo.wo_id)}>
+        <CheckSquare />Jadikan tugas
+      </Button>) : null) },
+  ];
 
   return (
-    <div className="p-6 space-y-5">
-      <div>
-        <h2 className="text-xl font-semibold flex items-center gap-2"><Brain className="w-5 h-5 text-purple-500" /> AI Insights</h2>
-        <p className="text-sm text-muted-foreground">Ringkasan harian, analisis akar masalah, dan prediksi delay berbasis data</p>
-      </div>
-
+    <PageLayout testId="hr-ai-insights" title="Wawasan AI"
+      subtitle="Ringkasan harian, analisis akar masalah, dan prediksi keterlambatan berbasis data.">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="flex-wrap">
-          <TabsTrigger value="summary"><Sparkles className="w-4 h-4 mr-1" /> Ringkasan Harian</TabsTrigger>
-          <TabsTrigger value="rootcause"><BarChart3 className="w-4 h-4 mr-1" /> Root Cause</TabsTrigger>
-          <TabsTrigger value="search"><Search className="w-4 h-4 mr-1" /> Smart Search</TabsTrigger>
-          <TabsTrigger value="delay"><AlertTriangle className="w-4 h-4 mr-1" /> Prediksi Delay</TabsTrigger>
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="summary">Ringkasan harian</TabsTrigger>
+          <TabsTrigger value="rootcause">Akar masalah</TabsTrigger>
+          <TabsTrigger value="search">Pencarian pintar</TabsTrigger>
+          <TabsTrigger value="delay">Prediksi keterlambatan</TabsTrigger>
         </TabsList>
 
-        {/* Daily Summary */}
-        <TabsContent value="summary" className="mt-4 space-y-4">
-          <div className="flex items-center gap-3">
-            <input type="date" value={summaryDate} onChange={e => setSummaryDate(e.target.value)} className="border rounded px-2 py-1 text-sm bg-background" />
-            <Button onClick={loadSummary} disabled={summaryLoading} size="sm">
-              {summaryLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />} Generate
+        {/* Ringkasan harian */}
+        <TabsContent value="summary" className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-44"><DatePicker value={summaryDate} onChange={setSummaryDate} bolehKosong={false} testId="ai-summary-date" /></div>
+            <Button onClick={loadSummary} disabled={summaryLoading}>
+              {summaryLoading ? <Loader2 className="animate-spin" /> : <RefreshCw />}Buat ringkasan
             </Button>
           </div>
-          {summary && (
+          {summary ? (
             <>
-              <Card className="border-purple-200">
-                <CardContent className="pt-4">
-                  <div className="flex items-start gap-3">
-                    <Sparkles className="w-5 h-5 text-purple-500 mt-0.5 flex-shrink-0" />
-                    <p className="text-sm leading-relaxed flex-1">{summary.summary}</p>
-                  </div>
-                  <div className="flex items-center justify-between mt-3">
-                    <p className="text-xs text-muted-foreground">Dihasilkan: {summary.generated_at?.slice(0, 16).replace('T', ' ')}</p>
-                    <Button size="sm" variant="outline" onClick={() => openSaveTask('daily-summary', `Follow-up Ringkasan ${summaryDate}`, summary.summary, summaryDate)} data-testid="save-summary-task">
-                      <CheckSquare className="w-3.5 h-3.5 mr-1" /> Simpan sbg Task
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                  { label: 'Output', value: `${summary.context?.total_output_pcs || 0} pcs` },
-                  { label: 'Target', value: `${summary.context?.target_output_pcs || 0} pcs` },
-                  { label: 'Efisiensi', value: `${summary.context?.efisiensi_pct || 0}%` },
-                  { label: 'QC Fail Rate', value: `${summary.context?.fail_rate_pct || 0}%` },
-                ].map(s => (
-                  <Card key={s.label}><CardContent className="pt-3 pb-3">
-                    <p className="text-xs text-muted-foreground">{s.label}</p>
-                    <p className="text-lg font-bold">{s.value}</p>
-                  </CardContent></Card>
-                ))}
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <StatTile label="Output" value={`${ctx.total_output_pcs || 0} pcs`} sub={`Hasil produksi ${formatDateID(summaryDate)}.`} />
+                <StatTile label="Target" value={adaTarget ? `${ctx.target_output_pcs} pcs` : '—'} sub={adaTarget ? 'Target penugasan hari itu.' : 'Belum ada target hari itu.'} />
+                <StatTile label="Efisiensi" value={adaTarget ? `${ctx.efisiensi_pct || 0}%` : '—'} sub={adaTarget ? 'Output ÷ target.' : 'Tidak bisa dihitung tanpa target.'} />
+                <StatTile label="Rasio gagal QC" value={adaQc ? `${ctx.fail_rate_pct || 0}%` : '—'}
+                  sub={adaQc ? `${ctx.total_qc_fail || 0} gagal dari ${ctx.total_qc_checked} diperiksa.` : 'Belum ada pemeriksaan QC hari itu.'} />
               </div>
-            </>
-          )}
-          {!summary && !summaryLoading && (
-            <div className="text-center py-8 text-muted-foreground">
-              <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p>Klik Generate untuk membuat ringkasan harian AI</p>
-            </div>
-          )}
-        </TabsContent>
-
-        {/* Root Cause */}
-        <TabsContent value="rootcause" className="mt-4 space-y-3">
-          <p className="text-sm text-muted-foreground">Tanyakan analisis akar masalah produksi. AI akan menggunakan data real dari sistem.</p>
-          <Textarea
-            value={rcQuestion}
-            onChange={e => setRcQuestion(e.target.value)}
-            placeholder="Contoh: Kenapa QC fail rate tinggi di line A minggu ini?"
-            rows={3}
-          />
-          <div className="flex gap-2">
-            {[
-              'Kenapa QC fail rate tinggi?',
-              'Apa penyebab downtime terbanyak?',
-              'Mengapa output turun minggu ini?',
-            ].map(s => (
-              <button key={s} onClick={() => setRcQuestion(s)} className="text-xs border rounded-full px-3 py-1 hover:bg-muted transition-colors">{s}</button>
-            ))}
-          </div>
-          <Button onClick={handleRootCause} disabled={rcLoading || !rcQuestion.trim()}>
-            {rcLoading ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Brain className="w-4 h-4 mr-1" />} Analisis
-          </Button>
-          {rcAnswer && (
-            <Card className="border-blue-200">
-              <CardContent className="pt-4">
-                <p className="text-xs font-medium text-muted-foreground mb-2">Pertanyaan: {rcAnswer.question}</p>
-                <p className="text-sm whitespace-pre-wrap">{rcAnswer.analysis}</p>
-                <div className="flex items-center justify-between mt-3">
-                  <p className="text-xs text-muted-foreground">Periode data: {rcAnswer.data_period}</p>
-                  <Button size="sm" variant="outline" onClick={() => openSaveTask('root-cause', `RCA: ${rcAnswer.question.slice(0, 80)}`, rcAnswer.analysis, rcAnswer.data_period)} data-testid="save-rca-task">
-                    <CheckSquare className="w-3.5 h-3.5 mr-1" /> Simpan sbg Task
+              <GlassCard hover={false} className="space-y-3 p-4">
+                <p className="text-sm leading-relaxed text-foreground">{summary.summary}</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">Dibuat {summary.generated_at ? formatDateTimeID(summary.generated_at) : '—'}</p>
+                  <Button size="sm" variant="outline" data-testid="save-summary-task"
+                    onClick={() => openSaveTask('daily-summary', `Follow-up Ringkasan ${summaryDate}`, summary.summary, summaryDate)}>
+                    <CheckSquare />Jadikan tugas
                   </Button>
                 </div>
-              </CardContent>
-            </Card>
+              </GlassCard>
+            </>
+          ) : !summaryLoading && (
+            <EmptyState icon={Sparkles} title="Belum ada ringkasan" description='Pilih tanggal lalu klik "Buat ringkasan".' />
           )}
         </TabsContent>
 
-        {/* Smart Search */}
-        <TabsContent value="search" className="mt-4 space-y-3">
-          <p className="text-sm text-muted-foreground">Cari WO, order, atau karyawan menggunakan kata-kata natural.</p>
-          <div className="flex gap-2">
-            <input
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              placeholder="Contoh: WO terlambat, order PT Matahari, operator rajut"
-              className="flex-1 border rounded px-3 py-2 text-sm bg-background"
-            />
-            <Button onClick={handleSearch} disabled={searchLoading}>
-              {searchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+        {/* Akar masalah */}
+        <TabsContent value="rootcause" className="mt-4 space-y-3">
+          <p className="text-sm text-muted-foreground">Tanyakan penyebab masalah produksi. AI memakai data nyata dari sistem.</p>
+          <Textarea value={rcQuestion} onChange={e => setRcQuestion(e.target.value)} rows={3}
+            placeholder="Contoh: Kenapa rasio gagal QC tinggi di line A minggu ini?" />
+          <div className="flex flex-wrap items-center gap-2">
+            <SmartNativeSelect searchable={false} value="" onChange={(e) => e.target.value && setRcQuestion(e.target.value)} className="w-64" aria-label="Contoh pertanyaan">
+              <option value="">Pakai contoh pertanyaan…</option>
+              {CONTOH_PERTANYAAN.map(s => <option key={s} value={s}>{s}</option>)}
+            </SmartNativeSelect>
+            <Button onClick={handleRootCause} disabled={rcLoading || !rcQuestion.trim()}>
+              {rcLoading ? <Loader2 className="animate-spin" /> : <Brain />}Analisis
             </Button>
           </div>
-          {searchResults && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">{searchResults.count} hasil untuk "{searchResults.query}"</p>
-              {searchResults.results?.map((r, i) => (
-                <Card key={i}><CardContent className="pt-3 pb-3">
-                  <div className="flex items-center gap-3">
-                    <Badge variant="outline" className="text-xs">{r.type}</Badge>
-                    <span className="font-medium text-sm">{r.label}</span>
-                    {r.customer && <span className="text-xs text-muted-foreground">{r.customer}</span>}
-                    {r.status && <Badge variant="secondary" className="text-xs">{r.status}</Badge>}
-                    {r.code && <span className="text-xs text-muted-foreground">{r.code}</span>}
-                  </div>
-                </CardContent></Card>
-              ))}
-              {!searchResults.results?.length && <p className="text-sm text-muted-foreground">Tidak ada hasil ditemukan.</p>}
-            </div>
+          {rcAnswer && (
+            <GlassCard hover={false} className="space-y-3 p-4">
+              <p className="text-sm text-muted-foreground">Pertanyaan: {rcAnswer.question}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{rcAnswer.analysis}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">Periode data: {rcAnswer.data_period}</p>
+                <Button size="sm" variant="outline" data-testid="save-rca-task"
+                  onClick={() => openSaveTask('root-cause', `RCA: ${rcAnswer.question.slice(0, 80)}`, rcAnswer.analysis, rcAnswer.data_period)}>
+                  <CheckSquare />Jadikan tugas
+                </Button>
+              </div>
+            </GlassCard>
           )}
         </TabsContent>
 
-        {/* Predictive Delay */}
-        <TabsContent value="delay" className="mt-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">WO dengan risiko keterlambatan berdasarkan output historis vs due date.</p>
-            <Button variant="outline" size="sm" onClick={loadDelays} disabled={delaysLoading}>
-              {delaysLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            </Button>
+        {/* Pencarian pintar */}
+        <TabsContent value="search" className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex w-full gap-2 sm:w-auto">
+              <div className="relative w-full sm:w-96">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                  placeholder="Contoh: WO terlambat, order PT Matahari" className="pl-8" />
+              </div>
+              <Button onClick={handleSearch} disabled={searchLoading}>{searchLoading ? <Loader2 className="animate-spin" /> : <Search />}Cari</Button>
+            </div>
+            {searchResults && (
+              <TombolUnduh namaBerkas="hasil-pencarian-ai" namaLembar="Hasil" baris={searchResults.results || []}
+                kolom={[
+                  { label: 'Jenis', nilai: (r) => JENIS_HASIL[r.type] || r.type }, { label: 'Hasil', nilai: (r) => r.label },
+                  { label: 'Kode', nilai: (r) => r.code || '' }, { label: 'Pelanggan', nilai: (r) => r.customer || '' }, { label: 'Status', nilai: (r) => r.status || '' },
+                ]} />
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {searchResults ? `${searchResults.count} hasil untuk "${searchResults.query}".` : 'Cari WO, order, atau karyawan dengan kalimat biasa.'}
+          </p>
+          {searchResults && (
+            <TabelData kolom={kolomCari} baris={searchResults.results || []} kunci={(r) => `${r.type}-${r.code || r.label}`} testId="ai-search-results"
+              kosong={<EmptyState title="Tidak ada hasil" description="Coba kata lain." />} />
+          )}
+        </TabsContent>
+
+        {/* Prediksi keterlambatan */}
+        <TabsContent value="delay" className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">WO berisiko terlambat, dari output historis dibanding jatuh tempo.</p>
+            <div className="flex items-center gap-2">
+              <TombolUnduh namaBerkas="prediksi-keterlambatan-wo" namaLembar="Prediksi" baris={delays?.data || []}
+                kolom={[
+                  { label: 'WO', nilai: (w) => w.wo_number }, { label: 'Risiko', nilai: (w) => RISIKO[w.risk_level]?.label || w.risk_level || '' },
+                  { label: 'Jatuh tempo', nilai: (w) => formatDateID(w.due_date) }, { label: 'Sisa hari', nilai: (w) => w.days_left },
+                  { label: 'Butuh hari', nilai: (w) => w.days_needed ?? '' }, { label: 'Peluang terlambat (%)', nilai: (w) => w.prob_delay_pct },
+                  { label: 'Keterangan', nilai: (w) => w.message || '' },
+                ]} />
+              <Button variant="outline" size="icon" onClick={loadDelays} disabled={delaysLoading} title="Muat ulang" aria-label="Muat ulang">
+                <RefreshCw className={delaysLoading ? 'animate-spin' : ''} />
+              </Button>
+            </div>
           </div>
           {delays && (
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <Card><CardContent className="pt-3 pb-3"><p className="text-xs text-muted-foreground">WO Dianalisis</p><p className="text-xl font-bold">{delays.total}</p></CardContent></Card>
-              <Card><CardContent className="pt-3 pb-3"><p className="text-xs text-muted-foreground">Risiko Tinggi</p><p className="text-xl font-bold text-red-600">{delays.high_risk}</p></CardContent></Card>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <StatTile label="WO dianalisis" value={delays.total ?? 0} sub="WO aktif yang punya jatuh tempo." />
+              <StatTile label="Risiko tinggi" value={delays.high_risk ?? 0} accent={delays.high_risk ? 'danger' : 'default'} sub="Peluang terlambat tinggi." />
             </div>
           )}
-          {delaysLoading ? <div className="text-center py-8 text-muted-foreground">Memuat...</div> : (
-            <div className="space-y-3">
-              {(delays?.data || []).map(wo => (
-                <Card key={wo.wo_id}>
-                  <CardContent className="pt-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm">{wo.wo_number}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${RISK_COLORS[wo.risk_level] || ''}`}>{wo.risk_level} risk</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">{wo.message}</p>
-                      </div>
-                      <div className="text-right text-xs text-muted-foreground">
-                        <p>Due: {wo.due_date?.slice(0, 10)}</p>
-                        <p>Sisa: {wo.days_left} hari</p>
-                        <p className="text-red-600 font-medium">{wo.prob_delay_pct}% prob. delay</p>
-                      </div>
-                    </div>
-                    {(wo.risk_level === 'high' || wo.risk_level === 'medium') && (
-                      <div className="mt-2 pt-2 border-t border-border/50 flex justify-end">
-                        <Button size="sm" variant="outline" className="h-7 text-xs"
-                          onClick={() => openSaveTask('predictive-delay', `Cegah delay WO ${wo.wo_number}`, wo.message + `\n\nProb delay: ${wo.prob_delay_pct}%, due ${wo.due_date}, sisa ${wo.days_left} hari, butuh ${wo.days_needed} hari lagi.`, wo.wo_id)}
-                          data-testid={`save-delay-task-${wo.wo_id}`}>
-                          <CheckSquare className="w-3 h-3 mr-1" /> Simpan sbg Task
-                        </Button>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-              {(delays?.data || []).length === 0 && !delaysLoading && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p>Tidak ada WO aktif dengan prediksi delay.</p>
-                </div>
-              )}
-            </div>
+          {delaysLoading && !delays ? <p className="py-8 text-center text-sm text-muted-foreground">Memuat…</p> : (
+            <TabelData kolom={kolomDelay} baris={delays?.data || []} kunci={(w) => w.wo_id} testId="ai-delay"
+              kosong={<EmptyState title="Tidak ada WO aktif dengan prediksi keterlambatan" />} />
           )}
         </TabsContent>
       </Tabs>
 
-      {/* Save as Task dialog */}
-      {taskDialog && (
-        <Dialog open onOpenChange={() => setTaskDialog(null)}>
-          <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Simpan sebagai Task</DialogTitle></DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label>Judul</Label>
-                <input value={taskDialog.title}
-                  onChange={e => setTaskDialog(t => ({ ...t, title: e.target.value }))}
-                  className="w-full border rounded px-3 py-2 text-sm bg-background"
-                  data-testid="save-task-title" />
-              </div>
-              <div className="space-y-1">
-                <Label>Rekomendasi AI</Label>
-                <Textarea value={taskDialog.description} rows={5}
-                  onChange={e => setTaskDialog(t => ({ ...t, description: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Prioritas</Label>
-                  <Select value={taskDialog.priority} onValueChange={v => setTaskDialog(t => ({ ...t, priority: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="low">Rendah</SelectItem>
-                      <SelectItem value="medium">Sedang</SelectItem>
-                      <SelectItem value="high">Tinggi</SelectItem>
-                      <SelectItem value="critical">Kritis</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label>Due Date</Label>
-                  <input type="date" value={taskDialog.due_date}
-                    onChange={e => setTaskDialog(t => ({ ...t, due_date: e.target.value }))}
-                    className="w-full border rounded px-3 py-2 text-sm bg-background" />
-                </div>
-              </div>
+      {/* Simpan sebagai tugas */}
+      <FormPopup open={!!taskDialog} onClose={() => setTaskDialog(null)} ukuran="pendek" onSimpan={submitTask} menyimpan={savingTask}
+        judul="Simpan sebagai tugas" labelSimpan="Simpan tugas" testId="ai-save-task-form">
+        {taskDialog && (
+          <>
+            <Isian label="Judul" wajib htmlFor="ai-task-judul">
+              <Input id="ai-task-judul" value={taskDialog.title} data-testid="save-task-title"
+                onChange={e => setTaskDialog(t => ({ ...t, title: e.target.value }))} />
+            </Isian>
+            <Isian label="Rekomendasi AI" htmlFor="ai-task-desk">
+              <Textarea id="ai-task-desk" value={taskDialog.description} rows={5}
+                onChange={e => setTaskDialog(t => ({ ...t, description: e.target.value }))} />
+            </Isian>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Isian label="Prioritas">
+                <SmartNativeSelect searchable={false} value={taskDialog.priority} onChange={e => setTaskDialog(t => ({ ...t, priority: e.target.value }))}>
+                  <option value="low">Rendah</option>
+                  <option value="medium">Sedang</option>
+                  <option value="high">Tinggi</option>
+                  <option value="critical">Kritis</option>
+                </SmartNativeSelect>
+              </Isian>
+              <Isian label="Tenggat">
+                <DatePicker value={taskDialog.due_date} onChange={v => setTaskDialog(t => ({ ...t, due_date: v }))} placeholder="Tanpa tenggat" testId="ai-task-tenggat" />
+              </Isian>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setTaskDialog(null)}>Batal</Button>
-              <Button onClick={submitTask} disabled={savingTask} data-testid="confirm-save-task">
-                {savingTask ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-                Simpan Task
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-    </div>
+          </>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }

@@ -10,6 +10,8 @@
  *
  * 2026-11-05 (PANDUAN_UI G1/G3/G10): cetakan PageLayout — pil penyaring di toolbar kiri, muat ulang di kanan;
  * tombol di baris tabel bergaris (dulu tombol utama berulang); tampilan kosong memakai EmptyState.
+ * 2026-11-08 (Standar UI/UX v2): form terbitkan nota debit & catat refund = FormPopup pendek + DatePicker; ketiga
+ * tabel bisa diunduh Excel/CSV; ukuran huruf & warna standar. (Halaman cetak nota memakai gaya cetak sendiri.)
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { EmptyState, Notice } from '../moduleAtoms';
@@ -19,7 +21,9 @@ import { AlertCircle, FileMinus, Printer, RefreshCw, Scale, Undo2, Wallet } from
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import Modal from '../Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { toast } from 'sonner';
 import { apiGet, apiPost, fmtDate, fmtNum, fmtRp } from '../procurement/procApi';
 import { StatusBadge, SETTLEMENT_OPTIONS } from '../procurement/PurchaseReturnModule';
@@ -83,42 +87,35 @@ function IssueModal({ token, rtp, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title={`Terbitkan nota debit · ${rtp.rtp_number}`} onClose={onClose} size="md">
-      <div className="space-y-3 text-sm" data-testid="dn-issue-modal">
-        <div className="text-xs text-muted-foreground">
-          {rtp.supplier_name} · GR {rtp.gr_number} · {settlementLabel(rtp.settlement)} · harga dasar = harga GR, tanpa PPN.
-        </div>
-        {isDisc && (
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Harga setelah diskon (per satuan) *</label>
-            <MoneyInput decimals={2} glass value={disc} onChange={(e) => setDisc(e.target.value)} data-testid="dn-disc-price" />
-          </div>
-        )}
-        {needLoc && (
-          <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)}
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="dn-location">
-            <option value="">— lokasi penyimpanan barang yang diterima —</option>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="dn-issue-modal"
+      judul={`Terbitkan nota debit · ${rtp.rtp_number}`}
+      keterangan={`${rtp.supplier_name} · GR ${rtp.gr_number} · ${settlementLabel(rtp.settlement)} · harga dasar = harga GR, tanpa PPN.`}
+      onSimpan={submit} menyimpan={busy} galat={err} labelSimpan="Terbitkan">
+      {isDisc && (
+        <Isian label="Harga setelah diskon (per satuan)" wajib>
+          <MoneyInput decimals={2} glass value={disc} onChange={(e) => setDisc(e.target.value)} data-testid="dn-disc-price" />
+        </Isian>
+      )}
+      {needLoc && (
+        <Isian label="Lokasi penyimpanan barang yang diterima" wajib>
+          <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)} className="h-9 w-full" data-testid="dn-location">
+            <option value="">— pilih lokasi —</option>
             {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
           </SmartNativeSelect>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tanggal</label>
-            <GlassInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Nilai nota</label>
-            <div className="h-9 flex items-center font-semibold">{fmtRp(preview)}</div>
-          </div>
-        </div>
-        <GlassInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Catatan" />
-        {err && <div className="text-sm text-[hsl(var(--destructive))]">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy} data-testid="dn-issue-submit">{busy ? 'Memproses…' : 'Terbitkan'}</Button>
-        </div>
+        </Isian>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Tanggal">
+          <DatePicker value={date} onChange={(v) => setDate(v || todayWIB())} bolehKosong={false} testId="dn-date" />
+        </Isian>
+        <Isian label="Nilai nota">
+          <div className="h-9 flex items-center font-semibold tabular-nums">{fmtRp(preview)}</div>
+        </Isian>
       </div>
-    </Modal>
+      <Isian label="Catatan">
+        <GlassInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opsional" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -139,22 +136,19 @@ function RefundModal({ token, rtp, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title={`Catat refund · ${rtp.rtp_number}`} onClose={onClose} size="sm">
-      <div className="space-y-3 text-sm">
-        <div className="text-xs text-muted-foreground">Klaim {fmtRp(rtp.total_claim_amount)} — Dr rekening / Cr klaim retur pemasok.</div>
-        <SmartNativeSelect value={accId} onChange={(e) => setAccId(e.target.value)}
-          className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="refund-account">
-          <option value="">— rekening penerima —</option>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="dn-refund-modal"
+      judul={`Catat refund · ${rtp.rtp_number}`} keterangan={`Klaim ${fmtRp(rtp.total_claim_amount)} — Dr rekening / Cr klaim retur pemasok.`}
+      onSimpan={submit} menyimpan={busy} galat={err} labelSimpan="Catat refund">
+      <Isian label="Rekening penerima" wajib>
+        <SmartNativeSelect value={accId} onChange={(e) => setAccId(e.target.value)} className="h-9 w-full" data-testid="refund-account">
+          <option value="">— pilih rekening —</option>
           {accs.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} · ` : ''}{a.name}</option>)}
         </SmartNativeSelect>
-        <GlassInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        {err && <div className="text-sm text-[hsl(var(--destructive))]">{err}</div>}
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? 'Memproses…' : 'Catat refund'}</Button>
-        </div>
-      </div>
-    </Modal>
+      </Isian>
+      <Isian label="Tanggal">
+        <DatePicker value={date} onChange={(v) => setDate(v || todayWIB())} bolehKosong={false} testId="refund-date" />
+      </Isian>
+    </FormPopup>
   );
 }
 
@@ -198,7 +192,45 @@ export default function DebitNoteModule({ token }) {
             { key: 'balance', label: 'Saldo per pemasok', count: balItems.length },
           ]} />
       }
-      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>}
+      tools={<>
+        {tab === 'todo' && (
+          <TombolUnduh namaBerkas="retur-perlu-diselesaikan" namaLembar="Perlu diselesaikan" baris={todo} testId="dn-unduh"
+            kolom={[
+              { label: 'Retur', nilai: (r) => r.rtp_number },
+              { label: 'Pemasok', nilai: (r) => r.supplier_name },
+              { label: 'GR', nilai: (r) => r.gr_number || '' },
+              { label: 'Penyelesaian', nilai: (r) => settlementLabel(r.settlement) },
+              { label: 'Nilai', nilai: (r) => Number(r.total_amount) || 0 },
+              { label: 'Umur (hari)', nilai: (r) => Number(r.age_days) || 0 },
+            ]} />
+        )}
+        {tab === 'list' && (
+          <TombolUnduh namaBerkas="nota-debit" namaLembar="Nota debit" baris={dns} testId="dn-unduh"
+            kolom={[
+              { label: 'No. nota', nilai: (d) => d.dn_number },
+              { label: 'Tanggal', nilai: (d) => fmtDate(d.date || d.created_at) },
+              { label: 'Pemasok', nilai: (d) => d.supplier_name },
+              { label: 'Retur', nilai: (d) => d.rtp_number },
+              { label: 'Penyelesaian', nilai: (d) => settlementLabel(d.settlement) },
+              { label: 'Nilai', nilai: (d) => Number(d.total_amount) || 0 },
+              { label: 'Kurangi hutang', nilai: (d) => Number(d.ap_amount) || 0 },
+              { label: 'Kurangi hutang belum ditagih', nilai: (d) => Number(d.grni_amount) || 0 },
+              { label: 'Jurnal', nilai: (d) => d.je_number || (d.gl_error ? `Gagal: ${d.gl_error}` : '') },
+            ]} />
+        )}
+        {tab === 'balance' && (
+          <TombolUnduh namaBerkas="saldo-hutang-per-pemasok" namaLembar="Saldo pemasok" baris={balItems} testId="dn-unduh"
+            kolom={[
+              { label: 'Pemasok', nilai: (x) => x.supplier_name || '' },
+              { label: 'Sisa faktur', nilai: (x) => Number(x.invoice_balance) || 0 },
+              { label: 'Jumlah faktur', nilai: (x) => Number(x.invoice_count) || 0 },
+              { label: 'Nota debit (hutang)', nilai: (x) => Number(x.debit_note_ap) || 0 },
+              { label: 'Jumlah nota debit', nilai: (x) => Number(x.debit_note_count) || 0 },
+              { label: 'Saldo hutang', nilai: (x) => Number(x.net_payable) || 0 },
+            ]} />
+        )}
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
+      </>}
       summary={err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
     >
       {tab === 'todo' && (
@@ -208,21 +240,21 @@ export default function DebitNoteModule({ token }) {
               description="Retur pembelian yang perlu nota debit atau refund akan muncul di sini." />
           ) : (
             <table className="w-full text-sm min-w-[800px]">
-              <thead className="border-b border-border text-xs text-muted-foreground"><tr>
-                <th className="text-left px-3 py-2">Retur</th><th className="text-left px-3 py-2">Pemasok · GR</th>
-                <th className="text-left px-3 py-2">Penyelesaian</th><th className="text-right px-3 py-2">Nilai</th>
-                <th className="text-center px-3 py-2">Status</th><th className="text-right px-3 py-2">Umur</th><th className="text-right px-3 py-2">Aksi</th>
+              <thead><tr>
+                <th className="text-left">Retur</th><th className="text-left">Pemasok · GR</th>
+                <th className="text-left">Penyelesaian</th><th className="text-right">Nilai</th>
+                <th className="text-center">Status</th><th className="text-right">Umur</th><th className="text-right">Aksi</th>
               </tr></thead>
               <tbody>
                 {todo.map((r) => (
                   <tr key={r.id} className="border-b border-border" data-testid={`dn-todo-${r.id}`}>
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">{r.rtp_number}</td>
-                    <td className="px-3 py-2 text-xs">{r.supplier_name}<div className="text-muted-foreground whitespace-nowrap">{r.gr_number}</div></td>
-                    <td className="px-3 py-2 text-xs">{settlementLabel(r.settlement)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(r.total_amount)}</td>
-                    <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
-                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs">{r.age_days} hari</td>
-                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <td className="whitespace-nowrap">{r.rtp_number}</td>
+                    <td>{r.supplier_name}<div className="text-muted-foreground whitespace-nowrap">{r.gr_number}</div></td>
+                    <td>{settlementLabel(r.settlement)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.total_amount)}</td>
+                    <td className="text-center"><StatusBadge status={r.status} /></td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{r.age_days} hari</td>
+                    <td className="text-right whitespace-nowrap">
                       {r.settlement === 'refund' ? (
                         <Button size="sm" variant="outline" onClick={() => setRefunding(r)} data-testid={`dn-refund-${r.id}`}><Wallet className="w-3.5 h-3.5" />Catat refund</Button>
                       ) : (
@@ -244,26 +276,26 @@ export default function DebitNoteModule({ token }) {
               description="Nota debit muncul setelah diterbitkan dari daftar Perlu diselesaikan." />
           ) : (
             <table className="w-full text-sm min-w-[800px]">
-              <thead className="border-b border-border text-xs text-muted-foreground"><tr>
-                <th className="text-left px-3 py-2">No. nota</th><th className="text-left px-3 py-2">Tanggal</th>
-                <th className="text-left px-3 py-2">Pemasok</th><th className="text-left px-3 py-2">Dasar</th>
-                <th className="text-right px-3 py-2">Nilai</th><th className="text-right px-3 py-2">Kurangi hutang</th>
-                <th className="text-right px-3 py-2">Kurangi hutang belum ditagih</th><th className="text-left px-3 py-2">Jurnal</th><th />
+              <thead><tr>
+                <th className="text-left">No. nota</th><th className="text-left">Tanggal</th>
+                <th className="text-left">Pemasok</th><th className="text-left">Dasar</th>
+                <th className="text-right">Nilai</th><th className="text-right">Kurangi hutang</th>
+                <th className="text-right">Kurangi hutang belum ditagih</th><th className="text-left">Jurnal</th><th />
               </tr></thead>
               <tbody>
                 {dns.map((d) => (
                   <tr key={d.id} className="border-b border-border">
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">{d.dn_number}</td>
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">{fmtDate(d.date || d.created_at)}</td>
-                    <td className="px-3 py-2 text-xs">{d.supplier_name}</td>
-                    <td className="px-3 py-2 text-xs">{d.rtp_number} · {settlementLabel(d.settlement)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(d.total_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(d.ap_amount)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(d.grni_amount)}</td>
-                    <td className="px-3 py-2 text-xs">{d.je_number
+                    <td className="whitespace-nowrap">{d.dn_number}</td>
+                    <td className="whitespace-nowrap">{fmtDate(d.date || d.created_at)}</td>
+                    <td>{d.supplier_name}</td>
+                    <td>{d.rtp_number} · {settlementLabel(d.settlement)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmtRp(d.total_amount)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmtRp(d.ap_amount)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmtRp(d.grni_amount)}</td>
+                    <td>{d.je_number
                       ? <span className="whitespace-nowrap">{d.je_number}</span>
-                      : (d.gl_error ? <span className="text-[hsl(var(--destructive))]">Gagal: {d.gl_error}</span> : '—')}</td>
-                    <td className="px-3 py-2 text-right">
+                      : (d.gl_error ? <span className="text-[hsl(var(--danger-text))]">Gagal: {d.gl_error}</span> : '—')}</td>
+                    <td className="text-right">
                       <Button size="icon-sm" variant="ghost" onClick={() => printDebitNote(d)} title="Cetak nota debit" aria-label="Cetak nota debit"><Printer className="w-3.5 h-3.5" /></Button>
                     </td>
                   </tr>
@@ -282,23 +314,23 @@ export default function DebitNoteModule({ token }) {
           ) : (
             <>
               <table className="w-full text-sm min-w-[700px]">
-                <thead className="border-b border-border text-xs text-muted-foreground"><tr>
-                  <th className="text-left px-3 py-2">Pemasok</th><th className="text-right px-3 py-2">Sisa faktur</th>
-                  <th className="text-right px-3 py-2">Nota debit (hutang)</th><th className="text-right px-3 py-2">Saldo hutang</th>
+                <thead><tr>
+                  <th className="text-left">Pemasok</th><th className="text-right">Sisa faktur</th>
+                  <th className="text-right">Nota debit (hutang)</th><th className="text-right">Saldo hutang</th>
                 </tr></thead>
                 <tbody>
                   {balItems.map((s) => (
                     <tr key={`${s.supplier_id}-${s.supplier_name}`} className="border-b border-border">
-                      <td className="px-3 py-2">{s.supplier_name || '-'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(s.invoice_balance)} <span className="text-[11px] text-muted-foreground">({s.invoice_count})</span></td>
-                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(s.debit_note_ap)} <span className="text-[11px] text-muted-foreground">({s.debit_note_count})</span></td>
-                      <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap font-semibold ${s.net_payable < 0 ? 'text-[hsl(var(--success))]' : ''}`}>{fmtRp(s.net_payable)}</td>
+                      <td>{s.supplier_name || '-'}</td>
+                      <td className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.invoice_balance)} <span className="text-xs text-muted-foreground">({s.invoice_count})</span></td>
+                      <td className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.debit_note_ap)} <span className="text-xs text-muted-foreground">({s.debit_note_count})</span></td>
+                      <td className={`text-right tabular-nums whitespace-nowrap font-semibold ${s.net_payable < 0 ? 'text-[hsl(var(--success-text))]' : ''}`}>{fmtRp(s.net_payable)}</td>
                     </tr>
                   ))}
-                  <tr><td className="px-3 py-2 font-semibold" colSpan="3">Total</td><td className="px-3 py-2 text-right tabular-nums whitespace-nowrap font-bold">{fmtRp(bal.total_net_payable)}</td></tr>
+                  <tr><td className="font-semibold" colSpan="3">Total</td><td className="text-right tabular-nums whitespace-nowrap font-bold">{fmtRp(bal.total_net_payable)}</td></tr>
                 </tbody>
               </table>
-              <p className="text-[11px] text-muted-foreground px-3 py-2">Saldo negatif = pemasok berutang ke DA (faktur sudah dibayar lalu terkena nota debit).</p>
+              <p className="text-xs text-muted-foreground px-3 py-2">Saldo negatif = pemasok berutang ke DA (faktur sudah dibayar lalu terkena nota debit).</p>
             </>
           )}
         </GlassCard>

@@ -1,18 +1,24 @@
 /**
- * Employee Per Diem Admin Module
+ * Employee Per Diem Admin Module — tab "Tarif uang harian" di menu SDM › Klaim Dinas.
  * CV. Dewi Aditya — Employee Expense Management (EEM)
  *
- * Admin/HR dapat mengkonfigurasi tarif uang harian (per diem) per tipe destinasi.
+ * Admin/HR mengatur tarif uang harian (per diem) per jenis perjalanan. Tarif ini dipakai menghitung
+ * perkiraan uang harian saat karyawan mengajukan perjalanan dinas.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): tiga kartu berwarna ber-emoji + kotak info biru → satu tabel (kartu ringkas
+ * di HP) dengan unduh Excel/CSV; form ubah tarif = FormPopup pendek dengan DatePicker. Data yang dikirim sama.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Settings2, RefreshCw, Plus, Edit2, Check, X, AlertCircle, Info } from 'lucide-react';
+import { Pencil, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
-import { PageHeader } from './moduleAtoms';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
 
@@ -20,83 +26,23 @@ const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
 
 const DEST_TYPES = [
-  { value: 'dalam_kota',  label: 'Dalam Kota',  emoji: '🏙️', description: 'Perjalanan dalam kota yang sama' },
-  { value: 'luar_kota',   label: 'Luar Kota',   emoji: '🚗', description: 'Perjalanan ke kota/provinsi lain' },
-  { value: 'luar_negeri', label: 'Luar Negeri', emoji: '✈️', description: 'Perjalanan ke luar negeri' },
+  { value: 'dalam_kota',  label: 'Dalam Kota',  description: 'Perjalanan dalam kota yang sama' },
+  { value: 'luar_kota',   label: 'Luar Kota',   description: 'Perjalanan ke kota/provinsi lain' },
+  { value: 'luar_negeri', label: 'Luar Negeri', description: 'Perjalanan ke luar negeri' },
 ];
-
-function RateCard({ rate, onEdit }) {
-  const dt = DEST_TYPES.find(d => d.value === rate.destination_type) || {};
-  const isDefault = rate.is_default;
-
-  return (
-    <div className={`rounded-xl border p-5 space-y-4 ${
-      isDefault ? 'border-dashed border-muted-foreground/50 bg-muted/20' : 'bg-card shadow-sm'
-    }`}>
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">{dt.emoji}</span>
-          <div>
-            <h3 className="font-semibold">{rate.label || dt.label}</h3>
-            <p className="text-xs text-muted-foreground">{dt.description}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isDefault && (
-            <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full">Default</span>
-          )}
-          {rate.is_active === false && (
-            <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full">Nonaktif</span>
-          )}
-          <Button size="sm" variant="outline" onClick={() => onEdit(rate)} className="h-7">
-            <Edit2 className="w-3.5 h-3.5 mr-1" />{isDefault ? 'Konfigurasi' : 'Edit'}
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-3">
-        <div className="text-center rounded-lg bg-blue-50 dark:bg-blue-950/30 p-3">
-          <div className="text-xs text-muted-foreground mb-1">Uang Harian</div>
-          <div className="text-lg font-bold text-blue-700 dark:text-blue-300">
-            {fmt(rate.daily_rate)}
-          </div>
-          <div className="text-xs text-muted-foreground">/hari</div>
-        </div>
-        <div className="text-center rounded-lg bg-green-50 dark:bg-green-950/30 p-3">
-          <div className="text-xs text-muted-foreground mb-1">Uang Makan</div>
-          <div className="text-lg font-bold text-green-700 dark:text-green-300">
-            {fmt(rate.meal_allowance)}
-          </div>
-          <div className="text-xs text-muted-foreground">/hari</div>
-        </div>
-        <div className="text-center rounded-lg bg-orange-50 dark:bg-orange-950/30 p-3">
-          <div className="text-xs text-muted-foreground mb-1">Transport</div>
-          <div className="text-lg font-bold text-orange-700 dark:text-orange-300">
-            {fmt(rate.transport_allowance)}
-          </div>
-          <div className="text-xs text-muted-foreground">/hari</div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">Total per hari:</span>
-        <span className="font-bold text-base">
-          {fmt((rate.daily_rate || 0) + (rate.meal_allowance || 0) + (rate.transport_allowance || 0))}
-        </span>
-      </div>
-
-      {rate.effective_date && (
-        <p className="text-xs text-muted-foreground">Berlaku sejak: {rate.effective_date}</p>
-      )}
-      {rate.notes && (
-        <p className="text-xs text-muted-foreground italic">{rate.notes}</p>
-      )}
-    </div>
-  );
-}
+const jenis = (rate) => DEST_TYPES.find(d => d.value === rate.destination_type) || {};
+const namaJenis = (rate) => {
+  const s = rate.label || jenis(rate).label || 'Jenis lain';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+};
+const totalHarian = (r) => (Number(r.daily_rate) || 0) + (Number(r.meal_allowance) || 0) + (Number(r.transport_allowance) || 0);
+const keadaan = (r) => (r.is_default ? { label: 'Bawaan, belum diatur', tone: 'warning' }
+  : r.is_active === false ? { label: 'Nonaktif', tone: 'danger' } : { label: 'Aktif', tone: 'success' });
+// Catatan bawaan server ("Default rate — belum dikonfigurasi") tidak ditampilkan apa adanya.
+const catatan = (r) => (r.is_default ? 'Tarif bawaan sistem; belum pernah diatur.' : (r.notes || ''));
 
 function RateFormDialog({ rate, onClose, token, onSaved }) {
-  const dt = DEST_TYPES.find(d => d.value === rate.destination_type) || {};
+  const dt = jenis(rate);
   const [form, setForm] = useState({
     daily_rate: rate.daily_rate || 0,
     meal_allowance: rate.meal_allowance || 0,
@@ -131,7 +77,7 @@ function RateFormDialog({ rate, onClose, token, onSaved }) {
         body: JSON.stringify(body),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Gagal simpan');
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan');
       onSaved();
       onClose();
     } catch (e) { setError(e.message); }
@@ -139,54 +85,33 @@ function RateFormDialog({ rate, onClose, token, onSaved }) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2 p-3 rounded-lg bg-muted">
-        <span className="text-2xl">{dt.emoji}</span>
-        <div>
-          <p className="font-semibold">{dt.label}</p>
-          <p className="text-xs text-muted-foreground">{dt.description}</p>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="per-diem-form"
+      judul={`Tarif uang harian · ${namaJenis(rate)}`} keterangan={dt.description}
+      onSimpan={handleSave} labelSimpan="Simpan tarif" menyimpan={saving} galat={error}>
+      <Isian label="Uang harian (Rp/hari)" wajib petunjuk="Biaya hidup harian karyawan selama dinas.">
+        <MoneyInput value={form.daily_rate} onChange={e => set('daily_rate', e.target.value)} placeholder="Contoh: 300.000"
+          data-testid="per-diem-daily" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Uang makan (Rp/hari)">
+          <MoneyInput value={form.meal_allowance} onChange={e => set('meal_allowance', e.target.value)} placeholder="Contoh: 75.000" />
+        </Isian>
+        <Isian label="Tunjangan transport (Rp/hari)">
+          <MoneyInput value={form.transport_allowance} onChange={e => set('transport_allowance', e.target.value)} placeholder="Contoh: 100.000" />
+        </Isian>
       </div>
-
-      <div className="grid grid-cols-1 gap-4">
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Uang Harian (Rp/hari) *</label>
-          <MoneyInput value={form.daily_rate} onChange={e => set('daily_rate', e.target.value)} placeholder="misal: 300.000" />
-          <p className="text-xs text-muted-foreground">Biaya hidup harian karyawan selama dinas</p>
-        </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Uang Makan (Rp/hari)</label>
-          <MoneyInput value={form.meal_allowance} onChange={e => set('meal_allowance', e.target.value)} placeholder="misal: 75.000" />
-        </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Tunjangan Transport (Rp/hari)</label>
-          <MoneyInput value={form.transport_allowance} onChange={e => set('transport_allowance', e.target.value)} placeholder="misal: 100.000" />
-        </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Berlaku Sejak</label>
-          <Input type="date" value={form.effective_date} onChange={e => set('effective_date', e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <label className="text-sm font-medium">Catatan</label>
-          <Input placeholder="opsional" value={form.notes} onChange={e => set('notes', e.target.value)} />
-        </div>
+      <Isian label="Berlaku sejak">
+        <DatePicker value={form.effective_date} onChange={v => set('effective_date', v)} bolehKosong={false}
+          testId="per-diem-effective" />
+      </Isian>
+      <Isian label="Catatan" htmlFor="per-diem-notes">
+        <Input id="per-diem-notes" placeholder="Opsional" value={form.notes} onChange={e => set('notes', e.target.value)} />
+      </Isian>
+      <div className="flex items-center justify-between border-t border-[var(--glass-border)] pt-3">
+        <span className="text-sm font-medium">Total per hari</span>
+        <span className="text-base font-semibold tabular-nums">{fmt(totalHarian(form))}</span>
       </div>
-
-      {/* Preview */}
-      <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 p-3">
-        <p className="text-xs font-medium text-blue-800 dark:text-blue-300 mb-1">Preview Total Per Hari</p>
-        <p className="text-xl font-bold text-blue-700 dark:text-blue-300">
-          {fmt((parseFloat(form.daily_rate) || 0) + (parseFloat(form.meal_allowance) || 0) + (parseFloat(form.transport_allowance) || 0))}
-        </p>
-      </div>
-
-      {error && <div className="text-sm text-red-600 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{error}</div>}
-
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={handleSave} disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan Tarif'}</Button>
-      </DialogFooter>
-    </div>
+    </FormPopup>
   );
 }
 
@@ -208,60 +133,54 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
 
   useEffect(() => { fetchRates(); }, [fetchRates]);
 
+  const kolom = [
+    { kunci: 'jenis', label: 'Jenis perjalanan', hp: 'judul', isi: (r) => (
+      <div className="min-w-0">
+        <p className="font-medium text-foreground">{namaJenis(r)}</p>
+        <p className="text-xs text-muted-foreground" title={catatan(r)}>{jenis(r).description || ''}</p>
+      </div>) },
+    { kunci: 'harian', label: 'Uang harian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.daily_rate)}</span> },
+    { kunci: 'makan', label: 'Uang makan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.meal_allowance)}</span> },
+    { kunci: 'transport', label: 'Transport', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.transport_allowance)}</span> },
+    { kunci: 'total', label: 'Total per hari', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{fmt(totalHarian(r))}</span> },
+    { kunci: 'berlaku', label: 'Berlaku sejak', isi: (r) => (r.effective_date ? formatTanggalID(r.effective_date) || r.effective_date : '—') },
+    { kunci: 'status', label: 'Status', isi: (r) => { const k = keadaan(r); return <StatusBadge status={k.label} label={k.label} tone={k.tone} />; } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button size="sm" variant="outline" onClick={() => setEditing(r)} data-testid={`per-diem-edit-${r.destination_type}`}>
+        <Pencil />{r.is_default ? 'Atur' : 'Ubah'}
+      </Button>) },
+  ];
+
   return (
-    <div className="space-y-5" data-testid="per-diem-admin-page">
-      <PageHeader
-        icon={Settings2}
-        eyebrow="SDM · Konfigurasi"
-        title="Konfigurasi Per Diem"
-        subtitle="Atur tarif uang harian karyawan saat melakukan perjalanan dinas per tipe destinasi."
-        actions={
-          <Button variant="ghost" onClick={fetchRates} className="h-9 border">
-            <RefreshCw className="w-3.5 h-3.5 mr-1" />Muat Ulang
-          </Button>
-        }
-      />
-
-      <div className="rounded-lg border bg-blue-50 dark:bg-blue-950/30 p-4 flex items-start gap-3">
-        <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-        <div className="text-sm text-blue-800 dark:text-blue-300">
-          <p className="font-medium">Tentang Per Diem</p>
-          <p className="mt-1">Per Diem adalah kompensasi harian yang diberikan kepada karyawan yang melakukan perjalanan dinas.
-            Tarif ini digunakan untuk menghitung otomatis estimasi uang harian saat karyawan mengajukan perjalanan dinas.</p>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="p-12 text-center text-muted-foreground">
-          <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
-          Memuat konfigurasi...
-        </div>
+    <PageLayout testId="per-diem-admin-page" title="Tarif uang harian"
+      subtitle="Tarif per jenis perjalanan, dipakai menghitung perkiraan uang harian saat karyawan mengajukan perjalanan dinas."
+      tools={<>
+        <TombolUnduh namaBerkas="tarif-uang-harian" namaLembar="Tarif uang harian" baris={rates} testId="per-diem-unduh"
+          kolom={[
+            { label: 'Jenis perjalanan', nilai: (r) => namaJenis(r) },
+            { label: 'Uang harian', nilai: (r) => Number(r.daily_rate || 0) },
+            { label: 'Uang makan', nilai: (r) => Number(r.meal_allowance || 0) },
+            { label: 'Transport', nilai: (r) => Number(r.transport_allowance || 0) },
+            { label: 'Total per hari', nilai: (r) => totalHarian(r) },
+            { label: 'Berlaku sejak', nilai: (r) => (r.effective_date ? formatTanggalID(r.effective_date) : '') },
+            { label: 'Status', nilai: (r) => keadaan(r).label },
+            { label: 'Catatan', nilai: (r) => catatan(r) },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchRates} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {loading && rates.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat tarif…</p>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {rates.map(rate => (
-            <RateCard key={rate.destination_type} rate={rate} onEdit={setEditing} />
-          ))}
-        </div>
+        <TabelData kolom={kolom} baris={rates} kunci={(r) => r.destination_type} onKlikBaris={setEditing}
+          testId="per-diem-table"
+          kosong={<EmptyState title="Belum ada tarif" description="Server tidak mengirim tarif uang harian. Muat ulang atau hubungi admin." />} />
       )}
 
-      <Dialog open={!!editing} onOpenChange={v => !v && setEditing(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="w-5 h-5 text-blue-600" />
-              Konfigurasi Tarif Per Diem
-            </DialogTitle>
-          </DialogHeader>
-          {editing && (
-            <RateFormDialog
-              rate={editing}
-              token={token}
-              onClose={() => setEditing(null)}
-              onSaved={fetchRates}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
+      {editing && (
+        <RateFormDialog rate={editing} token={token} onClose={() => setEditing(null)} onSaved={fetchRates} />
+      )}
+    </PageLayout>
   );
 }

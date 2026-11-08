@@ -1,46 +1,53 @@
+/**
+ * Portal Saya › Cuti & Lembur — pengajuan cuti/izin/sakit dan lembur milik karyawan sendiri.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, saldo cuti = StatTile, daftar pengajuan & lembur = TabelData (kartu
+ * ringkas di HP) + unduh Excel/CSV, form pengajuan = FormPopup (dulu form terbuka di halaman), tanggal pakai
+ * DatePicker, status pakai StatusBadge bersama, tanpa emoji. Endpoint & validasi tidak berubah.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Calendar, Clock, Plus, Trash2, CheckCircle2, XCircle, HelpCircle,
-  Loader2, Paperclip, Upload, FileText, Info, X, RefreshCw,
+  Clock, Plus, Trash2, CheckCircle2, XCircle, HelpCircle,
+  Loader2, Paperclip, Upload, FileText, X, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassInput } from '@/components/ui/glass';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import { withFileAuth } from '@/lib/fileUrl';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
-const fmt = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const fmt = (d) => (d ? formatDateID(String(d).slice(0, 10)) : '—');
 
 const STATUS_CFG = {
-  pending_approval: { label: 'Menunggu Supervisor', icon: HelpCircle, cls: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-700' },
-  pending_hr_approval: { label: 'Menunggu HR',       icon: Clock,       cls: 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-700' },
-  approved:         { label: 'Disetujui',  icon: CheckCircle2, cls: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-700' },
-  rejected:         { label: 'Ditolak',   icon: XCircle,      cls: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-700' },
-  cancelled:        { label: 'Dibatalkan', icon: X,           cls: 'bg-muted text-muted-foreground border-border dark:bg-slate-800/30 dark:text-muted-foreground dark:border-slate-600' },
+  pending_approval: { label: 'Menunggu atasan', icon: HelpCircle, tone: 'warning' },
+  pending_hr_approval: { label: 'Menunggu HR', icon: Clock, tone: 'info' },
+  pending: { label: 'Menunggu persetujuan', icon: HelpCircle, tone: 'warning' },
+  approved: { label: 'Disetujui', icon: CheckCircle2, tone: 'success' },
+  rejected: { label: 'Ditolak', icon: XCircle, tone: 'danger' },
+  cancelled: { label: 'Dibatalkan', icon: X, tone: 'muted' },
 };
-function StatusBadge({ status }) {
+const labelStatus = (status) => (STATUS_CFG[status] || STATUS_CFG.pending_approval).label;
+function StatusPengajuan({ status }) {
   const cfg = STATUS_CFG[status] || STATUS_CFG.pending_approval;
-  const Icon = cfg.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium ${cfg.cls}`}>
-      <Icon className="w-3 h-3" /> {cfg.label}
-    </span>
-  );
+  return <StatusBadge status={status} label={cfg.label} tone={cfg.tone} />;
 }
 
 const REQ_TYPE_CFG = {
-  cuti:  { label: 'Cuti',  icon: '🏖️' },
-  sakit: { label: 'Sakit', icon: '🏥' },
-  izin:  { label: 'Izin',  icon: '📋' },
+  cuti:  { label: 'Cuti' },
+  sakit: { label: 'Sakit' },
+  izin:  { label: 'Izin' },
 };
 
 // ─── Document Upload ──────────────────────────────────────────────────────────
@@ -59,42 +66,36 @@ function DocUpload({ value, onChange, required, docNote, headers }) {
         method: 'POST', headers: { Authorization: headers.Authorization }, body: form,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Upload gagal');
+      if (!res.ok) throw new Error(data.detail || 'Unggah gagal');
       onChange({ url: data.url, filename: file.name });
-      toast({ title: 'Dokumen berhasil diupload' });
+      toast({ title: 'Dokumen berhasil diunggah' });
     } catch (e) { toast({ title: e.message, variant: 'destructive' }); }
     finally { setUploading(false); }
   };
 
   return (
-    <div className="space-y-2">
-      <Label className={`text-xs flex items-center gap-1 ${required ? 'text-amber-600 dark:text-amber-400' : ''}`}>
-        <Paperclip size={12} />
-        Bukti / Dokumen Pendukung {required && <span className="text-red-700 dark:text-red-500">*</span>}
-      </Label>
-      {docNote && (
-        <div className="flex items-start gap-1.5 p-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 text-[11px] text-amber-700 dark:text-amber-300">
-          <Info size={12} className="mt-0.5 shrink-0" /> {docNote}
-        </div>
-      )}
+    <Isian label="Bukti / dokumen pendukung" wajib={!!required} petunjuk={docNote}>
       {value?.url ? (
-        <div className="flex items-center gap-2 p-2 rounded border bg-muted/30">
-          <FileText size={14} className="text-emerald-600 shrink-0" />
-          <span className="text-xs text-emerald-600 truncate flex-1">{value.filename}</span>
-          <a href={withFileAuth(`${API}${value.url}`)} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline">Lihat</a>
-          <button onClick={() => onChange(null)} className="text-red-700 dark:text-red-400 hover:text-red-700 dark:text-red-500"><X size={12} /></button>
+        <div className="flex items-center gap-2 rounded-md border border-[var(--glass-border)] p-2">
+          <FileText className="h-4 w-4 shrink-0 text-[hsl(var(--success-text))]" />
+          <span className="min-w-0 flex-1 truncate text-sm">{value.filename}</span>
+          <Button asChild variant="link" size="sm" className="h-auto p-0">
+            <a href={withFileAuth(`${API}${value.url}`)} target="_blank" rel="noreferrer">Lihat</a>
+          </Button>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => onChange(null)} title="Hapus lampiran" aria-label="Hapus lampiran">
+            <X />
+          </Button>
         </div>
       ) : (
-        <div onClick={() => fileRef.current?.click()}
-          className="flex items-center justify-center gap-2 p-3 rounded border-2 border-dashed border-muted-foreground/30 hover:border-primary/50 cursor-pointer transition-colors text-sm text-muted-foreground"
-          data-testid="portal-doc-upload">
-          {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-          {uploading ? 'Mengupload...' : 'Upload foto/PDF (maks 8MB)'}
-        </div>
+        <Button type="button" variant="outline" className="w-full border-dashed" onClick={() => fileRef.current?.click()}
+          disabled={uploading} data-testid="portal-doc-upload">
+          {uploading ? <Loader2 className="animate-spin" /> : <Upload />}
+          {uploading ? 'Mengunggah…' : 'Unggah foto/PDF (maks 8 MB)'}
+        </Button>
       )}
       <input ref={fileRef} type="file" className="hidden" accept="image/*,application/pdf"
         onChange={e => handleFile(e.target.files?.[0])} />
-    </div>
+    </Isian>
   );
 }
 
@@ -211,12 +212,12 @@ export default function PortalSayaCuti({ user, headers }) {
         request_type:      selectedLT?.request_type || 'cuti',
         leave_kind:        selectedLT?.request_type || 'cuti',
       }, { headers });
-      toast({ title: 'Request berhasil dikirim! Menunggu persetujuan.' });
+      toast({ title: 'Pengajuan terkirim. Menunggu persetujuan.' });
       setShowForm(false);
       setForm(EMPTY);
       loadData();
     } catch (e) {
-      toast({ title: e.response?.data?.detail || 'Gagal kirim request', variant: 'destructive' });
+      toast({ title: e.response?.data?.detail || 'Gagal mengirim pengajuan', variant: 'destructive' });
     } finally { setSubmitting(false); }
   };
 
@@ -224,7 +225,7 @@ export default function PortalSayaCuti({ user, headers }) {
     if (!(await confirmDialog({ title: 'Batalkan pengajuan ini?', confirmLabel: 'Batalkan pengajuan', cancelLabel: 'Kembali', danger: true }))) return;
     try {
       await axios.post(`${API}/api/rahaza/leaves/${id}/cancel`, { reason: 'Dibatalkan oleh karyawan' }, { headers });
-      toast({ title: 'Request dibatalkan' });
+      toast({ title: 'Pengajuan dibatalkan' });
       loadData();
     } catch (e) {
       toast({ title: e.response?.data?.detail || 'Gagal membatalkan', variant: 'destructive' });
@@ -258,298 +259,242 @@ export default function PortalSayaCuti({ user, headers }) {
       await axios.post(`${API}/api/rahaza/overtime`, {
         employee_id: employee.id, date: otForm.date, hours: Number(otForm.hours), reason: otForm.reason.trim(),
       }, { headers });
-      toast({ title: 'Request lembur dikirim' });
+      toast({ title: 'Pengajuan lembur terkirim' });
       setShowOtForm(false);
       setOtForm(OT_EMPTY);
       loadData();
     } catch (e) {
-      toast({ title: e.response?.data?.detail || 'Gagal kirim request lembur', variant: 'destructive' });
+      toast({ title: e.response?.data?.detail || 'Gagal mengirim pengajuan lembur', variant: 'destructive' });
     } finally { setSubmitting(false); }
   };
 
   if (!employee) {
     return (
-      <div className="p-6 text-center space-y-2">
-        <p className="text-muted-foreground text-sm">
-          {!empChecked ? 'Mencari data karyawan...' : 'Akun Anda belum ditautkan ke data karyawan. Minta HR menautkannya di Data Karyawan › Tautkan akun.'}
-        </p>
-        {!empChecked && <Loader2 className="mx-auto animate-spin" size={20} />}
-      </div>
+      <PageLayout testId="portal-cuti" title="Cuti & lembur" subtitle="Ajukan cuti, izin, sakit, dan lembur, lalu pantau statusnya.">
+        {!empChecked ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Mencari data karyawan…</p>
+        ) : (
+          <EmptyState title="Akun belum terhubung ke data karyawan"
+            description="Minta HR menautkannya di Data Karyawan › Tautkan akun. Setelah itu Anda bisa mengajukan cuti dan lembur di sini." />
+        )}
+      </PageLayout>
     );
   }
 
-  return (
-    <div className="space-y-4" data-testid="portal-cuti">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold">Cuti & Izin</h2>
-          <p className="text-xs text-muted-foreground">{employee.name} · {employee.employee_code}</p>
-        </div>
-        <Button size="sm" onClick={() => loadData()} variant="outline">
-          <RefreshCw size={13} className="mr-1" /> Refresh
-        </Button>
-      </div>
+  const saldo = balances.filter(b => b.remaining > 0 || b.used > 0);
+  const bukaFormCuti = () => { setForm(EMPTY); setShowForm(true); };
+  const bukaFormLembur = () => { setOtForm(OT_EMPTY); setShowOtForm(true); };
+  const durasi = (lv) => `${lv.duration_days} hari${lv.duration_working_days && lv.duration_working_days !== lv.duration_days ? ` (${lv.duration_working_days} hari kerja)` : ''}`;
 
-      {/* Balance Cards */}
-      {balances.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {balances.filter(b => b.remaining > 0 || b.used > 0).map(b => (
-            <Card key={b.leave_type_id} className="p-3">
-              <p className="text-[10px] text-muted-foreground truncate">{b.leave_type_name}</p>
-              {/* Tahap 7: jenis tak dibayar tidak punya jatah — tampilkan pemakaian, bukan "sisa" minus */}
-              <p className="text-lg font-bold tabular-nums">{b.unpaid ? b.used : b.remaining}</p>
-              <p className="text-[10px] text-muted-foreground">
-                {b.unpaid ? 'hari terpakai · tidak dibayar' : `sisa dari ${b.quota} hari`}
-              </p>
-            </Card>
+  const kolomCuti = [
+    { kunci: 'jenis', label: 'Jenis', hp: 'judul', isi: (lv) => (
+      <div className="min-w-0" data-testid={`portal-leave-${lv.id}`}>
+        <p className="font-medium">{lv.leave_type_name}{lv.is_half_day && <span className="text-muted-foreground"> · ½ hari ({lv.half_day_period === 'PM' ? 'siang' : 'pagi'})</span>}</p>
+        {lv.reason && <p className="line-clamp-2 text-xs text-muted-foreground md:max-w-[18rem]">{lv.reason}</p>}
+      </div>) },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (lv) => <span className="whitespace-nowrap text-sm">{fmt(lv.from_date)} – {fmt(lv.to_date)}</span> },
+    { kunci: 'durasi', label: 'Durasi', isi: (lv) => <span className="text-sm">{durasi(lv)}</span> },
+    { kunci: 'status', label: 'Status', isi: (lv) => (
+      <div className="space-y-0.5">
+        <StatusPengajuan status={lv.status} />
+        {lv.rejected_reason && <p className="text-xs text-[hsl(var(--danger-text))]">Alasan: {lv.rejected_reason}</p>}
+        {lv.holidays_in_period?.length > 0 && (
+          <p className="text-xs text-muted-foreground">Libur: {lv.holidays_in_period.map(h => h.name).join(', ')}</p>
+        )}
+      </div>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (lv) => (
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        {lv.attachment_url && (
+          <Button asChild size="sm" variant="outline">
+            <a href={withFileAuth(`${API}${lv.attachment_url}`)} target="_blank" rel="noreferrer"><Paperclip />Dokumen</a>
+          </Button>
+        )}
+        {['pending_approval', 'pending_hr_approval'].includes(lv.status) && (
+          <Button variant="outline" size="sm" onClick={() => cancelLeave(lv.id)} data-testid={`leave-cancel-${lv.id}`}>
+            <Trash2 />Batalkan
+          </Button>
+        )}
+        {lv.status === 'approved' && new Date(lv.from_date) > new Date() && (
+          <Button variant="outline" size="sm" onClick={() => cancelLeave(lv.id)}>Batalkan</Button>
+        )}
+      </div>) },
+  ];
+
+  const kolomLembur = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'judul', isi: (ot) => <span className="whitespace-nowrap">{fmt(ot.date)}</span> },
+    { kunci: 'jam', label: 'Jumlah jam', isi: (ot) => (
+      <span className="text-sm">{ot.hours} jam{ot.start_time && ot.end_time ? ` (${ot.start_time}–${ot.end_time})` : ''}</span>) },
+    { kunci: 'alasan', label: 'Alasan / pekerjaan', isi: (ot) => <p className="line-clamp-2 text-sm md:max-w-[22rem]">{ot.reason || '—'}</p> },
+    { kunci: 'status', label: 'Status', isi: (ot) => <StatusPengajuan status={ot.status || 'pending_approval'} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (ot) => (ot.status === 'pending' ? (
+      <Button size="sm" variant="outline" onClick={() => cancelOT(ot.id)} data-testid={`ot-cancel-${ot.id}`}>Batalkan</Button>
+    ) : null) },
+  ];
+
+  return (
+    <PageLayout testId="portal-cuti" title="Cuti & lembur"
+      subtitle={`${employee.name} · ${employee.employee_code} — ajukan cuti, izin, sakit, dan lembur, lalu pantau statusnya.`}
+      actions={tab === 'leaves'
+        ? <Button onClick={bukaFormCuti} data-testid="btn-ajukan-cuti"><Plus />Ajukan cuti/izin</Button>
+        : <Button onClick={bukaFormLembur} data-testid="btn-ajukan-lembur"><Plus />Ajukan lembur</Button>}
+      tools={(
+        <Button variant="outline" size="icon" onClick={() => loadData()} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      )}
+      summary={saldo.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="portal-cuti-saldo">
+          {saldo.map(b => (
+            /* Tahap 7: jenis tak dibayar tidak punya jatah — tampilkan pemakaian, bukan "sisa" minus */
+            <StatTile key={b.leave_type_id} label={b.leave_type_name} value={`${b.unpaid ? b.used : b.remaining} hari`}
+              sub={b.unpaid ? 'terpakai · tidak dibayar' : `sisa dari ${b.quota} hari`} />
           ))}
         </div>
-      )}
-
+      )}>
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="leaves" data-testid="tab-cuti">Cuti & Izin</TabsTrigger>
-          <TabsTrigger value="overtime" data-testid="tab-lembur">Lembur</TabsTrigger>
+          <TabsTrigger value="leaves" data-testid="tab-cuti">Cuti & izin ({leaves.length})</TabsTrigger>
+          <TabsTrigger value="overtime" data-testid="tab-lembur">Lembur ({overtimes.length})</TabsTrigger>
         </TabsList>
 
         {/* ── CUTI/IZIN TAB ── */}
-        <TabsContent value="leaves" className="mt-4 space-y-4">
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setShowForm(v => !v)} data-testid="btn-ajukan-cuti">
-              <Plus size={13} className="mr-1" /> Ajukan {showForm ? '↑' : 'Baru'}
-            </Button>
-          </div>
-
-          {showForm && (
-            <Card className="p-4 space-y-3" data-testid="leave-form">
-              {/* Leave type grouped by request_type */}
-              <div>
-                <Label className="text-xs">Tipe Izin/Cuti <span className="text-red-700 dark:text-red-500">*</span></Label>
-                {/* Tahap 5: hanya jenis AKTIF, bisa dicari */}
-                <SmartNativeSelect value={form.leave_type_id}
-                  onChange={e => setForm(f => ({ ...f, leave_type_id: e.target.value }))}
-                  wrapperClassName="mt-1" data-testid="select-leave-type"
-                  className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
-                  <option value="">— Pilih jenis izin/cuti —</option>
-                  {['cuti', 'sakit', 'izin'].map(rt => (
-                    <optgroup key={rt} label={REQ_TYPE_CFG[rt].label}>
-                      {leaveTypes.filter(lt => lt.active !== false && (lt.request_type || 'cuti') === rt).map(lt => (
-                        <option key={lt.id} value={lt.id}>{`${REQ_TYPE_CFG[rt].label} · ${lt.name}${lt.quota_default ? ` (${lt.quota_default} hari)` : ''}`}</option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </SmartNativeSelect>
-                {selectedLT?.legal_basis && (
-                  <p className="text-[10px] text-muted-foreground mt-1">{selectedLT.legal_basis}</p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="text-xs">Dari Tanggal <span className="text-red-700 dark:text-red-500">*</span></Label>
-                  <GlassInput type="date" className="mt-1 h-9 text-sm"
-                    value={form.from_date} onChange={e => setForm(f => ({ ...f, from_date: e.target.value, to_date: f.is_half_day || !f.to_date ? e.target.value : f.to_date }))}
-                    data-testid="leave-from-date" />
-                </div>
-                <div>
-                  <Label className="text-xs">Sampai Tanggal <span className="text-red-700 dark:text-red-500">*</span></Label>
-                  <GlassInput type="date" className="mt-1 h-9 text-sm"
-                    value={form.to_date} min={form.from_date || undefined} disabled={form.is_half_day}
-                    onChange={e => setForm(f => ({ ...f, to_date: e.target.value }))}
-                    data-testid="leave-to-date" />
-                </div>
-              </div>
-
-              {/* Working days preview */}
-              {(wdPreview || wdLoading) && !form.is_half_day && (
-                <div className={`rounded-lg px-3 py-2 text-xs border ${
-                  wdLoading ? 'bg-muted/30 border-border text-muted-foreground' :
-                  wdPreview?.holiday_days > 0 ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300' :
-                  'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300'
-                }`} data-testid="portal-wd-preview">
-                  {wdLoading ? 'Menghitung hari kerja...' : wdPreview ? (
-                    <div>
-                      <span className="font-semibold">
-                        {wdPreview.working_days === wdPreview.calendar_days
-                          ? `${wdPreview.working_days} hari kerja`
-                          : `${wdPreview.working_days} hari kerja (dari ${wdPreview.calendar_days} hari)`}
-                      </span>
-                      {wdPreview.holiday_days > 0 && (
-                        <div className="mt-0.5">
-                          🎌 Libur dalam periode: {wdPreview.holidays.map(h => h.name).join(', ')}
-                        </div>
-                      )}
-                      {wdPreview.weekend_days > 0 && (
-                        <div>📅 {wdPreview.weekend_days} hari akhir pekan tidak dihitung</div>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              {/* Half day */}
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={form.is_half_day} data-testid="leave-half-day"
-                    onChange={e => setForm(f => ({ ...f, is_half_day: e.target.checked, to_date: e.target.checked ? f.from_date : f.to_date }))} className="rounded" />
-                  Setengah Hari
-                </label>
-                {form.is_half_day && (
-                  <Select value={form.half_day_period} onValueChange={v => setForm(f => ({ ...f, half_day_period: v }))}>
-                    <SelectTrigger className="h-8 w-28 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="AM">Pagi (AM)</SelectItem>
-                      <SelectItem value="PM">Siang (PM)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-
-              <div>
-                <Label className="text-xs">Alasan <span className="text-[hsl(var(--destructive))]">*</span></Label>
-                <Textarea className="mt-1 text-sm" rows={2}
-                  placeholder="Tulis alasan..."
-                  value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
-                  data-testid="leave-reason" />
-              </div>
-
-              {/* Document upload */}
-              <DocUpload
-                value={form.attachment}
-                onChange={att => setForm(f => ({ ...f, attachment: att }))}
-                required={selectedLT?.requires_document}
-                docNote={selectedLT?.doc_note}
-                headers={headers}
-              />
-
-              <div className="flex gap-2 pt-1">
-                <Button onClick={submitLeave} disabled={submitting} size="sm" data-testid="btn-submit-cuti">
-                  {submitting ? <Loader2 size={13} className="mr-1 animate-spin" /> : null}
-                  Kirim Pengajuan
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setShowForm(false)}>Batal</Button>
-              </div>
-            </Card>
-          )}
-
-          {/* List */}
-          {loading ? (
-            <div className="py-8 flex justify-center"><Loader2 className="animate-spin" size={20} /></div>
-          ) : leaves.length === 0 ? (
-            <Card className="p-8 text-center text-muted-foreground text-sm">Belum ada pengajuan</Card>
-          ) : (
-            <div className="space-y-2">
-              {leaves.map(lv => (
-                <Card key={lv.id} className="p-3" data-testid={`portal-leave-${lv.id}`}>
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="font-medium text-sm">{lv.leave_type_name}</span>
-                        <StatusBadge status={lv.status} />
-                        {lv.is_half_day && <Badge variant="outline" className="text-[10px]">½ {lv.half_day_period}</Badge>}
-                        {lv.attachment_url && (
-                          <a href={withFileAuth(`${API}${lv.attachment_url}`)} target="_blank" rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
-                            <Paperclip size={9} /> Dok
-                          </a>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {fmt(lv.from_date)} – {fmt(lv.to_date)} · {lv.duration_days} hari
-                        {lv.duration_working_days && lv.duration_working_days !== lv.duration_days && (
-                          <span className="text-emerald-600 dark:text-emerald-400 ml-1">
-                            ({lv.duration_working_days} hari kerja)
-                          </span>
-                        )}
-                        {lv.reason && <span className="italic ml-1">"{lv.reason}"</span>}
-                      </p>
-                      {lv.holidays_in_period?.length > 0 && (
-                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
-                          🎌 Libur: {lv.holidays_in_period.map(h => h.name).join(', ')}
-                        </p>
-                      )}
-                      {lv.rejected_reason && (
-                        <p className="text-xs text-red-700 dark:text-red-500 mt-0.5">Alasan: {lv.rejected_reason}</p>
-                      )}
-                    </div>
-                    {['pending_approval', 'pending_hr_approval'].includes(lv.status) && (
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-700 dark:text-red-400"
-                        onClick={() => cancelLeave(lv.id)}>
-                        <Trash2 size={12} />
-                      </Button>
-                    )}
-                    {lv.status === 'approved' && new Date(lv.from_date) > new Date() && (
-                      <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground"
-                        onClick={() => cancelLeave(lv.id)}>
-                        Batalkan
-                      </Button>
-                    )}
-                  </div>
-                </Card>
-              ))}
+        <TabsContent value="leaves" className="mt-4 space-y-3">
+          {leaves.length > 0 && (
+            <div className="flex justify-end">
+              <TombolUnduh namaBerkas="pengajuan-cuti-saya" namaLembar="Cuti & izin" baris={leaves} testId="cuti-unduh" kolom={[
+                { label: 'Jenis', nilai: (lv) => lv.leave_type_name }, { label: 'Dari', nilai: (lv) => fmt(lv.from_date) },
+                { label: 'Sampai', nilai: (lv) => fmt(lv.to_date) }, { label: 'Durasi (hari)', nilai: (lv) => lv.duration_days },
+                { label: 'Hari kerja', nilai: (lv) => lv.duration_working_days ?? '' },
+                { label: 'Setengah hari', nilai: (lv) => (lv.is_half_day ? (lv.half_day_period === 'PM' ? 'Siang' : 'Pagi') : '') },
+                { label: 'Status', nilai: (lv) => labelStatus(lv.status) }, { label: 'Alasan', nilai: (lv) => lv.reason || '' },
+                { label: 'Alasan ditolak', nilai: (lv) => lv.rejected_reason || '' },
+              ]} />
             </div>
+          )}
+          {loading && leaves.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
+          ) : (
+            <TabelData kolom={kolomCuti} baris={leaves} testId="portal-leave-table"
+              kosong={<EmptyState title="Belum ada pengajuan" description="Tekan Ajukan cuti/izin untuk membuat pengajuan pertama." />} />
           )}
         </TabsContent>
 
         {/* ── LEMBUR TAB ── */}
-        <TabsContent value="overtime" className="mt-4 space-y-4">
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setShowOtForm(v => !v)} data-testid="btn-ajukan-lembur">
-              <Plus size={13} className="mr-1" /> Ajukan Lembur
-            </Button>
-          </div>
-          {showOtForm && (
-            <Card className="p-4 space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-xs">Tanggal <span className="text-[hsl(var(--destructive))]">*</span></Label>
-                  <GlassInput type="date" className="mt-1 h-9 text-sm" data-testid="ot-date"
-                    value={otForm.date} onChange={e => setOtForm(f => ({ ...f, date: e.target.value }))} />
-                </div>
-                <div>
-                  <Label className="text-xs">Jumlah jam <span className="text-[hsl(var(--destructive))]">*</span></Label>
-                  <GlassInput type="number" min="0.5" max="12" step="0.5" className="mt-1 h-9 text-sm" data-testid="ot-hours"
-                    value={otForm.hours} onChange={e => setOtForm(f => ({ ...f, hours: e.target.value }))} />
-                </div>
-              </div>
-              <p className="text-[11px] text-muted-foreground">Pengali upah lembur mengikuti Pengaturan Payroll.</p>
-              <div>
-                <Label className="text-xs">Alasan / Pekerjaan <span className="text-[hsl(var(--destructive))]">*</span></Label>
-                <Textarea className="mt-1 text-sm" rows={2} data-testid="ot-reason"
-                  value={otForm.reason} onChange={e => setOtForm(f => ({ ...f, reason: e.target.value }))} />
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" onClick={submitOT} disabled={submitting} data-testid="ot-submit">Kirim</Button>
-                <Button size="sm" variant="outline" onClick={() => setShowOtForm(false)}>Batal</Button>
-              </div>
-            </Card>
-          )}
-          {overtimes.length === 0 ? (
-            <Card className="p-8 text-center text-muted-foreground text-sm">Belum ada request lembur</Card>
-          ) : (
-            <div className="space-y-2">
-              {overtimes.map(ot => (
-                <Card key={ot.id} className="p-3">
-                  <div className="flex items-center gap-2">
-                    <Clock size={14} className="text-muted-foreground shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium">
-                        {ot.date} · {ot.hours} jam{ot.start_time && ot.end_time ? ` (${ot.start_time}–${ot.end_time})` : ''}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{ot.reason}</p>
-                    </div>
-                    <StatusBadge status={ot.status || 'pending_approval'} />
-                    {ot.status === 'pending' && (
-                      <Button size="sm" variant="outline" onClick={() => cancelOT(ot.id)}
-                        data-testid={`ot-cancel-${ot.id}`}>Batalkan</Button>
-                    )}
-                  </div>
-                </Card>
-              ))}
+        <TabsContent value="overtime" className="mt-4 space-y-3">
+          {overtimes.length > 0 && (
+            <div className="flex justify-end">
+              <TombolUnduh namaBerkas="pengajuan-lembur-saya" namaLembar="Lembur" baris={overtimes} testId="lembur-unduh" kolom={[
+                { label: 'Tanggal', nilai: (ot) => fmt(ot.date) }, { label: 'Jumlah jam', nilai: (ot) => Number(ot.hours) || 0 },
+                { label: 'Mulai', nilai: (ot) => ot.start_time || '' }, { label: 'Selesai', nilai: (ot) => ot.end_time || '' },
+                { label: 'Alasan', nilai: (ot) => ot.reason || '' }, { label: 'Status', nilai: (ot) => labelStatus(ot.status || 'pending_approval') },
+              ]} />
             </div>
           )}
+          <TabelData kolom={kolomLembur} baris={overtimes} testId="portal-ot-table"
+            kosong={<EmptyState title="Belum ada pengajuan lembur" description="Tekan Ajukan lembur untuk mengajukan jam lembur." />} />
         </TabsContent>
       </Tabs>
-    </div>
+
+      {/* Form pengajuan cuti / izin */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" testId="leave-form"
+        judul="Ajukan cuti / izin" keterangan="Pengajuan diperiksa atasan lalu HR."
+        onSimpan={submitLeave} menyimpan={submitting} labelSimpan="Kirim pengajuan">
+        <Isian label="Jenis izin/cuti" wajib petunjuk={selectedLT?.legal_basis}>
+          {/* Tahap 5: hanya jenis AKTIF, bisa dicari */}
+          <SmartNativeSelect value={form.leave_type_id}
+            onChange={e => setForm(f => ({ ...f, leave_type_id: e.target.value }))}
+            data-testid="select-leave-type" className="w-full">
+            <option value="">— Pilih jenis izin/cuti —</option>
+            {['cuti', 'sakit', 'izin'].map(rt => (
+              <optgroup key={rt} label={REQ_TYPE_CFG[rt].label}>
+                {leaveTypes.filter(lt => lt.active !== false && (lt.request_type || 'cuti') === rt).map(lt => (
+                  <option key={lt.id} value={lt.id}>{`${REQ_TYPE_CFG[rt].label} · ${lt.name}${lt.quota_default ? ` (${lt.quota_default} hari)` : ''}`}</option>
+                ))}
+              </optgroup>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Dari tanggal" wajib>
+            <DatePicker value={form.from_date} testId="leave-from-date"
+              onChange={(v) => setForm(f => ({ ...f, from_date: v || '', to_date: f.is_half_day || !f.to_date ? (v || '') : f.to_date }))} />
+          </Isian>
+          <Isian label="Sampai tanggal" wajib>
+            <DatePicker value={form.to_date} min={form.from_date || undefined} disabled={form.is_half_day} testId="leave-to-date"
+              onChange={(v) => setForm(f => ({ ...f, to_date: v || '' }))} />
+          </Isian>
+        </div>
+
+        {/* Pratinjau hari kerja */}
+        {(wdPreview || wdLoading) && !form.is_half_day && (
+          <Notice tone={wdLoading ? 'info' : wdPreview?.holiday_days > 0 ? 'warning' : 'success'} testId="portal-wd-preview">
+            {wdLoading ? 'Menghitung hari kerja…' : wdPreview ? (
+              <>
+                <span className="font-medium">
+                  {wdPreview.working_days === wdPreview.calendar_days
+                    ? `${wdPreview.working_days} hari kerja`
+                    : `${wdPreview.working_days} hari kerja (dari ${wdPreview.calendar_days} hari)`}
+                </span>
+                {wdPreview.holiday_days > 0 && (
+                  <span className="block">Libur dalam periode: {wdPreview.holidays.map(h => h.name).join(', ')}</span>
+                )}
+                {wdPreview.weekend_days > 0 && (
+                  <span className="block">{wdPreview.weekend_days} hari akhir pekan tidak dihitung</span>
+                )}
+              </>
+            ) : null}
+          </Notice>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input type="checkbox" checked={form.is_half_day} data-testid="leave-half-day" className="h-4 w-4 accent-[hsl(var(--primary))]"
+              onChange={e => setForm(f => ({ ...f, is_half_day: e.target.checked, to_date: e.target.checked ? f.from_date : f.to_date }))} />
+            Setengah hari
+          </label>
+          {form.is_half_day && (
+            <SmartNativeSelect value={form.half_day_period} onChange={e => setForm(f => ({ ...f, half_day_period: e.target.value }))}
+              searchable={false} className="w-full" wrapperClassName="w-40" aria-label="Bagian hari">
+              <option value="AM">Pagi</option>
+              <option value="PM">Siang</option>
+            </SmartNativeSelect>
+          )}
+        </div>
+
+        <Isian label="Alasan" wajib htmlFor="leave-reason">
+          <Textarea id="leave-reason" rows={2} placeholder="Tulis alasan…"
+            value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+            data-testid="leave-reason" />
+        </Isian>
+
+        <DocUpload
+          value={form.attachment}
+          onChange={att => setForm(f => ({ ...f, attachment: att }))}
+          required={selectedLT?.requires_document}
+          docNote={selectedLT?.doc_note}
+          headers={headers}
+        />
+      </FormPopup>
+
+      {/* Form pengajuan lembur */}
+      <FormPopup open={showOtForm} onClose={() => setShowOtForm(false)} ukuran="pendek" testId="ot-form"
+        judul="Ajukan lembur" keterangan="Pengali upah lembur mengikuti Pengaturan Payroll."
+        onSimpan={submitOT} menyimpan={submitting} labelSimpan="Kirim pengajuan">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Isian label="Tanggal" wajib>
+            <DatePicker value={otForm.date} onChange={(v) => setOtForm(f => ({ ...f, date: v || '' }))} testId="ot-date" />
+          </Isian>
+          <Isian label="Jumlah jam" wajib htmlFor="ot-hours">
+            <Input id="ot-hours" type="number" min="0.5" max="12" step="0.5" data-testid="ot-hours"
+              value={otForm.hours} onChange={e => setOtForm(f => ({ ...f, hours: e.target.value }))} />
+          </Isian>
+        </div>
+        <Isian label="Alasan / pekerjaan" wajib htmlFor="ot-reason">
+          <Textarea id="ot-reason" rows={2} data-testid="ot-reason"
+            value={otForm.reason} onChange={e => setOtForm(f => ({ ...f, reason: e.target.value }))} />
+        </Isian>
+      </FormPopup>
+    </PageLayout>
   );
 }

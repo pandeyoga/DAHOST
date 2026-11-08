@@ -7,14 +7,19 @@
  * dicatat). Faktur hanya DOKUMEN CETAK — per kiriman atau per PO, berapa pun jumlahnya.
  *
  * Sumber data: /api/dewi/maklon/receivables (satu dokumen piutang per PO di rahaza_ar_invoices).
- * PANDUAN_UI: PageLayout · rincian PO di halaman (DetailPanel) · isi kiriman di bawah barisnya (RowDetail) ·
- * popup hanya untuk formulir pembayaran.
+ * PANDUAN_UI: PageLayout · rincian PO = popup (DetailPanel) · isi kiriman di bawah barisnya (RowDetail).
+ * Standar UI/UX v2 (8 Nov 2026): semua tabel bisa diunduh (Excel/CSV), form pembayaran = FormPopup + DatePicker,
+ * cari ± 16 rem, warna status token. Selama form pembayaran terbuka, popup rincian disembunyikan (tidak bertumpuk).
  */
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Banknote, CreditCard, FileText, RefreshCw, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
+import { Input } from '@/components/ui/input';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -23,7 +28,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
-import Modal from './Modal';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
 import { filterCashAccountsByCv } from './SdmCashAccountSelect';
@@ -98,9 +102,9 @@ export default function MaklonBillingModule({ token }) {
       title="Piutang klien maklon"
       subtitle="Per PO: terjadwal saat dikonfirmasi, tertagih saat barang dikirim, lalu dibayar klien."
       filters={(data.items || []).length > 0 && <>
-        <div className="relative w-72 max-w-full">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <GlassInput className="pl-9 h-9" placeholder="Cari PO / klien / nomor piutang…" value={search}
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Cari PO, klien, nomor piutang" value={search}
             onChange={(e) => setSearch(e.target.value)} data-testid="mkl-ar-search" />
         </div>
         <FilterChips value={status} onChange={setStatus} testId="mkl-ar-status" ariaLabel="Status piutang"
@@ -109,9 +113,19 @@ export default function MaklonBillingModule({ token }) {
             { key: 'belum_lunas', label: 'Belum lunas', count: c.belum_lunas || 0 },
             { key: 'lunas', label: 'Lunas', count: c.lunas || 0 }]} />
       </>}
-      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="billing-refresh-btn">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="piutang-klien-maklon" namaLembar="Piutang klien" baris={rows} testId="mkl-ar-unduh"
+          kolom={[
+            { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Nomor piutang', nilai: (r) => r.invoice_number || '' },
+            { label: 'Klien', nilai: (r) => r.client_name || '' }, { label: 'Status', nilai: (r) => (STATUS[r.status] || { label: r.status }).label },
+            { label: 'Nilai PO', nilai: (r) => Number(r.scheduled_total || 0) }, { label: 'Tertagih', nilai: (r) => Number(r.billed_total || 0) },
+            { label: 'Dibayar', nilai: (r) => Number(r.paid_total || 0) }, { label: 'Sisa tertagih', nilai: (r) => Number(r.amount_due || 0) },
+            { label: 'Jatuh tempo', nilai: (r) => (r.due_date ? formatDateID(r.due_date) : '') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="billing-refresh-btn">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={<>
         {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
         {(data.items || []).length > 0 && (
@@ -160,15 +174,15 @@ export default function MaklonBillingModule({ token }) {
                     <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelected(r.id)}>
                       {r.po_number || '—'}
                     </Button>
-                    <div className="text-[11px] text-muted-foreground">{r.invoice_number}{r.mode === 'lama' ? ' · faktur lama' : ''}</div>
+                    <div className="text-xs text-muted-foreground">{r.invoice_number}{r.mode === 'lama' ? ' · faktur lama' : ''}</div>
                   </TableCell>
                   <TableCell>{r.client_name}</TableCell>
-                  <TableCell><ArStatus status={r.status} />{r.post_error && <div className="text-[11px] text-[hsl(var(--destructive))] mt-1">Jurnal tertunda</div>}</TableCell>
+                  <TableCell><ArStatus status={r.status} />{r.post_error && <div className="mt-1 text-xs text-[hsl(var(--danger-text))]">Jurnal tertunda</div>}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.scheduled_total)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.billed_total)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.paid_total)}</TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">
-                    {r.amount_due > 0.005 ? <span className="text-[hsl(var(--warning))] font-semibold">{fmt(r.amount_due)}</span> : fmt(0)}
+                    {r.amount_due > 0.005 ? <span className="font-semibold text-[hsl(var(--warning-text))]">{fmt(r.amount_due)}</span> : fmt(0)}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">{r.due_date ? formatDateID(r.due_date) : '—'}</TableCell>
                   <TableCell className="text-right">
@@ -203,6 +217,14 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
     `/api/dewi/maklon/receivables/${arId}/invoice.pdf?shipment_id=${encodeURIComponent(g.shipment_id)}&dispatch_seq=${g.dispatch_seq}`,
     headers, `Faktur_${d.invoice_number}_${g.seq_no}.pdf`);
 
+  // Form pembayaran menggantikan popup rincian sementara (tidak ada popup bertumpuk); Batal → rincian lagi.
+  if (paying && d) {
+    return (
+      <PaymentForm receivable={d} headers={headers} token={token}
+        onClose={() => setPaying(false)} onDone={() => { setPaying(false); refresh(); }} />
+    );
+  }
+
   return (
     <DetailPanel testId="mkl-ar-detail" onClose={onClose}
       title={d ? `${d.po_number} · ${d.client_name}` : 'Memuat…'}
@@ -225,7 +247,16 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
           <p className="text-sm text-muted-foreground">Uang muka klien <b className="text-foreground tabular-nums">{fmt(d.advance_balance)}</b> belum terpakai — otomatis menutup piutang saat barang berikutnya dikirim.</p>
         )}
 
-        <p className="text-sm font-semibold text-foreground">Per ukuran</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-foreground">Per ukuran</p>
+          <TombolUnduh namaBerkas={`piutang-${d.po_number}-per-ukuran`} namaLembar="Per ukuran" baris={d.lines || []} testId="mkl-ar-lines-unduh"
+            kolom={[
+              { label: 'Barang', nilai: (ln) => `${ln.sku || ln.description || ''}${ln.size ? ` · ${ln.size}` : ''}` },
+              { label: 'Dipesan', nilai: (ln) => Number(ln.qty_ordered ?? ln.qty ?? 0) }, { label: 'Dikirim', nilai: (ln) => ln.qty_dispatched ?? '' },
+              { label: 'Tertagih', nilai: (ln) => ln.qty_billed ?? '' }, { label: 'Harga jasa', nilai: (ln) => Number(ln.unit_price || 0) },
+              { label: 'Nilai terjadwal', nilai: (ln) => Number(ln.subtotal || 0) },
+            ]} />
+        </div>
         <Table>
           <TableHeader><TableRow>
             <TableHead>Barang</TableHead><TableHead className="text-right">Dipesan</TableHead>
@@ -247,7 +278,15 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
         </Table>
 
         {v2 && <>
-          <p className="text-sm font-semibold text-foreground">Kiriman yang sudah ditagih</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-foreground">Kiriman yang sudah ditagih</p>
+            <TombolUnduh namaBerkas={`piutang-${d.po_number}-kiriman`} namaLembar="Kiriman" baris={d.dispatches || []} testId="mkl-ar-dispatch-unduh"
+              kolom={[
+                { label: 'Surat jalan', nilai: (g) => `${g.shipment_number || ''} · kirim ke-${g.dispatch_seq}` },
+                { label: 'Tanggal', nilai: (g) => (g.date ? formatDateID(g.date) : '') }, { label: 'Nilai', nilai: (g) => Number(g.total || 0) },
+                { label: 'Dibayar', nilai: (g) => Number(g.paid || 0) }, { label: 'Sisa', nilai: (g) => Number(g.balance || 0) },
+              ]} />
+          </div>
           {(d.dispatches || []).length === 0 ? (
             <EmptyState icon={FileText} title="Belum ada kiriman ke klien"
               description="Pendapatan dicatat otomatis saat barang dikirim lewat Kirim ke Buyer." />
@@ -300,7 +339,16 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
           )}
         </>}
 
-        <p className="text-sm font-semibold text-foreground">Pembayaran klien</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-foreground">Pembayaran klien</p>
+          <TombolUnduh namaBerkas={`piutang-${d.po_number}-pembayaran`} namaLembar="Pembayaran" baris={d.payments || []} testId="mkl-ar-pay-unduh"
+            kolom={[
+              { label: 'Tanggal', nilai: (p) => (p.date ? formatDateID(p.date) : '') }, { label: 'Status', nilai: (p) => (p.status === 'voided' ? 'Dibatalkan' : 'Berlaku') },
+              { label: 'Rekening', nilai: (p) => p.account_name || '' }, { label: 'Referensi', nilai: (p) => p.reference_no || '' },
+              { label: 'Jumlah', nilai: (p) => Number(p.amount || 0) }, { label: 'Menutup piutang', nilai: (p) => Number(p.ar_portion || 0) },
+              { label: 'Uang muka', nilai: (p) => Number(p.advance_portion || 0) }, { label: 'Jurnal', nilai: (p) => p.je_number || '' },
+            ]} />
+        </div>
         {(d.payments || []).length === 0 ? (
           <p className="text-sm text-muted-foreground">Klien belum membayar untuk PO ini.</p>
         ) : (
@@ -325,10 +373,6 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
           </Table>
         )}
       </>}
-      {paying && d && (
-        <PaymentForm receivable={d} headers={headers} token={token}
-          onClose={() => setPaying(false)} onDone={() => { setPaying(false); refresh(); }} />
-      )}
     </DetailPanel>
   );
 }
@@ -369,33 +413,31 @@ function PaymentForm({ receivable, headers, token, onClose, onDone }) {
     finally { setSaving(false); }
   };
   return (
-    <Modal onClose={onClose} title="Catat pembayaran klien" size="sm" description={`${receivable.po_number} · ${receivable.client_name}`}>
-      <p className="text-xs text-muted-foreground mb-3">
-        Tertagih belum dibayar {fmt(due)} · sisa PO {fmt(limit)}. Kelebihan di atas tagihan dicatat sebagai uang muka.
-      </p>
-      <div className="space-y-3">
-        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-amount">Jumlah diterima</label>
-          <MoneyInput glass id="mkl-pay-amount" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="mkl-pay-amount" /></div>
-        <div><label className="text-xs text-muted-foreground">Masuk ke rekening</label>
-          <SmartNativeSelect value={account} onChange={(e) => setAccount(e.target.value)} className="h-9 w-full" aria-label="Rekening" data-testid="mkl-pay-account">
-            <option value="">{loaded ? '— Pilih rekening —' : 'Memuat rekening…'}</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
-          </SmartNativeSelect></div>
-        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-date">Tanggal</label>
-          <GlassInput id="mkl-pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-ref">No. referensi</label>
-          <GlassInput id="mkl-pay-ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="mis. nomor transfer" /></div>
-        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-notes">Catatan</label>
-          <GlassInput id="mkl-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="opsional" /></div>
-      </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" judul="Catat pembayaran klien" testId="mkl-pay-form"
+      keterangan={`${receivable.po_number} · ${receivable.client_name}. Tertagih belum dibayar ${fmt(due)} · sisa PO ${fmt(limit)}; kelebihan di atas tagihan dicatat sebagai uang muka.`}
+      onSimpan={save} menyimpan={saving} bisaSimpan={!problem} labelSimpan="Simpan"
+      galat={problem && account ? problem : null}>
+      <Isian label="Jumlah diterima" wajib htmlFor="mkl-pay-amount">
+        <MoneyInput id="mkl-pay-amount" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="mkl-pay-amount" />
+      </Isian>
+      <Isian label="Masuk ke rekening" wajib>
+        <SmartNativeSelect value={account} onChange={(e) => setAccount(e.target.value)} className="h-9 w-full" aria-label="Rekening" data-testid="mkl-pay-account">
+          <option value="">{loaded ? '— Pilih rekening —' : 'Memuat rekening…'}</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Tanggal">
+        <DatePicker value={date} onChange={setDate} bolehKosong={false} testId="mkl-pay-date" />
+      </Isian>
+      <Isian label="No. referensi" htmlFor="mkl-pay-ref">
+        <Input id="mkl-pay-ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Mis. nomor transfer" />
+      </Isian>
+      <Isian label="Catatan" htmlFor="mkl-pay-notes">
+        <Input id="mkl-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Opsional" />
+      </Isian>
       {n > 0 && !problem && toAdvance > 0.5 && (
-        <p className="text-xs text-muted-foreground mt-3">{fmt(Math.min(n, due))} menutup piutang · {fmt(toAdvance)} menjadi uang muka.</p>
+        <p className="text-sm text-muted-foreground">{fmt(Math.min(n, due))} menutup piutang · {fmt(toAdvance)} menjadi uang muka.</p>
       )}
-      {problem && account && <Notice tone="danger" icon={AlertCircle} className="mt-3">{problem}</Notice>}
-      <div className="flex gap-2 mt-4 justify-end">
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={save} disabled={!!problem || saving} data-testid="mkl-pay-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
-      </div>
-    </Modal>
+    </FormPopup>
   );
 }

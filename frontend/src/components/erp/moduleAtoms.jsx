@@ -39,10 +39,12 @@ export function PageHeader({ title, subtitle, actions, className, testId }) {
   return (
     <div data-testid={testId} className={cn('flex items-start justify-between gap-4 flex-wrap', className)}>
       <div className="min-w-0 flex-1">
-        <h1 className="text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h1>
-        {subtitle && <p className="text-sm text-muted-foreground mt-1 leading-relaxed max-w-3xl">{subtitle}</p>}
+        {/* Standar UI/UX v2: kepala tipis — di HP judul lebih kecil & keterangan disembunyikan. */}
+        <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h1>
+        {subtitle && <p className="hidden sm:block text-sm text-muted-foreground mt-1 leading-relaxed max-w-3xl">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>}
+      {/* v2: di HP tombol kepala turun ke baris sendiri dan boleh membungkus (dulu terdorong keluar layar) */}
+      {actions && <div className="flex items-center gap-2 flex-wrap max-sm:w-full sm:shrink-0">{actions}</div>}
     </div>
   );
 }
@@ -72,7 +74,7 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
       data-testid={testId}
       onClick={onClick}
       type={isClickable ? 'button' : undefined}
-      title={isClickable ? (hint || 'Klik untuk lihat detail') : undefined}
+      title={hint || (isClickable ? 'Klik untuk lihat detail' : undefined)}
       className={cn(
         'rounded-[var(--radius-md)] border px-4 py-3 text-left w-full',
         'bg-[var(--card-surface)] border-[var(--glass-border)]',
@@ -81,14 +83,15 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
         className
       )}
     >
-      <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">{label}</p>
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <p className={cn('text-xl font-bold tracking-tight mt-1 tabular-nums', colors[accent] || colors.default)}>
         {value}{suffix && <span className="text-sm text-foreground/50 ml-1">{suffix}</span>}
       </p>
       {/* 2026-11-04: baris keterangan kecil di bawah angka (mis. "Rp 2 jt lewat jatuh tempo") — tanpa kartu buatan */}
       {sub && <p className={cn('text-xs mt-1 line-clamp-2', subTone ? colors[subTone] : 'text-muted-foreground')}>{sub}</p>}
-      {isClickable && hint && (
-        <p className="text-[10px] text-foreground/40 mt-1 truncate">{hint} →</p>
+      {/* v2 (keputusan 9): keterangan arti angka selalu tampil — dulu hanya bila kartu bisa diklik */}
+      {hint && !sub && (
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground" title={hint}>{hint}{isClickable ? ' →' : ''}</p>
       )}
     </Tag>
   );
@@ -148,18 +151,19 @@ export function StatusBadge({ status, label, tone, className, testId }) {
   const final = tone || autoTone;
   const toneClass = {
     default: 'bg-[var(--glass-bg)] text-foreground/70 border-[var(--glass-border)]',
-    muted:   'bg-[var(--glass-bg)] text-foreground/50 border-[var(--glass-border)]',
-    info:    'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info))] border-[hsl(var(--info)/0.22)]',
-    success: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.22)]',
-    warning: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.22)]',
-    danger:  'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]',
+    muted:   'bg-[var(--glass-bg)] text-muted-foreground border-[var(--glass-border)]',
+    // Standar UI/UX v2: teks memakai token --*-text (kontras ≥ 4.5 di semua tema); latar tetap tipis.
+    info:    'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info-text))] border-[hsl(var(--info)/0.3)]',
+    success: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.3)]',
+    warning: 'bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)]',
+    danger:  'bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.3)]',
     primary: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.25)]',
   }[final] || 'bg-[var(--glass-bg)] text-foreground/70';
   return (
     <span
       data-testid={testId}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider border',
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border whitespace-nowrap',
         toneClass,
         className
       )}

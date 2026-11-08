@@ -10,13 +10,14 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
 import ViewToggle from '@/components/ui/view-toggle';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import {
   TypeBadge, CoaTreeView, UsageBadge, RowActions, buildTree, TYPE_LABELS, TYPE_ORDER, NB_LABELS, LEVEL_META,
 } from './RahazaCOATreeNode';
 import ImportExportToolbar from './ImportExportToolbar';
-import { Notice } from './moduleAtoms';
+import { Notice, EmptyState } from './moduleAtoms';
 
 // 2026-11-02 (S2-H) — permintaan owner: "untuk Chart of akun itu tolong tandai mana yang terhubung atau
 // tidak karena takutnya salah hapus … cek ui uxnya". Sumber keterikatan = backend core/coa_bindings
@@ -164,10 +165,10 @@ function useApi(token) {
 function Field({ label, htmlFor, children, hint, error }) {
   return (
     <div className="min-w-0">
-      <label htmlFor={htmlFor} className="text-xs font-medium text-foreground/80">{label}</label>
-      <div className="mt-1">{children}</div>
-      {error && <p className="text-xs text-red-600 dark:text-red-400 mt-1" role="alert">{error}</p>}
-      {!error && hint && <p className="text-[11px] text-muted-foreground mt-1">{hint}</p>}
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-foreground">{label}</label>
+      <div className="mt-1.5">{children}</div>
+      {error && <p className="text-xs text-[hsl(var(--danger-text))] mt-1" role="alert">{error}</p>}
+      {!error && hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
     </div>
   );
 }
@@ -233,6 +234,12 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
   const infoFlags = Object.entries(form.flags).filter(([k, v]) => v && !HIDDEN_FLAGS.has(k) && !FLAG_DEFS.some((d) => d.key === k) && k !== 'is_contra');
 
   const invalid = !!(codeError || typeError || nameError || dup || parentError);
+  // Tampilan saja: "wajib diisi" baru muncul setelah isian disentuh — formulir baru tidak langsung merah.
+  // Tombol Simpan tetap terkunci selama ada galat (aturan `invalid` di atas tidak berubah).
+  const [disentuh, setDisentuh] = useState({});
+  const sentuh = (k) => () => setDisentuh((t) => (t[k] ? t : { ...t, [k]: true }));
+  const codeErrorTampil = !code && !disentuh.code ? '' : (codeError || dup);
+  const nameErrorTampil = !form.name.trim() && !disentuh.name ? '' : nameError;
 
   const onCode = (v) => {
     const up = v.toUpperCase();
@@ -265,28 +272,24 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
   };
 
   return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl w-[calc(100vw-1.5rem)] max-h-[90vh] overflow-y-auto p-4 sm:p-6" data-testid="coa-editor">
-        <DialogHeader>
-          <DialogTitle>{isNew ? 'Tambah akun' : `Ubah akun ${initial.code}`}</DialogTitle>
-          <DialogDescription>
-            {isNew ? 'Kode, tipe, dan induk divalidasi seperti di server.'
-              : (usage ? `${LEVEL_META[usage.summary?.level]?.label || ''}${usage.summary?.count ? ` · ${usage.summary.count} keterikatan` : ''} — bagian yang terkunci menyebut alasannya.` : 'Memuat keterikatan…')}
-          </DialogDescription>
-        </DialogHeader>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="coa-editor"
+      judul={isNew ? 'Tambah akun' : `Ubah akun ${initial.code}`}
+      keterangan={isNew ? 'Kode, tipe, dan induk divalidasi seperti di server.'
+        : (usage ? `${LEVEL_META[usage.summary?.level]?.label || ''}${usage.summary?.count ? ` · ${usage.summary.count} keterikatan` : ''} — bagian yang terkunci menyebut alasannya.` : 'Memuat keterikatan…')}
+      onSimpan={save} menyimpan={saving} bisaSimpan={!invalid}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Kode akun *" htmlFor="coa-code" error={codeError || dup}
+          <Field label="Kode akun *" htmlFor="coa-code" error={codeErrorTampil}
             hint={lockCode ? `Terkunci: ${(actions.change_code?.reasons || ['akun sudah dirujuk'])[0]}` : (suggestion ? '' : 'Contoh: 6-2950')}>
-            <GlassInput id="coa-code" value={form.code} onChange={(e) => onCode(e.target.value)} disabled={lockCode}
-              placeholder="6-2950" autoComplete="off" className="font-mono" data-testid="coa-input-code" />
+            <GlassInput id="coa-code" value={form.code} onChange={(e) => onCode(e.target.value)} onBlur={sentuh('code')} disabled={lockCode}
+              placeholder="6-2950" autoComplete="off" data-testid="coa-input-code" />
             {suggestion && !form.code && (
-              <Button type="button" variant="link" size="sm" className="h-auto p-0 mt-1 text-[11px]" onClick={() => onCode(suggestion)} data-testid="coa-code-suggest">
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 mt-1" onClick={() => onCode(suggestion)} data-testid="coa-code-suggest">
                 Pakai saran: {suggestion}
               </Button>
             )}
           </Field>
-          <Field label="Nama akun *" htmlFor="coa-name" error={nameError}>
-            <GlassInput id="coa-name" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Beban Kebersihan" data-testid="coa-input-name" />
+          <Field label="Nama akun *" htmlFor="coa-name" error={nameErrorTampil}>
+            <GlassInput id="coa-name" value={form.name} onChange={(e) => set('name', e.target.value)} onBlur={sentuh('name')} placeholder="Beban Kebersihan" data-testid="coa-input-name" />
           </Field>
           <Field label="Tipe *" htmlFor="coa-type" error={typeError}
             hint={lockType ? `Terkunci: ${(actions.change_type?.reasons || ['akun sudah dipakai'])[0]}` : 'Tipe mengikuti awalan kode.'}>
@@ -307,10 +310,10 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
           <div className="sm:col-span-2 rounded-md border border-[var(--glass-border)] p-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-medium">Saldo normal: <span data-testid="coa-normal-balance">{NB_LABELS[nb]}</span>{contra && ' (akun kontra)'}</p>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Akun kontra (akumulasi penyusutan, cadangan piutang, retur/diskon penjualan, prive) bersaldo normal kebalikan tipenya.
               </p>
-              {looksContra && <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1">Nama ini biasanya akun kontra — nyalakan saklar di kanan bila benar.</p>}
+              {looksContra && <p className="text-xs text-[hsl(var(--warning-text))] mt-1">Nama ini biasanya akun kontra — nyalakan saklar di kanan bila benar.</p>}
             </div>
             <label className="flex items-center gap-2 shrink-0 text-xs">
               <Switch checked={contra} onCheckedChange={(v) => setFlag('is_contra', v)} aria-label="Akun kontra" data-testid="coa-input-contra" />
@@ -337,21 +340,21 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
           <div className="space-y-2">
             <label className={`flex items-start gap-2 text-sm ${groupLocked ? 'opacity-70' : ''}`}>
               <Switch checked={form.is_group} onCheckedChange={(v) => set('is_group', v)} disabled={groupLocked} aria-label="Akun grup" data-testid="coa-input-isgroup" />
-              <span>Akun grup (header) <span className="block text-[11px] text-muted-foreground">Hanya pengelompok — tidak bisa menerima jurnal.</span></span>
+              <span>Akun grup (header) <span className="block text-xs text-muted-foreground">Hanya pengelompok — tidak bisa menerima jurnal.</span></span>
             </label>
             {groupLocked && (
-              <p className="text-[11px] text-amber-700 dark:text-amber-300" data-testid="coa-isgroup-warning">
+              <p className="text-xs text-[hsl(var(--warning-text))]" data-testid="coa-isgroup-warning">
                 Terkunci: {((initial?.is_group ? actions.make_leaf : actions.make_group)?.reasons || []).slice(0, 2).join('; ')}
               </p>
             )}
-            {groupAction && !groupLocked && <p className="text-[11px] text-muted-foreground">Server memeriksa ulang saat simpan.</p>}
+            {groupAction && !groupLocked && <p className="text-xs text-muted-foreground">Server memeriksa ulang saat simpan.</p>}
             {!isNew && (
               <>
                 <label className={`flex items-start gap-2 text-sm ${deactLocked ? 'opacity-70' : ''}`}>
                   <Switch checked={form.active} onCheckedChange={(v) => set('active', v)} disabled={deactLocked} aria-label="Akun aktif" data-testid="coa-input-active" />
-                  <span>Aktif <span className="block text-[11px] text-muted-foreground">Akun nonaktif hilang dari pilihan akun; riwayat tetap.</span></span>
+                  <span>Aktif <span className="block text-xs text-muted-foreground">Akun nonaktif hilang dari pilihan akun; riwayat tetap.</span></span>
                 </label>
-                {deactLocked && <p className="text-[11px] text-amber-700 dark:text-amber-300">Tidak bisa dinonaktifkan: {(actions.deactivate?.reasons || []).slice(0, 2).join('; ')}</p>}
+                {deactLocked && <p className="text-xs text-[hsl(var(--warning-text))]">Tidak bisa dinonaktifkan: {(actions.deactivate?.reasons || []).slice(0, 2).join('; ')}</p>}
               </>
             )}
           </div>
@@ -361,7 +364,7 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
               {FLAG_DEFS.map((d) => (
                 <label key={d.key} className="flex items-start gap-2 text-sm" title={d.hint}>
                   <input type="checkbox" className="mt-1 h-4 w-4" checked={!!form.flags[d.key]} onChange={(e) => setFlag(d.key, e.target.checked)} data-testid={`coa-flag-${d.key}`} />
-                  <span className="min-w-0">{d.label}<span className="block text-[11px] text-muted-foreground">{d.hint}</span></span>
+                  <span className="min-w-0">{d.label}<span className="block text-xs text-muted-foreground">{d.hint}</span></span>
                 </label>
               ))}
             </div>
@@ -382,7 +385,7 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
             {infoFlags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1" aria-label="Penanda sistem (tidak bisa diubah di sini)">
                 {infoFlags.map(([k, v]) => (
-                  <span key={k} className="text-[10px] px-1.5 py-0.5 rounded border border-foreground/15 text-muted-foreground">{flagLabel(k, v)}</span>
+                  <span key={k} className="text-xs px-1.5 py-0.5 rounded border border-[var(--glass-border)] text-muted-foreground">{flagLabel(k, v)}</span>
                 ))}
               </div>
             )}
@@ -391,14 +394,7 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
         {serverError && (
           <Notice tone="danger" icon={AlertTriangle} testId="coa-editor-error">{serverError}</Notice>
         )}
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={onClose} data-testid="coa-editor-cancel">Batal</Button>
-          <Button onClick={save} disabled={invalid || saving} data-testid="coa-editor-save">
-            {saving && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}Simpan
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }
 
@@ -460,7 +456,7 @@ function UsagePanel({ acc, api, onClose, onEdit, onDelete, onReactivate, openScr
     <DetailPanel
       testId="coa-usage-sheet"
       title={<span className="flex items-center gap-2 flex-wrap"><span>{acc.code} · {acc.name}</span><TypeBadge type={acc.type} />
-        {acc.active === false && <span className="text-[10px] px-1.5 py-0.5 rounded border border-foreground/20">nonaktif</span>}</span>}
+        {acc.active === false && <span className="text-xs px-1.5 py-0.5 rounded border border-[var(--glass-border)]">nonaktif</span>}</span>}
       description={data ? `${data.level_label}${s.count ? ` · ${s.count} keterikatan` : ''}` : 'Memuat keterikatan…'}
       onClose={onClose}
       actions={data && <>
@@ -555,7 +551,7 @@ function DeleteDialog({ acc, api, onClose, onDone, openUsage }) {
   };
   return (
     <Dialog open={!!acc} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md w-[calc(100vw-1.5rem)] max-h-[90vh] overflow-y-auto p-4 sm:p-6" data-testid="coa-delete-dialog">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" data-testid="coa-delete-dialog">
         <DialogHeader>
           <DialogTitle>
             {!data ? 'Memeriksa keterikatan…' : mode === 'delete' ? 'Hapus permanen?' : mode === 'deactivate' ? 'Tidak bisa dihapus — nonaktifkan?' : 'Akun terkunci'}
@@ -569,25 +565,25 @@ function DeleteDialog({ acc, api, onClose, onDone, openUsage }) {
         {data && mode !== 'delete' && (
           <div className="space-y-2 text-sm">
             <p>Akun ini tidak bisa dihapus permanen karena:</p>
-            <ul className="list-disc pl-5 space-y-0.5 text-[13px]">
+            <ul className="list-disc pl-5 space-y-0.5 text-sm">
               {(act.delete?.reasons || []).slice(0, 6).map((r, i) => <li key={i} className="break-words">{r}</li>)}
               {(act.delete?.reasons || []).length > 6 && <li>+{act.delete.reasons.length - 6} lagi</li>}
             </ul>
             {mode === 'deactivate' && <Notice tone="warning">Anda bisa <b>menonaktifkannya</b>: akun hilang dari pilihan akun, riwayat jurnal & rujukan tetap utuh, dan bisa diaktifkan lagi kapan saja.</Notice>}
             {mode === 'locked' && (
               <Notice tone="danger" title="Menonaktifkan pun belum bisa:">
-                <ul className="list-disc pl-5 text-[13px]">{(act.deactivate?.reasons || []).slice(0, 5).map((r, i) => <li key={i} className="break-words">{r}</li>)}</ul>
-                <p className="text-[12px] mt-1">Ganti dulu rujukannya di layar terkait (lihat rincian keterikatan).</p>
+                <ul className="list-disc pl-5 text-sm">{(act.deactivate?.reasons || []).slice(0, 5).map((r, i) => <li key={i} className="break-words">{r}</li>)}</ul>
+                <p className="text-xs mt-1">Ganti dulu rujukannya di layar terkait (lihat rincian keterikatan).</p>
               </Notice>
             )}
           </div>
         )}
-        {err && <p className="text-sm text-[hsl(var(--destructive))]" role="alert">{err}</p>}
+        {err && <p className="text-sm text-[hsl(var(--danger-text))]" role="alert">{err}</p>}
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           {data && mode === 'locked' && <Button onClick={() => { onClose(); openUsage(acc); }}>Lihat keterikatan</Button>}
           {data && mode !== 'locked' && (
-            <Button variant={mode === 'delete' ? 'destructive' : 'default'} disabled={busy} onClick={run} data-testid="coa-delete-confirm">
+            <Button variant="destructive" disabled={busy} onClick={run} data-testid="coa-delete-confirm">
               {busy && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}{mode === 'delete' ? 'Hapus permanen' : 'Nonaktifkan'}
             </Button>
           )}
@@ -622,22 +618,22 @@ function IntegrityBanner({ data, openScreen }) {
         <ul className="mt-2 space-y-1.5">
           {rows.map((r) => (
             <li key={`${r.code}-${r.what}`} className="rounded border border-[var(--glass-border)] p-2">
-              <p><span className="font-mono">{r.code}</span> {r.name || ''} — <b>{r.what}</b></p>
-              <p className="text-[11px] text-muted-foreground break-words">{(r.refs || []).slice(0, 3).join(' · ')}</p>
+              <p><span className="font-medium">{r.code}</span> {r.name || ''} — <b>{r.what}</b></p>
+              <p className="text-xs text-muted-foreground break-words">{(r.refs || []).slice(0, 3).join(' · ')}</p>
               {(r.screens || []).slice(0, 2).map((s) => (
-                <Button key={s.label} variant="link" size="sm" onClick={() => openScreen(s)} className="h-auto p-0 text-[11px] mr-3">Buka {s.label}</Button>
+                <Button key={s.label} variant="link" size="sm" onClick={() => openScreen(s)} className="h-auto p-0 mr-3">Buka {s.label}</Button>
               ))}
             </li>
           ))}
           {(data.fallback_warnings || []).map((w) => (
-            <li key={`fb-${w.role}-${w.code}`} className="rounded border border-[hsl(var(--warning)/0.3)] p-2 text-[12px]">
-              Peran <span className="font-mono">{w.role}</span> kosong → program memakai <span className="font-mono">{w.code}</span> {w.name || ''} ({w.label}).
-              <Button variant="link" size="sm" onClick={() => openScreen({ module: 'fin-settings-hub', tab: 'mapping', view: 'posting', label: 'Pemetaan akun otomatis' }, w.role.split('.')[0])} className="h-auto p-0 text-[12px] ml-2">Isi di Pemetaan akun otomatis</Button>
+            <li key={`fb-${w.role}-${w.code}`} className="rounded border border-[hsl(var(--warning)/0.3)] p-2 text-xs">
+              Peran <span className="font-medium">{w.role}</span> kosong → program memakai <span className="font-medium">{w.code}</span> {w.name || ''} ({w.label}).
+              <Button variant="link" size="sm" onClick={() => openScreen({ module: 'fin-settings-hub', tab: 'mapping', view: 'posting', label: 'Pemetaan akun otomatis' }, w.role.split('.')[0])} className="h-auto p-0 ml-2">Isi di Pemetaan akun otomatis</Button>
             </li>
           ))}
           {(data.sync_skipped || []).map((x) => (
-            <li key={`sk-${x.code}`} className="rounded border border-foreground/15 p-2 text-[12px]">
-              <span className="font-mono">{x.code}</span> {x.name} — tidak dinonaktifkan sinkron toko: {x.reason}
+            <li key={`sk-${x.code}`} className="rounded border border-foreground/15 p-2 text-xs">
+              <span className="font-medium">{x.code}</span> {x.name} — tidak dinonaktifkan sinkron toko: {x.reason}
             </li>
           ))}
         </ul>
@@ -656,17 +652,17 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
           <li key={a.code} className={`rounded-md border border-[var(--glass-border)] p-2.5 ${a.active === false ? 'opacity-60' : ''}`} data-testid={`coa-card-${a.code}`}>
             <div className="flex items-start gap-2 min-w-0">
               <div className="min-w-0 flex-1">
-                <p className="font-mono text-xs text-foreground/75 truncate">{a.code}</p>
+                <p className="text-xs text-muted-foreground truncate">{a.code}</p>
                 <p className={`text-sm break-words ${a.is_group ? 'font-semibold' : ''}`}>{a.name}</p>
               </div>
               <RowActions acc={a} code={a.code} onEdit={onEdit} onDelete={onDelete} onReactivate={onReactivate} />
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <TypeBadge type={a.type} />
-              <span className="text-[10px] text-muted-foreground" data-testid={`coa-entities-card-${a.code}`}>{entitiesLabel(a.entities)}</span>
-              <span className="text-[10px] text-muted-foreground">{NB_LABELS[a.normal_balance] || a.normal_balance}</span>
-              {a.is_group && <span className="text-[10px] text-muted-foreground">grup</span>}
-              {a.active === false && <span className="text-[10px] px-1.5 rounded border border-foreground/20">nonaktif</span>}
+              <span className="text-xs text-muted-foreground" data-testid={`coa-entities-card-${a.code}`}>{entitiesLabel(a.entities)}</span>
+              <span className="text-xs text-muted-foreground">{NB_LABELS[a.normal_balance] || a.normal_balance}</span>
+              {a.is_group && <span className="text-xs text-muted-foreground">grup</span>}
+              {a.active === false && <span className="text-xs px-1.5 rounded border border-[var(--glass-border)]">nonaktif</span>}
               <UsageBadge usage={a.usage} onClick={() => onUsage(a)} testId={`coa-usage-card-${a.code}`} />
             </div>
           </li>
@@ -675,7 +671,7 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
       <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-[var(--card-surface)] backdrop-blur-sm z-[1]">
-            <tr className="text-left text-[11px] text-muted-foreground border-b border-[var(--glass-border)]">
+            <tr className="text-left">
               <th className="py-2 px-2 font-medium">Kode</th>
               <th className="py-2 px-2 font-medium">Nama</th>
               <th className="py-2 px-2 font-medium">Tipe</th>
@@ -692,13 +688,13 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
               const fl = flagLabels(a.flags);
               return (
                 <tr key={a.code} className={`border-b border-[var(--glass-border)] hover:bg-foreground/5 ${a.active === false ? 'opacity-60' : ''}`} data-testid={`coa-flat-${a.code}`}>
-                  <td className="py-1.5 px-2 font-mono text-xs whitespace-nowrap">{a.code}</td>
-                  <td className="py-1.5 px-2 min-w-[12rem]">{a.name}{a.is_group && <span className="text-[10px] text-muted-foreground ml-1">(grup)</span>}{a.active === false && <span className="text-[10px] text-muted-foreground ml-1">(nonaktif)</span>}</td>
+                  <td className="whitespace-nowrap">{a.code}</td>
+                  <td className="py-1.5 px-2 min-w-[12rem]">{a.name}{a.is_group && <span className="text-xs text-muted-foreground ml-1">(grup)</span>}{a.active === false && <span className="text-xs text-muted-foreground ml-1">(nonaktif)</span>}</td>
                   <td className="py-1.5 px-2"><TypeBadge type={a.type} /></td>
                   <td className="py-1.5 px-2 text-xs whitespace-nowrap" data-testid={`coa-entities-${a.code}`}>{entitiesLabel(a.entities)}</td>
-                  <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground">{a.parent_code || '—'}</td>
+                  <td className="text-muted-foreground whitespace-nowrap">{a.parent_code || '—'}</td>
                   <td className="py-1.5 px-2 text-xs">{NB_LABELS[a.normal_balance] || a.normal_balance}{a.flags?.is_contra ? ' · kontra' : ''}</td>
-                  <td className="py-1.5 px-2 text-[11px] text-muted-foreground" title={fl.join(', ')}>{fl.slice(0, 2).join(', ')}{fl.length > 2 ? ` +${fl.length - 2}` : ''}{!fl.length && '—'}</td>
+                  <td className="text-xs text-muted-foreground" title={fl.join(', ')}>{fl.slice(0, 2).join(', ')}{fl.length > 2 ? ` +${fl.length - 2}` : ''}{!fl.length && '—'}</td>
                   <td className="py-1.5 px-2"><UsageBadge usage={a.usage} onClick={() => onUsage(a)} testId={`coa-usage-flat-${a.code}`} /></td>
                   <td className="py-1.5 px-2"><div className="flex justify-end"><RowActions acc={a} code={a.code} onEdit={onEdit} onDelete={onDelete} onReactivate={onReactivate} /></div></td>
                 </tr>
@@ -843,7 +839,7 @@ export default function RahazaCOAModule({ token, onNavigate }) {
         </Button>
       )}
       filters={<>
-        <div className="relative w-72 max-w-full">
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
           <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode, nama, penanda, keterikatan…"
             className="pl-8 pr-8 h-9" aria-label="Cari akun" data-testid="coa-search" />
@@ -882,7 +878,7 @@ export default function RahazaCOAModule({ token, onNavigate }) {
         <IntegrityBanner data={integrity} openScreen={openScreen} />
         <p className="text-sm text-muted-foreground" data-testid="coa-summary">
           <span className="font-semibold text-foreground">{accounts.length - inactive}</span> aktif ·{' '}
-          <span className="text-[hsl(var(--destructive))] font-medium">{sys} dipakai sistem</span> · {free} bebas · {inactive} nonaktif
+          <span className="text-[hsl(var(--danger-text))] font-medium">{sys} dipakai sistem</span> · {free} bebas · {inactive} nonaktif
           {filtering && <> · <span className="text-foreground">{matched.size} cocok</span></>}
           <span className="ml-2 inline-flex items-center gap-1 text-xs" title="Dipakai sistem = tidak bisa dihapus · Struktur = induk/penanda laporan · Bawaan = akun sistem (bisa dinonaktifkan) · Bebas = aman dihapus">
             <Info className="w-3.5 h-3.5" aria-hidden="true" />arti lencana
@@ -896,13 +892,12 @@ export default function RahazaCOAModule({ token, onNavigate }) {
     >
       <GlassCard className="p-3 sm:p-4 min-w-0">
         <div>
-          {loading && <div className="py-12 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
-          {!loading && loadError && <p className="py-6 text-center text-sm text-red-600 dark:text-red-400">{loadError}</p>}
+          {loading && <div className="py-8 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
+          {!loading && loadError && <p className="py-6 text-center text-sm text-[hsl(var(--danger-text))]">{loadError}</p>}
           {!loading && !loadError && accounts.length === 0 && (
-            <div className="py-12 text-center space-y-3">
-              <div className="text-muted-foreground">Bagan Akun masih kosong.</div>
-              <Button onClick={doSeed} data-testid="coa-seed-empty"><Sparkles className="w-4 h-4 mr-1.5" />Pasang template PSAK garmen</Button>
-            </div>
+            <EmptyState icon={FolderTree} title="Bagan akun masih kosong"
+              description="Pasang susunan akun bawaan untuk usaha garmen (PSAK), lalu sesuaikan."
+              action={<Button onClick={doSeed} data-testid="coa-seed-empty"><Sparkles className="w-4 h-4 mr-1.5" />Pasang bagan akun bawaan PSAK garmen</Button>} />
           )}
           {!loading && accounts.length > 0 && view === 'tree' && (
             <CoaTreeView tree={tree} open={open} setOpen={setOpen} visible={visible} matched={filtering ? matched : undefined} q={q}

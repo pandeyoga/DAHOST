@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 export default function PDFViewer({ url, title }) {
   if (!url) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+      <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
         <FileText size={48} className="mb-2 opacity-30" />
         <p>PDF belum tersedia</p>
       </div>
@@ -43,7 +43,7 @@ export default function PDFViewer({ url, title }) {
           >
             <a href={url} download>
               <Download size={14} className="mr-1" />
-              Download
+              Unduh
             </a>
           </Button>
         </div>

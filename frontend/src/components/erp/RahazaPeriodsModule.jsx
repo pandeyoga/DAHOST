@@ -7,6 +7,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import { StatusBadge as ModuleStatusBadge, EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
 import { PeriodAlerts, YearEndClose } from './RahazaPeriodsExtras';
@@ -34,6 +35,7 @@ function StatusBadge({ status }) {
  * Tutup buku (menu Akuntansi › Akrual & Tutup Buku › Tutup buku).
  * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — pilihan tahun di toolbar, aturan posting & peringatan di
  * ringkasan; tanpa istilah Inggris ("Generate", "closed/locked").
+ * 2026-11-08 (Standar UI/UX v2): daftar periode bisa diunduh Excel/CSV; "Kunci final" merah; huruf standar.
  */
 export default function RahazaPeriodsModule({ token }) {
   const [periods, setPeriods] = useState([]);
@@ -82,16 +84,23 @@ export default function RahazaPeriodsModule({ token }) {
       actions={<Button variant="outline" onClick={ensureYear} data-testid="pr-ensure">Lengkapi periode {year}</Button>}
       filters={
         <SmartNativeSelect value={String(year)} onChange={e => setYear(Number(e.target.value) || year)} searchable={false}
-          className="h-9 w-28" aria-label="Tahun" data-testid="pr-year">
+          className="h-9 w-32" aria-label="Tahun" data-testid="pr-year">
           {yearOptions.map(y => <option key={y} value={String(y)}>{y}</option>)}
         </SmartNativeSelect>
       }
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas={`periode-buku-${year}`} namaLembar={`Periode ${year}`} baris={periods} testId="pr-unduh"
+          kolom={[
+            { label: 'Periode', nilai: (p) => periodLabelID(p.period_code) },
+            { label: 'Status', nilai: (p) => STATUS_LABEL[p.status] || p.status },
+            { label: 'Ditutup', nilai: (p) => (p.closed_at ? `${formatDateID(p.closed_at)} · ${p.closed_by_name || '-'}` : '') },
+            { label: 'Dikunci', nilai: (p) => (p.locked_at ? `${formatDateID(p.locked_at)} · ${p.locked_by_name || '-'}` : '') },
+          ]} />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pr-refresh"><RefreshCw className="w-4 h-4" /></Button>
-      }
+      </>}
       summary={<>
         {policy && (
-          <p className="text-xs text-muted-foreground" data-testid="pr-policy-banner">
+          <p className="text-sm text-muted-foreground" data-testid="pr-policy-banner">
             <span className="font-semibold text-foreground">Aturan posting:</span> jurnal ditolak bila tanggalnya lebih dari {policy.future_days_max} hari ke depan;
             periode tahun {policy.auto_years?.[0]}–{policy.auto_years?.[policy.auto_years.length - 1]} dibuka otomatis saat jurnal pertama;
             tahun lain harus dibuat di sini dulu. Periode yang ditutup atau dikunci selalu menolak jurnal.
@@ -119,7 +128,7 @@ export default function RahazaPeriodsModule({ token }) {
                     <tr key={p.period_code} data-testid={`pr-card-${p.period_code}`}>
                       <td className="text-foreground font-medium whitespace-nowrap">{periodLabelID(p.period_code)}</td>
                       <td><StatusBadge status={p.status} /></td>
-                      <td className="text-xs text-muted-foreground">
+                      <td className="text-muted-foreground">
                         {p.locked_at ? `Dikunci ${formatDateID(p.locked_at)} · ${p.locked_by_name || '-'}`
                           : p.closed_at ? `Ditutup ${formatDateID(p.closed_at)} · ${p.closed_by_name || '-'}`
                             : blockReason ? <span data-testid={`pr-not-ended-${p.period_code}`}>Belum berakhir</span> : '—'}
@@ -138,13 +147,13 @@ export default function RahazaPeriodsModule({ token }) {
                               <LockOpen className="w-4 h-4" />Buka lagi
                             </Button>
                             <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-lock-wrap-${p.period_code}`}>
-                              <Button size="sm" variant="outline" disabled={!!blockReason} onClick={() => act(p.period_code, 'lock')} className="text-[hsl(var(--destructive))]" data-testid={`pr-lock-${p.period_code}`}>
+                              <Button size="sm" variant="destructive" disabled={!!blockReason} onClick={() => act(p.period_code, 'lock')} data-testid={`pr-lock-${p.period_code}`}>
                                 <ShieldCheck className="w-4 h-4" />Kunci final
                               </Button>
                             </span>
                           </span>
                         )}
-                        {p.status === 'locked' && <span className="text-xs text-muted-foreground">Terkunci permanen</span>}
+                        {p.status === 'locked' && <span className="text-sm text-muted-foreground">Terkunci permanen</span>}
                       </td>
                     </tr>
                   );

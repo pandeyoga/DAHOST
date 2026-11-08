@@ -1,133 +1,63 @@
 /**
- * KPIGamificationTab — P3 Gamification
- * Leaderboard, Badge, Achievement, Gamification Summary
- * Digunakan di HRKPIModule (admin) dan KPIPortalModule (employee self-service)
+ * KPIGamificationTab — P3 Gamification: papan peringkat, lencana, pencapaian, ringkasan.
+ * Dipakai di HRKPIModule (SDM, isHR) dan KPIPortalModule (portal karyawan) — props & ekspor `BadgeChip` tetap.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): papan peringkat & katalog = tabel + unduh Excel/CSV (dulu kartu berulang &
+ * podium dekoratif), kartu angka StatTile, tab standar (di dalam hub tampil sebagai pil), tanpa emoji hiasan dan
+ * warna hex (ikon lencana dari data tetap tampil), bahasa Indonesia.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import axios from 'axios';
+import { RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { formatDateID } from '@/lib/format';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
 const B = process.env.REACT_APP_BACKEND_URL;
+const GRADE_TONE = { A: 'success', B: 'info', C: 'warning', D: 'warning', E: 'danger' };
 
-// ─── Badge Card ───────────────────────────────────────────────────────────────
+// ─── Lencana (ekspor dipakai KPIPortalModule) ─────────────────────────────────
 export function BadgeChip({ badge, size = 'sm' }) {
-  const sizeClass = size === 'lg' ? 'text-2xl px-4 py-2 gap-2' : 'text-sm px-2.5 py-1 gap-1.5';
+  const sizeClass = size === 'lg' ? 'text-base px-3 py-1.5 gap-2' : 'text-sm px-2.5 py-1 gap-1.5';
   return (
-    <span
-      className={`inline-flex items-center rounded-full font-medium border ${sizeClass}`}
-      style={{ borderColor: badge.badge_color || '#888', color: badge.badge_color || '#888', background: (badge.badge_color || '#888') + '18' }}
-      title={badge.badge_desc || badge.badge_label}
-    >
-      <span>{badge.badge_emoji || '🏅'}</span>
+    <span className={`inline-flex items-center rounded-full border border-[var(--glass-border)] bg-[var(--card-surface)] font-medium text-foreground ${sizeClass}`}
+      title={badge.badge_desc || badge.badge_label}>
+      {badge.badge_emoji && <span aria-hidden="true">{badge.badge_emoji}</span>}
       <span>{badge.badge_label}</span>
+      {badge.count > 1 && <span className="tabular-nums text-muted-foreground">×{badge.count}</span>}
     </span>
   );
 }
 
-// ─── Podium ───────────────────────────────────────────────────────────────────
-function Podium({ top3 }) {
-  if (!top3 || top3.length === 0) return null;
-  const [first, second, third] = [top3[0], top3[1], top3[2]];
-  const podiumColors = ['#F59E0B', '#9CA3AF', '#B45309'];
-  const heights = ['h-28', 'h-20', 'h-16'];
-  const emojis = ['🥇', '🥈', '🥉'];
-  const order = [second, first, third];  // 2-1-3 visual order
-  const orderRanks = [1, 0, 2];
-
-  return (
-    <div className="flex items-end justify-center gap-4 py-6">
-      {order.map((entry, idx) => {
-        const realIdx = orderRanks[idx];
-        if (!entry) return <div key={idx} className="w-24" />;
-        return (
-          <div key={idx} className="flex flex-col items-center gap-2">
-            {/* Avatar */}
-            <div
-              className="w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold border-2"
-              style={{ borderColor: podiumColors[realIdx], background: podiumColors[realIdx] + '22', color: podiumColors[realIdx] }}
-            >
-              {entry.employee_name?.charAt(0) || '?'}
-            </div>
-            <div className="text-center">
-              <div className="text-xs font-semibold truncate max-w-[90px]">{entry.employee_name}</div>
-              <div className="text-xs text-muted-foreground">{entry.score}</div>
-            </div>
-            {/* Podium block */}
-            <div
-              className={`w-24 ${heights[realIdx]} rounded-t-lg flex flex-col items-center justify-center`}
-              style={{ background: podiumColors[realIdx] + '33', borderTop: `3px solid ${podiumColors[realIdx]}` }}
-            >
-              <span className="text-2xl">{emojis[realIdx]}</span>
-              <span className="text-xs font-bold" style={{ color: podiumColors[realIdx] }}>#{realIdx + 1}</span>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── Leaderboard Table ────────────────────────────────────────────────────────
+// ─── Papan peringkat ──────────────────────────────────────────────────────────
 function LeaderboardTable({ entries }) {
-  if (!entries || entries.length === 0) return (
-    <div className="text-center py-10 text-muted-foreground text-sm">Belum ada data leaderboard.</div>
-  );
-  return (
-    <div className="space-y-2 mt-2">
-      {entries.map((e) => (
-        <div
-          key={e.employee_id}
-          className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-            e.rank <= 3 ? 'bg-[var(--glass-bg)] border-[var(--glass-border)]' : 'bg-transparent border-transparent hover:bg-[var(--glass-bg)]'
-          }`}
-        >
-          {/* Rank */}
-          <div className="w-8 text-center">
-            {e.rank === 1 ? '🥇' : e.rank === 2 ? '🥈' : e.rank === 3 ? '🥉' : (
-              <span className="text-sm font-bold text-muted-foreground">#{e.rank}</span>
-            )}
-          </div>
-          {/* Avatar */}
-          <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm shrink-0">
-            {e.employee_name?.charAt(0) || '?'}
-          </div>
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold truncate">{e.employee_name}</div>
-            <div className="text-xs text-muted-foreground">{e.employee_code} {e.department && `· ${e.department}`}</div>
-          </div>
-          {/* Badges */}
-          {e.badges && e.badges.length > 0 && (
-            <div className="flex gap-1 flex-wrap justify-end max-w-[140px]">
-              {e.badges.slice(0, 3).map((b, i) => (
-                <span key={i} title={b.badge_label} className="text-base">{b.badge_emoji}</span>
-              ))}
-              {e.badges.length > 3 && <span className="text-xs text-muted-foreground">+{e.badges.length - 3}</span>}
-            </div>
-          )}
-          {/* Score */}
-          <div className="text-right shrink-0">
-            <div className="text-base font-bold text-primary">{e.score}</div>
-            <div className={`text-xs font-medium ${e.delta === null || e.delta === undefined ? 'text-muted-foreground' : e.delta >= 0 ? 'text-emerald-500' : 'text-red-700 dark:text-red-500'}`}>
-              {e.delta === null || e.delta === undefined ? '—' : e.delta >= 0 ? `▲ ${e.delta}` : `▼ ${Math.abs(e.delta)}`}
-            </div>
-          </div>
-          {/* Grade */}
-          <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-            e.grade === 'A' ? 'bg-emerald-100 text-emerald-700' :
-            e.grade === 'B' ? 'bg-blue-100 text-blue-700' :
-            e.grade === 'C' ? 'bg-yellow-100 text-yellow-700' :
-            'bg-red-100 text-red-700'
-          }`}>
-            {e.grade || '-'}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  const kolom = [
+    { kunci: 'rank', label: 'Peringkat', isi: (e) => (e.rank <= 3
+      ? <StatusBadge status={`rank-${e.rank}`} label={`Juara ${e.rank}`} tone="primary" />
+      : <span className="font-semibold tabular-nums text-muted-foreground">{e.rank}</span>) },
+    { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (e) => (
+      <div className="min-w-0"><p className="font-medium text-foreground">{e.employee_name}</p>
+        <p className="text-xs text-muted-foreground">{e.employee_code}{e.department ? ` · ${e.department}` : ''}</p></div>) },
+    { kunci: 'lencana', label: 'Lencana', isi: (e) => (e.badges?.length
+      ? <span className="text-sm" title={e.badges.map(b => b.badge_label).join(', ')}>
+          {e.badges.slice(0, 3).map(b => b.badge_emoji).join(' ')}{e.badges.length > 3 ? ` +${e.badges.length - 3}` : ''}
+        </span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'skor', label: 'Skor', rata: 'kanan', isi: (e) => <span className="font-semibold tabular-nums">{e.score}</span> },
+    { kunci: 'delta', label: 'Perubahan', rata: 'kanan', isi: (e) => (e.delta === null || e.delta === undefined
+      ? <span className="text-muted-foreground">—</span>
+      : <span className={`tabular-nums ${e.delta >= 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}`}>{e.delta >= 0 ? `+${e.delta}` : `−${Math.abs(e.delta)}`}</span>) },
+    { kunci: 'grade', label: 'Grade', isi: (e) => (e.grade ? <StatusBadge status={`grade-${e.grade}`} label={e.grade} tone={GRADE_TONE[e.grade] || 'default'} /> : '—') },
+  ];
+  return <TabelData kolom={kolom} baris={entries} kunci={(e) => e.employee_id} testId="kpi-leaderboard" />;
 }
 
-// ─── Achievement Panel ────────────────────────────────────────────────────────
+// ─── Pencapaian satu karyawan ─────────────────────────────────────────────────
 function AchievementPanel({ employeeId, token }) {
   const [data, setData] = useState(null);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -139,43 +69,23 @@ function AchievementPanel({ employeeId, token }) {
       .catch(console.error);
   }, [employeeId, headers]);
 
-  if (!data) return <div className="py-4 text-center text-sm text-muted-foreground">Memuat pencapaian...</div>;
-
-  if (data.total === 0) return (
-    <div className="text-center py-8 text-muted-foreground text-sm">
-      <div className="text-4xl mb-2">🏅</div>
-      Belum ada badge yang diraih. Ikuti KPI untuk mendapatkan achievement!
-    </div>
-  );
+  if (!data) return <p className="py-4 text-center text-sm text-muted-foreground">Memuat pencapaian…</p>;
+  if (data.total === 0) return <EmptyState title="Belum ada lencana" description="Ikuti penilaian KPI untuk mendapatkan lencana." />;
 
   return (
-    <div className="space-y-4">
-      {/* Summary chips */}
-      <div className="flex flex-wrap gap-2">
-        {data.summary.map(s => (
-          <BadgeChip key={s.badge_type} badge={s} size="lg" />
-        ))}
-      </div>
-      {/* Badge list */}
-      <div className="space-y-2">
-        {data.badges.map((b, i) => (
-          <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)]">
-            <span className="text-2xl">{b.badge_emoji}</span>
-            <div className="flex-1">
-              <div className="font-semibold text-sm">{b.badge_label}</div>
-              <div className="text-xs text-muted-foreground">{b.badge_desc}</div>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {b.earned_at ? new Date(b.earned_at).toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' }) : ''}
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">{data.summary.map(s => <BadgeChip key={s.badge_type} badge={s} size="lg" />)}</div>
+      <TabelData baris={data.badges} kunci={(b) => `${b.badge_type}-${b.earned_at}`} testId="kpi-achievements"
+        kolom={[
+          { kunci: 'lencana', label: 'Lencana', hp: 'judul', isi: (b) => <BadgeChip badge={b} /> },
+          { kunci: 'desk', label: 'Keterangan', isi: (b) => <span className="text-sm text-muted-foreground">{b.badge_desc}</span> },
+          { kunci: 'tgl', label: 'Diraih', isi: (b) => <span className="text-sm">{b.earned_at ? formatDateID(b.earned_at) : '—'}</span> },
+        ]} />
     </div>
   );
 }
 
-// ─── HR Gamification Summary ──────────────────────────────────────────────────
+// ─── Ringkasan (SDM) ──────────────────────────────────────────────────────────
 function GamificationSummaryPanel({ token }) {
   const [data, setData] = useState(null);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -186,111 +96,84 @@ function GamificationSummaryPanel({ token }) {
       .catch(console.error);
   }, [headers]);
 
-  if (!data) return <div className="py-4 text-center text-sm text-muted-foreground animate-pulse">Memuat ringkasan...</div>;
+  if (!data) return <p className="py-4 text-center text-sm text-muted-foreground">Memuat ringkasan…</p>;
+  const top = data.top_earners?.[0];
 
   return (
-    <div className="space-y-6">
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Total Badge', value: data.total_badges_awarded, emoji: '🏅' },
-          { label: 'Tipe Badge', value: data.badge_types_available, emoji: '🎨' },
-          { label: 'Top Earner', value: data.top_earners?.[0]?.employee_name?.split(' ')[0] || '-', emoji: '🏆' },
-          { label: 'Badge Terbanyak', value: data.top_earners?.[0]?.badge_count || 0, emoji: '⭐' },
-        ].map((s, i) => (
-          <div key={i} className="bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl p-4 text-center">
-            <div className="text-2xl mb-1">{s.emoji}</div>
-            <div className="text-xl font-bold">{s.value}</div>
-            <div className="text-xs text-muted-foreground">{s.label}</div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile label="Lencana diberikan" value={data.total_badges_awarded ?? 0} sub="Semua karyawan, semua periode." />
+        <StatTile label="Jenis lencana" value={data.badge_types_available ?? 0} sub="Lencana yang bisa diraih." />
+        <StatTile label="Peraih terbanyak" value={top?.employee_name?.split(' ')[0] || '—'} sub={top ? top.employee_name : 'Belum ada lencana.'} />
+        <StatTile label="Lencana terbanyak" value={top?.badge_count || 0} sub="Milik peraih terbanyak." />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <section className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-foreground">Sebaran lencana</p>
+            <TombolUnduh namaBerkas="sebaran-lencana" namaLembar="Sebaran" baris={data.badge_distribution}
+              kolom={[{ label: 'Lencana', nilai: (b) => b.badge_label }, { label: 'Jumlah', nilai: (b) => b.count }]} />
           </div>
-        ))}
+          <TabelData baris={data.badge_distribution} kunci={(b) => b.badge_type} testId="kpi-badge-dist"
+            kolom={[
+              { kunci: 'lencana', label: 'Lencana', hp: 'judul', isi: (b) => <BadgeChip badge={b} /> },
+              { kunci: 'jumlah', label: 'Jumlah', rata: 'kanan', isi: (b) => <span className="tabular-nums">{b.count}</span> },
+              { kunci: 'porsi', label: 'Porsi', rata: 'kanan', isi: (b) => (
+                <span className="tabular-nums text-muted-foreground">{Math.round((b.count / (data.total_badges_awarded || 1)) * 100)}%</span>) },
+            ]}
+            kosong={<p className="text-sm text-muted-foreground">Lencana belum diberikan.</p>} />
+        </section>
+        <section className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-foreground">Peraih lencana terbanyak</p>
+            <TombolUnduh namaBerkas="peraih-lencana" namaLembar="Peraih" baris={data.top_earners}
+              kolom={[{ label: 'Karyawan', nilai: (e) => e.employee_name }, { label: 'Kode', nilai: (e) => e.employee_code }, { label: 'Lencana', nilai: (e) => e.badge_count }]} />
+          </div>
+          <TabelData baris={data.top_earners} kunci={(e) => e.employee_id || e.employee_code} testId="kpi-top-earners"
+            kolom={[
+              { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (e) => (
+                <div><p className="font-medium text-foreground">{e.employee_name}</p><p className="text-xs text-muted-foreground">{e.employee_code}</p></div>) },
+              { kunci: 'n', label: 'Lencana', rata: 'kanan', isi: (e) => <span className="tabular-nums">{e.badge_count}</span> },
+            ]}
+            kosong={<p className="text-sm text-muted-foreground">Data belum tersedia.</p>} />
+        </section>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Badge Distribution */}
-        <div className="bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl p-5">
-          <h3 className="font-semibold mb-3 text-sm">Distribusi Badge</h3>
-          {data.badge_distribution.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Belum ada badge.</p>
-          ) : (
-            <div className="space-y-2">
-              {data.badge_distribution.map(b => (
-                <div key={b.badge_type} className="flex items-center gap-3">
-                  <span className="text-lg w-7 text-center">{b.badge_emoji}</span>
-                  <div className="flex-1">
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="font-medium">{b.badge_label}</span>
-                      <span className="text-muted-foreground">{b.count}</span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{
-                          width: `${Math.min(100, (b.count / (data.total_badges_awarded || 1)) * 100)}%`,
-                          background: b.badge_color || '#888'
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Top Earners */}
-        <div className="bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl p-5">
-          <h3 className="font-semibold mb-3 text-sm">Top Badge Earners</h3>
-          {data.top_earners.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Belum ada data.</p>
-          ) : (
-            <div className="space-y-2">
-              {data.top_earners.map((e, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-lg">{i === 0 ? '🏆' : i === 1 ? '🥈' : i === 2 ? '🥉' : '🎖️'}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{e.employee_name}</div>
-                    <div className="text-xs text-muted-foreground">{e.employee_code}</div>
-                  </div>
-                  <div className="text-sm font-bold text-primary">{e.badge_count} badge</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent Badges */}
       {data.recent_badges.length > 0 && (
-        <div className="bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl p-5">
-          <h3 className="font-semibold mb-3 text-sm">Badge Terbaru</h3>
-          <div className="space-y-2">
-            {data.recent_badges.slice(0, 6).map((b, i) => (
-              <div key={i} className="flex items-center gap-3 text-sm">
-                <span className="text-base">{b.badge_emoji}</span>
-                <span className="font-medium">{b.employee_name}</span>
-                <span className="text-muted-foreground">mendapatkan</span>
-                <BadgeChip badge={b} />
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {b.earned_at ? new Date(b.earned_at).toLocaleDateString('id-ID', { day:'numeric', month:'short' }) : ''}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <section className="space-y-2">
+          <p className="text-sm font-semibold text-foreground">Lencana terbaru</p>
+          <TabelData baris={data.recent_badges.slice(0, 6)} kunci={(b) => `${b.employee_name}-${b.badge_type}-${b.earned_at}`} testId="kpi-recent-badges"
+            kolom={[
+              { kunci: 'nama', label: 'Karyawan', hp: 'judul', isi: (b) => <span className="font-medium text-foreground">{b.employee_name}</span> },
+              { kunci: 'lencana', label: 'Lencana', isi: (b) => <BadgeChip badge={b} /> },
+              { kunci: 'tgl', label: 'Diraih', isi: (b) => <span className="text-sm">{b.earned_at ? formatDateID(b.earned_at) : '—'}</span> },
+            ]} />
+        </section>
       )}
     </div>
   );
 }
 
-// ─── Main: KPIGamificationTab ─────────────────────────────────────────────────
+const KATALOG = [
+  { key: 'gold_medal', label: 'Juara 1', emoji: '🥇', desc: 'Peringkat 1 pada periode KPI' },
+  { key: 'silver_medal', label: 'Juara 2', emoji: '🥈', desc: 'Peringkat 2 pada periode KPI' },
+  { key: 'bronze_medal', label: 'Juara 3', emoji: '🥉', desc: 'Peringkat 3 pada periode KPI' },
+  { key: 'perfect_score', label: 'Nilai sempurna', emoji: '⭐', desc: 'KPI final ≥ 95' },
+  { key: 'grade_a', label: 'Grade A', emoji: '💎', desc: 'KPI grade A (91–100)' },
+  { key: 'most_improved', label: 'Paling meningkat', emoji: '📈', desc: 'Kenaikan skor terbesar dari periode sebelumnya' },
+  { key: 'consistent_top', label: 'Konsisten terbaik', emoji: '🔥', desc: 'Masuk 3 besar pada 3 periode berturut-turut atau lebih' },
+  { key: 'goal_crusher', label: 'Pencapai target', emoji: '🎯', desc: 'Semua target KPI tercapai' },
+  { key: 'top_performer', label: 'Kinerja puncak', emoji: '💪', desc: 'KPI final ≥ 90' },
+];
+
+// ─── Utama ────────────────────────────────────────────────────────────────────
 export default function KPIGamificationTab({ token, periods = [], isHR = true }) {
   const [activeTab, setActiveTab] = useState('leaderboard');
   const [selectedPeriodId, setSelectedPeriodId] = useState('overall');
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
-  const [seedMsg, setSeedMsg] = useState(null);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const finishedPeriods = periods.filter(p => ['finalized', 'closed'].includes(p.status));
@@ -316,127 +199,70 @@ export default function KPIGamificationTab({ token, periods = [], isHR = true })
   useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
 
   const seedDemo = async () => {
-    setSeeding(true); setSeedMsg(null);
+    setSeeding(true);
     try {
       const r = await axios.post(`${B}/api/dewi/kpi/gamification/seed-demo`, {}, { headers });
-      setSeedMsg({ type: 'success', text: r.data.message });
+      toast.success(r.data.message || 'Data contoh dimuat');
       await loadLeaderboard();
     } catch (e) {
-      setSeedMsg({ type: 'error', text: e.response?.data?.detail || 'Gagal seed demo' });
+      toast.error(e.response?.data?.detail || 'Gagal memuat data contoh');
     } finally { setSeeding(false); }
   };
 
   return (
-    <div className="space-y-5">
-      {/* Sub-tabs */}
-      <div className="flex gap-1 bg-muted/40 p-1 rounded-xl w-fit flex-wrap">
-        {[
-          { id: 'leaderboard', label: '🏆 Leaderboard' },
-          { id: 'summary', label: '📊 Ringkasan', hide: !isHR },
-          { id: 'badges', label: '🏅 Badge Catalog' },
-        ].filter(t => !t.hide).map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              activeTab === t.id ? 'bg-white shadow text-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}>
-            {t.label}
-          </button>
-        ))}
+    // Modul ini tampil sebagai tab di dalam hub → pilihan tampilan memakai pil (FilterChips), bukan tab kedua.
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} ariaLabel="Tampilan" testId="kpi-gamifikasi-tampilan"
+          options={[
+            { key: 'leaderboard', label: 'Peringkat' },
+            ...(isHR ? [{ key: 'summary', label: 'Ringkasan' }] : []),
+            { key: 'badges', label: 'Katalog lencana' },
+          ]} />
+        {isHR && (
+          <Button variant="outline" size="sm" onClick={seedDemo} disabled={seeding} title="Buat periode contoh, hasil KPI, dan lencana">
+            {seeding ? 'Menyiapkan data…' : 'Muat contoh data KPI'}
+          </Button>
+        )}
       </div>
 
-      {/* Seed demo button (HR only, when no data) */}
-      {isHR && (
-        <div className="flex items-center gap-3">
-          <button
-            onClick={seedDemo}
-            disabled={seeding}
-            className="px-4 py-2 rounded-lg bg-violet-500 text-foreground text-xs font-medium hover:bg-violet-600 disabled:opacity-50 transition-colors"
-          >
-            {seeding ? 'Menyiapkan data...' : '🌱 Seed Demo Data KPI'}
-          </button>
-          <span className="text-xs text-muted-foreground">Buat periode demo + hasil KPI + badge otomatis</span>
-          {seedMsg && (
-            <span className={`text-xs font-medium ${seedMsg.type === 'success' ? 'text-emerald-600' : 'text-red-700 dark:text-red-500'}`}>
-              {seedMsg.text}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Leaderboard Tab */}
-      {activeTab === 'leaderboard' && (
-        <div className="space-y-4">
-          {/* Period selector */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium">Periode:</label>
-            <SmartNativeSelect
-              value={selectedPeriodId}
-              onChange={e => setSelectedPeriodId(e.target.value)}
-              className="border rounded-lg px-3 py-1.5 text-sm bg-background"
-            >
-              <option value="overall">All-Time (Rata-rata)</option>
-              {finishedPeriods.map(p => (
-                <option key={p.period_id || p.id} value={p.period_id || p.id}>
-                  {p.title || p.name}
-                </option>
-              ))}
+      {activeTab === 'leaderboard' && (<div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <SmartNativeSelect value={selectedPeriodId} onChange={e => setSelectedPeriodId(e.target.value)} className="w-56" aria-label="Periode">
+              <option value="overall">Sepanjang waktu (rata-rata)</option>
+              {finishedPeriods.map(p => <option key={p.period_id || p.id} value={p.period_id || p.id}>{p.title || p.name}</option>)}
             </SmartNativeSelect>
-            <button onClick={loadLeaderboard} className="text-xs text-primary underline underline-offset-2">Refresh</button>
+            <Button variant="outline" size="icon" onClick={loadLeaderboard} disabled={loading} title="Muat ulang peringkat" aria-label="Muat ulang peringkat">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
           </div>
-
-          {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-            </div>
-          ) : leaderboard.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <div className="text-5xl mb-3">🏆</div>
-              <p className="text-sm">Belum ada data leaderboard.</p>
-              {isHR && <p className="text-xs mt-1">Klik <strong>Seed Demo Data KPI</strong> untuk mencoba fitur ini.</p>}
-            </div>
-          ) : (
-            <>
-              <Podium top3={leaderboard.slice(0, 3)} />
-              <div className="bg-[var(--glass-bg)] border border-[var(--glass-border)] rounded-xl p-4">
-                <h3 className="text-sm font-semibold mb-3">Ranking Lengkap</h3>
-                <LeaderboardTable entries={leaderboard} />
-              </div>
-            </>
-          )}
+          <TombolUnduh namaBerkas="peringkat-kpi" namaLembar="Peringkat" baris={leaderboard} testId="kpi-unduh-peringkat"
+            kolom={[
+              { label: 'Peringkat', nilai: (e) => e.rank }, { label: 'Karyawan', nilai: (e) => e.employee_name },
+              { label: 'Kode', nilai: (e) => e.employee_code || '' }, { label: 'Departemen', nilai: (e) => e.department || '' },
+              { label: 'Skor', nilai: (e) => e.score }, { label: 'Perubahan', nilai: (e) => (e.delta ?? '') },
+              { label: 'Grade', nilai: (e) => e.grade || '' }, { label: 'Lencana', nilai: (e) => (e.badges || []).map(b => b.badge_label).join(', ') },
+            ]} />
         </div>
-      )}
+        {loading && leaderboard.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">Memuat peringkat…</p>
+          : leaderboard.length === 0 ? (
+            <EmptyState title="Belum ada data peringkat"
+              description={isHR ? 'Peringkat muncul setelah hasil KPI dihitung. Bisa juga coba dengan "Muat contoh data KPI".' : 'Peringkat muncul setelah hasil KPI diterbitkan.'} />
+          ) : <LeaderboardTable entries={leaderboard} />}
+      </div>)}
 
-      {/* Summary Tab (HR only) */}
-      {activeTab === 'summary' && isHR && <GamificationSummaryPanel token={token} />}
+      {isHR && activeTab === 'summary' && <GamificationSummaryPanel token={token} />}
 
-      {/* Badge Catalog Tab */}
       {activeTab === 'badges' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Object.entries({
-            "gold_medal":     { label: "Juara 1",          emoji: "🥇", color: "#F59E0B", desc: "Ranking #1 pada periode KPI" },
-            "silver_medal":   { label: "Juara 2",          emoji: "🥈", color: "#9CA3AF", desc: "Ranking #2 pada periode KPI" },
-            "bronze_medal":   { label: "Juara 3",          emoji: "🥉", color: "#B45309", desc: "Ranking #3 pada periode KPI" },
-            "perfect_score":  { label: "Nilai Sempurna",   emoji: "⭐", color: "#7C3AED", desc: "KPI Final ≥ 95" },
-            "grade_a":        { label: "Grade A",          emoji: "💎", color: "#0EA5E9", desc: "KPI Grade A (91–100)" },
-            "most_improved":  { label: "Paling Meningkat", emoji: "📈", color: "#10B981", desc: "Peningkatan skor terbesar dari periode sebelumnya" },
-            "consistent_top": { label: "Konsisten Terbaik","emoji": "🔥", color: "#EF4444", desc: "Masuk Top 3 pada 3+ periode berturut-turut" },
-            "goal_crusher":   { label: "Goal Achiever",    emoji: "🎯", color: "#8B5CF6", desc: "Semua target KPI tercapai" },
-            "top_performer":  { label: "Top Performer",    emoji: "💪", color: "#F97316", desc: "KPI Final ≥ 90" },
-          }).map(([key, def]) => (
-            <div
-              key={key}
-              className="rounded-xl border p-5 flex items-start gap-4 transition-transform hover:scale-[1.02]"
-              style={{ borderColor: def.color + '44', background: def.color + '10' }}
-            >
-              <span className="text-4xl">{def.emoji}</span>
-              <div>
-                <div className="font-semibold text-sm" style={{ color: def.color }}>{def.label}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{def.desc}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <TabelData baris={KATALOG} kunci={(b) => b.key} testId="kpi-badge-catalog"
+          kolom={[
+            { kunci: 'lencana', label: 'Lencana', hp: 'judul', isi: (b) => <BadgeChip badge={{ badge_emoji: b.emoji, badge_label: b.label, badge_desc: b.desc }} /> },
+            { kunci: 'syarat', label: 'Cara meraih', isi: (b) => <span className="text-sm text-muted-foreground">{b.desc}</span> },
+          ]} />
       )}
     </div>
   );
 }
+
+export { AchievementPanel };

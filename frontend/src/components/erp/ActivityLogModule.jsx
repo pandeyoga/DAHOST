@@ -1,203 +1,328 @@
-
-import { useState, useEffect } from 'react';
+/**
+ * Log Aktivitas (Administrasi Sistem) — rekam jejak aktivitas pengguna.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, daftar = tabel (kartu ringkas di HP),
+ * detail = popup, unduh Excel/CSV, nama aksi & modul dalam bahasa staf (dulu tampil kode program seperti
+ * `create_journal`, `rahaza.model`).
+ * Perbaikan kartu angka: dulu menghitung aksi persis "Create"/"Update"/"Delete" (huruf besar) sehingga 56 aksi
+ * `create` dan semua `create_journal`/`delete_account` tidak terhitung. Kini dihitung per golongan aksi dari daftar
+ * yang tampil (mengikuti saringan).
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { RefreshCw, Filter, Activity, Search as SearchIcon, Calendar } from 'lucide-react';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 
-const ACTION_COLORS = {
-  Create: 'bg-emerald-100 text-emerald-700',
-  Update: 'bg-primary/15 text-primary',
-  Delete: 'bg-red-100 text-red-700',
-  Login: 'bg-purple-100 text-purple-700',
-  'Auto Generate': 'bg-amber-100 text-amber-700',
+const BATAS = 500;
+
+// ─── Nama modul & aksi dalam bahasa staf ─────────────────────────────────────
+const NAMA_MODUL = {
+  Auth: 'Masuk akun', journal: 'Jurnal', coa: 'Daftar akun (COA)', 'rahaza.model': 'Model produk', master: 'Data induk',
+  marketing_account: 'Akun marketing', 'rahaza.employee': 'Karyawan', rahaza_suppliers: 'Pemasok', vendor_portal: 'Portal vendor',
+  'sales.customer': 'Pelanggan penjualan', accruals: 'Akrual', 'rahaza.bom': 'BOM', 'rahaza.po': 'PO produksi',
+  'dewi-maklon': 'Maklon', bank_transfer: 'Transfer bank', wh_opname3_sessions: 'Opname gudang', 'rahaza.customer': 'Pelanggan',
+  'Production PO': 'PO produksi', 'cmt-permak': 'Permak CMT', 'cutting.order': 'Order potong', wh_building: 'Gedung gudang',
+  wh_rack: 'Rak gudang', wh_zone: 'Zona gudang', marketing_livehost_script: 'Naskah live host',
+  marketing_livehost_training: 'Pelatihan live host', 'rahaza.leave': 'Cuti', periods: 'Periode buku',
+  posting_profile: 'Profil posting', petty_cash_txn: 'Kas kecil', hr_inbox: 'Kotak masuk SDM', 'Work Order': 'Perintah kerja',
+  'Production Progress': 'Progres produksi', Garments: 'Garmen', Products: 'Produk', Invoice: 'Faktur', Payment: 'Pembayaran',
+  'User Management': 'Pengguna',
+};
+const KATA = {
+  create: 'buat', created: 'dibuat', add: 'tambah', update: 'ubah', edit: 'ubah', delete: 'hapus', remove: 'hapus', login: 'masuk',
+  logout: 'keluar', approve: 'setujui', reject: 'tolak', submit: 'ajukan', cancel: 'batalkan', void: 'batalkan', archive: 'arsipkan',
+  deactivate: 'nonaktifkan', activate: 'aktifkan', save: 'simpan', upload: 'unggah', image: 'gambar', journal: 'jurnal',
+  account: 'akun', draft: 'draf', auto: 'otomatis', sync: 'sinkron', master: 'data induk', apply: 'terapkan', fill: 'isi',
+  close: 'tutup', reopen: 'buka lagi', period: 'periode', post: 'posting', opening: 'awal', balance: 'saldo', bank: 'bank',
+  transfer: 'transfer', posting: 'posting', profile: 'profil', vendor: 'vendor', partner: 'mitra', template: 'templat',
+  lines: 'baris', copy: 'salin', missing: 'yang kurang', catalog: 'katalog', buyer: 'pembeli', generate: 'buat',
+  variants: 'varian', discontinue: 'hentikan', employee: 'karyawan', advance: 'kasbon', petty: 'kas', cash: 'kecil',
+  settle: 'selesaikan', dept: 'departemen', model: 'model', order: 'order', customer: 'pelanggan', supplier: 'pemasok',
+  suppliers: 'pemasok', user: 'pengguna', users: 'pengguna', role: 'peran', settings: 'pengaturan', import: 'impor',
+  export: 'unduh', payment: 'pembayaran', invoice: 'faktur', sop: 'SOP', coa: 'COA', bom: 'BOM', po: 'PO', cmt: 'CMT',
+  wh: 'gudang', opname: 'opname', opname3: 'opname', sessions: 'sesi', building: 'gedung', rack: 'rak', zone: 'zona',
+  rahaza: '', txn: 'transaksi', backfill: 'isi ulang', subledger: 'buku pembantu', vendor_portal: 'portal vendor', inbox: 'kotak masuk', hr: 'SDM', livehost: 'live host', script: 'naskah', training: 'pelatihan',
+  marketing: 'marketing', sales: 'penjualan', leave: 'cuti', accruals: 'akrual', periods: 'periode', cutting: 'potong',
+};
+const ALIAS_AKSI = {
+  'ganti sandi': 'Ganti sandi', login: 'Masuk', employee_advance: 'Kasbon karyawan', petty_cash_advance_settle: 'Penyelesaian kas kecil',
+  create_vendor_account: 'Buat akun vendor', create_vendor_partner: 'Buat mitra vendor',
 };
 
-const MODULE_ICONS = {
-  'Production PO': '📋',
-  'Work Order': '🏭',
-  'Production Progress': '📈',
-  'Garments': '👔',
-  'Products': '📦',
-  'Invoice': '🧾',
-  'Payment': '💰',
-  'User Management': '👤',
-  'Auth': '🔐',
+const kalimat = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+function terjemah(kode) {
+  const kata = String(kode || '').toLowerCase().split(/[._\-\s]+/).filter(Boolean).map((w) => (w in KATA ? KATA[w] : w));
+  return kalimat(kata.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim());
+}
+export function labelModul(m) {
+  if (!m) return '—';
+  return NAMA_MODUL[m] || terjemah(m) || m;
+}
+export function labelAksi(a) {
+  if (!a) return '—';
+  const [utama, ...sisa] = String(a).split(':');
+  const kunci = utama.trim().toLowerCase();
+  const dasar = ALIAS_AKSI[kunci] || terjemah(utama);
+  return sisa.length ? `${dasar} · ${sisa.join(':')}` : dasar;
+}
+
+/** Golongan aksi untuk warna lencana dan kartu angka. */
+export function golonganAksi(a) {
+  const s = String(a || '').toLowerCase();
+  if (s === 'login') return 'masuk';
+  if (/^(delete|remove|void|cancel|deactivate|archive)/.test(s) || s.includes('delete')) return 'hapus';
+  if (/^(create|add|auto_create|generate|opname_create|bom_add|post_opening)/.test(s) || s.startsWith('create')) return 'buat';
+  if (/^(update|edit|save|fill|upload|bom_copy)/.test(s)) return 'ubah';
+  return 'lain';
+}
+const NADA = { buat: 'success', ubah: 'primary', hapus: 'danger', masuk: 'info', lain: 'default' };
+
+// ─── Rincian log: ditulis server dalam bentuk teknis (ID acak, kamus data, kata Inggris) ──────────────────────
+// Hanya untuk tampilan: diterjemahkan seperlunya. Teks asli tetap ada di popup ("Teks asli dari sistem") dan di unduhan.
+const RE_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const KATA_TUNGGAL = {
+  expense: 'Biaya', revenue: 'Pendapatan', income: 'Pendapatan', asset: 'Aset', liability: 'Kewajiban', equity: 'Modal',
+  cogs: 'HPP', sales: 'Penjualan', purchase: 'Pembelian', payroll: 'Penggajian', inventory: 'Persediaan',
+};
+const ISTILAH_DATA = { cmt_vendor: 'vendor CMT', customer: 'pelanggan', supplier: 'pemasok', channel: 'kanal', bank: 'bank' };
+const GANTI_RINCIAN = [
+  [/\s*\{['"][\s\S]*$/, (m, posisi) => (posisi === 0 ? 'Ringkasan angka proses' : ' — ringkasan angka proses')],
+  [/\bscope=all\b/g, 'semua data'],
+  [/\bscope=([a-z_]+)/g, (m, k) => `bagian ${k === 'bom' ? 'BOM' : k.replace(/_/g, ' ')}`],
+  [/\bfields=\[([^\]]*)\]?/g, (m, isi) => `${(isi.match(/'[^']*'/g) || []).length} kolom diubah`],
+  [/^Cascade deleted ([^:]+):/i, '$1 dihapus beserta turunannya:'],
+  [/^Created PO:/, 'PO dibuat:'],
+  [/\b(Created|Updated|Archived|Deleted) platform account\b/g, (m, k) => `Akun toko ${({ Created: 'dibuat', Updated: 'diubah', Archived: 'diarsipkan', Deleted: 'dihapus' })[k]}`],
+  [/\bCreated training\b/g, 'Pelatihan dibuat'],
+  [/\bCreated script\b/g, 'Skrip dibuat'],
+  [/\b(Created|Deleted) accrual (\w+) for (\d{4}-\d{2})/g, (m, k, j, p) => `Akrual ${({ utility: 'utilitas', other: 'lainnya' })[j] || j} ${k === 'Created' ? 'dibuat' : 'dihapus'} untuk periode ${p}`],
+  [/\bwith (\d+) items?\b/g, 'berisi $1 barang'],
+  [/^User (\S+) logged in$/, 'Pengguna $1 masuk'],
+  [/^User (\S+) /, 'Pengguna $1 '],
+  [/\bvia HR Inbox\b/g, 'lewat kotak masuk SDM'],
+  [/\bRack\b/g, 'Rak'], [/\bpositions\b/g, 'posisi'], [/\bZone:/g, 'Zona:'], [/\bBuilding:/g, 'Gedung:'],
+  [/\bqty\b/g, 'jumlah'],
+  [/\bactive=True\b/g, 'aktif'], [/\bactive=False\b/g, 'tidak aktif'],
+  [/\bcatalog=/g, 'katalog '], [/\bversion=/g, 'versi '], [/\bclient=/g, 'klien '], [/\bartikel=/g, 'artikel '],
+  [/\btotal=(\d+)/g, 'total $1'], [/\bcreated=(\d+)/g, 'dibuat $1'],
+  [/\bid=/g, ''],
+  [/\bCreated\b/g, 'Dibuat'], [/\bDeleted\b/g, 'Dihapus'], [/\bUpdated\b/g, 'Diubah'], [/\bArchived\b/g, 'Diarsipkan'],
+  [/\(([a-z_]+)\)/g, (m, k) => `(${ISTILAH_DATA[k] || k.replace(/_/g, ' ')})`],
+  [RE_UUID, (m) => `#${m.slice(0, 8)}`],
+  // kode_bergaris_bawah → kata berspasi (alamat email dibiarkan apa adanya)
+  [/\S+/g, (kata) => (kata.includes('@') ? kata : kata.replace(/\b[a-z]+(?:_[a-z0-9]+)+\b/g, (m) => ISTILAH_DATA[m] || m.replace(/_/g, ' ')))],
+];
+const AWAL_TEKNIS = /^([a-z]+_[a-z0-9_]+|scope=|catalog=|\{)/;
+export function rapikanRincian(teks, { diPopup = false } = {}) {
+  const t = String(teks || '').trim();
+  if (!t) return '—';
+  if (KATA_TUNGGAL[t.toLowerCase()]) return KATA_TUNGGAL[t.toLowerCase()];
+  const hasil = GANTI_RINCIAN.reduce((s, [re, ke]) => s.replace(re, ke), t).replace(/\s{2,}/g, ' ').trim();
+  const ringkasan = /ringkasan angka proses$/i.test(hasil) ? (diPopup ? ' (isi lengkap di teks asli di bawah)' : ' (buka rincian)') : '';
+  return (AWAL_TEKNIS.test(t) ? kalimat(hasil) : hasil) + ringkasan || '—';
+}
+
+// Waktu dari server tersimpan UTC tetapi dikirim tanpa zona ("2026-11-07T22:19:14") → baca sebagai UTC,
+// bukan jam perangkat (dulu tampil mundur 7 jam di perangkat WIB).
+const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
+const waktu = (ts) => formatDateTimeID(instan(ts));
+const tanggalWIB = (ts) => {
+  const d = new Date(instan(ts));
+  return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 };
 
 export default function ActivityLogModule({ token }) {
   const [logs, setLogs] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [galat, setGalat] = useState('');
+  const [semuaModul, setSemuaModul] = useState([]);
   const [filterModule, setFilterModule] = useState('');
   const [filterUser, setFilterUser] = useState('');
   const [filterAction, setFilterAction] = useState('');
   const [searchText, setSearchText] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [periode, setPeriode] = useState(() => periodFromPreset('all'));
+  const [detail, setDetailMentah] = useState(null);
+  const [lihatAsli, setLihatAsli] = useState(false);
+  const setDetail = (d) => { setLihatAsli(false); setDetailMentah(d); };
 
-  const modules = [...new Set(logs.map(l => l.module))];
-  const actions = [...new Set(logs.map(l => l.action))];
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchLogs(); fetchUsers(); /* eslint-disable-next-line */ }, []);
-
+  // Modul & pengguna disaring di server (parameter API yang sudah ada); sisanya di layar.
   const fetchLogs = async () => {
     setLoading(true);
-    const params = new URLSearchParams({ limit: '500' });
-    if (filterModule) params.append('module', filterModule);
-    if (filterUser) params.append('user_id', filterUser);
-    const url = `/api/activity-logs?${params}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    setLogs(Array.isArray(data) ? data : []);
-    setLoading(false);
+    setGalat('');
+    try {
+      const params = new URLSearchParams({ limit: String(BATAS) });
+      if (filterModule) params.append('module', filterModule);
+      if (filterUser) params.append('user_id', filterUser);
+      const res = await fetch(`/api/activity-logs?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : [];
+      setLogs(list);
+      if (!res.ok) setGalat('Log aktivitas tidak bisa dimuat. Coba muat ulang.');
+      // Daftar modul tetap lengkap walau sedang menyaring satu modul.
+      setSemuaModul((prev) => [...new Set([...prev, ...list.map((l) => l.module).filter(Boolean)])]);
+    } catch {
+      setGalat('Log aktivitas tidak bisa dimuat. Coba muat ulang.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchUsers = async () => {
-    const res = await fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json();
-    setUsers(Array.isArray(data) ? data : []);
+    try {
+      const res = await fetch('/api/users', { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch { /* pilihan pengguna kosong */ }
   };
 
-  // Client-side filters on top of server-side
-  const filtered = logs.filter(l => {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchUsers(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchLogs(); }, [filterModule, filterUser]);
+
+  const actions = useMemo(() => [...new Set(logs.map((l) => l.action).filter(Boolean))]
+    .sort((a, b) => labelAksi(a).localeCompare(labelAksi(b), 'id')), [logs]);
+
+  const filtered = useMemo(() => logs.filter((l) => {
     if (filterAction && l.action !== filterAction) return false;
     if (searchText) {
       const q = searchText.toLowerCase();
-      if (!(`${l.details || ''} ${l.user_name || ''} ${l.module || ''}`.toLowerCase().includes(q))) return false;
+      const teks = `${l.details || ''} ${rapikanRincian(l.details)} ${l.user_name || ''} ${l.module || ''} ${labelModul(l.module)} ${labelAksi(l.action)}`;
+      if (!teks.toLowerCase().includes(q)) return false;
     }
-    if (dateFrom && new Date(l.timestamp) < new Date(dateFrom)) return false;
-    if (dateTo && new Date(l.timestamp) > new Date(dateTo + 'T23:59:59')) return false;
+    const tgl = tanggalWIB(l.timestamp);
+    if (periode.from && tgl && tgl < periode.from) return false;
+    if (periode.to && tgl && tgl > periode.to) return false;
     return true;
-  });
+  }), [logs, filterAction, searchText, periode]);
 
-  const formatDateTime = (d) => {
-    if (!d) return '-';
-    return new Date(d).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const hitung = useMemo(() => {
+    const h = { buat: 0, ubah: 0, hapus: 0, masuk: 0, lain: 0 };
+    filtered.forEach((l) => { h[golonganAksi(l.action)] += 1; });
+    return h;
+  }, [filtered]);
+
+  const adaSaringan = !!(searchText || filterAction || filterModule || filterUser || periode.preset !== 'all');
+  const resetSaringan = () => {
+    setSearchText(''); setFilterAction(''); setFilterModule(''); setFilterUser(''); setPeriode(periodFromPreset('all'));
   };
 
+  const kolom = [
+    { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (l) => <span className="whitespace-nowrap text-sm tabular-nums">{waktu(l.timestamp)}</span> },
+    { kunci: 'pengguna', label: 'Pengguna', hp: 'judul', isi: (l) => <span className="font-medium">{l.user_name || '—'}</span> },
+    { kunci: 'aksi', label: 'Aksi', isi: (l) => {
+      const [dasar, ...tambahan] = labelAksi(l.action).split(' · ');
+      return (
+        <div className="min-w-0 space-y-0.5 md:max-w-[14rem]">
+          <StatusBadge status={golonganAksi(l.action)} label={dasar} tone={NADA[golonganAksi(l.action)]} className="max-w-full whitespace-normal break-words" />
+          {tambahan.length > 0 && <p className="break-all text-xs text-muted-foreground">{tambahan.join(' · ')}</p>}
+        </div>
+      );
+    } },
+    { kunci: 'modul', label: 'Modul', isi: (l) => <span className="text-sm">{labelModul(l.module)}</span> },
+    { kunci: 'rincian', label: 'Rincian', isi: (l) => { const r = rapikanRincian(l.details); return <p className="break-words text-sm text-muted-foreground md:line-clamp-2 md:max-w-[22rem]" title={r}>{r}</p>; } },
+  ];
+
+  const keteranganKartu = `Dari ${filtered.length} aktivitas di daftar (${BATAS} terbaru, mengikuti saringan).`;
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Log Aktivitas</h1>
-          <p className="text-muted-foreground text-sm mt-1">Rekam jejak semua aktivitas sistem</p>
+    <PageLayout testId="activity-log-module" title="Log aktivitas"
+      subtitle="Rekam jejak aktivitas pengguna: siapa, melakukan apa, di modul mana, dan kapan."
+      filters={<>
+        <div className="relative w-full sm:w-56">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Cari rincian, pengguna, modul"
+            className="pl-8" data-testid="activity-log-search" />
         </div>
-        <button onClick={fetchLogs} className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm hover:bg-[var(--glass-bg)]">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
-      </div>
-
-      {/* Filter */}
-      <div className="flex flex-wrap gap-2 items-center">
-        <Filter className="w-4 h-4 text-muted-foreground" />
-        <button onClick={() => setFilterModule('')}
-          className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${!filterModule ? 'bg-primary text-foreground border-blue-600' : 'border-border text-muted-foreground hover:bg-[var(--glass-bg)]'}`}>
-          Semua Modul
-        </button>
-        {modules.map(m => (
-          <button key={m} onClick={() => setFilterModule(m)}
-            className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-              filterModule === m ? 'bg-primary text-foreground border-blue-600' : 'border-border text-muted-foreground hover:bg-[var(--glass-bg)]'
-            }`}>
-            {MODULE_ICONS[m] || '📌'} {m}
-          </button>
-        ))}
-      </div>
-
-      {/* User Filter */}
-      <div className="bg-[var(--card-surface)] p-3 rounded-lg border border-border space-y-2">
-        <div className="flex items-center gap-3 flex-wrap">
-          <label className="text-sm font-medium text-foreground whitespace-nowrap">Filter User:</label>
-          <SmartNativeSelect value={filterUser} onChange={(e) => { setFilterUser(e.target.value); }}
-            className="flex-1 min-w-[180px] px-3 py-2 border border-border rounded-lg text-sm">
-            <option value="">Semua User</option>
-            {users.map(u => <option key={u.id} value={u.id}>{`${u.name} - ${u.email}`}</option>)}
-          </SmartNativeSelect>
-          <SmartNativeSelect value={filterAction} onChange={(e) => setFilterAction(e.target.value)}
-            className="px-3 py-2 border border-border rounded-lg text-sm">
-            <option value="">Semua Action</option>
-            {actions.map(a => <option key={a} value={a}>{a}</option>)}
-          </SmartNativeSelect>
-          <button onClick={fetchLogs} className="px-4 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 whitespace-nowrap">
-            Terapkan Filter
-          </button>
+        <SmartNativeSelect value={filterModule} onChange={(e) => setFilterModule(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-40"
+          aria-label="Modul" data-testid="activity-log-module-filter">
+          <option value="">Semua modul</option>
+          {semuaModul.map((m) => <option key={m} value={m}>{labelModul(m)}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterUser} onChange={(e) => setFilterUser(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-44"
+          aria-label="Pengguna" data-testid="activity-log-user-filter">
+          <option value="">Semua pengguna</option>
+          {users.map((u) => <option key={u.id} value={u.id}>{`${u.name} - ${u.email}`}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterAction} onChange={(e) => setFilterAction(e.target.value)} className="w-full" wrapperClassName="w-full sm:w-40"
+          aria-label="Aksi" data-testid="activity-log-action-filter">
+          <option value="">Semua aksi</option>
+          {actions.map((a) => <option key={a} value={a}>{labelAksi(a)}</option>)}
+        </SmartNativeSelect>
+        <PeriodPicker value={periode} onChange={setPeriode} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="activity-log-period" />
+        {adaSaringan && (
+          <Button variant="link" size="sm" onClick={resetSaringan} data-testid="activity-log-reset">Hapus saringan</Button>
+        )}
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="log-aktivitas" namaLembar="Log aktivitas" baris={filtered} testId="activity-log-unduh"
+          kolom={[
+            { label: 'Waktu', nilai: (l) => waktu(l.timestamp) },
+            { label: 'Pengguna', nilai: (l) => l.user_name || '' },
+            { label: 'Aksi', nilai: (l) => labelAksi(l.action) },
+            { label: 'Modul', nilai: (l) => labelModul(l.module) },
+            { label: 'Rincian', nilai: (l) => l.details || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchLogs} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="activity-log-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={filtered.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="activity-log-stats">
+          <StatTile label="Dibuat" value={hitung.buat} hint={keteranganKartu} testId="activity-stat-buat" />
+          <StatTile label="Diubah" value={hitung.ubah} hint={keteranganKartu} testId="activity-stat-ubah" />
+          <StatTile label="Dihapus / dibatalkan" value={hitung.hapus} hint={keteranganKartu} testId="activity-stat-hapus" />
+          <StatTile label="Masuk akun" value={hitung.masuk} hint={keteranganKartu} testId="activity-stat-masuk" />
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[220px]">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input type="text" placeholder="Search details, user, module..." value={searchText} onChange={e => setSearchText(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border border-border rounded-lg text-sm" data-testid="activity-log-search" />
-          </div>
-          <Calendar className="w-4 h-4 text-muted-foreground" />
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-3 py-2 border border-border rounded-lg text-sm" />
-          <span className="text-xs text-muted-foreground">to</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-3 py-2 border border-border rounded-lg text-sm" />
-          {(searchText || dateFrom || dateTo || filterAction) && (
-            <button onClick={() => { setSearchText(''); setDateFrom(''); setDateTo(''); setFilterAction(''); }} className="text-xs text-primary hover:underline">
-              Clear filters
-            </button>
-          )}
-        </div>
-      </div>
-
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { action: 'Create', label: 'Dibuat', color: 'border-l-emerald-500' },
-          { action: 'Update', label: 'Diubah', color: 'border-l-blue-500' },
-          { action: 'Delete', label: 'Dihapus', color: 'border-l-red-500' },
-          { action: 'Login', label: 'Login', color: 'border-l-purple-500' },
-        ].map(s => (
-          <div key={s.action} className={`bg-[var(--card-surface)] rounded-xl border border-border border-l-4 ${s.color} p-4 shadow-sm`}>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-            <p className="text-2xl font-bold text-foreground mt-1">
-              {logs.filter(l => l.action === s.action).length}
+      )}>
+      {galat && <p className="text-sm text-[hsl(var(--danger-text))]" role="alert">{galat}</p>}
+      {loading && logs.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat log aktivitas…</p>
+      ) : (
+        <>
+          {filtered.length > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="activity-log-count">
+              {filtered.length} aktivitas tampil{logs.length >= BATAS ? ` · daftar memuat ${BATAS} aktivitas terbaru` : ''}.
             </p>
-          </div>
-        ))}
-      </div>
-
-      {/* Log List */}
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm">
-        <div className="px-5 py-4 border-b border-border">
-          <h3 className="font-semibold text-foreground">
-            <Activity className="w-4 h-4 inline mr-2 text-primary" />
-            Aktivitas Terbaru ({filtered.length})
-          </h3>
-        </div>
-        <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">Belum ada aktivitas</div>
-          ) : (
-            filtered.map(log => (
-              <div key={log.id} className="flex items-start gap-4 px-5 py-4 hover:bg-[var(--glass-bg)]">
-                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center text-sm flex-shrink-0">
-                  {MODULE_ICONS[log.module] || <Activity className="w-4 h-4 text-primary" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm text-foreground">{log.user_name}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ACTION_COLORS[log.action] || 'bg-secondary text-muted-foreground'}`}>
-                      {log.action}
-                    </span>
-                    <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded">{log.module}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-0.5">{log.details}</p>
-                </div>
-                <div className="text-xs text-muted-foreground whitespace-nowrap flex-shrink-0">
-                  {formatDateTime(log.timestamp)}
-                </div>
-              </div>
-            ))
           )}
-        </div>
-      </div>
-    </div>
+          <TabelData kolom={kolom} baris={filtered} onKlikBaris={setDetail} testId="activity-log-table"
+            kosong={<EmptyState title={logs.length ? 'Tidak ada aktivitas yang cocok' : 'Belum ada aktivitas'}
+              description={logs.length ? 'Ubah saringan atau kata pencarian.' : 'Aktivitas pengguna akan tercatat di sini.'}
+              action={adaSaringan ? { label: 'Hapus saringan', onClick: resetSaringan } : undefined} />} />
+        </>
+      )}
+
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={labelAksi(detail.action)} testId="activity-log-detail"
+          keterangan={waktu(detail.timestamp)}
+          status={<StatusBadge status={golonganAksi(detail.action)} label={labelModul(detail.module)} tone={NADA[golonganAksi(detail.action)]} />}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Pengguna">{detail.user_name || '—'}</BarisDetail>
+            <BarisDetail label="Aksi">{labelAksi(detail.action)}</BarisDetail>
+            <BarisDetail label="Modul">{labelModul(detail.module)}</BarisDetail>
+            <BarisDetail label="Waktu">{waktu(detail.timestamp)}</BarisDetail>
+            <BarisDetail label="Rincian"><span className="whitespace-pre-wrap break-words">{rapikanRincian(detail.details, { diPopup: true })}</span></BarisDetail>
+          </dl>
+          {detail.details && rapikanRincian(detail.details) !== String(detail.details).trim() && (
+            <div className="mt-3 text-sm" data-testid="activity-log-raw">
+              <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => setLihatAsli((v) => !v)}>
+                {lihatAsli ? 'Sembunyikan teks asli' : 'Lihat teks asli dari sistem (untuk teknisi)'}
+              </Button>
+              {lihatAsli && <p className="mt-2 whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">{detail.details}</p>}
+            </div>
+          )}
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }

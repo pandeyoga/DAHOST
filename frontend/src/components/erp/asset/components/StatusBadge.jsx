@@ -1,13 +1,10 @@
 /**
- * StatusBadge — Generic pill renderer driven by configMap (status → label/color).
- * Extracted from AssetManagementPortal.jsx (Phase 1 refactor)
+ * StatusBadge (aset) — lencana status memakai StatusBadge bersama (moduleAtoms) dengan label & nada dari
+ * `configMap` (constants.js). Standar UI/UX v2: satu bentuk lencana, warna hanya token.
  */
+import { StatusBadge as Lencana } from '../../moduleAtoms';
 
-export function StatusBadge({ status, configMap }) {
-  const cfg = configMap[status] || { label: status, color: 'bg-muted text-muted-foreground' };
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${cfg.color}`}>
-      {cfg.label}
-    </span>
-  );
+export function StatusBadge({ status, configMap, testId }) {
+  const cfg = configMap?.[status] || configMap?.[String(status || '').toLowerCase()];
+  return <Lencana status={status} label={cfg?.label} tone={cfg?.tone} testId={testId} />;
 }

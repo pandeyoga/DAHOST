@@ -11,7 +11,7 @@
  */
 import { Fragment, useState, useEffect, useCallback, useReducer, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { AlertCircle, RefreshCw, FileText, DollarSign, Calendar, Users, Store, History } from 'lucide-react';
+import { AlertCircle, RefreshCw, FileText, Calendar, Users, Store, History, MoreHorizontal } from 'lucide-react';
 import { PaymentHistoryList } from './PaymentHistoryModal';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -19,7 +19,10 @@ import { Button } from '@/components/ui/button';
 import { StatusBadge, EmptyState, Notice } from './moduleAtoms';
 import PageLayout, { DetailPanel, RowDetail } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
-import Modal from './Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatRupiah, formatDateID } from '@/lib/format';
@@ -61,7 +64,7 @@ function ChannelBadge({ channel, channels }) {
   const ch = channels.find(c => c.channel_key === channel);
   if (!ch) return <span className="text-xs text-muted-foreground">{channel}</span>;
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border bg-[var(--glass-bg)] text-foreground/70 border-[var(--glass-border)] whitespace-nowrap">
+    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border bg-[var(--card-surface)] text-muted-foreground border-[var(--glass-border)] whitespace-nowrap">
       <Store size={9} />
       {ch.channel_label}
     </span>
@@ -148,11 +151,26 @@ export default function RahazaARInvoicesModule({ token }) {
       title="Faktur Penjualan"
       subtitle="Faktur reseller & maklon. Dibuat dari Nota Penjualan atau Maklon; di sini diterbitkan dan dicatat pembayarannya."
       actions={<Button variant="outline" onClick={() => setShowStatement(v => !v)} aria-expanded={showStatement} data-testid="ar-open-statement"><Users className="w-4 h-4" />Rekening koran</Button>}
-      tools={<Button size="icon" variant="outline" onClick={refresh} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="faktur-penjualan" namaLembar="Faktur" baris={invoices} testId="ar-unduh"
+          kolom={[
+            { label: 'No. faktur', nilai: (i) => i.invoice_number },
+            { label: 'Saluran', nilai: (i) => { const ch = channels.find((c) => c.channel_key === i.sales_channel); return ch?.channel_label || i.sales_channel || ''; } },
+            { label: 'Pelanggan', nilai: (i) => i.customer_name },
+            { label: 'Terbit', nilai: (i) => formatDateID(i.issue_date) },
+            { label: 'Jatuh tempo', nilai: (i) => (i.due_date ? formatDateID(i.due_date) : '') },
+            { label: 'Status', nilai: (i) => AR_STATUS[(i.status || '').toLowerCase()]?.label || i.status },
+            { label: 'Total', nilai: (i) => Number(i.total) || 0 },
+            { label: 'Dibayar', nilai: (i) => Number(i.paid_amount) || 0 },
+            { label: 'Sisa', nilai: (i) => Number(i.balance) || 0 },
+            { label: 'Referensi', nilai: (i) => (i.schedule_mode === 'v2' ? `PO ${i.linked_maklon_po_number || ''}` : (i.shipment_number || '')) },
+          ]} />
+        <Button size="icon" variant="outline" onClick={refresh} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+      </>}
       summary={(error || invoices.length > 0) && <>
         {error && (
           <Notice tone="danger" icon={AlertCircle}
-            action={<Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setError('')}>Tutup</Button>}>
+            action={<Button variant="link" size="sm" className="h-auto p-0" onClick={() => setError('')}>Tutup</Button>}>
             {error}
           </Notice>
         )}
@@ -173,16 +191,16 @@ export default function RahazaARInvoicesModule({ token }) {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-[var(--glass-bg)]">
-                <tr className="text-left text-[10px] uppercase tracking-wider text-foreground/50">
-                  <th className="px-4 py-3">No. faktur</th>
-                  <th className="px-3 py-3">Saluran</th>
-                  <th className="px-3 py-3">Pelanggan</th>
-                  <th className="px-3 py-3">Terbit</th>
-                  <th className="px-3 py-3">Status</th>
-                  <th className="px-3 py-3 text-right">Total</th>
-                  <th className="px-3 py-3 text-right">Sisa</th>
-                  <th className="px-3 py-3 text-right">Aksi</th>
+              <thead>
+                <tr className="text-left">
+                  <th>No. faktur</th>
+                  <th className="hidden lg:table-cell">Saluran</th>
+                  <th>Pelanggan</th>
+                  <th className="hidden md:table-cell">Terbit</th>
+                  <th>Status</th>
+                  <th className="text-right hidden md:table-cell">Total</th>
+                  <th className="text-right">Sisa</th>
+                  <th className="text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -190,56 +208,58 @@ export default function RahazaARInvoicesModule({ token }) {
                   const histOpen = historyInv?.id === inv.id;
                   return (
                     <Fragment key={inv.id}>
-                      <tr className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] transition-colors ${histOpen ? 'bg-[hsl(var(--primary)/0.06)]' : idx % 2 === 0 ? '' : 'bg-[var(--glass-bg)]/20'}`}
+                      <tr className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] transition-colors ${histOpen ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                         data-testid={`ar-row-${inv.invoice_number}`}>
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          <div className="text-xs font-semibold text-foreground">{inv.invoice_number}</div>
+                        <td className="whitespace-nowrap">
+                          <div className="font-semibold text-foreground">{inv.invoice_number}</div>
                           {inv.intercompany && <StatusBadge status="antar-cv" label="Antar CV" tone="info" testId={`ar-ic-${inv.invoice_number}`} />}
-                          <div className="text-[10px] text-muted-foreground">
+                          <div className="text-xs text-muted-foreground">
                             {inv.schedule_mode === 'v2'
                               ? `PO ${inv.linked_maklon_po_number || '—'} · nilai PO ${fmt(inv.scheduled_total)} · tertagih ${fmt(inv.billed_total)}`
                               : (inv.shipment_number || '—')}
                           </div>
                         </td>
-                        <td className="px-3 py-2"><ChannelBadge channel={inv.sales_channel} channels={channels} /></td>
-                        <td className="px-3 py-2 text-xs text-foreground">{inv.customer_name}</td>
-                        <td className="px-3 py-2 text-xs text-foreground/70 whitespace-nowrap">{formatDateID(inv.issue_date)}</td>
-                        <td className="px-3 py-2"><ArStatusBadge status={inv.status} /></td>
-                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs text-foreground">{fmt(inv.total)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs">
+                        <td className="hidden lg:table-cell"><ChannelBadge channel={inv.sales_channel} channels={channels} /></td>
+                        <td className="text-foreground">{inv.customer_name}</td>
+                        <td className="text-muted-foreground whitespace-nowrap hidden md:table-cell">{formatDateID(inv.issue_date)}</td>
+                        <td><ArStatusBadge status={inv.status} /></td>
+                        <td className="text-right tabular-nums whitespace-nowrap text-foreground hidden md:table-cell">{fmt(inv.total)}</td>
+                        <td className="text-right tabular-nums whitespace-nowrap">
                           {inv.balance > 0
-                            ? <span className="text-[hsl(var(--warning))] font-semibold">{fmt(inv.balance)}</span>
-                            : <span className="text-[hsl(var(--success))]">Lunas</span>}
+                            ? <span className="text-[hsl(var(--warning-text))] font-semibold">{fmt(inv.balance)}</span>
+                            : <span className="text-[hsl(var(--success-text))]">Lunas</span>}
                         </td>
-                        <td className="px-3 py-2">
+                        <td>
                           <div className="flex items-center justify-end gap-1">
-                            {/* Riwayat pembayaran + nomor jurnal — dibuka di bawah baris ini */}
-                            {(Number(inv.paid_amount) > 0 || inv.status === 'paid' || inv.status === 'partial_paid') && (
-                              <Button variant="outline" size="sm" aria-expanded={histOpen}
-                                onClick={() => setHistoryInv(histOpen ? null : inv)}
-                                data-testid={`ar-history-${inv.id}`}
-                                title="Riwayat pembayaran & nomor jurnal"
-                              >
-                                <History className="w-3.5 h-3.5" />{histOpen ? 'Tutup riwayat' : 'Riwayat'}
-                              </Button>
-                            )}
                             {inv.status === 'draft' && (
                               <Button variant="outline" size="sm" onClick={() => sendInvoice(inv.id)} data-testid={`ar-send-${inv.id}`} title="Terbitkan faktur dan catat ke buku besar">Terbitkan</Button>
-                            )}
-                            {/* 2026-11-07: server menyimpan status terbit sebagai `issued` (H-01) — dulu tombol hanya untuk `sent` sehingga tidak pernah tampil */}
-                            {['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2' && (
-                              <Button variant="outline" size="sm" onClick={() => changeStatus(inv.id, 'overdue')} title="Tandai lewat jatuh tempo">Jatuh tempo</Button>
                             )}
                             {/* Bayar — form terisi sisa tagihan; rekening wajib dipilih. 2026-11-04: tombol ⚡ "Lunas"
                                 sekali-klik dilepas karena diam-diam memakai rekening pertama (Kas Kecil). */}
                             {inv.status !== 'draft' && inv.status !== 'cancelled' && (inv.status !== 'paid' || inv.schedule_mode === 'v2') && arPayCap(inv) > 0 && (
-                              <Button variant="outline" size="sm"
-                                onClick={() => setPaying(inv)}
-                                data-testid={`ar-pay-form-${inv.id}`}
-                                title="Catat pembayaran"
-                              >
+                              <Button variant="success" size="sm" onClick={() => setPaying(inv)} data-testid={`ar-pay-form-${inv.id}`} title="Catat pembayaran">
                                 Bayar
                               </Button>
+                            )}
+                            {/* Riwayat pembayaran (di bawah baris) & tandai jatuh tempo — di menu Lainnya (paling banyak 2 tombol terlihat) */}
+                            {((Number(inv.paid_amount) > 0 || inv.status === 'paid' || inv.status === 'partial_paid')
+                              || (['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2')) && (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`ar-more-${inv.id}`}><MoreHorizontal className="w-4 h-4" /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {(Number(inv.paid_amount) > 0 || inv.status === 'paid' || inv.status === 'partial_paid') && (
+                                    <DropdownMenuItem onClick={() => setHistoryInv(histOpen ? null : inv)} data-testid={`ar-history-${inv.id}`}>
+                                      <History className="w-4 h-4 mr-2" />{histOpen ? 'Tutup riwayat pembayaran' : 'Riwayat pembayaran & jurnal'}
+                                    </DropdownMenuItem>
+                                  )}
+                                  {/* 2026-11-07: server menyimpan status terbit sebagai `issued` (H-01) */}
+                                  {['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2' && (
+                                    <DropdownMenuItem onClick={() => changeStatus(inv.id, 'overdue')}>Tandai lewat jatuh tempo</DropdownMenuItem>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             )}
                           </div>
                         </td>
@@ -310,30 +330,37 @@ function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
       : Number(amount) > balance + 0.5 ? `Jumlah melebihi ${isSchedule ? 'sisa nilai PO' : 'sisa tagihan'} (${fmt(balance)}).`
         : '';
   return (
-    <Modal onClose={onClose} title="Catat pembayaran" size="sm" description={`${invoice.invoice_number} · ${invoice.customer_name}`}>
-      <p className="text-xs text-muted-foreground mb-3" data-testid="ar-pay-cap">
-        {invoice.invoice_number} · {invoice.customer_name} · {isSchedule
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="ar-pay-form" judul="Catat pembayaran"
+      keterangan={`${invoice.invoice_number} · ${invoice.customer_name}`}
+      onSimpan={() => onPay({ amount, account_id, date, notes, ...(isIc ? { counter_cash_account_id: counter_id } : {}) })}
+      bisaSimpan={!problem} galat={problem && account_id ? problem : undefined}>
+      <p className="text-sm text-muted-foreground" data-testid="ar-pay-cap">
+        {isSchedule
           ? `Piutang jatuh ${fmt(due)} · bisa diterima sampai ${fmt(balance)} (sisa nilai PO; kelebihan dicatat sebagai uang muka)`
-          : `Sisa: ${fmt(balance)}`}
+          : `Sisa tagihan: ${fmt(balance)}`}
       </p>
-      <div className="space-y-3">
-        <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-amount">Jumlah diterima</label><MoneyInput glass id="ar-pay-amount" value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
-        <div><label className="text-xs text-muted-foreground">Masuk ke rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={account_id} onChange={setAccount} testId="ar-pay-account" /></div>
-        {isIc && (
+      <Isian label="Jumlah diterima" wajib htmlFor="ar-pay-amount">
+        <MoneyInput glass id="ar-pay-amount" value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" />
+      </Isian>
+      <Isian label="Masuk ke rekening" wajib>
+        <CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={account_id} onChange={setAccount} testId="ar-pay-account" />
+      </Isian>
+      {isIc && (
+        <Isian label={`Dibayar dari rekening ${otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'}`} wajib petunjuk="Antar CV — pembayaran pasangannya dibuat otomatis.">
           <div data-testid="ar-pay-counter">
-            <label className="text-xs text-muted-foreground">Dibayar dari rekening {otherCv === 'SMU' ? 'CV Sukma' : 'CV Dewi Aditya'} (antar CV, pasangan otomatis)</label>
             <CashAccountSelect accounts={counterAccounts} loaded={counterLoaded} value={counter_id} onChange={setCounter} testId="ar-pay-counter-account" />
           </div>
-        )}
-        <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-date">Tanggal</label><GlassInput id="ar-pay-date" type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
-        <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-notes">Catatan</label><GlassInput id="ar-pay-notes" value={notes} onChange={e => setNotes(e.target.value)} placeholder="opsional, mis. no. referensi transfer" /></div>
+        </Isian>
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Isian label="Tanggal">
+          <DatePicker id="ar-pay-date" value={date} onChange={(v) => setDate(v || todayWIB())} bolehKosong={false} testId="ar-pay-date" />
+        </Isian>
+        <Isian label="Catatan" htmlFor="ar-pay-notes">
+          <GlassInput id="ar-pay-notes" value={notes} onChange={e => setNotes(e.target.value)} placeholder="mis. no. referensi transfer" />
+        </Isian>
       </div>
-      {problem && account_id && <div className="text-xs text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.3)] rounded-lg px-3 py-2 mt-3" data-testid="ar-pay-error">{problem}</div>}
-      <div className="flex gap-2 mt-4 justify-end">
-        <Button variant="outline" onClick={onClose}>Batal</Button>
-        <Button onClick={() => onPay({ amount, account_id, date, notes, ...(isIc ? { counter_cash_account_id: counter_id } : {}) })} disabled={!!problem} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4" />Simpan</Button>
-      </div>
-    </Modal>
+    </FormPopup>
   );
 }
 
@@ -362,7 +389,7 @@ function CustomerStatementPanel({ token, customers, onClose }) {
     <DetailPanel title="Rekening koran pelanggan" description="Ringkasan tagihan dan pembayaran satu pelanggan dalam satu periode."
       onClose={onClose} testId="ar-statement-panel">
       <div className="flex flex-wrap items-center gap-2">
-        <SmartNativeSelect value={customer_id} onChange={e => setCustomerId(e.target.value)} className="h-9 w-72 max-w-full" aria-label="Pelanggan" data-testid="stmt-customer">
+        <SmartNativeSelect value={customer_id} onChange={e => setCustomerId(e.target.value)} className="h-9 w-full sm:w-64" aria-label="Pelanggan" data-testid="stmt-customer">
           <option value="">— Pilih pelanggan —</option>
           {customers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}
         </SmartNativeSelect>
@@ -373,8 +400,8 @@ function CustomerStatementPanel({ token, customers, onClose }) {
       {data && (
         <p className="text-sm text-muted-foreground" data-testid="stmt-summary">
           <b className="text-foreground tabular-nums">{data.summary.count}</b> faktur · tagihan <b className="text-foreground tabular-nums">{fmt2(data.summary.total_billed)}</b>
-          {' · '}dibayar <b className="text-[hsl(var(--success))] tabular-nums">{fmt2(data.summary.total_paid)}</b>
-          {' · '}sisa <b className="text-[hsl(var(--warning))] tabular-nums">{fmt2(data.summary.outstanding)}</b>
+          {' · '}dibayar <b className="text-[hsl(var(--success-text))] tabular-nums">{fmt2(data.summary.total_paid)}</b>
+          {' · '}sisa <b className="text-[hsl(var(--warning-text))] tabular-nums">{fmt2(data.summary.outstanding)}</b>
         </p>
       )}
     </DetailPanel>

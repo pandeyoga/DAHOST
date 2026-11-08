@@ -15,29 +15,36 @@
  * `Omzet pesanan` dari pesanan nyata (`marketing_orders.creator_id`). Menjumlahkannya
  * berarti menghitung satu penjualan dua kali — jadi layar menaruhnya bersebelahan
  * beserta **cakupan KPI** supaya pembaca tahu berapa bagian yang benar-benar terukur.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub), periode = PeriodPicker (dulu dua input
+ * tanggal bawaan peramban), 4 StatTile berketerangan (dulu 6 kartu), tabel + unduh Excel/CSV, rincian kelompok = popup,
+ * label Indonesia. Tampilan Kartu untuk kelompok diganti tabel (HP: kartu ringkas). KPI yang belum diisi tampil
+ * '—' (bukan 0) supaya tidak terbaca sebagai nol tayangan.
  */
 import { useState, useEffect, useCallback } from 'react';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { RefreshCw, Loader2, Table2, LayoutGrid, Info, Users, PencilLine, ExternalLink } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { GlassCard } from '@/components/ui/glass';
-import { Badge } from '@/components/ui/badge';
+import { RefreshCw, Info, PencilLine, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatRupiah } from '@/lib/format';
-import { todayWIB, daysAgoWIB } from '@/lib/waktu';
+import { Button } from '@/components/ui/button';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { formatRupiah, formatDateID } from '@/lib/format';
+import PeriodPicker, { periodFromPreset } from '../finance/PeriodPicker';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import ContentKpiDialog from './ContentKpiDialog';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
-const VIEW_KEY = 'content_perf_view';
+const pct = (n, d = 1) => `${Number(n || 0).toFixed(d).replace('.', ',')}%`;
 const GROUPS = [
-  { v: 'content', l: 'Per Konten' },
-  { v: 'creator', l: 'Per Kreator (KOL)' },
-  { v: 'content_type', l: 'Per Jenis Konten' },
-  { v: 'account', l: 'Per Toko' },
-  { v: 'platform', l: 'Per Platform' },
+  { v: 'content', l: 'Per konten' },
+  { v: 'creator', l: 'Per kreator (KOL)' },
+  { v: 'content_type', l: 'Per jenis konten' },
+  { v: 'account', l: 'Per toko' },
+  { v: 'platform', l: 'Per platform' },
 ];
 const KPI_STATES = [
   { v: 'all', l: 'Semua konten' },
@@ -45,35 +52,52 @@ const KPI_STATES = [
   { v: 'filled', l: 'Sudah ada KPI' },
 ];
 const SORTS = [
-  { v: 'views', l: 'Views terbanyak' },
+  { v: 'views', l: 'Tayangan terbanyak' },
   { v: 'gmv', l: 'GMV terbesar' },
-  { v: 'engagement', l: 'Engagement terbanyak' },
-  { v: 'cvr', l: 'CVR tertinggi' },
+  { v: 'engagement', l: 'Interaksi terbanyak' },
+  { v: 'cvr', l: 'Konversi tertinggi' },
   { v: 'date', l: 'Terbaru' },
 ];
-const HEADS = ['Nama', 'Konten', 'Terbit', 'KPI terisi', 'Cakupan KPI', 'Views',
-  'Views/konten', 'Engagement', 'Eng. rate', 'Saves', 'CTR rata2', 'Order (KPI)',
-  'GMV (KPI)', 'GMV/konten', 'Omzet pesanan', 'Pesanan'];
-const CONTENT_HEADS = ['Tanggal', 'Konten', 'Jenis', 'Toko', 'Kreator', 'Status',
-  'Views', 'Engagement', 'Eng. rate', 'CVR', 'Order', 'GMV (KPI)', 'KPI', ''];
+const STATUS = { draft: ['Draf', 'muted'], scheduled: ['Terjadwal', 'info'], posted: ['Tayang', 'success'], cancelled: ['Batal', 'danger'] };
+/**
+ * Catatan data dari server memuat istilah program & huruf besar penekanan (mis. "(`marketing_orders.creator_id`)",
+ * "'no_target'", "link", "views", "BELUM"). Dirapikan di layar saja — isinya tidak diubah. Dipakai juga oleh
+ * Scorecard kreator.
+ */
+const GANTI_ISTILAH = [
+  [/\s*\(`?[a-z_]+\.[a-z_]+`?\)/g, ''], [/`/g, ''],
+  [/'no_target'/g, '"belum ada target"'], [/'posted'/g, '"tayang"'],
+  [/GMV\/view/g, 'GMV per tayangan'], [/\beng\. rate\b/g, 'tingkat interaksi'], [/\bCVR\b/g, 'konversi'],
+  [/\bAOV\b/g, 'nilai rata-rata pesanan'], [/\bviews\b/g, 'tayangan'], [/\bview\b/g, 'tayangan'],
+  [/\bengagement\b/g, 'interaksi'], [/\blink\b/g, 'tautan'], [/\bdi-assign\b/g, 'ditugaskan'],
+  [/\bmeng-assign\b/g, 'menugaskan'], [/\bassign\b/g, 'penugasan'],
+];
+const SINGKATAN = new Set(['GMV', 'KPI', 'HPP', 'PPN', 'SKU', 'KOL', 'CSV']);
+export function rapikanCatatan(teks) {
+  let s = String(teks || '');
+  GANTI_ISTILAH.forEach(([pola, ganti]) => { s = s.replace(pola, ganti); });
+  // Huruf besar penekanan → huruf biasa (singkatan resmi tetap).
+  s = s.replace(/\b[A-Z]{4,}\b/g, (w) => (SINGKATAN.has(w) ? w : w.toLowerCase()));
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const StatusKonten = ({ s }) => <StatusBadge status={s} label={(STATUS[s] || [s || '—'])[0]} tone={(STATUS[s] || [])[1]} />;
 
 export default function ContentPerformanceView({ token }) {
-  // 30 hari BERGULIR, bukan "awal bulan": dibuka tanggal 1, rentang awal-bulan
-  // hanya memuat satu hari dan layar tampak kosong padahal data pekan lalu ada.
-  const [from, setFrom] = useState(() => daysAgoWIB(29));
-  const [to, setTo] = useState(() => todayWIB());
+  // Bawaan "3 bulan" (bulan ini + 2 bulan lalu), bukan "awal bulan": dibuka tanggal 1, rentang awal-bulan
+  // hanya memuat satu hari dan layar tampak kosong padahal data pekan lalu ada. (8 Nov 2026: dulu 30 hari
+  // bergulir = mode "Pilih tanggal", yang memaksa dua kotak tanggal bawaan browser tampil sejak awal.)
+  const [periode, setPeriode] = useState(() => periodFromPreset('3m'));
+  const from = periode.from;
+  const to = periode.to;
   const [groupBy, setGroupBy] = useState('content');
   const [kpiState, setKpiState] = useState('all');
   const [sort, setSort] = useState('views');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem(VIEW_KEY) || 'table'; } catch { return 'table'; }
-  });
+  const [rincian, setRincian] = useState(null);
   const perContent = groupBy === 'content';
-
-  useEffect(() => { try { localStorage.setItem(VIEW_KEY, view); } catch { /* diblokir */ } }, [view]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,238 +120,165 @@ export default function ContentPerformanceView({ token }) {
 
   const t = data?.totals || {};
   const rows = data?.rows || [];
+  // KPI belum ada yang diisi → angka tayangan/GMV belum terukur, bukan nol.
+  const terukur = Number(t.with_kpi || 0) > 0;
+  const ukur = (v, f = fmtNum) => (terukur ? f(v) : '—');
+
+  const kolomKonten = [
+    { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{r.date ? formatDateID(r.date) : '—'}</span> },
+    { kunci: 'konten', label: 'Konten', hp: 'judul', isi: (r) => (
+      <div className="min-w-0 md:max-w-[16rem]">
+        <p className="truncate font-medium" title={r.title}>{r.title}</p>
+        <p className="text-xs text-muted-foreground">{r.content_type_label || '—'} · {r.published_url ? (
+          <a href={r.published_url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-0.5 text-primary" data-testid={`perf-content-link-${r.id}`}>
+            <ExternalLink className="h-3 w-3" />buka</a>) : 'tanpa tautan terbit'}</p>
+      </div>) },
+    { kunci: 'toko', label: 'Toko / kreator', isi: (r) => (
+      <span className="md:whitespace-nowrap">{r.account_name || '—'}<span className="block text-xs text-muted-foreground">{r.creator_name || 'tanpa kreator'}</span></span>) },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusKonten s={r.status} /> },
+    { kunci: 'views', label: 'Tayangan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.kpi_filled ? fmtNum(r.kpi?.views) : '—'}</span> },
+    { kunci: 'eng', label: 'Interaksi', rata: 'kanan', isi: (r) => (r.kpi_filled
+      ? <span className="tabular-nums">{fmtNum(r.kpi_derived?.engagement)}<span className="block text-xs text-muted-foreground">{pct(r.kpi_derived?.engagement_rate, 2)}</span></span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'order', label: 'Pesanan', rata: 'kanan', isi: (r) => (r.kpi_filled
+      ? <span className="tabular-nums">{fmtNum(r.kpi?.orders)}<span className="block text-xs text-muted-foreground">konversi {pct(r.kpi_derived?.cvr, 3)}</span></span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'gmv', label: 'GMV (KPI)', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium md:whitespace-nowrap">{r.kpi_filled ? fmtRp(r.kpi?.gmv) : '—'}</span> },
+    { kunci: 'kpi', label: 'KPI', isi: (r) => (r.kpi_filled
+      ? <StatusBadge status="terisi" label="Terisi" tone="success" />
+      : <StatusBadge status="belum" label="Belum diisi" tone="warning" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <Button size="sm" variant="outline" onClick={() => setEditing(r)} data-testid={`perf-fill-kpi-${r.id}`}><PencilLine />Isi KPI</Button>) },
+  ];
+  const kolomKelompok = [
+    { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (r) => (
+      <span className="font-medium">{r.label}{r.creator_code ? <span className="block text-xs font-normal text-muted-foreground">{r.creator_code}</span> : null}</span>) },
+    { kunci: 'konten', label: 'Konten / terbit', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtNum(r.contents)} / {fmtNum(r.posted)}</span> },
+    { kunci: 'cakupan', label: 'Cakupan KPI', rata: 'kanan', isi: (r) => (
+      <span className={`tabular-nums ${r.kpi_coverage_pct >= 80 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--warning-text))]'}`}>{pct(r.kpi_coverage_pct)}</span>) },
+    { kunci: 'views', label: 'Tayangan', rata: 'kanan', isi: (r) => (r.with_kpi ? <span className="tabular-nums">{fmtNum(r.views)}</span> : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'eng', label: 'Interaksi', rata: 'kanan', isi: (r) => (r.with_kpi
+      ? <span className="tabular-nums">{fmtNum(r.engagement)}<span className="block text-xs text-muted-foreground">{pct(r.engagement_rate, 2)}</span></span>
+      : <span className="text-muted-foreground">—</span>) },
+    { kunci: 'gmv', label: 'GMV (KPI)', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium md:whitespace-nowrap">{r.with_kpi ? fmtRp(r.gmv_kpi) : '—'}</span> },
+    { kunci: 'omzet', label: 'Omzet pesanan', rata: 'kanan', isi: (r) => (
+      <span className="tabular-nums md:whitespace-nowrap">{fmtRp(r.order_revenue)}<span className="block text-xs text-muted-foreground">{fmtNum(r.order_count)} pesanan</span></span>) },
+  ];
+  const unduhKonten = [
+    { label: 'Tanggal', nilai: (r) => (r.date ? formatDateID(r.date) : '') },
+    { label: 'Konten', nilai: (r) => r.title },
+    { label: 'Jenis', nilai: (r) => r.content_type_label || '' },
+    { label: 'Toko', nilai: (r) => r.account_name || '' },
+    { label: 'Kreator', nilai: (r) => r.creator_name || '' },
+    { label: 'Status', nilai: (r) => (STATUS[r.status] || [r.status || ''])[0] },
+    { label: 'Tayangan', nilai: (r) => (r.kpi_filled ? Number(r.kpi?.views) || 0 : '') },
+    { label: 'Interaksi', nilai: (r) => (r.kpi_filled ? Number(r.kpi_derived?.engagement) || 0 : '') },
+    { label: 'Tingkat interaksi (%)', nilai: (r) => (r.kpi_filled ? Number(r.kpi_derived?.engagement_rate) || 0 : '') },
+    { label: 'Konversi (%)', nilai: (r) => (r.kpi_filled ? Number(r.kpi_derived?.cvr) || 0 : '') },
+    { label: 'Pesanan', nilai: (r) => (r.kpi_filled ? Number(r.kpi?.orders) || 0 : '') },
+    { label: 'GMV (KPI)', nilai: (r) => (r.kpi_filled ? Number(r.kpi?.gmv) || 0 : '') },
+    { label: 'KPI terisi', nilai: (r) => (r.kpi_filled ? 'Ya' : 'Belum') },
+    { label: 'Tautan terbit', nilai: (r) => r.published_url || '' },
+  ];
+  const unduhKelompok = [
+    { label: 'Nama', nilai: (r) => r.label },
+    { label: 'Konten', nilai: (r) => Number(r.contents) || 0 },
+    { label: 'Terbit', nilai: (r) => Number(r.posted) || 0 },
+    { label: 'KPI terisi', nilai: (r) => Number(r.with_kpi) || 0 },
+    { label: 'Cakupan KPI (%)', nilai: (r) => Number(r.kpi_coverage_pct) || 0 },
+    { label: 'Tayangan', nilai: (r) => Number(r.views) || 0 },
+    { label: 'Tayangan per konten', nilai: (r) => Number(r.views_per_content) || 0 },
+    { label: 'Interaksi', nilai: (r) => Number(r.engagement) || 0 },
+    { label: 'Tingkat interaksi (%)', nilai: (r) => Number(r.engagement_rate) || 0 },
+    { label: 'Disimpan', nilai: (r) => Number(r.saves) || 0 },
+    { label: 'Rata-rata rasio klik (%)', nilai: (r) => Number(r.ctr_avg) || 0 },
+    { label: 'Pesanan (KPI)', nilai: (r) => Number(r.orders) || 0 },
+    { label: 'GMV (KPI)', nilai: (r) => Number(r.gmv_kpi) || 0 },
+    { label: 'GMV per konten', nilai: (r) => Number(r.gmv_per_content) || 0 },
+    { label: 'Omzet pesanan', nilai: (r) => Number(r.order_revenue) || 0 },
+    { label: 'Jumlah pesanan', nilai: (r) => Number(r.order_count) || 0 },
+  ];
 
   return (
-    <div className="space-y-4" data-testid="content-performance-view">
-      <div className="flex flex-wrap items-end gap-2">
-        <div>
-          <label className="text-[11px] text-muted-foreground block">Dari</label>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-            data-testid="perf-date-from"
-            className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
-        </div>
-        <div>
-          <label className="text-[11px] text-muted-foreground block">Sampai</label>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
-            data-testid="perf-date-to"
-            className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />
-        </div>
-        <div>
-          <label className="text-[11px] text-muted-foreground block">Tampilkan</label>
-          <SmartNativeSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value)}
-            data-testid="perf-group-by"
-            className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
-            {GROUPS.map((g) => <option key={g.v} value={g.v}>{g.l}</option>)}
+    <PageLayout testId="content-performance-view" title="Performa konten"
+      subtitle="KPI konten per konten, kreator, jenis, toko, atau platform."
+      filters={<>
+        <PeriodPicker value={periode} onChange={setPeriode} testId="perf-period" />
+        <SmartNativeSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="w-full" wrapperClassName="w-44 max-w-full" searchable={false}
+          data-testid="perf-group-by">
+          {GROUPS.map((g) => <option key={g.v} value={g.v}>{g.l}</option>)}
+        </SmartNativeSelect>
+        {perContent && <>
+          <SmartNativeSelect value={kpiState} onChange={(e) => setKpiState(e.target.value)} className="w-full" wrapperClassName="w-40 max-w-full" searchable={false}
+            data-testid="perf-kpi-state">
+            {KPI_STATES.map((x) => <option key={x.v} value={x.v}>{x.l}</option>)}
           </SmartNativeSelect>
-        </div>
-        {perContent && (
-          <>
-            <div>
-              <label className="text-[11px] text-muted-foreground block">Saring KPI</label>
-              <SmartNativeSelect value={kpiState} onChange={(e) => setKpiState(e.target.value)}
-                data-testid="perf-kpi-state"
-                className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
-                {KPI_STATES.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="text-[11px] text-muted-foreground block">Urutkan</label>
-              <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)}
-                data-testid="perf-sort"
-                className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
-                {SORTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
-              </SmartNativeSelect>
-            </div>
-          </>
-        )}
-        {!perContent && (
-          <div className="flex rounded-md border border-border overflow-hidden ml-auto">
-            <button type="button" onClick={() => setView('table')} data-testid="perf-view-table"
-              className={`px-2 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <Table2 size={12} /> Tabel
-            </button>
-            <button type="button" onClick={() => setView('grid')} data-testid="perf-view-grid"
-              className={`px-2 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <LayoutGrid size={12} /> Kartu
-            </button>
-          </div>
-        )}
-        <Button size="sm" variant="outline" className={`h-8 ${perContent ? 'ml-auto' : ''}`}
-          onClick={load} disabled={loading} data-testid="perf-refresh">
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)} className="w-full" wrapperClassName="w-48 max-w-full" searchable={false}
+            data-testid="perf-sort">
+            {SORTS.map((x) => <option key={x.v} value={x.v}>{x.l}</option>)}
+          </SmartNativeSelect>
+        </>}
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas={`performa-konten-${groupBy}`} namaLembar="Performa" baris={rows}
+          kolom={perContent ? unduhKonten : unduhKelompok} testId="perf-unduh" />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="perf-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="perf-kpi">
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Konten</p>
-          <p className="text-base font-bold">{fmtNum(t.contents)}</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.posted)} terbit</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Cakupan KPI</p>
-          <p className="text-base font-bold">{Number(t.kpi_coverage_pct || 0).toFixed(1)}%</p>
-          <p className="text-[10px] text-muted-foreground">{fmtNum(t.with_kpi)} konten ber-KPI</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Views</p>
-          <p className="text-base font-bold">{fmtNum(t.views)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">Engagement</p>
-          <p className="text-base font-bold">{fmtNum(t.engagement)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">GMV (KPI platform)</p>
-          <p className="text-base font-bold">{fmtRp(t.gmv_kpi)}</p></GlassCard>
-        <GlassCard className="p-3"><p className="text-[11px] text-muted-foreground">
-          {perContent ? 'Pesanan (KPI)' : 'Omzet pesanan'}</p>
-          <p className="text-base font-bold">
-            {perContent ? fmtNum(t.orders) : fmtRp(t.order_revenue)}</p>
-          <p className="text-[10px] text-muted-foreground">
-            {perContent ? 'dari KPI konten' : 'dari pesanan ber-kreator'}</p></GlassCard>
-      </div>
-
-      {loading ? (
-        <div className="py-10 text-center text-muted-foreground text-sm">
-          <Loader2 className="mx-auto animate-spin mb-2" size={18} /> Menghitung performa konten…
+      </>}
+      summary={data && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="perf-kpi">
+          <StatTile label="Konten" value={fmtNum(t.contents)} sub={`${fmtNum(t.posted)} sudah terbit`}
+            hint="Konten di periode ini (semua toko yang bisa Anda lihat)." />
+          <StatTile label="Cakupan KPI" value={pct(t.kpi_coverage_pct)} sub={`${fmtNum(t.with_kpi)} konten sudah ber-KPI`}
+            accent={Number(t.kpi_coverage_pct || 0) >= 80 ? 'success' : 'warning'} hint="Bagian konten yang KPI-nya sudah diisi." />
+          <StatTile label="Tayangan" value={ukur(t.views)} sub={terukur ? `${fmtNum(t.engagement)} interaksi` : 'Belum ada KPI yang diisi'}
+            hint="Jumlah dari KPI konten yang sudah diisi." />
+          <StatTile label="GMV (KPI platform)" value={ukur(t.gmv_kpi, fmtRp)}
+            sub={perContent ? (terukur ? `${fmtNum(t.orders)} pesanan dari KPI konten` : 'Belum ada KPI yang diisi')
+              : `Omzet pesanan ber-kreator ${fmtRp(t.order_revenue)}`}
+            hint="GMV dari KPI platform per konten; omzet pesanan nyata dihitung terpisah agar tidak terhitung dua kali." />
         </div>
+      )}>
+      {data?.truncated && (
+        <Notice tone="warning" title="Daftar terpotong">Hanya {fmtNum(data.limit)} konten pertama yang dimuat. Persempit periode.</Notice>
+      )}
+      {loading && !data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Menghitung performa konten…</p>
       ) : !rows.length ? (
-        <div className="py-10 text-center text-sm" data-testid="perf-empty">
-          {data?.scope_empty ? (
-            <span className="text-amber-600">
-              Belum ada toko yang di-assign kepada akun Anda — layar ini kosong karena
-              kewenangan, bukan karena tidak ada konten. Minta admin meng-assign toko Anda.
-            </span>
-          ) : (
-            <span className="text-muted-foreground">
-              Belum ada konten pada rentang tanggal ini.
-            </span>
-          )}
-        </div>
+        <EmptyState testId="perf-empty" title={data?.scope_empty ? 'Belum ada toko untuk akun Anda' : 'Belum ada konten di periode ini'}
+          description={data?.scope_empty
+            ? 'Layar ini kosong karena kewenangan, bukan karena tidak ada konten. Minta admin menugaskan toko Anda.'
+            : 'Ubah periode atau tambahkan konten di tab Kalender & rencana.'} />
       ) : perContent ? (
-        <div className="rounded-lg border border-border overflow-x-auto bg-background">
-          <table className="w-full text-xs" data-testid="perf-content-table">
-            <thead className="bg-muted/60"><tr>{CONTENT_HEADS.map((h, i) => (
-              <th key={`${h}-${i}`} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-            ))}</tr></thead>
-            <tbody className="divide-y">
-              {rows.map((r) => (
-                <tr key={r.id} className={`hover:bg-muted/30 ${r.kpi_filled ? '' : 'bg-amber-50/60 dark:bg-amber-900/10'}`}
-                  data-testid={`perf-content-row-${r.id}`}>
-                  <td className="px-2.5 py-2 whitespace-nowrap">{r.date}</td>
-                  <td className="px-2.5 py-2 max-w-[240px]">
-                    <div className="font-semibold text-foreground truncate" title={r.title}>{r.title}</div>
-                    {r.published_url ? (
-                      <a href={r.published_url} target="_blank" rel="noreferrer"
-                        className="text-[10px] text-primary inline-flex items-center gap-0.5"
-                        data-testid={`perf-content-link-${r.id}`}>
-                        <ExternalLink size={9} /> buka
-                      </a>
-                    ) : <span className="text-[10px] text-muted-foreground">tanpa link terbit</span>}
-                  </td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">{r.content_type_label || '—'}</td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">{r.account_name || '—'}</td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">{r.creator_name || '—'}</td>
-                  <td className="px-2.5 py-2">
-                    <Badge variant="outline" className="text-[9px]">{r.status}</Badge>
-                  </td>
-                  <td className="px-2.5 py-2">{fmtNum(r.kpi?.views)}</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.kpi_derived?.engagement)}</td>
-                  <td className="px-2.5 py-2">{Number(r.kpi_derived?.engagement_rate || 0).toFixed(2)}%</td>
-                  <td className="px-2.5 py-2">{Number(r.kpi_derived?.cvr || 0).toFixed(3)}%</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.kpi?.orders)}</td>
-                  <td className="px-2.5 py-2 font-semibold whitespace-nowrap">{fmtRp(r.kpi?.gmv)}</td>
-                  <td className="px-2.5 py-2">
-                    {r.kpi_filled
-                      ? <Badge className="text-[9px] bg-emerald-100 text-emerald-700 hover:bg-emerald-100">terisi</Badge>
-                      : <Badge className="text-[9px] bg-amber-100 text-amber-800 hover:bg-amber-100">belum</Badge>}
-                  </td>
-                  <td className="px-2.5 py-2">
-                    <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]"
-                      onClick={() => setEditing(r)} data-testid={`perf-fill-kpi-${r.id}`}>
-                      <PencilLine size={10} className="mr-1" /> Isi KPI
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : view === 'table' ? (
-        <div className="rounded-lg border border-border overflow-x-auto bg-background">
-          <table className="w-full text-xs" data-testid="perf-table">
-            <thead className="bg-muted/60"><tr>{HEADS.map((h) => (
-              <th key={h} className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-            ))}</tr></thead>
-            <tbody className="divide-y">
-              {rows.map((r) => (
-                <tr key={r.key} className="hover:bg-muted/30" data-testid={`perf-row-${r.key}`}>
-                  <td className="px-2.5 py-2">
-                    <div className="font-semibold text-foreground">{r.label}</div>
-                    {r.creator_code ? <div className="text-[10px] text-muted-foreground">{r.creator_code}</div> : null}
-                  </td>
-                  <td className="px-2.5 py-2">{fmtNum(r.contents)}</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.posted)}</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.with_kpi)}</td>
-                  <td className="px-2.5 py-2">
-                    <span className={r.kpi_coverage_pct >= 80 ? 'text-emerald-600' : 'text-amber-600'}>
-                      {Number(r.kpi_coverage_pct || 0).toFixed(1)}%
-                    </span>
-                  </td>
-                  <td className="px-2.5 py-2">{fmtNum(r.views)}</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.views_per_content)}</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.engagement)}</td>
-                  <td className="px-2.5 py-2">{Number(r.engagement_rate || 0).toFixed(2)}%</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.saves)}</td>
-                  <td className="px-2.5 py-2">{Number(r.ctr_avg || 0).toFixed(2)}%</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.orders)}</td>
-                  <td className="px-2.5 py-2 font-semibold whitespace-nowrap">{fmtRp(r.gmv_kpi)}</td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(r.gmv_per_content)}</td>
-                  <td className="px-2.5 py-2 whitespace-nowrap">{fmtRp(r.order_revenue)}</td>
-                  <td className="px-2.5 py-2">{fmtNum(r.order_count)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <TabelData kolom={kolomKonten} baris={rows} onKlikBaris={setEditing} testId="perf-content-table" />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" data-testid="perf-grid">
-          {rows.map((r) => (
-            <Card key={r.key} data-testid={`perf-card-${r.key}`}>
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="text-sm flex items-center gap-1.5">
-                    <Users size={13} className="text-violet-500" /> {r.label}
-                  </CardTitle>
-                  <Badge variant="outline" className="text-[9px]">
-                    KPI {Number(r.kpi_coverage_pct || 0).toFixed(0)}%
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-1 text-[11px]">
-                <div className="flex justify-between"><span className="text-muted-foreground">Konten / terbit</span>
-                  <span>{fmtNum(r.contents)} / {fmtNum(r.posted)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Views</span>
-                  <span>{fmtNum(r.views)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Engagement</span>
-                  <span>{fmtNum(r.engagement)} · {Number(r.engagement_rate || 0).toFixed(2)}%</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">GMV (KPI)</span>
-                  <span className="font-semibold">{fmtRp(r.gmv_kpi)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Omzet pesanan</span>
-                  <span>{fmtRp(r.order_revenue)}</span></div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <TabelData kolom={kolomKelompok} baris={rows} kunci={(r) => r.key} onKlikBaris={setRincian} testId="perf-table" />
       )}
-
       {(data?.data_notes || []).length > 0 && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="perf-notes">
-          <p className="text-xs font-semibold mb-1 flex items-center gap-1 text-foreground">
-            <Info size={12} /> Catatan kejujuran data
-          </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-muted-foreground">
-            {(data.data_notes || []).map((n, i) => <li key={i}>{n}</li>)}
+        <Notice tone="info" icon={Info} title="Catatan tentang data" testId="perf-notes">
+          <ul className="list-disc space-y-0.5 pl-4">
+            {(data.data_notes || []).map((n, i) => <li key={i}>{rapikanCatatan(n)}</li>)}
           </ul>
-        </div>
+        </Notice>
       )}
-
+      {rincian && (
+        <DetailPopup open onClose={() => setRincian(null)} judul={rincian.label} testId="perf-detail"
+          keterangan={`${formatDateID(from)} – ${formatDateID(to)}`}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            {unduhKelompok.slice(1).map((k) => (
+              <BarisDetail key={k.label} label={k.label}>
+                <span className="tabular-nums">{/(GMV|Omzet)/.test(k.label) ? fmtRp(k.nilai(rincian))
+                  : /%/.test(k.label) ? pct(k.nilai(rincian), 2) : fmtNum(k.nilai(rincian))}</span>
+              </BarisDetail>
+            ))}
+          </dl>
+        </DetailPopup>
+      )}
       <ContentKpiDialog open={!!editing} content={editing} token={token}
         onClose={() => setEditing(null)} onSaved={load} />
-    </div>
+    </PageLayout>
   );
 }

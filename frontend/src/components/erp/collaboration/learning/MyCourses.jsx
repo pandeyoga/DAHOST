@@ -1,38 +1,39 @@
 /**
- * MyCourses.jsx
- * View all enrolled courses with filter tabs
- * FIXED: Using apiFetch utility for authentication
+ * MyCourses.jsx — Kursus saya: semua kursus yang diikuti, disaring per status.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout · status = FilterChips (dulu tab) · daftar = tabel standar (kartu ringkas
+ * di HP; dulu kartu besar berulang) yang bisa diunduh · bahasa Indonesia. Klik baris membuka rincian kursus seperti dulu.
  */
-
 import { useState, useEffect } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
+import { ArrowRight, BookOpen, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  BookOpen, Clock, ArrowRight, CheckCircle2, PlayCircle,
-  Calendar
-} from 'lucide-react';
-import { toast } from 'sonner';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
 import apiFetch from '@/lib/apiFetch';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../../moduleAtoms';
+import { labelKategori } from './CourseCatalog';
 
 const STATUS_TABS = [
-  { value: 'all', label: 'All Courses' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'not_started', label: 'Not Started' },
+  { value: 'all', label: 'Semua' },
+  { value: 'in_progress', label: 'Berjalan' },
+  { value: 'completed', label: 'Selesai' },
+  { value: 'not_started', label: 'Belum mulai' },
 ];
+const STATUS_META = {
+  completed: { label: 'Selesai', tone: 'success' },
+  in_progress: { label: 'Berjalan', tone: 'info' },
+  not_started: { label: 'Belum mulai', tone: 'muted' },
+};
+const formatDate = (dateStr) => (dateStr ? new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 
 export default function MyCourses({ onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('all');
   const [courses, setCourses] = useState([]);
-
-  useEffect(() => {
-    fetchMyCourses();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
 
   const fetchMyCourses = async () => {
     try {
@@ -40,164 +41,69 @@ export default function MyCourses({ onNavigate }) {
       const data = await apiFetch(`/lms/student/my-courses?status=${activeTab}`);
       setCourses(data.courses || []);
     } catch (error) {
-      console.error('Error fetching my courses:', error);
-      toast.error('Gagal memuat courses');
+      toast.error('Gagal memuat kursus');
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => { fetchMyCourses(); }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  const buka = (c) => onNavigate && onNavigate('course-detail', { courseId: c.course_id });
 
-  const getStatusBadge = (status) => {
-    const badges = {
-      'completed': { label: 'Completed', variant: 'default', className: 'bg-green-500' },
-      'in_progress': { label: 'In Progress', variant: 'default', className: 'bg-blue-500' },
-      'not_started': { label: 'Not Started', variant: 'secondary' },
-    };
-    
-    const badge = badges[status] || badges['not_started'];
-    return <Badge variant={badge.variant} className={badge.className}>{badge.label}</Badge>;
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-  };
+  const kolom = [
+    { kunci: 'judul', label: 'Kursus', hp: 'judul', isi: (c) => (
+      <div className="min-w-0 md:max-w-[24rem]">
+        <p className="font-medium text-foreground">{c.title}</p>
+        {c.next_material && <p className="truncate text-xs text-muted-foreground">Berikutnya: {c.next_material.title}</p>}
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', hp: 'keterangan', isi: (c) => labelKategori(c.category) },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.duration_hours} jam</span> },
+    { kunci: 'daftar', label: 'Terdaftar', isi: (c) => <span className="whitespace-nowrap">{formatDate(c.enrolled_at) || '—'}</span> },
+    { kunci: 'progres', label: 'Progres', isi: (c) => (c.enrollment_status === 'not_started' ? <span className="text-muted-foreground">—</span> : (
+      <div className="min-w-[8rem] space-y-1">
+        <Progress value={c.progress_percent} />
+        <p className="text-xs text-muted-foreground">{c.progress_percent}% · {c.completed_items}/{c.total_items} materi</p>
+      </div>)) },
+    { kunci: 'status', label: 'Status', isi: (c) => {
+      const m = STATUS_META[c.enrollment_status] || STATUS_META.not_started;
+      return (
+        <span className="flex flex-col items-start gap-0.5">
+          <StatusBadge status={c.enrollment_status} label={m.label} tone={m.tone} />
+          {c.enrollment_status === 'completed' && c.last_accessed && <span className="text-xs text-muted-foreground">{formatDate(c.last_accessed)}</span>}
+        </span>
+      );
+    } },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <Button size="sm" variant={c.enrollment_status === 'completed' ? 'outline' : 'default'} onClick={() => buka(c)}>
+        {c.enrollment_status === 'completed' ? 'Lihat sertifikat' : c.enrollment_status === 'not_started' ? 'Mulai belajar' : 'Lanjutkan'}
+        {c.enrollment_status !== 'completed' && <ArrowRight />}
+      </Button>) },
+  ];
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 space-y-6 max-w-7xl mx-auto">
-        {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold mb-2">📚 My Courses</h1>
-          <p className="text-muted-foreground">
-            Manage semua courses yang sudah Anda enroll
-          </p>
-        </div>
-
-        {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList>
-            {STATUS_TABS.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value}>
-                {tab.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          <TabsContent value={activeTab} className="mt-6">
-            {loading ? (
-              <div className="text-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                <p className="text-sm text-muted-foreground mt-2">Loading courses...</p>
-              </div>
-            ) : courses.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <BookOpen size={48} className="mx-auto mb-3 text-muted-foreground opacity-20" />
-                  <p className="text-muted-foreground mb-4">
-                    Belum ada course {activeTab !== 'all' ? `dengan status "${activeTab}"` : ''}
-                  </p>
-                  <Button onClick={() => onNavigate && onNavigate('catalog')}>
-                    Browse Course Catalog
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid grid-cols-1 gap-4">
-                {courses.map((course) => (
-                  <Card 
-                    key={course.course_id}
-                    className="cursor-pointer hover:shadow-md transition-shadow"
-                    onClick={() => onNavigate && onNavigate('course-detail', course.course_id)}
-                  >
-                    <CardContent className="pt-6">
-                      <div className="flex flex-col md:flex-row md:items-start gap-4">
-                        {/* Course Info */}
-                        <div className="flex-1 space-y-3">
-                          <div className="flex items-start justify-between gap-4">
-                            <div>
-                              <h3 className="font-semibold text-lg mb-1">{course.title}</h3>
-                              <p className="text-sm text-muted-foreground line-clamp-2">
-                                {course.description}
-                              </p>
-                            </div>
-                            {getStatusBadge(course.enrollment_status)}
-                          </div>
-
-                          {/* Meta */}
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <Badge variant="outline">{course.category}</Badge>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Clock size={14} />
-                              {course.duration_hours}h
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Calendar size={14} />
-                              Enrolled: {formatDate(course.enrolled_at)}
-                            </div>
-                          </div>
-
-                          {/* Progress */}
-                          {course.enrollment_status !== 'not_started' && (
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-muted-foreground">
-                                  Progress: {course.progress_percent}%
-                                </span>
-                                <span className="text-muted-foreground">
-                                  {course.completed_items}/{course.total_items} completed
-                                </span>
-                              </div>
-                              <Progress value={course.progress_percent} />
-                            </div>
-                          )}
-
-                          {/* Next Material */}
-                          {course.next_material && (
-                            <div className="pt-3 border-t">
-                              <p className="text-xs text-muted-foreground mb-1">Next:</p>
-                              <div className="flex items-center gap-2">
-                                <PlayCircle size={16} className="text-primary" />
-                                <p className="text-sm font-medium">{course.next_material.title}</p>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Completed Badge */}
-                          {course.enrollment_status === 'completed' && (
-                            <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
-                              <CheckCircle2 size={16} />
-                              <span className="text-sm font-medium">
-                                Completed on {formatDate(course.last_accessed)}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Action Button */}
-                        <div className="flex md:flex-col gap-2">
-                          {course.enrollment_status === 'completed' ? (
-                            <Button variant="outline">
-                              View Certificate
-                            </Button>
-                          ) : (
-                            <Button>
-                              {course.enrollment_status === 'not_started' ? 'Start Learning' : 'Continue'}
-                              <ArrowRight size={16} className="ml-2" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+      <div className="p-4 sm:px-6">
+        <PageLayout title="Kursus saya" subtitle="Semua kursus yang Anda ikuti beserta kemajuannya."
+          filters={<FilterChips value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} ariaLabel="Status kursus"
+            options={STATUS_TABS.map((t) => ({ key: t.value, label: t.label }))} />}
+          tools={<>
+            <TombolUnduh namaBerkas="kursus-saya" namaLembar="Kursus saya" baris={courses} testId="my-courses-unduh"
+              kolom={[{ label: 'Kursus', nilai: (c) => c.title }, { label: 'Kategori', nilai: (c) => labelKategori(c.category) },
+                { label: 'Durasi (jam)', nilai: (c) => Number(c.duration_hours || 0) }, { label: 'Terdaftar', nilai: (c) => formatDate(c.enrolled_at) },
+                { label: 'Progres %', nilai: (c) => Number(c.progress_percent || 0) },
+                { label: 'Status', nilai: (c) => (STATUS_META[c.enrollment_status] || STATUS_META.not_started).label }]} />
+            <Button variant="outline" size="icon" onClick={fetchMyCourses} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+          </>}>
+          {loading && !courses.length ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Memuat kursus…</p>
+          ) : (
+            <TabelData kolom={kolom} baris={courses} kunci={(c) => c.course_id} onKlikBaris={buka} testId="my-courses-table"
+              kosong={<EmptyState icon={BookOpen}
+                title={activeTab !== 'all' ? `Belum ada kursus berstatus ${(STATUS_TABS.find((t) => t.value === activeTab) || {}).label?.toLowerCase()}` : 'Belum ada kursus'}
+                action={<Button onClick={() => onNavigate && onNavigate('course-catalog')}>Buka katalog kursus</Button>} />} />
+          )}
+        </PageLayout>
       </div>
     </div>
   );

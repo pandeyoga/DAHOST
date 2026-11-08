@@ -1,5 +1,29 @@
 # Panduan UI DAHOST
 
+> ## Revisi 3 — Standar UI/UX v2 (keputusan owner 8 Nov 2026) — BERLAKU DI ATAS ATURAN LAMA
+> Sumber keputusan: `private/audit/rencana_perbaikan_uiux_2026-11-08.md` (17 butir, semua disetujui; #2 diubah owner).
+> **Hanya tampilan yang diubah — fitur, alur, dan data tidak berubah.**
+>
+> | No | Aturan v2 | Komponen |
+> |---|---|---|
+> | 1 | **Detail dibuka sebagai POPUP**, bukan panel di atas tabel. Rincian kecil (mis. baris jurnal) boleh tetap di bawah barisnya (`RowDetail`). | `DetailPanel` (kini otomatis popup bila ada `onClose`), `ui/detail-popup` |
+> | 2 | **Form SELALU popup** — tidak pernah halaman sendiri. Dua ukuran yang konsisten: pendek & panjang. Kaki: galat · Batal · Simpan (hijau). | `ui/form-popup` (`FormPopup`, `Isian`; form penolakan: `warnaSimpan="destructive"`) |
+> | 3 | **Warna tombol**: utama ungu; Simpan/Setujui hijau (`variant="success"`); Hapus/Tolak merah (`variant="destructive"`); lainnya garis. Warna pada tombol aksi dan status itu boleh — hiasan (gradien, emoji) tidak. | `ui/button` |
+> | 4 | **Kepala halaman tipis**: judul + 1 kalimat; tanpa ikon besar; di HP judul lebih kecil & keterangan disembunyikan. | `PageLayout` / `PageHeader` |
+> | 5 | **Daftar > 6 data = tabel**, bukan kartu berulang. | `ui/tabel-data` (`TabelData`) atau `ui/table` |
+> | 6 | **Penyaring satu baris** ringkas: kotak cari ± 16 rem, pilihan ± 10–15 rem — tidak pernah selebar layar. Pil status satu baris (di HP bisa digeser). | `FilterChips`, `SmartNativeSelect` |
+> | 7 | **Satu pemilih tanggal**: tidak ada lagi `<input type="date|month|datetime-local">`. Satu tanggal → `DatePicker`; periode → `PeriodPicker`. | `ui/date-picker` |
+> | 8 | **Satu gaya kartu angka** (`StatTile`), skala huruf tetap (12/14/16/20/24 px), satu latar halaman (tanpa kotak abu di dalam halaman). | `StatTile` |
+> | 9 | **Kartu angka harus benar & jelas artinya**: ada keterangan (`hint`), dihitung dari sumber yang sama dengan daftar/rinciannya. Angka yang belum bisa dihitung → "—" + alasan, bukan 0. | `StatTile hint=` |
+> | 10 | **Bahasa Indonesia**: tanpa istilah Inggris/program (Expense → Klaim biaya, Settlement → Penyelesaian, Approval → Persetujuan, Update → Simpan/Ubah, Export → Unduh, Bulk → Massal, Draft → Draf, Pre-order → Pra-pesan, Dashboard boleh). Singkatan umum boleh: PO, SKU, CMT, QC, HPP, PIC, BOM. Huruf besar hanya di awal kalimat. | — |
+> | 11 | **Tabel di HP** menjadi kartu ringkas (tanpa geser samping). | `TabelData` |
+> | 12 | **Gerbang**: portal selesai bila skrip `scripts/ui_audit/jelajah_layar.py` = 0 temuan untuk portal itu **dan** owner menyetujui galeri sebelum/sesudah. | `ukur_layar.py`, `jelajah_layar.py` |
+> | 16 | **Semua tabel bisa diunduh** Excel & CSV (permintaan owner 8 Nov). | `ui/tombol-unduh` (`TombolUnduh`) di slot `tools` |
+> | — | **Kontras teks ≥ 4.5**: teks status pakai token `--success-text/--warning-text/--info-text/--danger-text`; latar tombol hijau/merah pakai `--success-strong/--destructive-strong`. | `index.css`, `StatusBadge` |
+>
+> Contoh acuan yang sudah memakai semua aturan v2: **Portal SDM › Papan Pengumuman** (`erp/AnnouncementModule.jsx`).
+
+
 Status: **disetujui owner 4 Nov 2026**. **Revisi 2 (4 Nov 2026):** cetakan halaman `PageLayout` wajib, detail dibuka di
 halaman (bukan popup), aturan ruang kosong & posisi tombol, larangan teks teknis. Ini **satu-satunya** panduan UI;
 `design_guidelines.md` dicabut. Agen AI membaca ringkasannya di [`AGENTS.md`](../../AGENTS.md).
@@ -224,7 +248,7 @@ Kartu menandai **satu kelompok isi yang berdiri sendiri**: tabel, formulir, satu
 
 Tombol chat dan bantuan mengambang di kanan bawah. Halaman memberi ruang di bawahnya. Toolbar, tombol, dan baris terakhir tabel tidak boleh tertutup. → `TERTUTUP-CHAT`
 
-## G13 · Detail dibuka di halaman, bukan popup
+## G13 · ~~Detail dibuka di halaman, bukan popup~~ — DICABUT 8 Nov 2026 (lihat Revisi 3 #1: detail = popup)
 
 Arahan owner 4 Nov 2026: klik satu baris membuka detailnya **di halaman**.
 - **Detail satu baris** (mutasi rekening, keterikatan akun, rincian dokumen) = `DetailPanel` di slot `detail`:

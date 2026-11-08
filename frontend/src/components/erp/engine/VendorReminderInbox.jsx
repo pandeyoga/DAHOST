@@ -1,128 +1,115 @@
-import { useState, useEffect } from 'react';
-import { Bell, Clock, CheckCircle, MessageSquare, X } from 'lucide-react';
+/**
+ * VendorReminderInbox — Pengingat dari admin DA (Portal Vendor CMT; juga di Input atas nama CMT).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, daftar = tabel (dulu kartu berwarna berulang), saringan Menunggu/Dibalas,
+ * rincian + balasan dibuka di popup (balasan = FormPopup pendek), bisa diunduh. API sama: GET /reminders,
+ * PUT /reminders/{id} { response }.
+ */
+import { useEffect, useState } from 'react';
+import { Bell, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
-import { apiGet, apiPut } from '../../../lib/api';
 import { Button } from '@/components/ui/button';
-import { GlassCard } from '@/components/ui/glass';
-import { EmptyState } from '../moduleAtoms';
+import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { formatDateTimeID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { PageLayoutSatuBaris } from './DataTable';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
+import { apiGet, apiPut } from '../../../lib/api';
 
-export default function VendorReminderInbox({ token, user }) {
+const PRIORITAS = { urgent: ['Mendesak', 'danger'], high: ['Tinggi', 'warning'] };
+const prioritas = (p) => PRIORITAS[p] || ['Normal', 'muted'];
+const waktu = (d) => (d ? formatDateTimeID(d) : '—');
+
+export default function VendorReminderInbox() {
   const [reminders, setReminders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saring, setSaring] = useState('');
+  const [detail, setDetail] = useState(null);
+  const [balas, setBalas] = useState(null);
   const [responseText, setResponseText] = useState('');
-  const [respondingId, setRespondingId] = useState(null);
-
-  useEffect(() => {
-    fetchReminders();
-  }, []);
+  const [mengirim, setMengirim] = useState(false);
 
   const fetchReminders = async () => {
     try {
-      setReminders(await apiGet('/reminders'));
-    } catch (e) {}
+      const d = await apiGet('/reminders');
+      setReminders(Array.isArray(d) ? d : []);
+    } catch (e) { /* tetap tampil kosong */ }
     setLoading(false);
   };
+  useEffect(() => { fetchReminders(); }, []);
 
-  const sendResponse = async (reminderId) => {
-    if (!responseText.trim()) { toast.error('Tulis respon terlebih dahulu'); return; }
+  const sendResponse = async () => {
+    if (!responseText.trim()) { toast.error('Tulis balasan terlebih dahulu'); return; }
+    setMengirim(true);
     try {
-      await apiPut(`/reminders/${reminderId}`, { response: responseText });
-      setRespondingId(null);
+      await apiPut(`/reminders/${balas.id}`, { response: responseText });
+      setBalas(null);
       setResponseText('');
       fetchReminders();
-    } catch (e) { toast.error('Error: ' + e.message); }
+    } catch (e) { toast.error('Gagal mengirim balasan: ' + e.message); }
+    finally { setMengirim(false); }
   };
 
-  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
-  const pending = reminders.filter(r => r.status === 'pending');
-  const responded = reminders.filter(r => r.status !== 'pending');
+  const pending = reminders.filter((r) => r.status === 'pending');
+  const baris = reminders.filter((r) => (saring === 'pending' ? r.status === 'pending' : saring === 'dibalas' ? r.status !== 'pending' : true));
+
+  const kolom = [
+    { kunci: 'tgl', label: 'Waktu', isi: (r) => <span className="whitespace-nowrap text-sm">{waktu(r.created_at)}</span> },
+    { kunci: 'subjek', label: 'Pengingat', hp: 'judul', isi: (r) => (
+      <div className="min-w-0 md:max-w-[26rem]">
+        <span className="block truncate font-medium" title={r.subject}>{r.subject}</span>
+        <span className="block truncate text-xs text-muted-foreground" title={r.message}>{r.po_number ? `PO ${r.po_number} · ` : ''}{r.message}</span>
+      </div>) },
+    { kunci: 'prioritas', label: 'Prioritas', isi: (r) => { const [l, t] = prioritas(r.priority); return <StatusBadge status={r.priority || 'normal'} label={l} tone={t} />; } },
+    { kunci: 'status', label: 'Status', isi: (r) => (r.status === 'pending'
+      ? <StatusBadge status="pending" tone="warning" label="Menunggu balasan" /> : <StatusBadge status="done" tone="success" label="Dibalas" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.status === 'pending' && (
+      <Button type="button" size="sm" onClick={() => { setBalas(r); setResponseText(''); }}><MessageSquare className="w-3.5 h-3.5" />Balas</Button>)) },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-foreground flex items-center gap-2"><Bell className="w-5 h-5 text-[hsl(var(--success))]" /> Inbox Reminder</h2>
-          <p className="text-sm text-muted-foreground">Pesan dan reminder dari ERP Admin</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {pending.length > 0 && (
-            <span className="px-3 py-1 bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] rounded-full text-xs font-medium">{pending.length} belum dibalas</span>
-          )}
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-8 text-muted-foreground/70">Memuat...</div>
-      ) : reminders.length === 0 ? (
-        <GlassCard>
-          <EmptyState icon={Bell} title="Belum ada reminder" description="Reminder dari admin akan muncul di sini." />
-        </GlassCard>
-      ) : (
-        <div className="space-y-4">
-          {/* Pending first */}
-          {pending.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold text-[hsl(var(--warning))] mb-2 flex items-center gap-1"><Clock className="w-4 h-4" /> Menunggu Respon ({pending.length})</h3>
-              <div className="space-y-3">
-                {pending.map(r => (
-                  <div key={r.id} className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4 shadow-sm">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${r.priority === 'urgent' ? 'bg-[hsl(var(--destructive)/0.2)] text-[hsl(var(--destructive))]' : r.priority === 'high' ? 'bg-[hsl(var(--warning)/0.2)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--primary)/0.2)] text-[hsl(var(--primary))]'}`}>{r.priority === 'urgent' ? 'Mendesak' : r.priority === 'high' ? 'Tinggi' : 'Normal'}</span>
-                          <span className="text-xs text-muted-foreground/70">{fmtDate(r.created_at)}</span>
-                        </div>
-                        <h4 className="font-semibold text-foreground mt-1">{r.subject}</h4>
-                        {r.po_number && <p className="text-xs text-muted-foreground mt-0.5">PO: {r.po_number}</p>}
-                        <p className="text-sm text-muted-foreground mt-1">{r.message}</p>
-                        <p className="text-xs text-muted-foreground/70 mt-1">Dari: {r.created_by}</p>
-                      </div>
-                    </div>
-                    {respondingId === r.id ? (
-                      <div className="mt-3 space-y-2">
-                        <textarea value={responseText} onChange={e => setResponseText(e.target.value)} className="w-full border border-[hsl(var(--warning)/0.35)] rounded-lg px-3 py-2 text-sm h-20 resize-none bg-card" placeholder="Tulis respon Anda..." />
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={() => sendResponse(r.id)}><MessageSquare className="w-3.5 h-3.5" /> Kirim Respon</Button>
-                          <Button size="sm" variant="outline" onClick={() => { setRespondingId(null); setResponseText(''); }}>Batal</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button size="sm" className="mt-3" onClick={() => setRespondingId(r.id)}><MessageSquare className="w-3.5 h-3.5" /> Balas</Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {/* Responded */}
-          {responded.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold text-[hsl(var(--success))] mb-2 flex items-center gap-1"><CheckCircle className="w-4 h-4" /> Sudah Dibalas ({responded.length})</h3>
-              <div className="space-y-3">
-                {responded.map(r => (
-                  <div key={r.id} className="bg-card border border-[hsl(var(--success)/0.35)] rounded-xl p-4 shadow-sm">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-muted-foreground/70">{fmtDate(r.created_at)}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-[hsl(var(--success)/0.2)] text-[hsl(var(--success))] font-medium">Dibalas</span>
-                    </div>
-                    <h4 className="font-medium text-foreground/90">{r.subject}</h4>
-                    <p className="text-sm text-muted-foreground mt-0.5">{r.message}</p>
-                    <div className="mt-2 p-2 bg-[hsl(var(--success)/0.1)] rounded-lg border border-[hsl(var(--success)/0.35)]">
-                      <p className="text-sm text-[hsl(var(--success))]">{r.response}</p>
-                      <p className="text-[10px] text-muted-foreground/70 mt-1">Dibalas: {fmtDate(r.response_date)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+    <PageLayoutSatuBaris testId="vendor-reminder-inbox" title="Pengingat" subtitle="Pesan dan pengingat dari admin DA."
+      filters={<FilterChips value={saring} onChange={setSaring} hideWhenEmpty={false} ariaLabel="Saring pengingat"
+        options={[{ key: '', label: 'Semua', count: reminders.length }, { key: 'pending', label: 'Menunggu balasan', count: pending.length },
+          { key: 'dibalas', label: 'Dibalas', count: reminders.length - pending.length }]} />}
+      tools={<TombolUnduh namaBerkas="pengingat-vendor" baris={baris} kolom={[
+        { label: 'Waktu', nilai: (r) => waktu(r.created_at) }, { label: 'Subjek', nilai: (r) => r.subject || '' },
+        { label: 'PO', nilai: (r) => r.po_number || '' }, { label: 'Pesan', nilai: (r) => r.message || '' },
+        { label: 'Prioritas', nilai: (r) => prioritas(r.priority)[0] }, { label: 'Dari', nilai: (r) => r.created_by || '' },
+        { label: 'Balasan', nilai: (r) => r.response || '' }, { label: 'Dibalas', nilai: (r) => (r.response_date ? waktu(r.response_date) : '') },
+      ]} />}>
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p> : (
+        <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="vendor-reminder-table"
+          kosong={<EmptyState icon={Bell} title={reminders.length ? 'Tidak ada pengingat yang cocok' : 'Belum ada pengingat'}
+            description={reminders.length ? 'Ubah saringan.' : 'Pengingat dari admin akan muncul di sini.'} />} />
       )}
-    </div>
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.subject || 'Pengingat'} testId="vendor-reminder-detail"
+          status={(() => { const [l, t] = prioritas(detail.priority); return <StatusBadge status={detail.priority || 'normal'} label={l} tone={t} />; })()}
+          aksi={detail.status === 'pending' && <Button type="button" size="sm" onClick={() => { setBalas(detail); setResponseText(''); setDetail(null); }}><MessageSquare className="w-4 h-4" />Balas</Button>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Waktu">{waktu(detail.created_at)}</BarisDetail>
+            {detail.po_number && <BarisDetail label="PO">{detail.po_number}</BarisDetail>}
+            <BarisDetail label="Dari">{detail.created_by || '—'}</BarisDetail>
+            <BarisDetail label="Pesan">{detail.message || '—'}</BarisDetail>
+            {detail.status !== 'pending' && <BarisDetail label="Balasan">{detail.response || '—'}</BarisDetail>}
+            {detail.status !== 'pending' && <BarisDetail label="Dibalas">{waktu(detail.response_date)}</BarisDetail>}
+          </dl>
+        </DetailPopup>
+      )}
+      {balas && (
+        <FormPopup open onClose={() => setBalas(null)} ukuran="pendek" judul={`Balas: ${balas.subject || 'pengingat'}`}
+          keterangan={balas.message} onSimpan={sendResponse} menyimpan={mengirim} labelSimpan="Kirim balasan" testId="vendor-reminder-reply">
+          <Isian label="Balasan" wajib>
+            <Textarea rows={4} value={responseText} onChange={(e) => setResponseText(e.target.value)} placeholder="Tulis balasan Anda…" />
+          </Isian>
+        </FormPopup>
+      )}
+    </PageLayoutSatuBaris>
   );
 }
-
-
-// ─── VENDOR VARIANCE REPORT (OVERPRODUCTION/UNDERPRODUCTION) ────────────────
-
-

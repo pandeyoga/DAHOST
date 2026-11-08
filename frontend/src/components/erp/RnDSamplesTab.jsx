@@ -1,40 +1,63 @@
+/**
+ * RnDSamplesTab — Sample Request (Portal RnD; juga tab di RnDModule lama).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, penyaring satu baris (pil status + cari), tabel + unduh,
+ * aksi baris maks 2 + "Lainnya", rincian = DetailPopup, semua form = FormPopup (buat request, setujui,
+ * request aksesoris), tolak & hapus lewat confirmDialog, tanggal lewat DatePicker, warna token.
+ * Kotak "Setelah sample disetujui" (huruf kapital, selebar halaman) → menu "Langkah berikutnya".
+ * Endpoint, isian, dan validasi tidak berubah.
+ */
 import { useState, useEffect, useMemo } from 'react';
+import {
+  ArrowRight, CheckCircle, FileStack, Factory, FlaskConical, MoreHorizontal, Package, Plus, RefreshCw,
+  Search, Send, Trash2, XCircle,
+} from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Plus, CheckCircle, XCircle, Clock, Send, Search,
-  FlaskConical, Pencil, Trash2, Filter, Package, FileStack, Factory
-} from 'lucide-react';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
-import Modal from './Modal';
-import ConfirmDialog from './ConfirmDialog';
+import { formatDateID, formatDateTimeID } from '@/lib/format';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import OnwardCTA from './OnwardCTA';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import RnDUnitSelect from './RnDUnitSelect';
 import { useActiveEmployees, employeeLabel } from './hr/hrPickers';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 
 const STATUS_CONF = {
-  draft:     { label: 'Draft',     cls: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: Clock },
-  submitted: { label: 'Diajukan', cls: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-500 border-amber-400 dark:border-amber-500/30',  Icon: Send },
-  approved:  { label: 'Disetujui',cls: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-500 border-emerald-400 dark:border-emerald-500/30', Icon: CheckCircle },
-  rejected:  { label: 'Ditolak',  cls: 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-500 border-red-400 dark:border-red-500/30',         Icon: XCircle },
+  draft:     { label: 'Draf',      tone: 'muted' },
+  submitted: { label: 'Diajukan',  tone: 'warning' },
+  approved:  { label: 'Disetujui', tone: 'success' },
+  rejected:  { label: 'Ditolak',   tone: 'danger' },
 };
-
-const PRIORITY_CLS = {
-  high:   'bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-500 border-red-500/25',
-  normal: 'bg-sky-100 dark:bg-sky-500/15 text-sky-500 border-sky-500/25',
-  low:    'bg-muted dark:bg-zinc-500/15 text-muted-foreground dark:text-zinc-400 border-border/25',
+const PRIORITY = {
+  high:   { label: 'Tinggi', tone: 'danger' },
+  normal: { label: 'Normal', tone: 'info' },
+  low:    { label: 'Rendah', tone: 'muted' },
 };
+const statusOf = (s) => STATUS_CONF[s] || STATUS_CONF.draft;
+const prioOf = (p) => PRIORITY[p] || PRIORITY.normal;
 
 const emptyForm = {
   style_id: '', quantity: 1, priority: 'normal', sample_pic: '', sample_pic_employee_id: '',
   sample_pic_external: false, due_date: '', notes: '',
 };
+const BARIS_AKS = () => ({ material_code: '', material_name: '', qty: 1, unit: 'pcs', notes: '' });
 
 // 2026-11-07 (Tahap 6, HR4): PIC sample DIPILIH dari karyawan aktif — karyawan bagian sample (departemen /
 // jabatan / peran memuat "sample", "RnD", "riset") ditawarkan paling atas. Penjahit luar tetap bisa lewat
@@ -44,6 +67,8 @@ const SAMPLE_DEPT_RX = /sampl|\brnd\b|r\s*&\s*d|riset/i;
 const isSampleStaff = (e) => [e?.department, e?.job_title, e?.position, e?.role_hint]
   .some((v) => v && SAMPLE_DEPT_RX.test(String(v)));
 
+const tgl = (v) => (v ? formatDateID(v) : '—');
+
 export default function RnDSamplesTab({ token, onNavigate }) {
   const [samples,  setSamples]  = useState([]);
   const [styles,   setStyles]   = useState([]);
@@ -52,9 +77,10 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   const [search,   setSearch]   = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form,     setForm]     = useState({ ...emptyForm });
-  // Approve / Reject modal
-  const [actionModal, setActionModal] = useState(null); // { id, type: 'approve'|'reject', notes: '' }
-  const [delId,    setDelId]    = useState(null);
+  const [saving,   setSaving]   = useState(false);
+  // Popup setujui (catatan opsional). Tolak memakai confirmDialog dengan alasan wajib.
+  const [actionModal, setActionModal] = useState(null); // { id, type: 'approve', notes: '' }
+  const [detail, setDetail] = useState(null);
 
   // Session 27 — Accessory Request Modal (GAP-R3)
   const [accReqModal, setAccReqModal] = useState(null); // { sample: {...}, items: [...], urgent, needed_by_date, notes }
@@ -107,57 +133,79 @@ export default function RnDSamplesTab({ token, onNavigate }) {
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
     if (!(Number(form.quantity) > 0)) return toast.error('Jumlah sample minimal 1 pcs');
     if (form.sample_pic_external && !String(form.sample_pic || '').trim()) return toast.error('Ketik nama penjahit luar');
+    setSaving(true);
     try {
       await apiFetch('/dewi/rnd/sample-requests', { method: 'POST', body: { ...form, quantity: Number(form.quantity) } });
-      toast.success('Sample request berhasil dibuat');
+      toast.success('Request sample berhasil dibuat');
       setShowForm(false);
       setForm({ ...emptyForm });
       fetchSamples();
     } catch (e) {
       if (e instanceof ApiError && !e.isUnauthorized) toast.error('Gagal membuat sample');
-    }
+    } finally { setSaving(false); }
   };
 
   const handleSubmit = async (id) => {
     try {
       await apiFetch(`/dewi/rnd/sample-requests/${id}/submit`, { method: 'POST' });
-      toast.success('Sample berhasil di-submit');
+      toast.success('Sample berhasil diajukan');
+      setDetail(null);
       fetchSamples();
     } catch (e) {
-      if (e instanceof ApiError && !e.isUnauthorized) toast.error('Gagal submit sample');
+      if (e instanceof ApiError && !e.isUnauthorized) toast.error('Gagal mengajukan sample');
     }
   };
 
-  const handleAction = async () => {
-    if (!actionModal) return;
-    const { id, type, notes } = actionModal;
-    if (type === 'reject' && !notes.trim()) return toast.error('Alasan reject wajib diisi');
+  const kirimKeputusan = async (id, type, notes) => {
     try {
       await apiFetch(`/dewi/rnd/sample-requests/${id}/${type}`, {
         method: 'POST', body: { notes },
       });
       toast.success(type === 'approve' ? 'Sample disetujui' : 'Sample ditolak');
       setActionModal(null);
+      setDetail(null);
       fetchSamples();
     } catch (e) {
-      if (e instanceof ApiError && !e.isUnauthorized) toast.error(`Gagal ${type} sample`);
+      if (e instanceof ApiError && !e.isUnauthorized) toast.error(type === 'approve' ? 'Gagal menyetujui sample' : 'Gagal menolak sample');
     }
   };
 
-  const handleDelete = async () => {
+  const handleApprove = () => {
+    if (!actionModal) return;
+    kirimKeputusan(actionModal.id, 'approve', actionModal.notes || '');
+  };
+
+  const tolak = async (s) => {
+    const alasan = await confirmDialog({
+      title: `Tolak sample ${s.sample_code}?`, body: 'Alasan penolakan wajib diisi dan tercatat di request ini.',
+      confirmLabel: 'Tolak sample', danger: true,
+      input: { label: 'Alasan penolakan', placeholder: 'Alasan penolakan wajib diisi…', minLength: 1 },
+    });
+    if (alasan === false || alasan === null || alasan === undefined) return;
+    if (!String(alasan).trim()) return toast.error('Alasan tolak wajib diisi');
+    kirimKeputusan(s.id, 'reject', String(alasan));
+  };
+
+  const hapus = async (s) => {
+    const ok = await confirmDialog({
+      title: 'Hapus request sample?', body: `${s.sample_code} akan dihapus permanen.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
-      await apiFetch(`/dewi/rnd/sample-requests/${delId}`, { method: 'DELETE' });
+      await apiFetch(`/dewi/rnd/sample-requests/${s.id}`, { method: 'DELETE' });
       toast.success('Sample dihapus');
-      setDelId(null);
+      setDetail(null);
       fetchSamples();
     } catch { toast.error('Gagal menghapus'); }
   };
 
   // ── Session 27 — GAP-R3 Accessory Request Handlers ────────────────────────
   const openAccReq = (sample) => {
+    setDetail(null);
     setAccReqModal({
       sample,
-      items: [{ material_code: '', material_name: '', qty: 1, unit: 'pcs', notes: '' }],
+      items: [BARIS_AKS()],
       urgent: false,
       needed_by_date: '',
       notes: '',
@@ -175,7 +223,7 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   };
 
   const addAccReqItemRow = () => {
-    setAccReqModal(prev => prev ? ({ ...prev, items: [...prev.items, { material_code: '', material_name: '', qty: 1, unit: 'pcs', notes: '' }] }) : prev);
+    setAccReqModal(prev => prev ? ({ ...prev, items: [...prev.items, BARIS_AKS()] }) : prev);
   };
 
   const removeAccReqItemRow = (idx) => {
@@ -208,8 +256,6 @@ export default function RnDSamplesTab({ token, onNavigate }) {
         ...docNumberPayload(accNumPolicy, 'request_code', accReqCode),
       };
       const res = await apiFetch('/dewi/accessory-requests', { method: 'POST', body: payload });
-      // Submit transition (optional — backend default is 'draft' if status missing; we send 'submitted')
-      // Actually we passed status='submitted' so the row is created directly in submitted state; skip /submit call to keep simple.
       toast.success(`Request aksesoris ${res.request_code} terkirim`);
       setAccReqModal(null);
     } catch (e) {
@@ -230,349 +276,292 @@ export default function RnDSamplesTab({ token, onNavigate }) {
       || (s.style_code || '').toLowerCase().includes(q);
   });
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
-  return (
-    <div className="p-6 space-y-5" data-testid="rnd-samples-tab">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <FlaskConical className="w-5 h-5 text-violet-500" /> Sample Requests
-          </h1>
-          <p className="text-sm text-foreground/50 mt-0.5">Kelola permintaan sample produk</p>
-        </div>
-        <Button onClick={() => { setShowForm(true); }} className="gap-2" data-testid="create-sample-btn">
-          <Plus className="w-4 h-4" /> Request Sample Baru
-        </Button>
+  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 25);
+
+  /** Aksi baris: paling banyak 2 tombol tampil, sisanya di "Lainnya". */
+  const AksiBaris = ({ s }) => {
+    return (
+      <div className="flex items-center justify-end gap-1.5">
+        {s.status === 'draft' && (
+          <Button size="sm" variant="outline" onClick={() => handleSubmit(s.id)} data-testid={`submit-sample-${s.id}`}>
+            <Send />Ajukan
+          </Button>
+        )}
+        {s.status === 'submitted' && (
+          <>
+            <Button size="sm" variant="success" onClick={() => setActionModal({ id: s.id, type: 'approve', notes: '', code: s.sample_code })}
+              data-testid={`approve-sample-${s.id}`}>
+              <CheckCircle />Setujui
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => tolak(s)} data-testid={`reject-sample-${s.id}`}>
+              <XCircle />Tolak
+            </Button>
+          </>
+        )}
+        {s.status === 'approved' && (
+          <Button size="sm" variant="outline" onClick={() => openAccReq(s)} title="Request aksesoris ke Admin Aksesoris"
+            data-testid={`req-acc-sample-${s.id}`}>
+            <Package />Aksesoris
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya" data-testid={`more-sample-${s.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setDetail(s)}>Lihat rincian</DropdownMenuItem>
+            {s.status === 'submitted' && (
+              <DropdownMenuItem onSelect={() => openAccReq(s)} data-testid={`req-acc-sample-${s.id}`}>
+                <Package className="mr-2 h-4 w-4" />Request aksesoris
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => hapus(s)} className="text-[hsl(var(--danger-text))]"
+              data-testid={`delete-sample-${s.id}`}>
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+    );
+  };
 
-      {/* RC-FLOW-UX Alur 9 — Sample disetujui → Tech Pack / PO Maklon */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Setelah Sample Disetujui"
-        actions={[
-          { module: 'rnd-techpack', label: 'Buat Tech Pack', icon: FileStack, primary: true, hint: 'Susun tech pack dari sample yang disetujui' },
-          { module: 'maklon-po', label: 'Buat PO Maklon', icon: Factory, hint: 'Order produksi maklon berdasarkan sample' },
-        ]}
-      />
+  const kolom = [
+    { kunci: 'kode', label: 'Kode sample', hp: 'judul', isi: (s) => <span className="font-mono text-xs font-semibold">{s.sample_code}</span> },
+    { kunci: 'style', label: 'Style', hp: 'keterangan', isi: (s) => (
+      <div className="min-w-0">
+        <p className="truncate font-medium text-foreground md:max-w-[16rem]">{s.style_name}</p>
+        <p className="text-xs text-muted-foreground">{s.style_code}</p>
+      </div>) },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.quantity} pcs</span> },
+    { kunci: 'pic', label: 'PIC / pembuat', isi: (s) => (
+      <span className="text-sm" data-testid={`sample-pic-${s.id}`}>
+        {s.sample_pic || <span className="text-muted-foreground">Belum ditentukan</span>}
+        {s.sample_pic && s.sample_pic_external && <span className="ml-1 text-xs text-muted-foreground">(penjahit luar)</span>}
+      </span>) },
+    { kunci: 'prio', label: 'Prioritas', isi: (s) => <StatusBadge status={`prio-${s.priority}`} tone={prioOf(s.priority).tone} label={prioOf(s.priority).label} /> },
+    { kunci: 'due', label: 'Target selesai', isi: (s) => <span className="text-sm md:whitespace-nowrap">{tgl(s.due_date)}</span> },
+    { kunci: 'status', label: 'Status', isi: (s) => <StatusBadge status={s.status} tone={statusOf(s.status).tone} label={statusOf(s.status).label} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => <AksiBaris s={s} /> },
+  ];
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
+  const chips = [
+    { key: '', label: 'Semua' },
+    ...Object.entries(STATUS_CONF).map(([k, v]) => ({ key: k, label: v.label })),
+  ];
+
+  return (
+    <PageLayout testId="rnd-samples-tab" title="Sample Request"
+      subtitle="Permintaan sample produk per style: buat, ajukan, setujui, lalu lanjut ke tech pack atau PO maklon."
+      actions={<>
+        {typeof onNavigate === 'function' && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="max-sm:px-2.5" aria-label="Langkah berikutnya" title="Langkah berikutnya"
+                data-testid="sample-onward"><span className="hidden sm:inline">Langkah berikutnya</span><ArrowRight /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => onNavigate('rnd-techpack')} data-testid="onward-rnd-techpack">
+                <FileStack className="mr-2 h-4 w-4" />Buat tech pack dari sample disetujui
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onNavigate('maklon-po')} data-testid="onward-maklon-po">
+                <Factory className="mr-2 h-4 w-4" />Buat PO maklon berdasarkan sample
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        <Button onClick={() => setShowForm(true)} data-testid="create-sample-btn">
+          <Plus />Request sample baru
+        </Button>
+      </>}
+      filters={<>
+        <FilterChips options={chips} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false}
+          testId="sample-status-filter" ariaLabel="Status" />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && fetchSamples()}
-            placeholder="Cari kode / style..." className="pl-9" />
+            placeholder="Cari kode atau style" className="pl-8" data-testid="sample-search" />
         </div>
-        <div className="flex gap-2 flex-wrap">
-          {['', 'draft', 'submitted', 'approved', 'rejected'].map(s => (
-            <button key={s} onClick={() => setFilterStatus(s)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                filterStatus === s
-                  ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-400 border-violet-500/40'
-                  : 'bg-foreground/5 text-foreground/50 border-foreground/10 hover:border-foreground/20'
-              }`}>
-              {s === '' ? 'Semua' : STATUS_CONF[s]?.label || s}
-            </button>
-          ))}
-        </div>
-      </div>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="sample-request" namaLembar="Sample request" baris={filtered} testId="sample-unduh"
+          kolom={[
+            { label: 'Kode sample', nilai: (s) => s.sample_code },
+            { label: 'Kode style', nilai: (s) => s.style_code || '' },
+            { label: 'Style', nilai: (s) => s.style_name || '' },
+            { label: 'Qty (pcs)', nilai: (s) => Number(s.quantity || 0) },
+            { label: 'PIC / pembuat', nilai: (s) => `${s.sample_pic || ''}${s.sample_pic && s.sample_pic_external ? ' (penjahit luar)' : ''}` },
+            { label: 'Prioritas', nilai: (s) => prioOf(s.priority).label },
+            { label: 'Target selesai', nilai: (s) => (s.due_date ? formatDateID(s.due_date) : '') },
+            { label: 'Status', nilai: (s) => statusOf(s.status).label },
+            { label: 'Catatan', nilai: (s) => s.notes || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchSamples} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      footer={filtered.length > 25 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />
+      )}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && samples.length === 0 ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+        ) : (
+          <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="sample-table"
+            kosong={
+              <EmptyState icon={FlaskConical}
+                title={samples.length ? 'Tidak ada sample yang cocok' : filterStatus ? `Belum ada sample berstatus ${statusOf(filterStatus).label.toLowerCase()}` : 'Belum ada request sample'}
+                description={samples.length || filterStatus ? 'Ubah saringan atau kata pencarian.' : 'Buat request sample pertama dari style yang sudah ada.'}
+                action={!samples.length && !filterStatus && <Button onClick={() => setShowForm(true)}><Plus />Request sample baru</Button>} />
+            } />
+        )}
+      </GlassCard>
 
-      {/* Table */}
-      {loading ? (
-        <div className="flex justify-center h-32 items-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-500" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <FlaskConical className="w-10 h-10 text-foreground/20 mx-auto mb-3" />
-          <p className="text-foreground/50 text-sm">Belum ada sample request.</p>
-          <Button variant="outline" className="mt-3" onClick={() => setShowForm(true)}>+ Buat Request Pertama</Button>
-        </GlassCard>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-          <table className="w-full text-sm">
-            <thead className="bg-foreground/5 border-b border-foreground/10">
-              <tr>
-                {['Kode Sample', 'Style', 'Qty', 'PIC / Pembuat', 'Prioritas', 'Due Date', 'Status', 'Aksi'].map(h => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-foreground/50 uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paged.map(s => {
-                const sc = STATUS_CONF[s.status] || STATUS_CONF.draft;
-                const Icon = sc.Icon;
-                return (
-                  <tr key={s.id} className="border-b border-foreground/5 hover:bg-foreground/[0.03] last:border-0">
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-foreground">{s.sample_code}</td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-foreground">{s.style_name}</div>
-                      <div className="text-xs text-foreground/40">{s.style_code}</div>
-                    </td>
-                    <td className="px-4 py-3 text-foreground/70">{s.quantity} pcs</td>
-                    <td className="px-4 py-3 text-foreground/70 text-xs" data-testid={`sample-pic-${s.id}`}>
-                      {s.sample_pic || <span className="text-foreground/40">belum ditentukan</span>}
-                      {s.sample_pic && s.sample_pic_external && <span className="ml-1 text-[11px] text-muted-foreground">(penjahit luar)</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${PRIORITY_CLS[s.priority] || PRIORITY_CLS.normal}`}>
-                        {s.priority === 'high' ? 'Tinggi' : s.priority === 'low' ? 'Rendah' : 'Normal'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-foreground/60 text-xs">
-                      {s.due_date ? new Date(s.due_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border ${sc.cls}`}>
-                        <Icon className="w-3 h-3" /> {sc.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        {s.status === 'draft' && (
-                          <Button variant="ghost" size="sm"
-                            onClick={() => handleSubmit(s.id)}
-                            className="h-7 px-2 text-xs text-sky-600 dark:text-sky-400 hover:text-sky-600 dark:text-sky-300 hover:bg-sky-100 dark:bg-sky-500/10"
-                            data-testid={`submit-sample-${s.id}`}>
-                            <Send className="w-3.5 h-3.5 mr-1" /> Submit
-                          </Button>
-                        )}
-                        {s.status === 'submitted' && (
-                          <>
-                            <Button variant="ghost" size="sm"
-                              onClick={() => setActionModal({ id: s.id, type: 'approve', notes: '' })}
-                              className="h-7 px-2 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:bg-emerald-500/10"
-                              data-testid={`approve-sample-${s.id}`}>
-                              <CheckCircle className="w-3.5 h-3.5 mr-1" /> Setujui
-                            </Button>
-                            <Button variant="ghost" size="sm"
-                              onClick={() => setActionModal({ id: s.id, type: 'reject', notes: '' })}
-                              className="h-7 px-2 text-xs text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10"
-                              data-testid={`reject-sample-${s.id}`}>
-                              <XCircle className="w-3.5 h-3.5 mr-1" /> Tolak
-                            </Button>
-                          </>
-                        )}
-                        {(s.status === 'submitted' || s.status === 'approved') && (
-                          <Button variant="ghost" size="sm"
-                            onClick={() => openAccReq(s)}
-                            className="h-7 px-2 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:bg-amber-500/10"
-                            title="Request Aksesoris ke Admin Aksesoris"
-                            data-testid={`req-acc-sample-${s.id}`}>
-                            <Package className="w-3.5 h-3.5 mr-1" /> Aksesoris
-                          </Button>
-                        )}
-                        <Button variant="ghost" size="sm" onClick={() => setDelId(s.id)}
-                          className="h-7 w-7 p-0 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-        </div>
+      {/* Rincian satu request */}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="sample-detail"
+          judul={detail.sample_code} keterangan={`${detail.style_code || ''} — ${detail.style_name || ''}`}
+          status={<StatusBadge status={detail.status} tone={statusOf(detail.status).tone} label={statusOf(detail.status).label} />}
+          aksi={<AksiBaris s={detail} />}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Jumlah">{detail.quantity} pcs</BarisDetail>
+            <BarisDetail label="Prioritas">{prioOf(detail.priority).label}</BarisDetail>
+            <BarisDetail label="PIC / pembuat">
+              {detail.sample_pic || 'Belum ditentukan'}{detail.sample_pic && detail.sample_pic_external ? ' (penjahit luar)' : ''}
+            </BarisDetail>
+            <BarisDetail label="Target selesai">{tgl(detail.due_date)}</BarisDetail>
+            <BarisDetail label="Catatan">{detail.notes || '—'}</BarisDetail>
+            {detail.approved_by_name && (
+              <BarisDetail label="Diputuskan">{detail.approved_by_name}{detail.approved_at ? ` · ${formatDateTimeID(detail.approved_at)}` : ''}</BarisDetail>
+            )}
+            {detail.approval_notes && <BarisDetail label="Catatan keputusan">{detail.approval_notes}</BarisDetail>}
+            {detail.created_at && (
+              <BarisDetail label="Dibuat">{formatDateTimeID(detail.created_at)}{detail.created_by_name ? ` · ${detail.created_by_name}` : ''}</BarisDetail>
+            )}
+          </dl>
+        </DetailPopup>
       )}
 
-      {/* Create Form Modal */}
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Request Sample Baru">
-        <div className="space-y-4">
-          <div>
-            <Label>Style <span className="text-red-700 dark:text-red-400">*</span></Label>
-            <SmartNativeSelect value={form.style_id} onChange={e => f('style_id', e.target.value)}
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground"
-              data-testid="sample-style-select">
-              <option value="">-- Pilih Style --</option>
-              {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+      {/* Form request baru */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} judul="Request sample baru"
+        keterangan="Sample dibuat dari style yang sudah ada di Style & Desain." ukuran="pendek"
+        onSimpan={handleCreate} labelSimpan="Buat request" menyimpan={saving} testId="sample-form">
+        <Isian label="Style" wajib htmlFor="sample-style">
+          <SmartNativeSelect id="sample-style" value={form.style_id} onChange={e => f('style_id', e.target.value)}
+            data-testid="sample-style-select">
+            <option value="">Pilih style</option>
+            {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Jumlah (pcs)" wajib htmlFor="sample-qty">
+            <Input id="sample-qty" type="number" min="1" inputMode="numeric" value={form.quantity}
+              onChange={e => f('quantity', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+              data-testid="sample-qty-input" />
+          </Isian>
+          <Isian label="Prioritas" htmlFor="sample-prio">
+            <SmartNativeSelect id="sample-prio" value={form.priority} onChange={e => f('priority', e.target.value)}
+              data-testid="sample-priority-select">
+              <option value="low">Rendah</option>
+              <option value="normal">Normal</option>
+              <option value="high">Tinggi</option>
             </SmartNativeSelect>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Jumlah (pcs) <span className="text-[hsl(var(--destructive))]">*</span></Label>
-              <Input className="mt-1" type="number" min="1" value={form.quantity}
-                onChange={e => f('quantity', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                data-testid="sample-qty-input" />
-            </div>
-            <div>
-              <Label>Prioritas</Label>
-              <SmartNativeSelect value={form.priority} onChange={e => f('priority', e.target.value)}
-                className="w-full mt-1" data-testid="sample-priority-select">
-                <option value="low">Rendah</option>
-                <option value="normal">Normal</option>
-                <option value="high">Tinggi</option>
-              </SmartNativeSelect>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>PIC / Pembuat Sample</Label>
-              <SmartNativeSelect value={picValue} onChange={e => pickPic(e.target.value)}
-                searchable={true} className="w-full mt-1" aria-label="PIC / pembuat sample"
-                data-testid="sample-pic-select">
-                <option value="">— Belum ditentukan —</option>
-                <option value={PIC_EXTERNAL}>Penjahit luar — ketik nama</option>
-                {picChoices.map((e) => (
-                  <option key={e.id} value={e.id}>{`${employeeLabel(e)}${e.sampleStaff ? ' — bagian sample' : ''}`}</option>
-                ))}
-              </SmartNativeSelect>
-              {form.sample_pic_external && (
-                <Input className="mt-1.5" value={form.sample_pic}
-                  onChange={e => f('sample_pic', e.target.value)}
-                  placeholder="Nama penjahit luar"
-                  data-testid="sample-pic-input" />
-              )}
-            </div>
-            <div>
-              <Label>Target Selesai</Label>
-              <Input className="mt-1" type="date" value={form.due_date}
-                onChange={e => f('due_date', e.target.value)} />
-            </div>
-          </div>
-          <div>
-            <Label>Catatan</Label>
-            <textarea value={form.notes} onChange={e => f('notes', e.target.value)}
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground h-20 resize-none"
-              placeholder="Spesifikasi khusus, referensi, dll..." />
-          </div>
+          </Isian>
+          <Isian label="PIC / pembuat sample" htmlFor="sample-pic">
+            <SmartNativeSelect id="sample-pic" value={picValue} onChange={e => pickPic(e.target.value)}
+              searchable={true} aria-label="PIC / pembuat sample" data-testid="sample-pic-select">
+              <option value="">Belum ditentukan</option>
+              <option value={PIC_EXTERNAL}>Penjahit luar — ketik nama</option>
+              {picChoices.map((e) => (
+                <option key={e.id} value={e.id}>{`${employeeLabel(e)}${e.sampleStaff ? ' — bagian sample' : ''}`}</option>
+              ))}
+            </SmartNativeSelect>
+            {form.sample_pic_external && (
+              <Input className="mt-1.5" value={form.sample_pic} onChange={e => f('sample_pic', e.target.value)}
+                placeholder="Nama penjahit luar" data-testid="sample-pic-input" />
+            )}
+          </Isian>
+          <Isian label="Target selesai">
+            <DatePicker value={form.due_date} onChange={(v) => f('due_date', v)} placeholder="Belum ditentukan"
+              testId="sample-due-date" />
+          </Isian>
         </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-          <Button onClick={handleCreate} data-testid="save-sample-btn">Buat Request</Button>
-        </div>
-      </Modal>
+        <Isian label="Catatan" htmlFor="sample-notes">
+          <Textarea id="sample-notes" rows={3} value={form.notes} onChange={e => f('notes', e.target.value)}
+            placeholder="Spesifikasi khusus, referensi, dll." />
+        </Isian>
+      </FormPopup>
 
-      {/* Approve / Reject Modal */}
-      <Modal
-        open={!!actionModal}
-        onClose={() => setActionModal(null)}
-        title={actionModal?.type === 'approve' ? 'Setujui Sample Request' : 'Tolak Sample Request'}
-      >
-        <p className="text-sm text-foreground/60 mb-4">
-          {actionModal?.type === 'approve'
-            ? 'Tambahkan catatan approval (opsional):'
-            : 'Tuliskan alasan penolakan:'}
-        </p>
-        <textarea
-          value={actionModal?.notes || ''}
-          onChange={e => setActionModal(a => ({ ...a, notes: e.target.value }))}
-          className="w-full border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground h-24 resize-none"
-          placeholder={actionModal?.type === 'reject' ? 'Alasan penolakan wajib diisi...' : 'Catatan opsional...'}
-          data-testid="action-notes-input"
-        />
-        <div className="flex justify-end gap-3 mt-5">
-          <Button variant="outline" onClick={() => setActionModal(null)}>Batal</Button>
-          <Button
-            onClick={handleAction}
-            className={actionModal?.type === 'reject' ? 'bg-red-600 hover:bg-red-700 text-foreground' : ''}
-            data-testid="confirm-action-btn"
-          >
-            {actionModal?.type === 'approve' ? 'Setujui' : 'Tolak Sample'}
-          </Button>
-        </div>
-      </Modal>
+      {/* Setujui (catatan opsional) */}
+      <FormPopup open={!!actionModal} onClose={() => setActionModal(null)} ukuran="pendek"
+        judul={`Setujui sample ${actionModal?.code || ''}`.trim()} keterangan="Catatan persetujuan boleh dikosongkan."
+        onSimpan={handleApprove} labelSimpan="Setujui" testId="sample-approve">
+        <Isian label="Catatan persetujuan" htmlFor="sample-approve-notes">
+          <Textarea id="sample-approve-notes" rows={3} value={actionModal?.notes || ''}
+            onChange={e => setActionModal(a => ({ ...a, notes: e.target.value }))}
+            placeholder="Catatan opsional" data-testid="action-notes-input" />
+        </Isian>
+      </FormPopup>
 
-      {delId && (
-        <ConfirmDialog
-          onConfirm={handleDelete}
-          onCancel={() => setDelId(null)}
-          title="Hapus Sample Request?"
-          message="Sample request ini akan dihapus permanen."
-        />
-      )}
-
-      {/* ── Session 27 — GAP-R3 Accessory Request Modal ──────────────────── */}
-      {accReqModal && (
-        <Modal open={!!accReqModal} onClose={() => setAccReqModal(null)}
-          title={`Request Aksesoris — ${accReqModal.sample.sample_code}`} size="xl">
-          <div className="space-y-4">
-            <div className="px-4 py-3 rounded-lg bg-amber-100 dark:bg-amber-500/5 border border-amber-300 dark:border-amber-500/20">
-              <div className="text-xs text-foreground/60">Style</div>
-              <div className="font-medium text-foreground">{accReqModal.sample.style_code} — {accReqModal.sample.style_name}</div>
-              <div className="text-xs text-foreground/50 mt-1">Sample qty: {accReqModal.sample.quantity} pcs</div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label>Daftar Aksesoris</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addAccReqItemRow}
-                  data-testid="acc-req-add-row" className="gap-1.5">
-                  <Plus className="w-3.5 h-3.5" /> Tambah Baris
-                </Button>
-              </div>
+      {/* ── Session 27 — GAP-R3 Request aksesoris ──────────────────── */}
+      <FormPopup open={!!accReqModal} onClose={() => setAccReqModal(null)} ukuran="panjang"
+        judul={`Request aksesoris — ${accReqModal?.sample?.sample_code || ''}`}
+        keterangan={accReqModal ? `${accReqModal.sample.style_code} — ${accReqModal.sample.style_name} · sample ${accReqModal.sample.quantity} pcs` : ''}
+        onSimpan={handleSubmitAccReq} labelSimpan="Kirim request" menyimpan={!!accReqModal?.submitting}
+        testId="acc-req-form">
+        {accReqModal && (
+          <>
+            <Isian label="Daftar aksesoris" petunjuk="Isi nama atau kode, dan qty lebih dari 0.">
               <div className="space-y-2">
                 {accReqModal.items.map((it, idx) => (
-                  <div key={idx} className="grid grid-cols-12 gap-2 items-start" data-testid={`acc-req-row-${idx}`}>
-                    <Input className="col-span-3" placeholder="Kode (opsional)"
-                      value={it.material_code}
-                      onChange={e => updateAccReqItem(idx, 'material_code', e.target.value)} />
-                    <Input className="col-span-4" placeholder="Nama aksesoris *"
-                      value={it.material_name}
-                      onChange={e => updateAccReqItem(idx, 'material_name', e.target.value)} />
-                    <Input className="col-span-2" type="number" min="0" step="0.1" placeholder="Qty"
-                      value={it.qty}
-                      onChange={e => updateAccReqItem(idx, 'qty', e.target.value)} />
-                    {/* 2026-11-07: satuan dari daftar satuan RnD yang sama dengan Costing/Tech Pack (dulu daftar
-                        sendiri berisi "meter" — ejaan yang tidak dikenal master; yang dikenal "m") */}
-                    <div className="col-span-2">
+                  <div key={idx} className="grid grid-cols-2 gap-2 sm:grid-cols-12 sm:items-start" data-testid={`acc-req-row-${idx}`}>
+                    <Input className="sm:col-span-3" placeholder="Kode (opsional)" aria-label="Kode aksesoris"
+                      value={it.material_code} onChange={e => updateAccReqItem(idx, 'material_code', e.target.value)} />
+                    <Input className="sm:col-span-4" placeholder="Nama aksesoris *" aria-label="Nama aksesoris"
+                      value={it.material_name} onChange={e => updateAccReqItem(idx, 'material_name', e.target.value)} />
+                    <Input className="sm:col-span-2" type="number" min="0" step="0.1" placeholder="Qty" aria-label="Qty"
+                      value={it.qty} onChange={e => updateAccReqItem(idx, 'qty', e.target.value)} />
+                    {/* 2026-11-07: satuan dari daftar satuan RnD yang sama dengan Costing/Tech Pack */}
+                    <div className="sm:col-span-2">
                       <RnDUnitSelect value={it.unit} onChange={e => updateAccReqItem(idx, 'unit', e.target.value)}
                         testId={`acc-req-unit-${idx}`} />
                     </div>
-                    <button type="button" onClick={() => removeAccReqItemRow(idx)}
-                      disabled={accReqModal.items.length <= 1}
-                      className="col-span-1 h-9 rounded-md border border-red-400 dark:border-red-500/30 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
-                      data-testid={`acc-req-remove-row-${idx}`}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <Button type="button" variant="outline" size="icon" className="sm:col-span-1"
+                      onClick={() => removeAccReqItemRow(idx)} disabled={accReqModal.items.length <= 1}
+                      aria-label="Hapus baris" title="Hapus baris" data-testid={`acc-req-remove-row-${idx}`}>
+                      <Trash2 />
+                    </Button>
                   </div>
                 ))}
+                <Button type="button" variant="outline" size="sm" onClick={addAccReqItemRow} data-testid="acc-req-add-row">
+                  <Plus />Tambah baris
+                </Button>
               </div>
+            </Isian>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Isian label="Butuh sebelum">
+                <DatePicker value={accReqModal.needed_by_date} placeholder="Tidak ditentukan"
+                  onChange={(v) => setAccReqModal(p => ({ ...p, needed_by_date: v }))} testId="acc-req-needed-by-date" />
+              </Isian>
+              <label className="flex items-center gap-2 text-sm sm:mt-7" htmlFor="acc-req-urgent" data-testid="acc-req-urgent-label">
+                <Checkbox id="acc-req-urgent" checked={!!accReqModal.urgent}
+                  onCheckedChange={(v) => setAccReqModal(p => ({ ...p, urgent: !!v }))} data-testid="acc-req-urgent-checkbox" />
+                Tandai mendesak
+              </label>
             </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Butuh Sebelum (tanggal)</Label>
-                <Input type="date" className="mt-1" value={accReqModal.needed_by_date}
-                  onChange={e => setAccReqModal(p => ({ ...p, needed_by_date: e.target.value }))}
-                  data-testid="acc-req-needed-by-date" />
-              </div>
-              <div className="flex items-end">
-                <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="acc-req-urgent-label">
-                  <input type="checkbox" checked={!!accReqModal.urgent}
-                    onChange={e => setAccReqModal(p => ({ ...p, urgent: e.target.checked }))}
-                    className="w-4 h-4 accent-amber-500"
-                    data-testid="acc-req-urgent-checkbox" />
-                  <span className="text-foreground/70">Tandai Urgent</span>
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <Label>Catatan</Label>
-              <textarea className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground h-20 resize-none"
-                placeholder="Spesifikasi warna, ukuran khusus, dll..."
-                value={accReqModal.notes}
-                onChange={e => setAccReqModal(p => ({ ...p, notes: e.target.value }))}
+            <Isian label="Catatan" htmlFor="acc-req-notes">
+              <Textarea id="acc-req-notes" rows={3} placeholder="Spesifikasi warna, ukuran khusus, dll."
+                value={accReqModal.notes} onChange={e => setAccReqModal(p => ({ ...p, notes: e.target.value }))}
                 data-testid="acc-req-notes" />
-            </div>
-
-            <DocNumberField
-              policy={accNumPolicy} value={accReqCode} onChange={setAccReqCode}
-              testId="acc-req-docnum" label="Nomor Permintaan Aksesoris" />
-          </div>
-          <div className="flex justify-end gap-3 mt-6">
-            <Button variant="outline" onClick={() => setAccReqModal(null)} disabled={accReqModal.submitting}>Batal</Button>
-            <Button onClick={handleSubmitAccReq} disabled={accReqModal.submitting}
-              data-testid="acc-req-submit-btn" className="gap-2">
-              {accReqModal.submitting && <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current" />}
-              Kirim Request
-            </Button>
-          </div>
-        </Modal>
-      )}
-    </div>
+            </Isian>
+            <DocNumberField policy={accNumPolicy} value={accReqCode} onChange={setAccReqCode}
+              testId="acc-req-docnum" label="Nomor permintaan aksesoris" />
+          </>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }

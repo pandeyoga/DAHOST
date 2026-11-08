@@ -26,6 +26,8 @@ import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID, formatRupiah, formatPercent } from '@/lib/format';
 import { humanMemo } from '@/lib/financeLabels';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -41,10 +43,10 @@ function fmtPct(v) {
 // PANDUAN_UI G8: abu = belum jatuh tempo, kuning = perlu perhatian, merah = masalah. Dulu 5 warna palet.
 const BUCKET_META = {
   current:   { label: 'Belum jatuh tempo', text: 'text-foreground',                    bar: 'bg-foreground/30' },
-  '1_30':    { label: '1-30 hari',         text: 'text-[hsl(var(--warning))]',         bar: 'bg-[hsl(var(--warning)/0.6)]' },
-  '31_60':   { label: '31-60 hari',        text: 'text-[hsl(var(--warning))]',         bar: 'bg-[hsl(var(--warning))]' },
-  '61_90':   { label: '61-90 hari',        text: 'text-[hsl(var(--destructive))]',     bar: 'bg-[hsl(var(--destructive)/0.7)]' },
-  '90_plus': { label: '> 90 hari',         text: 'text-[hsl(var(--destructive))]',     bar: 'bg-[hsl(var(--destructive))]' },
+  '1_30':    { label: '1–30 hari',         text: 'text-[hsl(var(--warning-text))]',    bar: 'bg-[hsl(var(--warning)/0.6)]' },
+  '31_60':   { label: '31–60 hari',        text: 'text-[hsl(var(--warning-text))]',    bar: 'bg-[hsl(var(--warning))]' },
+  '61_90':   { label: '61–90 hari',        text: 'text-[hsl(var(--danger-text))]',     bar: 'bg-[hsl(var(--destructive)/0.7)]' },
+  '90_plus': { label: 'Lebih dari 90 hari', text: 'text-[hsl(var(--danger-text))]',    bar: 'bg-[hsl(var(--destructive))]' },
 };
 const BUCKET_KEYS = Object.keys(BUCKET_META);
 
@@ -58,11 +60,11 @@ function BucketSpread({ values = {}, counts, total }) {
         const pct = total > 0 ? (val / total) * 100 : 0;
         return (
           <div key={key}>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
-            <div className={`text-lg font-bold tabular-nums whitespace-nowrap mt-1 ${val ? m.text : 'text-muted-foreground'}`}>{fmtRp(val)}</div>
-            <div className="flex items-center justify-between mt-1">
-              <span className="text-[10px] text-muted-foreground">{counts ? `${counts[key] || 0} faktur` : ''}</span>
-              <span className="text-[10px] font-semibold text-foreground/70 tabular-nums">{pct.toFixed(0)}%</span>
+            <div className="text-xs text-muted-foreground">{m.label}</div>
+            <div className={`text-base font-semibold tabular-nums whitespace-nowrap mt-0.5 ${val ? m.text : 'text-muted-foreground'}`}>{fmtRp(val)}</div>
+            <div className="flex items-center justify-between mt-0.5">
+              <span className="text-xs text-muted-foreground">{counts ? `${counts[key] || 0} faktur` : ''}</span>
+              <span className="text-xs font-medium text-muted-foreground tabular-nums">{pct.toFixed(0)}%</span>
             </div>
             <div className="h-1 rounded-full bg-foreground/10 mt-1.5 overflow-hidden">
               <div className={`h-full transition-[width] duration-500 ${m.bar}`} style={{ width: `${pct}%` }} />
@@ -143,7 +145,7 @@ function CustomerStatementPanel({ customerId, headers, onClose }) {
           <p className="text-sm text-muted-foreground" data-testid="ar360-statement-summary">
             Ditagih <b className="text-foreground tabular-nums">{fmtRp(data.total_billed)}</b> ({data.total_invoices} faktur)
             {' · '}dibayar <b className="text-foreground tabular-nums">{fmtRp(data.total_paid)}</b> ({data.total_payments} pembayaran)
-            {' · '}sisa piutang <b className={`tabular-nums ${data.closing_balance > 0 ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>{fmtRp(data.closing_balance)}</b>
+            {' · '}sisa piutang <b className={`tabular-nums ${data.closing_balance > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}`}>{fmtRp(data.closing_balance)}</b>
           </p>
 
           <div className="space-y-2">
@@ -152,53 +154,63 @@ function CustomerStatementPanel({ customerId, headers, onClose }) {
           </div>
 
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-foreground">Riwayat transaksi ({txs.length})</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground">Riwayat transaksi ({txs.length})</p>
+              <TombolUnduh namaBerkas={`rekening-koran-${cust.code || cust.name || 'pelanggan'}`} namaLembar="Rekening koran" baris={txs} testId="ar360-statement-unduh"
+                kolom={[
+                  { label: 'Tanggal', nilai: (t) => formatDateID(t.date) },
+                  { label: 'Jenis', nilai: (t) => (t.type === 'invoice' ? 'Faktur' : 'Pembayaran') },
+                  { label: 'Referensi', nilai: (t) => t.reference || '' },
+                  { label: 'Keterangan', nilai: (t) => humanMemo(t.description) },
+                  { label: 'Debit', nilai: (t) => Number(t.debit) || 0 },
+                  { label: 'Kredit', nilai: (t) => Number(t.credit) || 0 },
+                  { label: 'Saldo', nilai: (t) => Number(t.balance_after) || 0 },
+                ]} />
+            </div>
             {txs.length === 0 ? (
               <EmptyState icon={Receipt} title="Belum ada transaksi" description="Faktur dan pembayaran pelanggan ini akan tampil di sini." />
             ) : (
-              <div className="overflow-x-auto -mx-4">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-muted-foreground border-b border-foreground/10">
-                      <th className="text-left py-2 px-2">Tanggal</th>
-                      <th className="text-left py-2 px-2">Jenis</th>
-                      <th className="text-left py-2 px-2">Referensi</th>
-                      <th className="text-left py-2 px-2">Keterangan</th>
-                      <th className="text-right py-2 px-2">Debit</th>
-                      <th className="text-right py-2 px-2">Kredit</th>
-                      <th className="text-right py-2 px-2">Saldo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {txs.map((t, idx) => {
-                      const isInvoice = t.type === 'invoice';
-                      return (
-                        <tr key={idx} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
-                          <td className="py-2 px-2 text-foreground/70 whitespace-nowrap">{formatDateID(t.date)}</td>
-                          <td className="py-2 px-2">
-                            <StatusBadge status={t.type} label={isInvoice ? 'Faktur' : 'Pembayaran'} tone={isInvoice ? 'info' : 'success'} />
-                          </td>
-                          <td className="py-2 px-2 whitespace-nowrap">{t.reference}</td>
-                          <td className="py-2 px-2 text-foreground/70">{humanMemo(t.description)}</td>
-                          <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{t.debit > 0 ? fmtRp(t.debit) : '—'}</td>
-                          <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{t.credit > 0 ? fmtRp(t.credit) : '—'}</td>
-                          <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold">{fmtRp(t.balance_after)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-[var(--glass-border)] font-bold">
-                      <td colSpan="4" className="py-2 px-2 text-foreground">Saldo akhir</td>
-                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_billed)}</td>
-                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_paid)}</td>
-                      <td className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${data.closing_balance > 0 ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>
-                        {fmtRp(data.closing_balance)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              <Table className="md:min-w-0">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tanggal</TableHead>
+                    <TableHead>Jenis</TableHead>
+                    <TableHead>Referensi</TableHead>
+                    <TableHead>Keterangan</TableHead>
+                    <TableHead className="text-right">Debit</TableHead>
+                    <TableHead className="text-right">Kredit</TableHead>
+                    <TableHead className="text-right">Saldo</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {txs.map((t, idx) => {
+                    const isInvoice = t.type === 'invoice';
+                    return (
+                      <TableRow key={idx}>
+                        <TableCell className="text-muted-foreground whitespace-nowrap">{formatDateID(t.date)}</TableCell>
+                        <TableCell>
+                          <StatusBadge status={t.type} label={isInvoice ? 'Faktur' : 'Pembayaran'} tone={isInvoice ? 'info' : 'success'} />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{t.reference}</TableCell>
+                        <TableCell className="text-muted-foreground">{humanMemo(t.description)}</TableCell>
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">{t.debit > 0 ? fmtRp(t.debit) : '—'}</TableCell>
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">{t.credit > 0 ? fmtRp(t.credit) : '—'}</TableCell>
+                        <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold">{fmtRp(t.balance_after)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+                <TableFooter>
+                  <TableRow className="font-semibold">
+                    <TableCell colSpan={4} className="text-foreground">Saldo akhir</TableCell>
+                    <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_billed)}</TableCell>
+                    <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_paid)}</TableCell>
+                    <TableCell className={`text-right tabular-nums whitespace-nowrap ${data.closing_balance > 0 ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}`}>
+                      {fmtRp(data.closing_balance)}
+                    </TableCell>
+                  </TableRow>
+                </TableFooter>
+              </Table>
             )}
           </div>
         </>
@@ -230,40 +242,40 @@ function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-muted-foreground border-b border-foreground/10">
-            <th className="text-right py-2 px-2 w-10">#</th>
-            <th className="text-left py-2 px-2">Pelanggan</th>
-            <th className="text-right py-2 px-2">Faktur</th>
-            <th className="text-right py-2 px-2">Terlama terlambat</th>
-            <th className="text-right py-2 px-2">Lewat jatuh tempo</th>
-            <th className="text-right py-2 px-2">Sisa piutang</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="w-full md:min-w-0">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-right w-10">#</TableHead>
+            <TableHead className="text-left py-2 px-2">Pelanggan</TableHead>
+            <TableHead className="text-right py-2 px-2">Faktur</TableHead>
+            <TableHead className="text-right py-2 px-2">Terlama terlambat</TableHead>
+            <TableHead className="text-right py-2 px-2">Lewat jatuh tempo</TableHead>
+            <TableHead className="text-right py-2 px-2">Sisa piutang</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {filtered.map((d, idx) => (
-            <tr key={d.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === d.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
-              <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{idx + 1}</td>
-              <td className="py-2 px-2">
-                <Button variant="link" size="sm" className="h-auto p-0 text-xs font-semibold" onClick={() => onPickCustomer(d)}
+            <TableRow key={d.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === d.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+              <TableCell className="py-2 px-2 text-right tabular-nums text-muted-foreground">{idx + 1}</TableCell>
+              <TableCell className="py-2 px-2">
+                <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => onPickCustomer(d)}
                   data-testid={`ar360-debtor-${d.customer_id}`} title="Buka rekening koran pelanggan">
                   {d.customer_name}
                 </Button>
-                {d.customer_code && <span className="ml-2 text-[10px] text-muted-foreground">{d.customer_code}</span>}
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums">{d.invoice_count}</td>
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
-                {d.oldest_days_overdue > 0 ? <span className="text-[hsl(var(--warning))]">{d.oldest_days_overdue} hari</span> : <span className="text-muted-foreground">—</span>}
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
-                {d.overdue_amount > 0 ? <span className="text-[hsl(var(--destructive))]">{fmtRp(d.overdue_amount)}</span> : <span className="text-muted-foreground">—</span>}
-              </td>
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold text-foreground">{fmtRp(d.outstanding)}</td>
-            </tr>
+                {d.customer_code && <span className="block text-xs text-muted-foreground">{d.customer_code}</span>}
+              </TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums">{d.invoice_count}</TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+                {d.oldest_days_overdue > 0 ? <span className="text-[hsl(var(--warning-text))]">{d.oldest_days_overdue} hari</span> : <span className="text-muted-foreground">—</span>}
+              </TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+                {d.overdue_amount > 0 ? <span className="text-[hsl(var(--danger-text))]">{fmtRp(d.overdue_amount)}</span> : <span className="text-muted-foreground">—</span>}
+              </TableCell>
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold text-foreground">{fmtRp(d.outstanding)}</TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -283,57 +295,57 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
   const hasSched = rows.some((r) => Number(r.scheduled || 0) > 0);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-muted-foreground border-b border-foreground/10">
-            <th className="text-left py-2 px-2">Pelanggan</th>
-            {BUCKET_KEYS.map((k) => <th key={k} className="text-right py-2 px-2 whitespace-nowrap">{BUCKET_META[k].label}</th>)}
-            <th className="text-right py-2 px-2 border-l border-foreground/10">Total</th>
-            {hasSched && <th className="text-right py-2 px-2 whitespace-nowrap">Terjadwal (belum jatuh tempo)</th>}
-            <th className="text-right py-2 px-2">Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table className="w-full md:min-w-0">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-left">Pelanggan</TableHead>
+            {BUCKET_KEYS.map((k) => <TableHead key={k} className="text-right py-2 px-2 whitespace-nowrap">{BUCKET_META[k].label}</TableHead>)}
+            <TableHead className="text-right py-2 px-2 border-l border-foreground/10">Total</TableHead>
+            {hasSched && <TableHead className="text-right py-2 px-2 whitespace-nowrap">Terjadwal (belum jatuh tempo)</TableHead>}
+            <TableHead className="text-right py-2 px-2">Aksi</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map(r => (
-            <tr key={r.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === r.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
-              <td className="py-2 px-2">
+            <TableRow key={r.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === r.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+              <TableCell className="py-2 px-2">
                 <div className="flex items-center gap-2">
                   <span className="text-foreground font-semibold truncate max-w-[200px]" title={r.customer_name}>{r.customer_name}</span>
-                  {r.customer_code && <span className="text-[10px] text-muted-foreground">{r.customer_code}</span>}
+                  {r.customer_code && <span className="text-xs text-muted-foreground">{r.customer_code}</span>}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
+                <div className="text-xs text-muted-foreground mt-0.5">
                   {r.count} faktur · terlama {r.oldest_days_overdue} hari
                 </div>
-              </td>
+              </TableCell>
               {BUCKET_KEYS.map((k) => (
-                <td key={k} className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${k === '90_plus' ? 'font-bold' : ''}`}>{cell(r, k)}</td>
+                <TableCell key={k} className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${k === '90_plus' ? 'font-bold' : ''}`}>{cell(r, k)}</TableCell>
               ))}
-              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap border-l border-foreground/10">
+              <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap border-l border-foreground/10">
                 <span className="text-foreground font-bold">{fmtRp(r.total)}</span>
-              </td>
-              {hasSched && <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{Number(r.scheduled || 0) > 0 ? fmtRp(r.scheduled) : '—'}</td>}
-              <td className="py-2 px-2 text-right whitespace-nowrap">
-                <Button variant="link" size="sm" className="h-auto p-0 text-xs"
+              </TableCell>
+              {hasSched && <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{Number(r.scheduled || 0) > 0 ? fmtRp(r.scheduled) : '—'}</TableCell>}
+              <TableCell className="py-2 px-2 text-right whitespace-nowrap">
+                <Button variant="link" size="sm" className="h-auto p-0"
                   data-testid={`ar360-matrix-statement-${r.customer_id}`}
                   onClick={() => onPickCustomer(r)}>
                   {selectedId === r.customer_id ? 'Tutup rekening koran' : 'Rekening koran'}
                 </Button>
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-[var(--glass-border)] font-bold">
-            <td className="py-2 px-2 text-foreground">Total ({totals.count || 0} faktur)</td>
+        </TableBody>
+        <TableFooter>
+          <TableRow className="border-t-2 border-[var(--glass-border)] font-bold">
+            <TableCell className="py-2 px-2 text-foreground">Total ({totals.count || 0} faktur)</TableCell>
             {BUCKET_KEYS.map((k) => (
-              <td key={k} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(totals[k])}</td>
+              <TableCell key={k} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(totals[k])}</TableCell>
             ))}
-            <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-base text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</td>
-            {hasSched && <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{fmtRp(totals.scheduled)}</td>}
-            <td></td>
-          </tr>
-        </tfoot>
-      </table>
+            <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</TableCell>
+            {hasSched && <TableCell className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{fmtRp(totals.scheduled)}</TableCell>}
+            <TableCell></TableCell>
+          </TableRow>
+        </TableFooter>
+      </Table>
     </div>
   );
 }
@@ -389,7 +401,7 @@ export default function ARLifecycleModule({ token }) {
           { key: 'overview', label: 'Piutang terbesar', icon: TrendingUp, count: (dashboard?.top_debtors || []).length },
           { key: 'matrix', label: 'Per pelanggan', icon: FileSpreadsheet, count: (matrix?.rows || []).length },
         ]} />
-      <div className="relative w-72 max-w-full">
+      <div className="relative w-full sm:w-64">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <GlassInput className="pl-9 h-9" placeholder="Cari nama / kode pelanggan…"
           value={search} onChange={e => setSearch(e.target.value)} data-testid="ar360-search" />
@@ -403,11 +415,32 @@ export default function ARLifecycleModule({ token }) {
       title="Umur Piutang"
       subtitle="Umur piutang per pelanggan, rekening koran pelanggan, dan pelanggan dengan piutang terbesar."
       filters={filters}
-      tools={
+      tools={<>
+        {tab === 'overview' ? (
+          <TombolUnduh namaBerkas="piutang-terbesar" namaLembar="Piutang terbesar" baris={dashboard?.top_debtors || []} testId="ar360-unduh"
+            kolom={[
+              { label: 'Pelanggan', nilai: (d) => d.customer_name },
+              { label: 'Kode', nilai: (d) => d.customer_code || '' },
+              { label: 'Faktur', nilai: (d) => Number(d.invoice_count) || 0 },
+              { label: 'Terlama terlambat (hari)', nilai: (d) => Number(d.oldest_days_overdue) || 0 },
+              { label: 'Lewat jatuh tempo', nilai: (d) => Number(d.overdue_amount) || 0 },
+              { label: 'Sisa piutang', nilai: (d) => Number(d.outstanding) || 0 },
+            ]} />
+        ) : (
+          <TombolUnduh namaBerkas="umur-piutang-per-pelanggan" namaLembar="Umur piutang" baris={matrixRows} testId="ar360-unduh"
+            kolom={[
+              { label: 'Pelanggan', nilai: (r) => r.customer_name },
+              { label: 'Kode', nilai: (r) => r.customer_code || '' },
+              { label: 'Faktur', nilai: (r) => Number(r.count) || 0 },
+              ...BUCKET_KEYS.map((key) => ({ label: BUCKET_META[key].label, nilai: (r) => Number(r[key]) || 0 })),
+              { label: 'Total', nilai: (r) => Number(r.total) || 0 },
+              { label: 'Terjadwal (belum jatuh tempo)', nilai: (r) => Number(r.scheduled) || 0 },
+            ]} />
+        )}
         <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="ar360-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
-      }
+      </>}
       summary={<>
         {/* 2026-11-04: tombol jalankan M-07 (tandai lewat jatuh tempo) pindah ke Adm. Sistem */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -419,7 +452,9 @@ export default function ARLifecycleModule({ token }) {
           <StatTile label="Rata-rata hari tertagih" value={k.dso_estimate_days ? `${fmtNum(k.dso_estimate_days)} hari` : '—'}
             accent={k.dso_estimate_days ? 'default' : 'muted'} sub={`Diterima 30 hari: ${fmtRp(k.cash_collected_30d)}`} />
         </div>
-        <GlassCard className="p-4 space-y-3">
+        {/* Sebaran umur — di HP disembunyikan (angka totalnya sudah di kartu; rinciannya di tabel Per pelanggan)
+            supaya tabel tidak terdorong ke bawah layar. */}
+        <GlassCard className="p-4 space-y-2 hidden sm:block" data-testid="ar360-buckets">
           <p className="text-sm font-semibold text-foreground">Sebaran umur piutang</p>
           <BucketSpread values={buckets} counts={bucketCounts} total={totalBucket} />
         </GlassCard>
@@ -429,9 +464,9 @@ export default function ARLifecycleModule({ token }) {
           onClose={() => setSelectedCustomerId(null)} />
       )}
     >
-      <GlassCard className="p-4">
+      <GlassCard className="p-0 overflow-hidden">
         {loading && !dashboard && !matrix ? (
-          <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9 rounded-lg" />)}</div>
+          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9 rounded-lg" />)}</div>
         ) : tab === 'overview' ? (
           <TopDebtorsTable debtors={dashboard?.top_debtors || []} search={search} selectedId={selectedCustomerId} onPickCustomer={pick} />
         ) : (

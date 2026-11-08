@@ -1,78 +1,78 @@
 /**
- * AccessoriesDashboard — Portal Aksesoris MVP
- * Session #11.21 — Dedicated Accessories Portal
+ * AccessoriesDashboard — Portal Aksesoris › Dashboard.
  *
- * KPI cards + quick view panels
- * Endpoint: GET /api/acc/dashboard
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, 4 kartu angka (StatTile) yang sumbernya sama dengan
+ * daftar, daftar stok = tabel (kartu ringkas di HP) yang bisa diurutkan, disaring, dan diunduh (Excel/CSV).
+ *
+ * Perbaikan angka (keputusan 9):
+ *  • Panel lama "Item stok rendah / habis" membaca `low_stock_items` dari server — isinya hanya item MENIPIS
+ *    (stok > 0) dan paling banyak 5, sehingga layar menulis "Semua item stok aman" walau 324 item habis.
+ *    Panel itu diganti saringan "Habis" / "Menipis" di tabel yang membaca daftar stok lengkap.
+ *  • Panel "Ringkasan pengadaan" mengulang angka kartu — angkanya kini di keterangan kartu.
+ *  • Spanduk "n item belum punya HPP" → kartu "Belum dinilai" yang membuka saringannya (konten utama naik ke atas).
+ *
+ * Endpoint: GET /api/acc/dashboard (kartu) · GET /api/acc/stock (daftar).
  */
-
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  Package, AlertTriangle, Clock, PackageCheck, ShoppingCart,
-  TrendingDown, RefreshCw, ChevronRight, CheckCircle,
-  Table2, LayoutGrid, ArrowUpDown, Search,
-} from 'lucide-react';
-// F15-B — nama warna boleh dinamis, KELASNYA tidak. `bg-${color}-500/5` tidak
-// pernah dibuat Tailwind (ia membaca teks, bukan menjalankan JS). Terukur:
-// kartu KPI "Perlu Diserahkan" (teal) memang tanpa latar & tanpa garis di
-// bundel hasil build. Lihat `lib/tone.js`.
-import { tone } from '@/lib/tone';
-import ExportCsvButton from '@/components/ui/export-csv-button';
+import { AlertTriangle, ArrowUpDown, ClipboardCheck, Package, RefreshCw, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import ViewToggle from '@/components/ui/view-toggle';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { cn } from '@/lib/utils';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const ACC_VIEW_KEY = 'acc_stock_view';
-const CSV_HEAD = ['Kode', 'Nama', 'Kategori', 'Satuan', 'Stok', 'Min. stok',
-  'Status stok', 'HPP satuan', 'Nilai stok', 'Sudah dinilai', 'Metode biaya'];
-
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-function fmtDate(iso) {
-  if (!iso) return '-';
-  try { return new Date(iso).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
-  catch { return iso?.slice(0, 10) || '-'; }
-}
-
-function fmtNum(n) { return Number(n || 0).toLocaleString('id-ID'); }
+const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
 const fmtRp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
-function KPICard({ label, value, icon: Icon, color, subtext }) {
-  const t = tone(color);
+// Metode biaya ditampilkan dengan bahasa staf (dulu tampil kode program "moving_average").
+const METODE_BIAYA = { moving_average: 'Rata-rata bergerak', manual: 'Manual' };
+const labelMetode = (m) => METODE_BIAYA[m] || (m ? m : '—');
+
+// Status stok — definisi sama dengan server (/api/acc/stock: out / low / ok).
+const STATUS_STOK = {
+  habis: { label: 'Habis', tone: 'danger' },
+  menipis: { label: 'Menipis', tone: 'warning' },
+  aman: { label: 'Aman', tone: 'success' },
+};
+function statusStok(it) {
+  const q = Number(it.stock_qty || 0);
+  const min = Number(it.min_stock || 0);
+  if (q <= 0) return 'habis';
+  if (min > 0 && q <= min) return 'menipis';
+  return 'aman';
+}
+
+function KepalaUrut({ kunci, urut, onUrut, children }) {
+  const aktif = urut.key === kunci;
   return (
-    <div
-      className={`border rounded-xl p-4 flex flex-col gap-2 ${t.surface}`}
-      data-testid={`acc-kpi-${label.toLowerCase().replace(/\s+/g, '-')}`}
-    >
-      <div className="flex items-center gap-2">
-        <div className={`w-8 h-8 rounded-lg border flex items-center justify-center ${t.chip}`}>
-          <Icon className={`w-4 h-4 ${t.text}`} />
-        </div>
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-      <div className={`text-3xl font-bold ${t.text}`}>{fmtNum(value)}</div>
-      {subtext && <p className="text-xs text-muted-foreground">{subtext}</p>}
-    </div>
+    <Button type="button" variant="ghost" size="sm" onClick={() => onUrut(kunci)} data-testid={`acc-sort-${kunci}`}
+      title="Urutkan" className="-ml-2 h-7 gap-1 px-2 text-xs font-medium text-muted-foreground">
+      {children}
+      <ArrowUpDown className={cn('!size-3', aktif ? 'text-primary' : 'opacity-40')} aria-hidden="true" />
+    </Button>
   );
 }
 
-function Skeleton({ className = '' }) {
-  return <div className={`animate-pulse bg-foreground/5 rounded-lg ${className}`} />;
-}
-
 export default function AccessoriesDashboard({ token }) {
-  const [dash, setDash]       = useState(null);
+  const [dash, setDash] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState('');
-
-  // ── F13-B (sesi #12) — DAFTAR STOK, bukan cuma angka ringkas ─────────────
-  // Layar ini dulu hanya KPI + dua panel ringkas. Nilainya nyata (stok
-  // aksesoris bernilai puluhan juta) tetapi tidak ada satu pun daftar yang bisa
-  // diurutkan atau diunduh. Dua pertanyaan yang paling sering ditanya karena
-  // itu tidak terjawab: "aksesoris mana yang nilainya paling besar?" dan
-  // "item mana yang BELUM DINILAI?" — item tak bernilai membuat nilai stok
-  // total lebih rendah dari kenyataan, dan itu masuk ke laporan keuangan.
-  const [stock, setStock]     = useState([]);
+  const [error, setError] = useState('');
+  // F13-B: daftar stok lengkap — "aksesoris mana yang nilainya paling besar / belum dinilai?"
+  const [stock, setStock] = useState([]);
   const [stockErr, setStockErr] = useState('');
-  const [search, setSearch]   = useState('');
+  const [stockLoading, setStockLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [saring, setSaring] = useState('');
   const [view, setView] = useState(() => {
     try { return localStorage.getItem(ACC_VIEW_KEY) || 'table'; } catch { return 'table'; }
   });
@@ -80,20 +80,18 @@ export default function AccessoriesDashboard({ token }) {
     try { localStorage.setItem(ACC_VIEW_KEY, view); } catch { /* penyimpanan diblokir */ }
   }, [view]);
   const [sort, setSort] = useState({ key: 'stock_value', dir: 'desc' });
+  const [rinci, setRinci] = useState(null);   // baris yang dibuka di popup rincian
 
   const loadDash = useCallback(async () => {
     if (!token) return;
     setLoading(true);
     setError('');
     try {
-      const r = await fetch(`${API}/api/acc/dashboard`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      setDash(data);
+      const r = await fetch(`${API}/api/acc/dashboard`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(`Ringkasan gagal dimuat (kode ${r.status}).`);
+      setDash(await r.json());
     } catch (e) {
-      setError(e.message || 'Gagal memuat dashboard');
+      setError(e.message || 'Ringkasan gagal dimuat.');
     } finally {
       setLoading(false);
     }
@@ -102,357 +100,199 @@ export default function AccessoriesDashboard({ token }) {
   const loadStock = useCallback(async () => {
     if (!token) return;
     setStockErr('');
+    setStockLoading(true);
     try {
-      const r = await fetch(`${API}/api/acc/stock`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const r = await fetch(`${API}/api/acc/stock`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(`Daftar stok gagal dimuat (kode ${r.status}).`);
       const d = await r.json();
       setStock(Array.isArray(d) ? d : (d.items || []));
     } catch (e) {
       setStock([]);
-      setStockErr(e.message || 'Gagal memuat daftar stok');
+      setStockErr(e.message || 'Daftar stok gagal dimuat.');
+    } finally {
+      setStockLoading(false);
     }
   }, [token]);
 
   useEffect(() => { loadDash(); }, [loadDash]);
   useEffect(() => { loadStock(); }, [loadStock]);
+  const muatUlang = () => { loadDash(); loadStock(); };
 
-  const stockStatus = (it) => {
-    const q = Number(it.stock_qty || 0), min = Number(it.min_stock || 0);
-    if (q <= 0) return 'Habis';
-    if (min > 0 && q <= min) return 'Hampir habis';
-    return 'Aman';
-  };
+  const hitung = useMemo(() => {
+    const c = { habis: 0, menipis: 0, aman: 0, belum: 0 };
+    stock.forEach((it) => { c[statusStok(it)] += 1; if (!it.valued) c.belum += 1; });
+    return c;
+  }, [stock]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return stock;
-    return stock.filter((it) =>
-      String(it.code || '').toLowerCase().includes(q)
-      || String(it.name || '').toLowerCase().includes(q)
-      || String(it.category || '').toLowerCase().includes(q));
-  }, [stock, search]);
+    return stock.filter((it) => {
+      if (saring === 'belum' ? it.valued : (saring && statusStok(it) !== saring)) return false;
+      if (!q) return true;
+      return String(it.code || '').toLowerCase().includes(q)
+        || String(it.name || '').toLowerCase().includes(q)
+        || String(it.category || '').toLowerCase().includes(q);
+    });
+  }, [stock, search, saring]);
 
   const rows = useMemo(() => {
     const list = [...filtered];
     const { key, dir } = sort;
     list.sort((a, b) => {
-      const av = a?.[key], bv = b?.[key];
+      const av = a?.[key];
+      const bv = b?.[key];
       const num = typeof av === 'number' || typeof bv === 'number';
-      const cmp = num ? (Number(av || 0) - Number(bv || 0))
-        : String(av ?? '').localeCompare(String(bv ?? ''), 'id');
+      const cmp = num ? (Number(av || 0) - Number(bv || 0)) : String(av ?? '').localeCompare(String(bv ?? ''), 'id');
       return dir === 'asc' ? cmp : -cmp;
     });
     return list;
   }, [filtered, sort]);
-  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 12);
-  const toggleSort = (key) => setSort((s) => (
-    s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
-  const csvRows = rows.map((it) => [
-    it.code, it.name, it.category || '', it.unit || '',
-    it.stock_qty ?? 0, it.min_stock ?? 0, stockStatus(it),
-    it.unit_cost ?? 0, it.stock_value ?? 0,
-    it.valued ? 'ya' : 'BELUM', it.cost_method || '',
-  ]);
-  const unvalued = rows.filter((it) => !it.valued).length;
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+  const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
+
+  const H = (kunci, label) => <KepalaUrut kunci={kunci} urut={sort} onUrut={toggleSort}>{label}</KepalaUrut>;
+  const kolom = [
+    { kunci: 'code', label: H('code', 'Kode'), hp: 'keterangan', isi: (it) => <span className="tabular-nums whitespace-nowrap">{it.code}</span> },
+    { kunci: 'name', label: H('name', 'Nama'), hp: 'judul', isi: (it) => <span className="font-medium text-foreground">{it.name}</span> },
+    { kunci: 'category', label: H('category', 'Kategori'), hp: false, isi: (it) => <span className="text-muted-foreground">{it.category || '—'}</span> },
+    { kunci: 'stock_qty', label: H('stock_qty', 'Stok'), rata: 'kanan', isi: (it) => {
+      const st = statusStok(it);
+      return (
+        <span className={cn('tabular-nums font-semibold whitespace-nowrap',
+          st === 'habis' && 'text-[hsl(var(--danger-text))]', st === 'menipis' && 'text-[hsl(var(--warning-text))]')}>
+          {fmtNum(it.stock_qty)} <span className="font-normal text-muted-foreground">{it.unit}</span>
+        </span>
+      );
+    } },
+    { kunci: 'min_stock', label: H('min_stock', 'Min. stok'), rata: 'kanan', hp: false, isi: (it) => <span className="tabular-nums text-muted-foreground">{fmtNum(it.min_stock)}</span> },
+    { kunci: 'unit_cost', label: H('unit_cost', 'HPP satuan'), rata: 'kanan', hp: false, isi: (it) => <span className="tabular-nums whitespace-nowrap">{fmtRp(it.unit_cost)}</span> },
+    { kunci: 'stock_value', label: H('stock_value', 'Nilai stok'), rata: 'kanan', isi: (it) => <span className="tabular-nums font-semibold whitespace-nowrap">{fmtRp(it.stock_value)}</span> },
+    { kunci: 'valued', label: H('valued', 'Dinilai'), isi: (it) => (it.valued
+      ? <StatusBadge status="ya" label="Sudah" tone="success" />
+      : <StatusBadge status="belum" label="Belum" tone="warning" />) },
+  ];
+
+  const opsiSaring = [
+    { key: '', label: 'Semua', count: stock.length },
+    { key: 'habis', label: 'Habis', count: hitung.habis },
+    { key: 'menipis', label: 'Menipis', count: hitung.menipis },
+    { key: 'aman', label: 'Aman', count: hitung.aman },
+    { key: 'belum', label: 'Belum dinilai', count: hitung.belum },
+  ];
 
   return (
-    <div className="space-y-6" data-testid="accessories-dashboard">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Dashboard Aksesoris</h2>
-          <p className="text-muted-foreground text-sm mt-1">Ringkasan stok, request, dan peminjaman aksesoris produksi</p>
+    <PageLayout testId="accessories-dashboard" title="Dashboard aksesoris"
+      subtitle="Ringkasan stok aksesoris, permintaan yang menunggu, dan barang yang perlu diserahkan."
+      filters={<>
+        <FilterChips options={opsiSaring} value={saring} onChange={setSaring} hideWhenEmpty={false} testId="acc-stock-filter" />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode, nama, kategori"
+            className="pl-8" data-testid="acc-stock-search" />
         </div>
-        <button
-          onClick={loadDash}
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg border border-foreground/10 hover:bg-foreground/5 transition-colors"
-          data-testid="acc-dash-refresh"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4 text-sm text-[hsl(var(--destructive))] ">
-          {error}
-        </div>
-      )}
-
-      {/* KPI Cards */}
-      {loading ? (
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28" />)}
-        </div>
-      ) : dash ? (
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPICard
-            label="Total Item"
-            value={dash.total_items ?? 0}
-            icon={Package}
-            color="violet"
-            subtext="Item aksesoris aktif"
-          />
-          <KPICard
-            label="Stok Rendah"
-            value={(dash.out_of_stock ?? 0) + (dash.low_stock ?? 0)}
-            icon={AlertTriangle}
-            color="amber"
-            subtext={`${dash.out_of_stock ?? 0} habis · ${dash.low_stock ?? 0} hampir habis`}
-          />
-          <KPICard
-            label="Request Pending"
-            value={dash.pending_requests ?? 0}
-            icon={Clock}
-            color="sky"
-            subtext="Menunggu persetujuan"
-          />
-          <KPICard
-            label="Perlu Diserahkan"
-            value={dash.ready_to_deliver ?? 0}
-            icon={PackageCheck}
-            color="teal"
-            subtext={`Sudah disetujui · PR pending: ${dash.pending_pr ?? 0}`}
-          />
-        </div>
-      ) : null}
-
-      {/* Active Opname Alert */}
-      {dash?.active_opname && (
-        <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 flex items-center gap-3">
-          <CheckCircle className="w-5 h-5 text-[hsl(var(--primary))] shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-[hsl(var(--primary))] ">Sesi Opname Sedang Berjalan</p>
-            <p className="text-xs text-muted-foreground">No. sesi: {dash.active_opname}</p>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="stok-aksesoris" namaLembar="Stok aksesoris" baris={rows} testId="acc-export"
+          kolom={[
+            { label: 'Kode', nilai: (it) => it.code },
+            { label: 'Nama', nilai: (it) => it.name },
+            { label: 'Kategori', nilai: (it) => it.category || '' },
+            { label: 'Satuan', nilai: (it) => it.unit || '' },
+            { label: 'Stok', nilai: (it) => Number(it.stock_qty || 0) },
+            { label: 'Min. stok', nilai: (it) => Number(it.min_stock || 0) },
+            { label: 'Status stok', nilai: (it) => STATUS_STOK[statusStok(it)].label },
+            { label: 'HPP satuan', nilai: (it) => Number(it.unit_cost || 0) },
+            { label: 'Nilai stok', nilai: (it) => Number(it.stock_value || 0) },
+            { label: 'Sudah dinilai', nilai: (it) => (it.valued ? 'Ya' : 'Belum') },
+            { label: 'Metode biaya', nilai: (it) => labelMetode(it.cost_method) },
+          ]} />
+        <div className="hidden md:block"><ViewToggle value={view} onChange={setView} testId="acc-view" /></div>
+        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="acc-dash-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {error && <Notice tone="danger" icon={AlertTriangle}>{error}</Notice>}
+        {loading && !dash ? (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-20 rounded-lg" />)}
           </div>
-        </div>
-      )}
-
-      {/* ── DAFTAR STOK AKSESORIS (F13-B) ──────────────────────────────────
-          Nilai stok adalah angka yang masuk laporan keuangan. Kalau ia hanya
-          bisa dilihat sebagai ringkasan, "kenapa nilainya segini" tidak pernah
-          bisa ditelusuri ke item-nya. */}
-      <div className="rounded-xl border border-border bg-card">
-        <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">
-          <h3 className="text-sm font-semibold flex items-center gap-2 mr-auto">
-            <Package className="w-4 h-4 text-muted-foreground" />
-            Daftar Stok Aksesoris
-            <span className="text-xs font-normal text-muted-foreground">
-              {rows.length} item · nilai {fmtRp(rows.reduce((s, i) => s + Number(i.stock_value || 0), 0))}
-            </span>
-          </h3>
-          <div className="relative min-w-[180px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-            <input value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari kode / nama / kategori..."
-              data-testid="acc-stock-search"
-              className="h-8 w-full pl-8 pr-2 rounded-lg border border-border bg-background text-xs" />
+        ) : dash ? (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="acc-kpi">
+            <StatTile label="Item aktif" value={fmtNum(dash.total_items)} testId="acc-kpi-total-item"
+              sub={`Nilai stok ${fmtRp(dash.total_stock_value)}`} />
+            <StatTile label="Stok habis" value={fmtNum(dash.out_of_stock)} accent={dash.out_of_stock ? 'danger' : 'default'}
+              testId="acc-kpi-stok-habis" onClick={() => setSaring('habis')}
+              hint={`Menipis: ${fmtNum(dash.low_stock)} item`} />
+            {/* Dulu spanduk kuning terpisah; kini kartu yang bisa diklik (saringan Belum dinilai) */}
+            <StatTile label="Belum dinilai (HPP kosong)" value={fmtNum(dash.unvalued_items)} testId="acc-kpi-belum-dinilai"
+              accent={dash.unvalued_items ? 'warning' : 'default'} onClick={() => setSaring('belum')}
+              hint="Lihat item" />
+            <StatTile label="Permintaan menunggu" value={fmtNum(dash.pending_requests)} testId="acc-kpi-request-pending"
+              sub={`Perlu diserahkan ${fmtNum(dash.ready_to_deliver)} · PR berjalan ${fmtNum(dash.pending_pr)}`} />
           </div>
-          <div className="inline-flex rounded-lg border border-border overflow-hidden">
-            <button type="button" onClick={() => setView('table')} data-testid="acc-view-table"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <Table2 size={12} /> Tabel
-            </button>
-            <button type="button" onClick={() => setView('grid')} data-testid="acc-view-grid"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <LayoutGrid size={12} /> Kartu
-            </button>
-          </div>
-          <ExportCsvButton filename="stok-aksesoris" testId="acc-export-csv"
-            head={CSV_HEAD} rows={csvRows}
-            note={unvalued ? `${unvalued} item BELUM dinilai` : 'semua item sudah dinilai'} />
-        </div>
-
-        {/* Item yang belum dinilai DIAKUI di layar: nilai stok total pasti
-            lebih rendah dari kenyataan selama angka ini > 0. */}
-        {unvalued > 0 && (
-          <div className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-3 py-2 "
-               data-testid="acc-unvalued-banner">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[hsl(var(--warning))] " />
-            <p className="text-xs text-[hsl(var(--warning))] ">
-              <b>{unvalued} item belum punya nilai (HPP).</b> Selama itu belum diisi,
-              total nilai stok di atas LEBIH RENDAH dari kenyataan — dan angka itu
-              ikut ke laporan keuangan. Urutkan kolom <b>Sudah dinilai</b> untuk melihatnya.
-            </p>
-          </div>
+        ) : null}
+        {dash?.active_opname && (
+          <Notice tone="info" icon={ClipboardCheck} title="Sesi stok opname sedang berjalan" testId="acc-active-opname">
+            Nomor sesi {dash.active_opname}. Angka stok bisa berubah setelah opname ditutup.
+          </Notice>
         )}
-
-        {stockErr ? (
-          <p className="p-6 text-center text-sm text-muted-foreground">{stockErr}</p>
-        ) : rows.length === 0 ? (
-          <p className="p-6 text-center text-sm text-muted-foreground">
-            {search ? 'Tidak ada item yang cocok dengan pencarian' : 'Belum ada item aksesoris'}
-          </p>
-        ) : view === 'table' ? (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs" data-testid="acc-table">
-                <thead className="bg-muted/50">
-                  <tr className="text-left">
-                    {[['code', 'Kode'], ['name', 'Nama'], ['category', 'Kategori'],
-                      ['unit', 'Satuan'], ['stock_qty', 'Stok'], ['min_stock', 'Min. stok'],
-                      ['unit_cost', 'HPP satuan'], ['stock_value', 'Nilai stok'],
-                      ['valued', 'Sudah dinilai'], ['cost_method', 'Metode biaya']].map(([k, label]) => (
-                      <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
-                        <button type="button" onClick={() => toggleSort(k)}
-                          data-testid={`acc-sort-${k}`}
-                          className="inline-flex items-center gap-1 hover:text-primary">
-                          {label}
-                          <ArrowUpDown size={10}
-                            className={sort.key === k ? 'text-primary' : 'opacity-30'} />
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {paged.map((it) => {
-                    const st = stockStatus(it);
-                    return (
-                      <tr key={it.id} className="border-t border-border hover:bg-muted/40"
-                          data-testid={`acc-stock-row-${it.code}`}>
-                        <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{it.code}</td>
-                        <td className="px-2.5 py-2">{it.name}</td>
-                        <td className="px-2.5 py-2 text-muted-foreground">{it.category || '—'}</td>
-                        <td className="px-2.5 py-2">{it.unit || '—'}</td>
-                        <td className={`px-2.5 py-2 text-right font-semibold ${st === 'Habis'
-                          ? 'text-[hsl(var(--destructive))] ' : st === 'Hampir habis'
-                            ? 'text-[hsl(var(--warning))] ' : ''}`}>
-                          {fmtNum(it.stock_qty)}
-                        </td>
-                        <td className="px-2.5 py-2 text-right text-muted-foreground">{fmtNum(it.min_stock)}</td>
-                        <td className="px-2.5 py-2 text-right whitespace-nowrap">{fmtRp(it.unit_cost)}</td>
-                        <td className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">{fmtRp(it.stock_value)}</td>
-                        <td className="px-2.5 py-2">
-                          {it.valued ? (
-                            <span className="text-[hsl(var(--success))] ">ya</span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 font-medium text-[hsl(var(--warning))] ">
-                              BELUM
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2.5 py-2 text-muted-foreground">{it.cost_method || '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <PaginationLite page={page} totalPages={totalPages} total={total}
-              pageSize={pageSize} onPageChange={setPage} className="px-3" />
-          </>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
-              {paged.map((it) => (
-                <div key={it.id} className="rounded-lg border border-border bg-background p-3"
-                     data-testid={`acc-stock-card-${it.code}`}>
-                  <p className="text-sm font-medium truncate" title={it.name}>{it.name}</p>
-                  <p className="text-xs tabular-nums text-muted-foreground">{it.code}</p>
-                  <div className="mt-2 flex items-end justify-between">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Stok</p>
-                      <p className="text-sm font-semibold">{fmtNum(it.stock_qty)} {it.unit}</p>
+      </>}
+      footer={rows.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}>
+      {stockErr ? (
+        <Notice tone="danger" icon={AlertTriangle}>{stockErr}</Notice>
+      ) : stockLoading && stock.length === 0 ? (
+        <div className="space-y-2">{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+      ) : (
+        <>
+          {view === 'grid' && rows.length > 0 ? (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="acc-stock-grid">
+              {paged.map((it) => {
+                const st = STATUS_STOK[statusStok(it)];
+                return (
+                  <div key={it.id} className="cursor-pointer rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] p-3"
+                    onClick={() => setRinci(it)} data-testid={`acc-stock-card-${it.code}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground" title={it.name}>{it.name}</p>
+                        <p className="text-xs tabular-nums text-muted-foreground">{it.code}</p>
+                      </div>
+                      <StatusBadge status={statusStok(it)} label={st.label} tone={st.tone} />
                     </div>
-                    <div className="text-right">
-                      <p className="text-xs text-muted-foreground">Nilai</p>
-                      <p className="text-sm font-semibold">{fmtRp(it.stock_value)}</p>
+                    <div className="mt-2 flex items-end justify-between text-sm">
+                      <span className="tabular-nums">{fmtNum(it.stock_qty)} {it.unit}</span>
+                      <span className="font-semibold tabular-nums">{fmtRp(it.stock_value)}</span>
                     </div>
+                    {!it.valued && <p className="mt-1 text-xs text-[hsl(var(--warning-text))]">Belum dinilai</p>}
                   </div>
-                  {!it.valued && (
-                    <p className="mt-1.5 text-[11px] text-[hsl(var(--warning))] ">belum dinilai</p>
-                  )}
-                </div>
-              ))}
-            </div>
-            <PaginationLite page={page} totalPages={totalPages} total={total}
-              pageSize={pageSize} onPageChange={setPage} className="px-3" />
-          </>
-        )}
-      </div>
-
-      {/* Two-Column Panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Low Stock Items */}
-        <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-5" data-testid="acc-low-stock-panel">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              <TrendingDown className="w-4 h-4 text-[hsl(var(--warning))] " />
-              <span>Item Stok Rendah / Habis</span>
-            </h3>
-            {dash?.low_stock_items?.length > 0 && (
-              <span className="text-xs text-[hsl(var(--warning))] ">{dash.low_stock_items.length} item</span>
-            )}
-          </div>
-
-          {loading ? (
-            <div className="space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
-          ) : (dash?.low_stock_items?.length ?? 0) === 0 ? (
-            <div className="text-center py-8">
-              <CheckCircle className="w-8 h-8 text-[hsl(var(--success))] mx-auto mb-2" />
-              <p className="text-sm text-muted-foreground">Semua item stok aman</p>
+                );
+              })}
             </div>
           ) : (
-            <div className="space-y-2">
-              {dash.low_stock_items.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between p-2.5 rounded-lg bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.15)]"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">{item.code}</p>
-                  </div>
-                  <div className="text-right shrink-0 ml-3">
-                    <p className="text-sm text-[hsl(var(--warning))] font-semibold">
-                      {fmtNum(item.stock_qty)} {item.unit}
-                    </p>
-                    <p className="text-xs text-muted-foreground">min: {fmtNum(item.min_stock)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <TabelData kolom={kolom} baris={paged} testId="acc-table" onKlikBaris={setRinci}
+              kosong={<EmptyState icon={Package}
+                title={stock.length ? 'Tidak ada item yang cocok' : 'Belum ada item aksesoris'}
+                description={stock.length ? 'Ubah saringan atau kata pencarian.' : 'Item aksesoris ditambahkan di menu Master Aksesoris.'} />} />
           )}
-        </div>
+        </>
+      )}
 
-        {/* PR Pending */}
-        <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-5" data-testid="acc-pr-panel">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold flex items-center gap-2">
-              <ShoppingCart className="w-4 h-4 text-[hsl(var(--primary))] " />
-              <span>Ringkasan Pengadaan</span>
-            </h3>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex justify-between items-center p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02]">
-              <span className="text-sm text-muted-foreground">PR Pending Persetujuan</span>
-              <span className="text-sm font-semibold text-[hsl(var(--primary))] ">{fmtNum(dash?.pending_pr ?? 0)}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02]">
-              <span className="text-sm text-muted-foreground">Sudah Disetujui, Belum Diserahkan</span>
-              <span className="text-sm font-semibold text-[hsl(var(--success))] ">{fmtNum(dash?.ready_to_deliver ?? 0)}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02]">
-              <span className="text-sm text-muted-foreground">Request Internal Pending</span>
-              <span className="text-sm font-semibold text-[hsl(var(--warning))] ">{fmtNum(dash?.pending_requests ?? 0)}</span>
-            </div>
-          </div>
-
-          <div className="mt-4 pt-4 border-t border-foreground/10">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <ChevronRight className="w-3.5 h-3.5" />
-              <span>Gunakan menu sidebar untuk aksi lanjutan</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      {rinci && (
+        <DetailPopup open onClose={() => setRinci(null)} judul={rinci.name} keterangan={rinci.code} testId="acc-stock-detail"
+          status={<StatusBadge status={statusStok(rinci)} label={STATUS_STOK[statusStok(rinci)].label} tone={STATUS_STOK[statusStok(rinci)].tone} />}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Kategori">{rinci.category || '—'}</BarisDetail>
+            <BarisDetail label="Stok">{fmtNum(rinci.stock_qty)} {rinci.unit}</BarisDetail>
+            <BarisDetail label="Min. stok">{fmtNum(rinci.min_stock)} {rinci.unit}</BarisDetail>
+            <BarisDetail label="HPP satuan">{fmtRp(rinci.unit_cost)}{!rinci.valued && ' (belum dinilai)'}</BarisDetail>
+            <BarisDetail label="Nilai stok">{fmtRp(rinci.stock_value)}</BarisDetail>
+            <BarisDetail label="Metode biaya">{labelMetode(rinci.cost_method)}</BarisDetail>
+          </dl>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }

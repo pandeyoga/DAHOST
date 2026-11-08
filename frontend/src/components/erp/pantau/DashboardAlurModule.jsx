@@ -15,7 +15,7 @@ import {
   Badge, LoadingRows, RefreshButton, Section, n, pct, poStatusLabel, portalBusinessType, useApi,
 } from './pantauShared';
 
-const SEVERITY = { error: { label: 'Penting', tone: 'danger' }, warning: { label: 'Perhatian', tone: 'warning' }, info: { label: 'Info', tone: 'info' } };
+const SEVERITY = { error: { label: 'Penting', tone: 'danger' }, warning: { label: 'Perhatian', tone: 'warning' }, info: { label: 'Catatan', tone: 'info' } };
 
 /** Isi Dashboard sebagai props cetakan PageLayout — dipakai Dashboard Produksi dan tab alur Dashboard Maklon
  *  supaya keduanya identik (satu definisi). */
@@ -33,7 +33,7 @@ export function useDashboardAlur(props) {
     testId: bt === 'maklon' ? 'maklon-dashboard-alur' : 'production-dashboard',
     title: bt === 'maklon' ? 'Dashboard Maklon' : 'Dashboard Produksi',
     subtitle: 'Perjalanan barang: bahan ke CMT, jahit, QC, sampai hasil akhirnya.',
-    actions: <Button variant="outline" onClick={() => go('pantau-produksi')} data-testid="dash-open-pantau">Buka Pantau Produksi</Button>,
+    actions: <Button type="button" variant="outline" onClick={() => go('pantau-produksi')} data-testid="dash-open-pantau">Buka Pantau Produksi</Button>,
     tools: <RefreshButton onClick={() => { reload(); next.reload(); }} loading={loading} testId="dash-refresh" />,
     summary: <>
         {error && <Notice tone="danger" icon={AlertTriangle}>{error}</Notice>}
@@ -47,7 +47,12 @@ export function useDashboardAlur(props) {
         )}
       </>,
     children: loading && !data ? <Section><LoadingRows /></Section> : data && <>
-        <Section title="Alur barang" hint="Jumlah barang yang sedang berada di tiap tahap (PO berjalan)." testId="dash-alur">
+        <Section title="Alur barang" hint="Jumlah barang yang sedang berada di tiap tahap (PO berjalan)." testId="dash-alur"
+          unduh={{ namaBerkas: 'alur-barang', baris: data.alur || [], kolom: [
+            { label: 'Tahap', nilai: (s) => s.label }, { label: 'Pcs', nilai: (s) => Number(s.qty) || 0 },
+            { label: 'Dokumen', nilai: (s) => Number(s.docs) || 0 }, { label: 'Jenis dokumen', nilai: (s) => s.doc_label || '' },
+            { label: 'Catatan', nilai: (s) => s.note || '' },
+          ] }}>
           <Table data-testid="dash-alur-table">
             <TableHeader><TableRow>
               <TableHead>Tahap</TableHead><TableHead className="text-right">Pcs</TableHead>
@@ -56,10 +61,10 @@ export function useDashboardAlur(props) {
             <TableBody>
               {data.alur.map((s) => (
                 <TableRow key={s.key} data-testid={`dash-alur-${s.key}`}>
-                  <TableCell className="font-medium">{s.label}{s.note ? <div className="text-[11px] text-muted-foreground">{s.note}</div> : null}</TableCell>
+                  <TableCell className="font-medium">{s.label}{s.note ? <div className="text-xs text-muted-foreground">{s.note}</div> : null}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold" data-testid={`dash-alur-${s.key}-qty`}>{n(s.qty)}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">{n(s.docs)} {s.doc_label}</TableCell>
-                  <TableCell className="text-right"><Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button></TableCell>
+                  <TableCell className="text-right"><Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go(s.module)}>Buka</Button></TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -68,13 +73,16 @@ export function useDashboardAlur(props) {
 
         {!data.balance?.all_ok && (
           <Notice tone="warning" icon={AlertTriangle} testId="dash-balance-warning"
-            action={<Button variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Lihat PO penyebab</Button>}>
+            action={<Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Lihat PO penyebab</Button>}>
             {(data.balance?.checks || []).filter((c) => !c.ok).map((c) => `${c.label}: ${n(c.offender_count)} PO tidak cocok`).join(' · ')}
           </Notice>
         )}
 
         {actions.length > 0 && (
-          <Section title="Perlu ditindaklanjuti" testId="dash-next-actions">
+          <Section title="Perlu ditindaklanjuti" testId="dash-next-actions" unduh={{ namaBerkas: 'perlu-ditindaklanjuti', baris: actions, kolom: [
+            { label: 'Hal', nilai: (a) => a.title || '' }, { label: 'Keterangan', nilai: (a) => a.description || '' },
+            { label: 'Tingkat', nilai: (a) => (SEVERITY[a.severity] || SEVERITY.info).label },
+          ] }}>
             <Table>
               <TableHeader><TableRow>
                 <TableHead>Hal</TableHead><TableHead>Tingkat</TableHead><TableHead className="text-right">Buka</TableHead>
@@ -82,9 +90,9 @@ export function useDashboardAlur(props) {
               <TableBody>
                 {actions.map((a) => (
                   <TableRow key={a.id}>
-                    <TableCell>{a.title}{a.description ? <div className="text-[11px] text-muted-foreground">{a.description}</div> : null}</TableCell>
+                    <TableCell>{a.title}{a.description ? <div className="text-xs text-muted-foreground">{a.description}</div> : null}</TableCell>
                     <TableCell><Badge meta={SEVERITY[a.severity] || SEVERITY.info} /></TableCell>
-                    <TableCell className="text-right"><Button variant="link" size="sm" className="h-auto p-0" onClick={() => go(a.cta_module, a.cta_params)}>{a.cta_label || 'Buka'}</Button></TableCell>
+                    <TableCell className="text-right"><Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go(a.cta_module, a.cta_params)}>{a.cta_label || 'Buka'}</Button></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -92,7 +100,12 @@ export function useDashboardAlur(props) {
           </Section>
         )}
 
-        <Section title="PO paling lama tidak bergerak" hint="PO yang diam ≥ 7 hari biasanya menunggu kiriman bahan, setoran CMT, atau QC." testId="dash-aging">
+        <Section title="PO paling lama tidak bergerak" hint="PO yang diam ≥ 7 hari biasanya menunggu kiriman bahan, setoran CMT, atau QC." testId="dash-aging"
+          unduh={{ namaBerkas: 'po-tidak-bergerak', baris: data.aging || [], kolom: [
+            { label: 'PO', nilai: (a) => a.po_number }, { label: 'Pemesan', nilai: (a) => a.customer_name || '' },
+            { label: 'Vendor CMT', nilai: (a) => a.vendor_name || '' }, { label: 'Status', nilai: (a) => poStatusLabel(a.status) },
+            { label: 'Diam (hari)', nilai: (a) => Number(a.idle_days) || 0 },
+          ] }}>
           {data.aging.length === 0 ? (
             <EmptyState icon={CheckCircle2} title="Tidak ada PO berjalan" description="PO baru dibuat di menu PO." />
           ) : (
@@ -108,7 +121,7 @@ export function useDashboardAlur(props) {
                     <TableCell>{a.customer_name || '—'}</TableCell>
                     <TableCell>{a.vendor_name || '—'}</TableCell>
                     <TableCell>{poStatusLabel(a.status)}</TableCell>
-                    <TableCell className={`text-right tabular-nums ${a.idle_days >= 7 ? 'text-[hsl(var(--warning))] font-semibold' : ''}`}>{n(a.idle_days)} hari</TableCell>
+                    <TableCell className={`text-right tabular-nums ${a.idle_days >= 7 ? 'text-[hsl(var(--warning-text))] font-semibold' : ''}`}>{n(a.idle_days)} hari</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -117,7 +130,7 @@ export function useDashboardAlur(props) {
         </Section>
         {data.overdue.length > 0 && (
           <Notice tone="danger" icon={ListChecks} testId="dash-overdue"
-            action={<Button variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Buka</Button>}>
+            action={<Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => go('pantau-produksi')}>Buka</Button>}>
             {n(data.overdue.filter((r) => r.risk === 'telat').length)} PO lewat batas kirim dan {n(data.overdue.filter((r) => r.risk === 'berisiko').length)} PO berisiko telat.
           </Notice>
         )}

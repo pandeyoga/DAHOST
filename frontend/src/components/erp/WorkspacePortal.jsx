@@ -1,44 +1,51 @@
 /**
- * WorkspacePortal — thin orchestrator shell.
+ * WorkspacePortal — Spreadsheet (Portal Kolaborasi): daftar dokumen + editor.
  *
- * [REFACTORED 2026-05-24 Session #10] was 1364 LOC monolith → now ~180 LOC shell.
+ * UI lain ada di `./workspace-portal/*` (utils, AccessBadge, ShareDialog, ColumnsDialog, ImportExcelDialog,
+ * ImportFromModuleDialog, VersionHistoryDrawer, FormulaBar, FormattingToolbar, DocCard, NewDocForm, GridEditorView).
  *
- * All UI pieces live in `./workspace-portal/*`:
- *   utils.js, AccessBadge, ShareDialog, ColumnsDialog (AddColumnDialog + ManageColumnsDialog),
- *   ImportExcelDialog, ImportFromModuleDialog, VersionHistoryDrawer,
- *   FormulaBar, FormattingToolbar, DocCard, NewDocForm, GridEditorView.
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout · daftar dokumen = tabel standar (dulu kartu berulang) yang bisa
+ * diunduh · tiga kartu "aksi cepat" besar diganti tombol di kepala halaman · spreadsheet baru = FormPopup ·
+ * hapus = konfirmasi aplikasi (dulu window.confirm).
  *
- * External API (props) UNCHANGED: { token, user }
- * Default export name UNCHANGED: WorkspacePortal
- *
- * Consumed by: CollaborationPortal, WorkspaceTab, StudyGroupDetail, moduleRegistry (lazy).
+ * Props: { token, user, onBack? } — `onBack` hanya dipakai saat menu Spreadsheet dibuka sendiri (Portal
+ * Kolaborasi tampil tanpa kerangka portal, jadi tanpa tombol ini tidak ada jalan kembali).
+ * Dipakai oleh: CollaborationPortal, StudyGroupDetail, moduleRegistry (collab-workspace).
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
+import { ArrowLeft, ChevronDown, FileSpreadsheet, Package, Plus, RefreshCw, Search, Share2, Trash2, Upload } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import { toast } from 'sonner';
-import {
-  FileSpreadsheet, Plus, Search, Users, RefreshCw,
-  Package, Upload, Loader2,
-} from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState } from './moduleAtoms';
 
-import {
-  API, apicall, canShare,
-} from './workspace-portal/utils';
-import DocCard from './workspace-portal/DocCard';
+import { API, ACCESS_CONFIG, apicall, canShare, fmtTime } from './workspace-portal/utils';
+import AccessBadge from './workspace-portal/AccessBadge';
 import NewDocForm from './workspace-portal/NewDocForm';
 import ShareDialog from './workspace-portal/ShareDialog';
 import ImportExcelDialog from './workspace-portal/ImportExcelDialog';
 import ImportFromModuleDialog from './workspace-portal/ImportFromModuleDialog';
 import GridEditorView from './workspace-portal/GridEditorView';
 
-export default function WorkspacePortal({ token /*, user */ }) {
+const KOLOM_UNDUH = [
+  { label: 'Nama', nilai: (d) => d.name },
+  { label: 'Akses', nilai: (d) => (ACCESS_CONFIG[d.access_level] || ACCESS_CONFIG.view).label },
+  { label: 'Pemilik', nilai: (d) => d.owner_name || '' },
+  { label: 'Diubah', nilai: (d) => (d.updated_at ? new Date(d.updated_at).toLocaleString('id-ID') : '') },
+  { label: 'Baris', nilai: (d) => Number(d.metadata?.row_count ?? 0) },
+  { label: 'Kolom', nilai: (d) => Number(d.metadata?.column_count ?? 0) },
+];
+
+export default function WorkspacePortal({ token, onBack, moduleId }) {
   const [documents, setDocuments] = useState({ owned: [], shared: [] });
   const [loading, setLoading] = useState(true);
   const [selectedDoc, setSelectedDoc] = useState(null);
@@ -47,7 +54,7 @@ export default function WorkspacePortal({ token /*, user */ }) {
   const [showImportExcel, setShowImportExcel] = useState(false);
   const [showImportModule, setShowImportModule] = useState(false);
   const [shareTarget, setShareTarget] = useState(null);
-  const [importingExcel, setImportingExcel] = useState(false);
+  const [, setImportingExcel] = useState(false);
   const fileInputRef = useRef(null);
 
   const loadDocuments = useCallback(async () => {
@@ -74,7 +81,8 @@ export default function WorkspacePortal({ token /*, user */ }) {
   };
 
   const handleDocDelete = async (docId, docName) => {
-    if (!window.confirm(`Hapus "${docName}"?`)) return;
+    if (!(await confirmDialog({ title: `Hapus "${docName}"?`, body: 'Dokumen dan isinya hilang untuk semua orang yang diberi akses.',
+      confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await apicall('DELETE', `/api/workspace/documents/${docId}`, token);
       toast.success('Dokumen dihapus');
@@ -84,7 +92,7 @@ export default function WorkspacePortal({ token /*, user */ }) {
     }
   };
 
-  // Quick Excel import (old 1-step, kept for quick action)
+  // Impor Excel cepat (1 langkah, versi lama) — tetap ada lewat input berkas tersembunyi.
   const handleQuickExcelImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -94,225 +102,129 @@ export default function WorkspacePortal({ token /*, user */ }) {
     fd.append('file', file);
     try {
       const res = await fetch(`${API}/api/workspace/documents/import-excel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
       });
       const doc = await res.json();
-      if (!res.ok) throw new Error(doc.detail || 'Import gagal');
-      toast.success(`Excel berhasil diimport: "${doc.name}"`);
+      if (!res.ok) throw new Error(doc.detail || 'Impor gagal');
+      toast.success(`Excel berhasil diimpor: "${doc.name}"`);
       loadDocuments();
       setSelectedDoc(doc);
-    } catch (e) {
-      toast.error(e.message);
+    } catch (err) {
+      toast.error(err.message);
     } finally {
       setImportingExcel(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const filteredOwned = documents.owned.filter((d) =>
-    d.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-  const filteredShared = documents.shared.filter((d) =>
-    d.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const q = searchQuery.toLowerCase();
+  const filteredOwned = documents.owned.filter((d) => d.name.toLowerCase().includes(q));
+  const filteredShared = documents.shared.filter((d) => d.name.toLowerCase().includes(q));
 
-  // Editor view (when a doc is selected)
+  // Editor (bila dokumen dipilih)
   if (selectedDoc) {
     return (
-      <GridEditorView
-        document={selectedDoc}
-        token={token}
-        onBack={() => setSelectedDoc(null)}
-        onUpdated={loadDocuments}
-      />
+      <GridEditorView document={selectedDoc} token={token} onBack={() => setSelectedDoc(null)} onUpdated={loadDocuments} />
     );
   }
 
-  // Index view
-  return (
-    <div
-      className="h-full flex flex-col bg-gradient-to-br from-background via-background to-muted/20"
-      data-testid="workspace-portal"
-    >
-      {/* Header */}
-      <div className="border-b bg-card/50 backdrop-blur-sm shrink-0">
-        <div className="p-6 pb-4">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h1 className="text-2xl font-bold">Workspace Spreadsheet</h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Kelola dokumen & editor spreadsheet kolaboratif
-              </p>
-            </div>
-            <Button onClick={() => setShowNewDoc(true)} data-testid="new-doc-btn">
-              <Plus size={16} className="mr-1" />Spreadsheet Baru
-            </Button>
-          </div>
-          <div className="relative max-w-md">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Cari dokumen..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
-              data-testid="doc-search"
-            />
-          </div>
+  const kolom = (milikSendiri) => [
+    { kunci: 'nama', label: 'Nama', hp: 'judul', isi: (doc) => (
+      <span className="inline-flex flex-wrap items-center gap-2" data-testid={`doc-card-${doc.id}`}>
+        <FileSpreadsheet className="h-4 w-4 shrink-0 text-primary" />
+        <span className="font-medium text-foreground">{doc.name}</span>
+        <AccessBadge level={doc.access_level} />
+      </span>) },
+    ...(milikSendiri ? [] : [{ kunci: 'pemilik', label: 'Pemilik', isi: (doc) => doc.owner_name || '—' }]),
+    { kunci: 'diubah', label: 'Diubah', isi: (doc) => <span className="whitespace-nowrap text-muted-foreground">{fmtTime(doc.updated_at)}</span> },
+    { kunci: 'ukuran', label: 'Isi', rata: 'kanan', isi: (doc) => (
+      <span className="tabular-nums whitespace-nowrap">{doc.metadata?.row_count ?? 0} baris · {doc.metadata?.column_count ?? 0} kolom</span>) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (doc) => {
+      const bisaBagi = milikSendiri || canShare(doc.access_level);
+      const bisaHapus = milikSendiri || doc.is_owner;
+      return (
+        <div className="flex justify-end gap-1">
+          {bisaBagi && (
+            <Button variant="ghost" size="icon-sm" onClick={() => setShareTarget(doc)} title="Bagikan" aria-label="Bagikan"
+              data-testid={`share-doc-${doc.id}`}><Share2 /></Button>
+          )}
+          {bisaHapus && (
+            <Button variant="ghost" size="icon-sm" onClick={() => handleDocDelete(doc.id, doc.name)} title="Hapus dokumen" aria-label="Hapus dokumen"
+              data-testid={`delete-doc-${doc.id}`}><Trash2 /></Button>
+          )}
         </div>
-      </div>
+      );
+    } },
+  ];
 
-      <ScrollArea className="flex-1">
-        <div className="p-6 space-y-6">
+  return (
+    <div className="h-full overflow-y-auto" data-testid="workspace-portal">
+      <div className="p-4 sm:px-6">
+        <PageLayout title="Spreadsheet" subtitle="Spreadsheet bersama: buat baru atau impor, lalu bagikan."
+          actions={<>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="workspace-import-menu"><Upload />Impor<ChevronDown /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setShowImportExcel(true)} data-testid="quick-import-excel">
+                  <Upload className="mr-2 h-4 w-4" />Dari berkas Excel
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setShowImportModule(true)} data-testid="quick-import-module">
+                  <Package className="mr-2 h-4 w-4" />Dari modul (aset, pengadaan)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button onClick={() => setShowNewDoc(true)} data-testid="new-doc-btn"><Plus /><span className="sm:hidden">Baru</span><span className="hidden sm:inline">Spreadsheet baru</span></Button>
+          </>}
+          filters={<div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Cari dokumen" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8" data-testid="doc-search" />
+          </div>}
+          tools={<>
+            <TombolUnduh namaBerkas="daftar-spreadsheet" namaLembar="Dokumen" baris={[...filteredOwned, ...filteredShared]}
+              kolom={KOLOM_UNDUH} testId="workspace-unduh" />
+            <Button variant="outline" size="icon" onClick={loadDocuments} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
+            {onBack && moduleId === 'collab-workspace' && (
+              <Button variant="outline" size="icon" onClick={onBack} title="Kembali ke pilihan portal" aria-label="Kembali ke pilihan portal"
+                data-testid="workspace-back"><ArrowLeft /></Button>
+            )}
+          </>}>
+          <input type="file" ref={fileInputRef} onChange={handleQuickExcelImport} accept=".xlsx,.xls" className="hidden" />
           {loading ? (
-            <div className="text-center py-12">
-              <Loader2 size={32} className="animate-spin mx-auto text-muted-foreground" />
-              <p className="text-sm text-muted-foreground mt-2">Memuat dokumen...</p>
-            </div>
+            <div className="space-y-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
           ) : (
             <>
-              {/* Quick Actions */}
-              <div className="grid grid-cols-3 gap-4">
-                <Card className="cursor-pointer hover:bg-accent/50 hover:shadow-md transition-all border-dashed"
-                  onClick={() => setShowNewDoc(true)} data-testid="quick-new-spreadsheet">
-                  <CardContent className="p-5 text-center">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-2">
-                      <Plus size={20} className="text-primary" />
-                    </div>
-                    <p className="text-sm font-medium">Spreadsheet Baru</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Mulai dari kosong</p>
-                  </CardContent>
-                </Card>
-
-                <Card className="cursor-pointer hover:bg-accent/50 hover:shadow-md transition-all border-dashed"
-                  onClick={() => setShowImportExcel(true)} data-testid="quick-import-excel">
-                  <CardContent className="p-5 text-center">
-                    <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center mx-auto mb-2">
-                      {importingExcel
-                        ? <Loader2 size={20} className="text-emerald-600 animate-spin" />
-                        : <Upload size={20} className="text-emerald-600" />}
-                    </div>
-                    <p className="text-sm font-medium">Import Excel</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Preview + mapping kolom</p>
-                  </CardContent>
-                </Card>
-                <input type="file" ref={fileInputRef} onChange={handleQuickExcelImport}
-                  accept=".xlsx,.xls" className="hidden" />
-
-                <Card className="cursor-pointer hover:bg-accent/50 hover:shadow-md transition-all border-dashed"
-                  onClick={() => setShowImportModule(true)} data-testid="quick-import-module">
-                  <CardContent className="p-5 text-center">
-                    <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center mx-auto mb-2">
-                      <Package size={20} className="text-blue-600" />
-                    </div>
-                    <p className="text-sm font-medium">Import dari Modul</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Aset, Pengadaan</p>
-                  </CardContent>
-                </Card>
+              <div className="space-y-2">
+                <p className="text-base font-semibold text-foreground">Dokumen saya ({filteredOwned.length})</p>
+                <TabelData kolom={kolom(true)} baris={filteredOwned} onKlikBaris={(doc) => handleDocOpen(doc.id)} testId="workspace-owned"
+                  kosong={<EmptyState icon={FileSpreadsheet} className="py-10"
+                    title={searchQuery ? 'Tidak ada dokumen yang cocok' : 'Belum ada dokumen'}
+                    description={searchQuery ? 'Ubah kata pencarian.' : 'Buat spreadsheet baru atau impor dari Excel.'}
+                    action={!searchQuery && <Button variant="outline" onClick={() => setShowNewDoc(true)} data-testid="quick-new-spreadsheet"><Plus />Buat sekarang</Button>} />} />
               </div>
-
-              {/* My Documents */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-base font-semibold flex items-center gap-2">
-                    <FileSpreadsheet size={17} className="text-primary" />
-                    Dokumen Saya
-                    <Badge variant="secondary" className="text-xs">{filteredOwned.length}</Badge>
-                  </h2>
-                  <Button variant="ghost" size="sm" onClick={loadDocuments} className="h-7">
-                    <RefreshCw size={13} />
-                  </Button>
-                </div>
-                {filteredOwned.length === 0 ? (
-                  <Card>
-                    <CardContent className="p-10 text-center">
-                      <FileSpreadsheet size={40} className="mx-auto text-muted-foreground/30 mb-3" />
-                      <p className="text-sm text-muted-foreground">
-                        {searchQuery ? 'Tidak ada dokumen yang cocok' : 'Belum ada dokumen.'}
-                      </p>
-                      {!searchQuery && (
-                        <Button size="sm" variant="outline" className="mt-3" onClick={() => setShowNewDoc(true)}>
-                          <Plus size={13} className="mr-1" />Buat Sekarang
-                        </Button>
-                      )}
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="grid gap-2.5">
-                    {filteredOwned.map((doc) => (
-                      <DocCard
-                        key={doc.id}
-                        doc={doc}
-                        onOpen={handleDocOpen}
-                        onDelete={handleDocDelete}
-                        onShare={() => setShareTarget(doc)}
-                        showDelete
-                        showShare
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Shared with Me */}
               {filteredShared.length > 0 && (
-                <div>
-                  <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-                    <Users size={17} className="text-blue-600" />Dibagikan ke Saya
-                    <Badge variant="secondary" className="text-xs">{filteredShared.length}</Badge>
-                  </h2>
-                  <div className="grid gap-2.5">
-                    {filteredShared.map((doc) => (
-                      <DocCard
-                        key={doc.id}
-                        doc={doc}
-                        onOpen={handleDocOpen}
-                        onDelete={handleDocDelete}
-                        onShare={() => setShareTarget(doc)}
-                        showDelete={doc.is_owner}
-                        showShare={canShare(doc.access_level)}
-                      />
-                    ))}
-                  </div>
+                <div className="space-y-2">
+                  <p className="text-base font-semibold text-foreground">Dibagikan ke saya ({filteredShared.length})</p>
+                  <TabelData kolom={kolom(false)} baris={filteredShared} onKlikBaris={(doc) => handleDocOpen(doc.id)} testId="workspace-shared" />
                 </div>
               )}
             </>
           )}
-        </div>
-      </ScrollArea>
+        </PageLayout>
+      </div>
 
-      {/* Dialogs */}
-      <Dialog open={showNewDoc} onOpenChange={(v) => !v && setShowNewDoc(false)}>
-        <DialogContent className="sm:max-w-sm" data-testid="new-doc-dialog">
-          <DialogHeader><DialogTitle>Spreadsheet Baru</DialogTitle></DialogHeader>
-          <NewDocForm
-            token={token}
-            onCreated={(doc) => { loadDocuments(); setSelectedDoc(doc); setShowNewDoc(false); }}
-            onClose={() => setShowNewDoc(false)}
-          />
-        </DialogContent>
-      </Dialog>
-
-      <ImportExcelDialog
-        open={showImportExcel}
-        onClose={() => setShowImportExcel(false)}
-        token={token}
-        onImported={(doc) => { loadDocuments(); setSelectedDoc(doc); }}
-      />
-      <ImportFromModuleDialog
-        open={showImportModule}
-        onClose={() => setShowImportModule(false)}
-        token={token}
-        onImported={(doc) => { loadDocuments(); setSelectedDoc(doc); }}
-      />
-      <ShareDialog
-        open={!!shareTarget}
-        onClose={() => setShareTarget(null)}
-        document={shareTarget}
-        token={token}
-        onShared={() => loadDocuments()}
-      />
+      <NewDocForm open={showNewDoc} token={token} onClose={() => setShowNewDoc(false)}
+        onCreated={(doc) => { loadDocuments(); setSelectedDoc(doc); setShowNewDoc(false); }} />
+      <ImportExcelDialog open={showImportExcel} onClose={() => setShowImportExcel(false)} token={token}
+        onImported={(doc) => { loadDocuments(); setSelectedDoc(doc); }} />
+      <ImportFromModuleDialog open={showImportModule} onClose={() => setShowImportModule(false)} token={token}
+        onImported={(doc) => { loadDocuments(); setSelectedDoc(doc); }} />
+      <ShareDialog open={!!shareTarget} onClose={() => setShareTarget(null)} document={shareTarget} token={token}
+        onShared={() => loadDocuments()} />
     </div>
   );
 }

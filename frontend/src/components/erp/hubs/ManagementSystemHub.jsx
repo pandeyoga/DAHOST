@@ -1,4 +1,4 @@
-import React, { lazy } from 'react';
+import React from 'react';
 import { lazyRetry } from '../../../lib/lazyRetry';
 import HubTabs from './HubTabs';
 
@@ -24,11 +24,11 @@ export default function ManagementSystemHub(props) {
     <HubTabs
       hubId="mgmt-system-hub"
       title="Pengaturan Sistem"
-      subtitle="Konfigurasi perusahaan, template dokumen PDF, dan integrasi API."
+      subtitle="Profil perusahaan, kop & templat dokumen PDF, dan kunci API integrasi."
       tabs={[
         { key: 'company', label: 'Perusahaan', Component: CompanySettingsModule },
         { key: 'pdf', label: 'PDF & Kop Surat', Component: PdfTemplateStudio },
-        { key: 'api', label: 'API Keys', Component: IntegrationSettingsModule },
+        { key: 'api', label: 'Kunci API', Component: IntegrationSettingsModule },
       ]}
       {...props}
     />
