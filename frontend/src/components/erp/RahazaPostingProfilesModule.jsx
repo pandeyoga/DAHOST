@@ -270,7 +270,7 @@ export default function RahazaPostingProfilesModule({ token }) {
                               <SmartNativeSelect
                                 value={value}
                                 onChange={(e) => handleEdit(p.event_type, role, e.target.value)}
-                                className={`w-full md:w-96 h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : offType ? 'border-[hsl(var(--warning))]' : ''}`}
+                                className={`w-full md:w-[420px] h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : offType ? 'border-[hsl(var(--warning))]' : ''}`}
                                 data-testid={`pp-select-${p.event_type}-${role}`}
                                 aria-label={`${eventLabel(p.event_type)} › ${roleLabel(p.event_type, role)}`}
                                 aria-invalid={red}

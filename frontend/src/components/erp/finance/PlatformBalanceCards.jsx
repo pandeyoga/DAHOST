@@ -52,7 +52,7 @@ export function PlatformBalanceCards({ refreshKey }) {
           </p>
           <p className="text-sm text-muted-foreground" data-testid="platform-balance-total">
             Yang masih bisa ditarik ke bank: <b className="text-foreground tabular-nums">{rp(data?.total_balance || 0)}</b>
-            <span className="ml-1 tabular-nums">(dilepas {rp(data?.total_released || 0)} − ditarik {rp(data?.total_withdrawn || 0)})</span>
+            <span className="block sm:inline sm:ml-1 tabular-nums">(dilepas {rp(data?.total_released || 0)} − ditarik {rp(data?.total_withdrawn || 0)})</span>
           </p>
         </div>
         <TombolUnduh namaBerkas="saldo-platform-per-toko" namaLembar="Saldo platform" baris={rows} testId="platform-balance-unduh"

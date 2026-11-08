@@ -234,6 +234,12 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
   const infoFlags = Object.entries(form.flags).filter(([k, v]) => v && !HIDDEN_FLAGS.has(k) && !FLAG_DEFS.some((d) => d.key === k) && k !== 'is_contra');
 
   const invalid = !!(codeError || typeError || nameError || dup || parentError);
+  // Tampilan saja: "wajib diisi" baru muncul setelah isian disentuh — formulir baru tidak langsung merah.
+  // Tombol Simpan tetap terkunci selama ada galat (aturan `invalid` di atas tidak berubah).
+  const [disentuh, setDisentuh] = useState({});
+  const sentuh = (k) => () => setDisentuh((t) => (t[k] ? t : { ...t, [k]: true }));
+  const codeErrorTampil = !code && !disentuh.code ? '' : (codeError || dup);
+  const nameErrorTampil = !form.name.trim() && !disentuh.name ? '' : nameError;
 
   const onCode = (v) => {
     const up = v.toUpperCase();
@@ -272,9 +278,9 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
         : (usage ? `${LEVEL_META[usage.summary?.level]?.label || ''}${usage.summary?.count ? ` · ${usage.summary.count} keterikatan` : ''} — bagian yang terkunci menyebut alasannya.` : 'Memuat keterikatan…')}
       onSimpan={save} menyimpan={saving} bisaSimpan={!invalid}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Kode akun *" htmlFor="coa-code" error={codeError || dup}
+          <Field label="Kode akun *" htmlFor="coa-code" error={codeErrorTampil}
             hint={lockCode ? `Terkunci: ${(actions.change_code?.reasons || ['akun sudah dirujuk'])[0]}` : (suggestion ? '' : 'Contoh: 6-2950')}>
-            <GlassInput id="coa-code" value={form.code} onChange={(e) => onCode(e.target.value)} disabled={lockCode}
+            <GlassInput id="coa-code" value={form.code} onChange={(e) => onCode(e.target.value)} onBlur={sentuh('code')} disabled={lockCode}
               placeholder="6-2950" autoComplete="off" data-testid="coa-input-code" />
             {suggestion && !form.code && (
               <Button type="button" variant="link" size="sm" className="h-auto p-0 mt-1" onClick={() => onCode(suggestion)} data-testid="coa-code-suggest">
@@ -282,8 +288,8 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
               </Button>
             )}
           </Field>
-          <Field label="Nama akun *" htmlFor="coa-name" error={nameError}>
-            <GlassInput id="coa-name" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Beban Kebersihan" data-testid="coa-input-name" />
+          <Field label="Nama akun *" htmlFor="coa-name" error={nameErrorTampil}>
+            <GlassInput id="coa-name" value={form.name} onChange={(e) => set('name', e.target.value)} onBlur={sentuh('name')} placeholder="Beban Kebersihan" data-testid="coa-input-name" />
           </Field>
           <Field label="Tipe *" htmlFor="coa-type" error={typeError}
             hint={lockType ? `Terkunci: ${(actions.change_type?.reasons || ['akun sudah dipakai'])[0]}` : 'Tipe mengikuti awalan kode.'}>

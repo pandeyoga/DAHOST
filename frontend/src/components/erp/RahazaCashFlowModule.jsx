@@ -97,7 +97,11 @@ export default function RahazaCashFlowModule({ token }) {
             Kas awal <b className="text-foreground tabular-nums" data-testid="cf-kpi-open">{fmt(opening)}</b>
             {' '}{Number(closing) < Number(opening) ? '−' : '+'} perubahan <b className={`tabular-nums ${Number(closing) < Number(opening) ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="cf-kpi-net">{fmt(Math.abs(Number(closing || 0) - Number(opening || 0)))}</b>
             {' '}= kas akhir <b className="text-foreground tabular-nums" data-testid="cf-kpi-closing">{fmt(closing)}</b>
-            {view === 'account' && ba ? <span className="hidden sm:inline">{` · ${ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).`}</span> : ''}
+          </p>
+        )}
+        {data && view === 'account' && ba && (
+          <p className="hidden sm:block text-sm text-muted-foreground" data-testid="cf-ringkas-jurnal">
+            {`${ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).`}
           </p>
         )}
         {data && view === 'account' && Math.abs(ba?.totals?.unexplained || 0) > 0.5 && (
