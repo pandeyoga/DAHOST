@@ -156,3 +156,13 @@ def test_q6_basis_tanggal_omzet_tanggal_pesanan_dibuat():
     from core import marketing_daily_rollup as R
     assert R.order_date_key(datetime(2026, 8, 3, 23, 30, tzinfo=timezone.utc)) == "2026-08-03"
     assert R.order_date_key("2026-08-03T23:30:00") == "2026-08-03"
+
+
+def test_q5_impor_rekap_harian_ke_toko_impor_pesanan_ditolak(db, monkeypatch):
+    from _mkt_uji import csv_bytes, import_file, patch_import
+    md = patch_import(monkeypatch, db)
+    sd = csv_bytes([["date", "revenue_type", "revenue", "orders"], ["2026-08-04", "total", 1_234_567, 12]])
+    _sid, res = run(import_file(md, sd, "rekap.csv", "sales_daily", "TTK-01", on_duplicate="update"))
+    assert res["inserted"] == 0 and res["rejected"] == 1
+    _sid, res = run(import_file(md, sd, "rekap.csv", "sales_daily", "TTK-02", on_duplicate="update"))
+    assert res["inserted"] == 1                                    # toko rekap manual tetap bisa

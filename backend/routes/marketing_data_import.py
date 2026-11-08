@@ -3211,6 +3211,19 @@ def _plan_fulfillment_row(st: SourceType, doc: dict, existing: dict) -> tuple:
     return ("diperbarui", notes, changes, hidden)
 
 
+async def _rekap_mode_impor(db, st: SourceType, account: Optional[dict]) -> str:
+    """Q-5 — pesan penolakan rekap total BARU untuk toko bermode "Impor pesanan" ("" = boleh).
+
+    Hari yang sudah punya rekap turunan tetap ditangani pagar F2 (kolom non-turunan disimpan).
+    """
+    if st.key != "sales_daily" or not account:
+        return ""
+    from core import marketing_input_mode as _mode
+    if await _mode.mode_toko(db, account) != _mode.IMPOR:
+        return ""
+    return _mode.pesan_tolak_manual(account, "{date}")
+
+
 def _foreign_reason(st: SourceType, doc: dict,
                     foreign: Optional[Dict[str, str]]) -> Optional[str]:
     """M-15 / Q-7 — alasan penolakan baris yang nomornya sudah milik toko lain."""
@@ -3245,6 +3258,7 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
     plans: List[dict] = []
     counts = {"baru": 0, "diperbarui": 0, "sebagian": 0, "dilewati": 0,
               "ditolak": 0, "total": 0}
+    rekap_tolak = await _rekap_mode_impor(db, st, account)
 
     def add(row_no: int, ref: str, action: str, why: List[str],
             changes: Optional[List[dict]] = None, hidden: int = 0,
@@ -3361,6 +3375,10 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
                  "diimpor — impor 'Pesanan Marketplace (ekspor Seller Center)' dulu. "
                  "Berkas status pengiriman tidak boleh membuat pesanan baru "
                  "(pesanan tanpa item & tanpa omzet)."])
+            continue
+
+        if rekap_tolak and str(doc.get("revenue_type") or "total") == "total":
+            add(row_no, ref, "ditolak", [rekap_tolak.replace("{date}", str(doc.get("date") or ""))])
             continue
 
         changes, hidden = _new_row_changes(st, doc)
@@ -3603,6 +3621,7 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
     for _blocker in await _commit_blockers(db, st, s, built, account,
                                           opt.on_duplicate, foreign_out=foreign):
         raise HTTPException(_blocker["http"], _blocker["message"])
+    rekap_tolak = await _rekap_mode_impor(db, st, account)
 
     # M-11 (audit 9 Nov 2026) — penanda "sedang disimpan". Commit berjalan baris demi
     # baris; bila terhenti di tengah (galat/putus), baris yang SUDAH tersimpan tetap
@@ -3793,6 +3812,13 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
                             "pernah diimpor — impor 'Pesanan Marketplace (ekspor Seller "
                             "Center)' dulu. Berkas status pengiriman tidak boleh "
                             "membuat pesanan baru (pesanan tanpa item & tanpa omzet)."]})
+                continue
+
+            # Q-5 — toko bermode "Impor pesanan": rekap TOTAL baru dari berkas ditolak
+            if rekap_tolak and str(doc.get("revenue_type") or "total") == "total":
+                rejected += 1
+                row_notes.append({"row": r["row_id"] + 2, "action": "ditolak",
+                                  "why": [rekap_tolak.replace("{date}", str(doc.get("date") or ""))]})
                 continue
 
             doc["id"] = str(uuid.uuid4())
