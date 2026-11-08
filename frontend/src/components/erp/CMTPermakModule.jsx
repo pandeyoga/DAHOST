@@ -480,7 +480,8 @@ function StatusDialog({ target, onClose, onDone }) {
   return (
     <FormPopup open onClose={onClose} ukuran="pendek" testId="permak-status-dialog" judul={titles[action] || 'Ubah status'}
       keterangan={`${record.permak_number} — ${record.product_name || record.sku} (${fmt(qty)} pcs)`}
-      onSimpan={submit} menyimpan={saving} labelSimpan="Konfirmasi">
+      onSimpan={submit} menyimpan={saving} labelSimpan="Konfirmasi"
+      warnaSimpan={action === 'gagal_buang' ? 'destructive' : 'success'}>
       {action === 'selesai_berhasil' && (
         <Field label="Qty berhasil diperbaiki"
           hint={`Diperbaiki ${fmt(qtyFixed)} + dibuang ${fmt(qtyScrap)} = ${fmt(qty)}. Yang diperbaiki menambah stok barang jadi.`}>

@@ -983,7 +983,7 @@ function ReasonDialog({ kind, sample, onClose, onDone }) {
   return (
     <FormPopup open onClose={onClose} ukuran="pendek" testId={`sample-${kind}-dialog`} onSimpan={submit} menyimpan={saving}
       judul={isRev ? `Minta revisi ${sample.sample_code}` : `Tolak sampel ${sample.sample_code}`}
-      labelSimpan={isRev ? 'Minta revisi' : 'Tolak sampel'}>
+      labelSimpan={isRev ? 'Minta revisi' : 'Tolak sampel'} warnaSimpan={isRev ? 'success' : 'destructive'}>
       <Isian label={isRev ? 'Alasan revisi' : 'Alasan penolakan'} wajib>
         <Textarea rows={2} value={reason} onChange={e => setReason(e.target.value)} data-testid="sample-reason-input" />
       </Isian>
