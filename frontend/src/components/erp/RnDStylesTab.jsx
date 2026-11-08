@@ -1,66 +1,58 @@
+/**
+ * Daftar style RnD (tab "Daftar style" di menu Style & Desain).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (penyaring satu baris, unduh Excel/CSV), tabel dengan
+ * kartu ringkas di HP, klik baris = popup detail, aksi baris paling banyak 2 (aksi alur + "Lainnya"),
+ * semua form = FormPopup (Tambah/Ubah style, Ajukan ke owner, Tinjau desain), konfirmasi = confirmDialog.
+ * Fitur, isian, dan panggilan API tidak berubah.
+ */
 import { useState, useEffect } from 'react';
+import {
+  Plus, Search, Pencil, Trash2, X, Eye, Send, Clock, CheckCircle2, XCircle, AlertCircle, MessageSquare,
+  ImagePlus, Loader2, Rocket, RefreshCw, MoreHorizontal,
+} from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassCard } from '@/components/ui/glass';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { BarisDetail } from '@/components/ui/detail-popup';
 import {
-  Plus, Search, Pencil, Trash2, X, Check, Eye, Layers,
-  Send, Clock, CheckCircle2, XCircle, AlertCircle, ChevronDown, ChevronUp, MessageSquare,
-  ImagePlus, Loader2, Rocket,
-} from 'lucide-react';
-
-const API = process.env.REACT_APP_BACKEND_URL || '';
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
-import RnDStyleDetailPage from './RnDStyleDetailPage';
-import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { formatDateID } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice } from './moduleAtoms';
+import RnDStyleDetailPage, { STATUS_STYLE, StyleStatusBadge } from './RnDStyleDetailPage';
 
-const STATUS_BADGE = {
-  draft:                 { label: 'Draft',                color: '#94a3b8', bg: '#94a3b820' },
-  active:                { label: 'Aktif',                color: '#10b981', bg: '#10b98120' },
-  pending_owner_review:  { label: 'Menunggu Review Owner',color: '#f59e0b', bg: '#f59e0b20' },
-  approved_for_launch:   { label: 'Disetujui Owner',      color: '#3b82f6', bg: '#3b82f620' },
-  archived:              { label: 'Diarsipkan',           color: '#6b7280', bg: '#6b728020' },
-};
+const API = process.env.REACT_APP_BACKEND_URL || '';
+const PER_HALAMAN = 25;
 
 // Status keputusan — hanya boleh berpindah lewat tombol Ajukan/Setujui/Tolak
 // (backend juga menolak perubahannya lewat PUT /styles/{id}).
 const LIFECYCLE_STATUSES = ['pending_owner_review', 'approved_for_launch'];
 
-function StatusBadge({ status }) {
-  const s = STATUS_BADGE[status] || STATUS_BADGE.draft;
-  return (
-    <span
-      className="inline-block px-2 py-1 rounded-full text-xs font-medium"
-      style={{ backgroundColor: s.bg, color: s.color }}
-    >
-      {s.label}
-    </span>
-  );
-}
-
-function ReviewHistoryPanel({ style }) {
+/** Riwayat keputusan owner: siapa memutuskan + alasan lengkap (satu baris kecil di bawah nama style). */
+function ReviewHistoryLine({ style }) {
   if (!style.owner_review_result) return null;
   const approved = style.owner_review_result === 'approved';
+  const Icon = approved ? CheckCircle2 : XCircle;
   return (
-    <div
-      className={`mt-2 px-3 py-2 rounded-lg text-xs flex items-start gap-2 ${
-        approved ? 'bg-blue-100 dark:bg-blue-500/10 border border-blue-300 dark:border-blue-400/20' : 'bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-400/20'
-      }`}
-    >
-      {approved ? (
-        <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
-      ) : (
-        <XCircle className="w-3.5 h-3.5 text-red-700 dark:text-red-400 mt-0.5 shrink-0" />
-      )}
-      <div>
-        <span className={`font-semibold ${approved ? 'text-blue-600 dark:text-blue-300' : 'text-red-600 dark:text-red-300'}`}>
-          {approved ? 'Disetujui' : 'Ditolak'} oleh {style.owner_reviewed_by}
-        </span>
-        {style.owner_review_notes && (
-          <p className="text-foreground/60 mt-0.5">{style.owner_review_notes}</p>
-        )}
-      </div>
-    </div>
+    <p className={cn('mt-0.5 flex items-start gap-1 text-xs',
+      approved ? 'text-[hsl(var(--info-text))]' : 'text-[hsl(var(--danger-text))]')}>
+      <Icon className="mt-0.5 h-3 w-3 shrink-0" />
+      <span>
+        {approved ? 'Disetujui' : 'Ditolak'} oleh {style.owner_reviewed_by}
+        {style.owner_review_notes ? <span className="text-muted-foreground"> — {style.owner_review_notes}</span> : null}
+      </span>
+    </p>
   );
 }
 
@@ -71,6 +63,8 @@ export default function RnDStylesTab({ token, user }) {
   const [filterStatus, setFilterStatus] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [formErr, setFormErr] = useState('');
   const [detailStyleId, setDetailStyleId] = useState(null);
   const [submitReviewDialog, setSubmitReviewDialog] = useState(null);
   const [ownerReviewDialog, setOwnerReviewDialog] = useState(null);
@@ -82,7 +76,7 @@ export default function RnDStylesTab({ token, user }) {
     client_id: '', buyer: '', fabric_type: '', season: '', description: '', status: 'draft',
   });
 
-  // Foto desain (unggah di form Tambah/Edit Style → galeri approval manajemen)
+  // Foto desain (unggah di form Tambah/Ubah style → galeri persetujuan manajemen)
   const [photos, setPhotos] = useState([]);            // foto yang sudah tersimpan
   const [pendingPhotos, setPendingPhotos] = useState([]); // dipilih saat mode Tambah
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -154,6 +148,7 @@ export default function RnDStylesTab({ token, user }) {
 
   const openCreate = () => {
     setEditing(null);
+    setFormErr('');
     setForm({ style_code: '', style_name: '', category: '', client_id: '', buyer: '', fabric_type: '', season: '', description: '', status: 'draft' });
     setPhotos([]);
     setPendingPhotos([]);
@@ -162,6 +157,7 @@ export default function RnDStylesTab({ token, user }) {
 
   const openEdit = (style) => {
     setEditing(style);
+    setFormErr('');
     setPhotos(Array.isArray(style.design_images) ? style.design_images.filter((p) => p && p.url) : []);
     setPendingPhotos([]);
     setForm({
@@ -175,13 +171,15 @@ export default function RnDStylesTab({ token, user }) {
 
   const handleSave = async () => {
     if (!form.style_code.trim() || !form.style_name.trim()) {
-      toast.error('Kode style dan nama style wajib diisi');
+      setFormErr('Kode style dan nama style wajib diisi.');
       return;
     }
+    setFormErr('');
+    setSaving(true);
     try {
       if (editing) {
         await apiFetch(`/dewi/rnd/styles/${editing.id}`, { method: 'PUT', body: form });
-        toast.success('Style berhasil diupdate');
+        toast.success('Style disimpan');
       } else {
         const created = await apiFetch('/dewi/rnd/styles', { method: 'POST', body: form });
         if (pendingPhotos.length && created?.id) {
@@ -195,7 +193,12 @@ export default function RnDStylesTab({ token, user }) {
       setPendingPhotos([]);
       fetchStyles();
     } catch (e) {
-      if (e instanceof ApiError && !e.isUnauthorized) toast.error(e.userMessage || 'Gagal menyimpan style');
+      if (e instanceof ApiError && !e.isUnauthorized) {
+        toast.error(e.userMessage || 'Gagal menyimpan style');
+        setFormErr(e.userMessage || 'Gagal menyimpan style.');
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -249,20 +252,20 @@ export default function RnDStylesTab({ token, user }) {
     }
   };
 
-  // GAP-R2: Submit for Owner Review
+  // GAP-R2: Ajukan ke owner
   const handleSubmitForReview = async (styleId, notes) => {
     try {
       await apiFetch(`/dewi/rnd/styles/${styleId}/submit-for-review`, { method: 'POST', body: { notes } });
-      toast.success('Style berhasil diajukan untuk review Owner');
+      toast.success('Style diajukan ke owner untuk ditinjau');
       setSubmitReviewDialog(null);
       fetchStyles();
       if (isOwner) fetchPendingCount();
     } catch (e) {
-      if (e instanceof ApiError && !e.isUnauthorized) toast.error(e.userMessage || 'Gagal mengajukan review');
+      if (e instanceof ApiError && !e.isUnauthorized) toast.error(e.userMessage || 'Gagal mengajukan ke owner');
     }
   };
 
-  // GAP-R2: Owner Approve
+  // GAP-R2: Owner menyetujui
   const handleOwnerApprove = async (styleId, notes) => {
     try {
       await apiFetch(`/dewi/rnd/styles/${styleId}/owner-approve`, { method: 'POST', body: { notes } });
@@ -275,12 +278,12 @@ export default function RnDStylesTab({ token, user }) {
     }
   };
 
-  // GAP-R2: Owner Reject
+  // GAP-R2: Owner menolak
   const handleOwnerReject = async (styleId, notes) => {
     if (!notes.trim()) { toast.error('Catatan penolakan wajib diisi'); return; }
     try {
       await apiFetch(`/dewi/rnd/styles/${styleId}/owner-reject`, { method: 'POST', body: { notes } });
-      toast.success('Style ditolak dan dikembalikan ke Draft');
+      toast.success('Style ditolak dan dikembalikan ke draf');
       setOwnerReviewDialog(null);
       fetchStyles();
       if (isOwner) fetchPendingCount();
@@ -310,366 +313,275 @@ export default function RnDStylesTab({ token, user }) {
     }
   };
 
-  const { page: stylesPage, setPage: setStylesPage, totalPages: stylesTotalPages, total: stylesTotal, paged: pagedStyles } = useClientPagination(styles, 10);
+  const { page: stylesPage, setPage: setStylesPage, totalPages: stylesTotalPages, total: stylesTotal, paged: pagedStyles } = useClientPagination(styles, PER_HALAMAN);
 
+  const togglePendingInbox = () => {
+    setShowPendingInbox(!showPendingInbox);
+    if (!showPendingInbox) setFilterStatus('pending_owner_review'); else setFilterStatus('');
+  };
+
+  /** Aksi alur sesuai status (paling banyak satu yang berlaku: Tinjau / Promosikan / Ajukan). */
+  const aksiAlur = (style) => {
+    const canSubmitReview = (style.status === 'draft' || style.status === 'active');
+    const pendingReview = style.status === 'pending_owner_review';
+    const canPromote = style.status === 'approved_for_launch' && style.rnd_type !== 'maklon_product' && !style.promoted_to_model_id;
+    if (isOwner && pendingReview) {
+      return (
+        <Button size="sm" variant="outline" onClick={() => setOwnerReviewDialog(style)} title="Tinjau desain"
+          data-testid={`owner-review-style-${style.id}`}>
+          <MessageSquare />Tinjau
+        </Button>
+      );
+    }
+    if (canPromote) {
+      return (
+        <Button size="sm" variant="outline" onClick={() => handlePromote(style)} disabled={promotingId === style.id}
+          title="Promosikan style ini menjadi Model DA di Portal Produksi" data-testid={`promote-style-${style.id}`}>
+          <Rocket />{promotingId === style.id ? 'Mempromosikan…' : 'Promosikan'}
+        </Button>
+      );
+    }
+    if (canSubmitReview) {
+      return (
+        <Button size="sm" variant="outline" onClick={() => setSubmitReviewDialog(style)} title="Ajukan ke owner"
+          data-testid={`submit-review-${style.id}`}>
+          <Send />Ajukan
+        </Button>
+      );
+    }
+    return null;
+  };
+
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'keterangan', isi: (s) => <span className="text-sm font-medium">{s.style_code}</span> },
+    { kunci: 'nama', label: 'Nama style', hp: 'judul', isi: (s) => (
+      <div className="min-w-0 md:max-w-[20rem]">
+        <p className="font-medium text-foreground">{s.style_name}</p>
+        <ReviewHistoryLine style={s} />
+        {s.status === 'pending_owner_review' && s.submitted_for_review_by && (
+          <p className="mt-0.5 flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]">
+            <Clock className="h-3 w-3" />Diajukan oleh {s.submitted_for_review_by}
+          </p>
+        )}
+      </div>) },
+    { kunci: 'kategori', label: 'Kategori', isi: (s) => s.category || '—' },
+    { kunci: 'klien', label: 'Klien', hp: false, isi: (s) => s.client_name || s.buyer || 'Internal DA' },
+    { kunci: 'musim', label: 'Musim', hp: false, isi: (s) => s.season || '—' },
+    { kunci: 'varian', label: 'Varian', rata: 'kanan', isi: (s) => {
+      const n = s.variants_count ?? (s.variants || []).length;
+      return n > 0 ? <span className="tabular-nums">{n}</span> : <span className="text-muted-foreground">—</span>;
+    } },
+    { kunci: 'status', label: 'Status', isi: (s) => <StyleStatusBadge status={s.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <div className="flex items-center justify-end gap-1">
+        {aksiAlur(s)}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" title="Lainnya" aria-label={`Aksi lain untuk ${s.style_code}`}
+              data-testid={`more-style-${s.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setDetailStyleId(s.id)} data-testid={`detail-style-${s.id}`}>
+              <Eye className="mr-2 h-4 w-4" />Lihat detail
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openEdit(s)} data-testid={`edit-style-${s.id}`}>
+              <Pencil className="mr-2 h-4 w-4" />Ubah
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => handleDelete(s.id)} data-testid={`delete-style-${s.id}`}
+              className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  const statusLabel = (s) => (STATUS_STYLE[s] || STATUS_STYLE.draft).label;
 
   return (
-    <div className="space-y-4" data-testid="rnd-styles-tab">
-      {/* Owner Pending Review Inbox Banner */}
-      {isOwner && pendingCount > 0 && (
-        <div className="rounded-xl border border-amber-400 dark:border-amber-400/30 bg-amber-100 dark:bg-amber-500/10 p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-              <span className="text-sm font-semibold text-amber-600 dark:text-amber-300">
-                {pendingCount} style menunggu review Owner Anda
-              </span>
-            </div>
-            <button
-              onClick={() => { setShowPendingInbox(!showPendingInbox); if (!showPendingInbox) setFilterStatus('pending_owner_review'); else setFilterStatus(''); }}
-              className="text-xs text-amber-600 dark:text-amber-300 hover:text-amber-200 flex items-center gap-1"
-              data-testid="view-pending-review-btn"
-            >
-              {showPendingInbox ? (<><ChevronUp className="w-3.5 h-3.5" /> Sembunyikan</>) : (<><ChevronDown className="w-3.5 h-3.5" /> Lihat Semua</>)}
-            </button>
-          </div>
+    <PageLayout testId="rnd-styles-tab" title="Daftar style"
+      subtitle="Style desain RnD: ajukan ke owner, setujui, lalu promosikan menjadi model produksi."
+      actions={<Button onClick={openCreate} data-testid="create-style-btn"><Plus />Tambah style</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode atau nama style"
+            className="pl-8" data-testid="rnd-style-search" />
         </div>
-      )}
-
-      {/* Search + Filter + Create */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Cari style..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-        </div>
-        <SmartNativeSelect
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="w-48" wrapperClassName="w-48"
-          data-testid="filter-status-select"
-        >
+        <SmartNativeSelect value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+          className="w-52" wrapperClassName="w-52" aria-label="Status" data-testid="filter-status-select">
           <option value="">Semua status</option>
-          <option value="draft">Draft</option>
+          <option value="draft">Draf</option>
           <option value="active">Aktif</option>
-          <option value="pending_owner_review">Menunggu review</option>
+          <option value="pending_owner_review">Menunggu tinjauan owner</option>
           <option value="approved_for_launch">Disetujui owner</option>
+          <option value="promoted">Dipromosikan</option>
           <option value="archived">Diarsipkan</option>
         </SmartNativeSelect>
-        <button
-          onClick={openCreate}
-          className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
-          data-testid="create-style-btn"
-        >
-          <Plus className="w-4 h-4" />
-          Tambah Style
-        </button>
-      </div>
-
-      {/* Styles Table */}
-      <GlassCard>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left p-3 text-sm font-semibold">Kode</th>
-                <th className="text-left p-3 text-sm font-semibold">Nama Style</th>
-                <th className="text-left p-3 text-sm font-semibold">Kategori</th>
-                <th className="text-left p-3 text-sm font-semibold">Buyer</th>
-                <th className="text-left p-3 text-sm font-semibold">Season</th>
-                <th className="text-left p-3 text-sm font-semibold">Varian</th>
-                <th className="text-left p-3 text-sm font-semibold">Status</th>
-                <th className="text-right p-3 text-sm font-semibold">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan="8" className="text-center p-8 text-muted-foreground">Memuat...</td></tr>
-              ) : styles.length === 0 ? (
-                <tr><td colSpan="8" className="text-center p-8 text-muted-foreground">Belum ada data style</td></tr>
-              ) : (
-                pagedStyles.map((style) => {
-                  const variantCount = style.variants_count ?? (style.variants || []).length;
-                  const canSubmitReview = (style.status === 'draft' || style.status === 'active');
-                  const pendingReview = style.status === 'pending_owner_review';
-                  const canPromote = style.status === 'approved_for_launch' && style.rnd_type !== 'maklon_product' && !style.promoted_to_model_id;
-
-                  return (
-                    <tr key={style.id} className="border-b hover:bg-accent/50 transition-colors">
-                      <td className="p-3">
-                        <span className="font-mono text-sm font-semibold">{style.style_code}</span>
-                      </td>
-                      <td className="p-3">
-                        <div>{style.style_name}</div>
-                        {/* Riwayat keputusan owner: siapa memutuskan + alasan lengkap.
-                            (Sebelum 2026-08-07 komponen ReviewHistoryPanel ini menganggur
-                            dan barisnya hanya memotong alasan sampai 40 karakter tanpa
-                            menyebut pemutusnya.) */}
-                        <ReviewHistoryPanel style={style} />
-                        {pendingReview && style.submitted_for_review_by && (
-                          <div className="mt-1 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            Diajukan oleh {style.submitted_for_review_by}
-                          </div>
-                        )}
-                      </td>
-                      <td className="p-3 text-sm text-muted-foreground">{style.category || '-'}</td>
-                      <td className="p-3 text-sm text-muted-foreground">{style.client_name || style.buyer || '-'}</td>
-                      <td className="p-3 text-sm text-muted-foreground">{style.season || '-'}</td>
-                      <td className="p-3">
-                        {variantCount > 0 ? (
-                          <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-violet-100 dark:bg-violet-500/10 border border-violet-300 dark:border-violet-500/20">
-                            <Layers className="w-3 h-3 text-violet-500" />
-                            <span className="text-xs font-semibold text-violet-500">{variantCount}</span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">-</span>
-                        )}
-                      </td>
-                      <td className="p-3">
-                        <StatusBadge status={style.status} />
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center justify-end gap-1">
-                          {/* Owner: Approve/Reject when pending review */}
-                          {isOwner && pendingReview && (
-                            <button
-                              onClick={() => setOwnerReviewDialog(style)}
-                              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300 hover:bg-amber-500/30 transition-colors"
-                              title="Review Desain"
-                              data-testid={`owner-review-style-${style.id}`}
-                            >
-                              <MessageSquare className="w-3 h-3" />
-                              Review
-                            </button>
-                          )}
-                          {/* RND-01 (temuan 2026-09-23): promosi style disetujui → Model DA Produksi */}
-                          {canPromote && (
-                            <button
-                              onClick={() => handlePromote(style)}
-                              disabled={promotingId === style.id}
-                              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/30 transition-colors disabled:opacity-50"
-                              title="Promosikan style ini menjadi Model DA di Portal Produksi"
-                              data-testid={`promote-style-${style.id}`}
-                            >
-                              <Rocket className="w-3 h-3" />
-                              {promotingId === style.id ? 'Mempromosikan…' : 'Promosikan ke Produksi'}
-                            </button>
-                          )}
-                          {/* RnD: Submit for review */}
-                          {canSubmitReview && (
-                            <button
-                              onClick={() => setSubmitReviewDialog(style)}
-                              className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-300 hover:bg-violet-500/30 transition-colors"
-                              title="Ajukan ke Owner"
-                              data-testid={`submit-review-${style.id}`}
-                            >
-                              <Send className="w-3 h-3" />
-                              Ajukan
-                            </button>
-                          )}
-                          <button
-                            onClick={() => setDetailStyleId(style.id)}
-                            className="p-1.5 hover:bg-accent rounded transition-colors"
-                            title="Lihat Detail"
-                            data-testid={`detail-style-${style.id}`}
-                          >
-                            <Eye className="w-4 h-4 text-violet-500" />
-                          </button>
-                          <button
-                            onClick={() => openEdit(style)}
-                            className="p-1.5 hover:bg-accent rounded transition-colors"
-                            title="Edit"
-                            data-testid={`edit-style-${style.id}`}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(style.id)}
-                            className="p-1.5 hover:bg-destructive/10 text-destructive rounded transition-colors"
-                            title="Hapus"
-                            data-testid={`delete-style-${style.id}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        {!loading && styles.length > 0 && (
-          <PaginationLite page={stylesPage} totalPages={stylesTotalPages} total={stylesTotal} onPageChange={setStylesPage} className="px-3" />
-        )}
-      </GlassCard>
-
-      {/* ── Create/Edit Style Modal ── */}
-      {showForm && (
-        <div className="fixed inset-0 bg-foreground/40 flex items-center justify-center z-50 p-4">
-          <GlassCard className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold">{editing ? 'Edit Style' : 'Tambah Style Baru'}</h2>
-                <button onClick={() => setShowForm(false)} className="p-1 hover:bg-accent rounded transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Kode Style <span className="text-destructive">*</span></label>
-                  <input type="text" value={form.style_code} onChange={(e) => setForm({ ...form, style_code: e.target.value.toUpperCase() })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" placeholder="ST-001" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Nama Style <span className="text-destructive">*</span></label>
-                  <input type="text" value={form.style_name} onChange={(e) => setForm({ ...form, style_name: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Basic Tee Premium" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Kategori</label>
-                  <SmartNativeSelect value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full" data-testid="style-category-select">
-                    <option value="">— Pilih kategori produk —</option>
-                    {form.category && !categories.some(c => c.name === form.category) && (
-                      <option value={form.category}>{`${form.category} (belum ada di master)`}</option>
-                    )}
-                    {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Buyer</label>
-                  <SmartNativeSelect value={buyerValue} onChange={(e) => pickBuyer(e.target.value)}
-                    className="w-full" aria-label="Buyer" data-testid="style-buyer-select">
-                    <option value="">— Internal DA (tanpa buyer) —</option>
-                    {buyerValue === LEGACY && <option value={LEGACY}>{`${form.buyer} (lama, belum di master)`}</option>}
-                    {formOpts.buyers.map(b => <option key={b.id} value={b.id}>{`${b.code ? `${b.code} · ` : ''}${b.name}`}</option>)}
-                  </SmartNativeSelect>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Dari master Klien maklon.</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Jenis kain</label>
-                  <SmartNativeSelect value={form.fabric_type} onChange={(e) => setForm({ ...form, fabric_type: e.target.value })}
-                    className="w-full" aria-label="Jenis kain" data-testid="style-fabric-select">
-                    <option value="">— Pilih jenis kain —</option>
-                    {fabricLegacy && <option value={form.fabric_type}>{`${form.fabric_type} (lama, belum ada di master)`}</option>}
-                    {formOpts.fabric_types.map(n => <option key={n} value={n}>{n}</option>)}
-                  </SmartNativeSelect>
-                  <p className="mt-1 text-[11px] text-muted-foreground">Dari master kain (Master Material).</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Season</label>
-                  <input type="text" value={form.season} onChange={(e) => setForm({ ...form, season: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Spring 2024" />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium mb-1.5">Deskripsi</label>
-                  <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" rows="3" placeholder="Classic crew neck t-shirt..." />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1.5">Status</label>
-                  {LIFECYCLE_STATUSES.includes(form.status) ? (
-                    /* Status keputusan (menunggu review / disetujui owner) TIDAK boleh
-                       diubah dari form edit — dulu select-nya menampilkan "Draft" secara
-                       keliru sehingga status review bisa terhapus tanpa sengaja. */
-                    <div className="rounded-lg border bg-muted/40 px-3 py-2" data-testid="style-status-locked">
-                      <StatusBadge status={form.status} />
-                      <p className="mt-1.5 text-[11px] text-muted-foreground">
-                        Diatur lewat tombol <b>Ajukan Review</b> / <b>Setujui</b> / <b>Tolak</b> agar
-                        keputusan tercatat beserta pemutus &amp; alasannya.
-                      </p>
-                    </div>
-                  ) : (
-                    <SmartNativeSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
-                      className="w-full" data-testid="style-status-select">
-                      <option value="draft">Draft</option>
-                      <option value="active">Aktif</option>
-                      <option value="archived">Diarsipkan</option>
-                    </SmartNativeSelect>
-                  )}
-                </div>
-              </div>
-
-              {/* ── Foto / Sketsa Desain ── */}
-              <div className="rounded-lg border p-4 space-y-3" data-testid="style-photos-section">
-                <div className="flex items-start justify-between gap-2 flex-wrap">
-                  <div>
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
-                      <ImagePlus className="w-4 h-4 text-violet-500" /> Foto / Sketsa Desain
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Tampil di galeri approval manajemen &amp; ikut tersimpan pada riwayat revisi. Maks 10MB per foto.
-                    </p>
-                  </div>
-                  <label
-                    className="flex items-center gap-2 px-3 py-2 border rounded-lg text-sm font-medium cursor-pointer hover:bg-accent transition-colors"
-                    data-testid="style-photo-upload-label"
-                  >
-                    {uploadingPhoto ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
-                    {uploadingPhoto ? 'Mengunggah...' : 'Pilih Foto'}
-                    <input type="file" accept="image/*" multiple hidden disabled={uploadingPhoto}
-                      onChange={handlePhotoInput} data-testid="style-photo-input" />
-                  </label>
-                </div>
-
-                {photos.length === 0 && pendingPhotos.length === 0 ? (
-                  <p className="text-xs text-muted-foreground" data-testid="style-photo-empty">
-                    Belum ada foto desain.
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="style-photo-grid">
-                    {photos.map((p) => (
-                      <div key={p.id} className="relative rounded-lg border overflow-hidden group">
-                        <img
-                          src={`${API}${p.url}${(p.url || '').includes('?') ? '&' : '?'}auth=${encodeURIComponent(token || '')}`}
-                          alt={p.caption || 'Foto desain'} className="h-24 w-full object-cover" loading="lazy"
-                        />
-                        <button onClick={() => handlePhotoDelete(p.id)} data-testid={`style-photo-delete-${p.id}`}
-                          className="absolute top-1 right-1 p-1 rounded bg-background/90 text-destructive md:opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Hapus foto">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                        <p className="truncate px-2 py-1 text-[10px] text-muted-foreground">{p.caption || '—'}</p>
-                      </div>
-                    ))}
-                    {pendingPhotos.map((f, i) => (
-                      <div key={`pending-${i}`} className="relative rounded-lg border border-dashed overflow-hidden">
-                        <img src={URL.createObjectURL(f)} alt={f.name} className="h-24 w-full object-cover" />
-                        <button onClick={() => setPendingPhotos((p) => p.filter((_, idx) => idx !== i))}
-                          data-testid={`style-photo-pending-remove-${i}`}
-                          className="absolute top-1 right-1 p-1 rounded bg-background/90 text-destructive" title="Batalkan">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                        <p className="truncate px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
-                          Akan diunggah: {f.name}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t">
-                <button onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-lg font-medium hover:bg-accent transition-colors">Batal</button>
-                <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity" data-testid="save-style-btn">
-                  <Check className="w-4 h-4" /> Simpan
-                </button>
-              </div>
-            </div>
-          </GlassCard>
-        </div>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="daftar-style-rnd" namaLembar="Style" baris={styles} testId="rnd-style-unduh"
+          kolom={[
+            { label: 'Kode', nilai: (s) => s.style_code },
+            { label: 'Nama style', nilai: (s) => s.style_name },
+            { label: 'Kategori', nilai: (s) => s.category || '' },
+            { label: 'Klien', nilai: (s) => s.client_name || s.buyer || 'Internal DA' },
+            { label: 'Jenis kain', nilai: (s) => s.fabric_type || '' },
+            { label: 'Musim', nilai: (s) => s.season || '' },
+            { label: 'Varian', nilai: (s) => Number(s.variants_count ?? (s.variants || []).length) || 0 },
+            { label: 'Status', nilai: (s) => statusLabel(s.status) },
+            { label: 'Keputusan owner', nilai: (s) => (s.owner_review_result
+              ? `${s.owner_review_result === 'approved' ? 'Disetujui' : 'Ditolak'} oleh ${s.owner_reviewed_by || ''}${s.owner_review_notes ? ` — ${s.owner_review_notes}` : ''}`
+              : '') },
+            { label: 'Dibuat', nilai: (s) => (s.created_at ? formatDateID(s.created_at) : '') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchStyles} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={isOwner && pendingCount > 0 ? (
+        <Notice tone="warning" icon={AlertCircle} title={`${pendingCount} style menunggu tinjauan Anda`}
+          action={(
+            <Button size="sm" variant="outline" onClick={togglePendingInbox} data-testid="view-pending-review-btn">
+              {showPendingInbox ? 'Tampilkan semua' : 'Lihat yang menunggu'}
+            </Button>
+          )} />
+      ) : null}
+      footer={!loading && styles.length > PER_HALAMAN ? (
+        <PaginationLite page={stylesPage} totalPages={stylesTotalPages} total={stylesTotal} pageSize={PER_HALAMAN}
+          onPageChange={setStylesPage} />
+      ) : null}>
+      {loading && styles.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat style…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={pagedStyles} onKlikBaris={(s) => setDetailStyleId(s.id)} testId="rnd-style-table"
+          kosong={<EmptyState title={search || filterStatus ? 'Tidak ada style yang cocok' : 'Belum ada style'}
+            description={search || filterStatus ? 'Ubah kata pencarian atau pilihan status.' : 'Tambah style pertama untuk mulai mendokumentasikan desain.'}
+            action={!search && !filterStatus && <Button onClick={openCreate}><Plus />Tambah style</Button>} />} />
       )}
 
-      {/* ── Submit for Review Dialog ── */}
+      {/* ── Form Tambah/Ubah style ── */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave}
+        menyimpan={saving} galat={formErr} testId="rnd-style-form"
+        judul={editing ? 'Ubah style' : 'Tambah style'}
+        keterangan="Kategori, klien, dan jenis kain diambil dari master supaya cocok saat style naik ke produksi."
+        labelSimpan={editing ? 'Simpan perubahan' : 'Simpan style'}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kode style" wajib htmlFor="style-code">
+            <Input id="style-code" value={form.style_code} onChange={(e) => setForm({ ...form, style_code: e.target.value.toUpperCase() })}
+              placeholder="ST-001" data-testid="style-code-input" />
+          </Isian>
+          <Isian label="Nama style" wajib htmlFor="style-name">
+            <Input id="style-name" value={form.style_name} onChange={(e) => setForm({ ...form, style_name: e.target.value })}
+              placeholder="Kaus dasar premium" data-testid="style-name-input" />
+          </Isian>
+          <Isian label="Kategori" petunjuk="Dari master Kategori Produk.">
+            <SmartNativeSelect value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+              className="w-full" aria-label="Kategori" data-testid="style-category-select">
+              <option value="">— Pilih kategori produk —</option>
+              {form.category && !categories.some(c => c.name === form.category) && (
+                <option value={form.category}>{`${form.category} (belum ada di master)`}</option>
+              )}
+              {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Klien" petunjuk="Dari master Klien maklon. Kosong = produk internal DA.">
+            <SmartNativeSelect value={buyerValue} onChange={(e) => pickBuyer(e.target.value)}
+              className="w-full" aria-label="Klien" data-testid="style-buyer-select">
+              <option value="">— Internal DA (tanpa klien) —</option>
+              {buyerValue === LEGACY && <option value={LEGACY}>{`${form.buyer} (lama, belum di master)`}</option>}
+              {formOpts.buyers.map(b => <option key={b.id} value={b.id}>{`${b.code ? `${b.code} · ` : ''}${b.name}`}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Jenis kain" petunjuk="Dari master kain (Master Material).">
+            <SmartNativeSelect value={form.fabric_type} onChange={(e) => setForm({ ...form, fabric_type: e.target.value })}
+              className="w-full" aria-label="Jenis kain" data-testid="style-fabric-select">
+              <option value="">— Pilih jenis kain —</option>
+              {fabricLegacy && <option value={form.fabric_type}>{`${form.fabric_type} (lama, belum ada di master)`}</option>}
+              {formOpts.fabric_types.map(n => <option key={n} value={n}>{n}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Musim" htmlFor="style-season">
+            <Input id="style-season" value={form.season} onChange={(e) => setForm({ ...form, season: e.target.value })}
+              placeholder="Lebaran 2027" data-testid="style-season-input" />
+          </Isian>
+          <Isian label="Deskripsi" htmlFor="style-desc" className="sm:col-span-2">
+            <Textarea id="style-desc" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+              placeholder="Kaus leher bulat klasik…" data-testid="style-desc-input" />
+          </Isian>
+          <Isian label="Status"
+            petunjuk={LIFECYCLE_STATUSES.includes(form.status)
+              ? 'Diatur lewat tombol Ajukan / Setujui / Tolak agar keputusan tercatat beserta pemutus dan alasannya.'
+              : undefined}>
+            {LIFECYCLE_STATUSES.includes(form.status) ? (
+              /* Status keputusan (menunggu tinjauan / disetujui owner) TIDAK boleh diubah dari form ubah —
+                 dulu pilihannya menampilkan "Draft" secara keliru sehingga status tinjauan bisa terhapus. */
+              <div className="flex h-9 items-center" data-testid="style-status-locked">
+                <StyleStatusBadge status={form.status} />
+              </div>
+            ) : (
+              <SmartNativeSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
+                className="w-full" aria-label="Status" data-testid="style-status-select">
+                {form.status === 'promoted' && <option value="promoted">Dipromosikan</option>}
+                <option value="draft">Draf</option>
+                <option value="active">Aktif</option>
+                <option value="archived">Diarsipkan</option>
+              </SmartNativeSelect>
+            )}
+          </Isian>
+        </div>
+
+        {/* ── Foto / sketsa desain ── */}
+        <Isian label="Foto / sketsa desain"
+          petunjuk="Tampil di galeri persetujuan manajemen dan ikut tersimpan pada riwayat revisi. Maks 10MB per foto.">
+          <div className="space-y-3" data-testid="style-photos-section">
+            <Button asChild variant="outline" size="sm">
+              <label className="cursor-pointer" data-testid="style-photo-upload-label">
+                {uploadingPhoto ? <Loader2 className="animate-spin" /> : <ImagePlus />}
+                {uploadingPhoto ? 'Mengunggah…' : 'Pilih foto'}
+                <input type="file" accept="image/*" multiple hidden disabled={uploadingPhoto}
+                  onChange={handlePhotoInput} data-testid="style-photo-input" />
+              </label>
+            </Button>
+            {photos.length === 0 && pendingPhotos.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid="style-photo-empty">Foto desain belum diunggah.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="style-photo-grid">
+                {photos.map((p) => (
+                  <div key={p.id} className="relative overflow-hidden rounded-lg border border-[var(--glass-border)]">
+                    <img
+                      src={`${API}${p.url}${(p.url || '').includes('?') ? '&' : '?'}auth=${encodeURIComponent(token || '')}`}
+                      alt={p.caption || 'Foto desain'} className="h-24 w-full object-cover" loading="lazy"
+                    />
+                    <Button type="button" variant="outline" size="icon-sm" onClick={() => handlePhotoDelete(p.id)}
+                      className="absolute right-1 top-1 text-[hsl(var(--danger-text))]" title="Hapus foto" aria-label="Hapus foto"
+                      data-testid={`style-photo-delete-${p.id}`}>
+                      <Trash2 />
+                    </Button>
+                    <p className="truncate px-2 py-1 text-xs text-muted-foreground">{p.caption || '—'}</p>
+                  </div>
+                ))}
+                {pendingPhotos.map((f, i) => (
+                  <div key={`pending-${i}`} className="relative overflow-hidden rounded-lg border border-dashed border-[var(--glass-border)]">
+                    <img src={URL.createObjectURL(f)} alt={f.name} className="h-24 w-full object-cover" />
+                    <Button type="button" variant="outline" size="icon-sm"
+                      onClick={() => setPendingPhotos((p) => p.filter((_, idx) => idx !== i))}
+                      className="absolute right-1 top-1" title="Batal unggah" aria-label="Batal unggah"
+                      data-testid={`style-photo-pending-remove-${i}`}>
+                      <X />
+                    </Button>
+                    <p className="truncate px-2 py-1 text-xs text-[hsl(var(--warning-text))]">Akan diunggah: {f.name}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Isian>
+      </FormPopup>
+
       {submitReviewDialog && (
         <SubmitForReviewDialog
           style={submitReviewDialog}
@@ -678,7 +590,6 @@ export default function RnDStylesTab({ token, user }) {
         />
       )}
 
-      {/* ── Owner Review Dialog ── */}
       {ownerReviewDialog && (
         <OwnerReviewDialog
           style={ownerReviewDialog}
@@ -688,7 +599,6 @@ export default function RnDStylesTab({ token, user }) {
         />
       )}
 
-      {/* ── Style Detail ── */}
       {detailStyleId && (
         <RnDStyleDetailPage
           token={token}
@@ -696,11 +606,11 @@ export default function RnDStylesTab({ token, user }) {
           onClose={() => setDetailStyleId(null)}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
 
-// ─── Sub-Components ────────────────────────────────────────────────────────────
+// ─── Sub-komponen ──────────────────────────────────────────────────────────────
 
 function SubmitForReviewDialog({ style, onClose, onSubmit }) {
   const [notes, setNotes] = useState('');
@@ -713,180 +623,65 @@ function SubmitForReviewDialog({ style, onClose, onSubmit }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-foreground/50 flex items-center justify-center z-50 p-4" data-testid="submit-review-dialog">
-      <GlassCard className="w-full max-w-md">
-        <div className="p-6 space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center">
-              <Send className="w-5 h-5 text-violet-600 dark:text-violet-400" />
-            </div>
-            <div>
-              <h3 className="font-bold text-lg">Ajukan ke Owner</h3>
-              <p className="text-sm text-muted-foreground">{style.style_code} — {style.style_name}</p>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-lg bg-violet-100 dark:bg-violet-500/10 border border-violet-300 dark:border-violet-400/20 text-sm text-violet-600 dark:text-violet-300">
-            Style ini akan dikirim ke Owner untuk review dan persetujuan sebelum dilanjutkan ke produksi.
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Catatan untuk Owner (opsional)</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              rows="3"
-              placeholder="Contoh: Style ini siap untuk review, sample sudah disiapkan..."
-              data-testid="review-notes-input"
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button onClick={onClose} className="px-4 py-2 border rounded-lg font-medium hover:bg-accent transition-colors">Batal</button>
-            <button
-              onClick={handleSubmit}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-foreground rounded-lg font-medium hover:bg-violet-700 transition-colors disabled:opacity-50"
-              data-testid="confirm-submit-review-btn"
-            >
-              <Send className="w-4 h-4" />
-              {saving ? 'Mengajukan...' : 'Ajukan Review'}
-            </button>
-          </div>
-        </div>
-      </GlassCard>
-    </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={handleSubmit} menyimpan={saving}
+      judul="Ajukan ke owner" keterangan={`${style.style_code} — ${style.style_name}`}
+      labelSimpan="Ajukan" testId="submit-review-dialog">
+      <p className="text-sm text-muted-foreground">
+        Style ini dikirim ke owner untuk ditinjau dan disetujui sebelum dilanjutkan ke produksi.
+      </p>
+      <Isian label="Catatan untuk owner" petunjuk="Opsional." htmlFor="review-notes">
+        <Textarea id="review-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Contoh: style siap ditinjau, sample sudah disiapkan…" data-testid="review-notes-input" />
+      </Isian>
+    </FormPopup>
   );
 }
 
 function OwnerReviewDialog({ style, onClose, onApprove, onReject }) {
   const [notes, setNotes] = useState('');
-  const [action, setAction] = useState(null); // 'approve' | 'reject'
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
 
-  const handleAction = async () => {
-    if (action === 'reject' && !notes.trim()) { toast.error('Catatan penolakan wajib diisi'); return; }
+  const approve = async () => {
+    setGalat('');
     setSaving(true);
-    if (action === 'approve') await onApprove(style.id, notes);
-    else await onReject(style.id, notes);
+    await onApprove(style.id, notes);
+    setSaving(false);
+  };
+  const reject = async () => {
+    if (!notes.trim()) { setGalat('Catatan penolakan wajib diisi.'); return; }
+    setGalat('');
+    setSaving(true);
+    await onReject(style.id, notes);
     setSaving(false);
   };
 
   return (
-    <div className="fixed inset-0 bg-foreground/50 flex items-center justify-center z-50 p-4" data-testid="owner-review-dialog">
-      <GlassCard className="w-full max-w-lg">
-        <div className="p-6 space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-500/20 flex items-center justify-center">
-                <MessageSquare className="w-5 h-5 text-amber-700 dark:text-amber-400" />
-              </div>
-              <div>
-                <h3 className="font-bold text-lg">Review Desain Style</h3>
-                <p className="text-sm text-muted-foreground">{style.style_code} — {style.style_name}</p>
-              </div>
-            </div>
-            <button onClick={onClose} className="p-1.5 hover:bg-accent rounded"><X className="w-4 h-4" /></button>
-          </div>
-
-          {/* Style info */}
-          <div className="grid grid-cols-2 gap-3 p-4 rounded-xl bg-foreground/[0.04] border border-foreground/[0.08] text-sm">
-            <InfoItem label="Kategori" value={style.category} />
-            <InfoItem label="Buyer" value={style.client_name || style.buyer} />
-            <InfoItem label="Jenis kain" value={style.fabric_type} />
-            <InfoItem label="Season" value={style.season} />
-            {style.description && (
-              <div className="col-span-2">
-                <span className="text-foreground/50 text-xs">Deskripsi:</span>
-                <p className="text-foreground/80 mt-0.5">{style.description}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Submission info */}
-          {style.submitted_for_review_by && (
-            <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-300">
-              <Clock className="w-3.5 h-3.5" />
-              Diajukan oleh <strong>{style.submitted_for_review_by}</strong>
-              {style.review_notes && <span className="text-foreground/60">— {style.review_notes}</span>}
-            </div>
-          )}
-
-          {/* Action selector */}
-          <div>
-            <p className="text-sm font-medium mb-2">Keputusan Owner:</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => setAction('approve')}
-                className={`p-3 rounded-xl border-2 transition-all flex items-center gap-2 justify-center ${
-                  action === 'approve'
-                    ? 'border-green-400 bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-300'
-                    : 'border-foreground/10 bg-foreground/[0.04] text-foreground/60 hover:border-green-400/40'
-                }`}
-                data-testid="owner-approve-option"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                Setujui Desain
-              </button>
-              <button
-                onClick={() => setAction('reject')}
-                className={`p-3 rounded-xl border-2 transition-all flex items-center gap-2 justify-center ${
-                  action === 'reject'
-                    ? 'border-red-400 bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300'
-                    : 'border-foreground/10 bg-foreground/[0.04] text-foreground/60 hover:border-red-400/40'
-                }`}
-                data-testid="owner-reject-option"
-              >
-                <XCircle className="w-4 h-4" />
-                Tolak Desain
-              </button>
-            </div>
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">
-              {action === 'reject' ? 'Catatan Penolakan *' : 'Catatan (opsional)'}
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              rows="3"
-              placeholder={action === 'reject' ? 'Jelaskan alasan penolakan...' : 'Catatan tambahan...'}
-              data-testid="owner-review-notes-input"
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-3">
-            <button onClick={onClose} className="px-4 py-2 border rounded-lg font-medium hover:bg-accent transition-colors">Batal</button>
-            <button
-              onClick={handleAction}
-              disabled={!action || saving}
-              className={`flex items-center gap-2 px-5 py-2 rounded-lg font-medium transition-colors disabled:opacity-40 text-foreground ${
-                action === 'approve' ? 'bg-green-600 hover:bg-green-700' :
-                action === 'reject' ? 'bg-red-600 hover:bg-red-700' :
-                'bg-primary'
-              }`}
-              data-testid="confirm-owner-review-btn"
-            >
-              {action === 'approve' ? <CheckCircle2 className="w-4 h-4" /> : action === 'reject' ? <XCircle className="w-4 h-4" /> : null}
-              {saving ? 'Memproses...' : action === 'approve' ? 'Setujui' : action === 'reject' ? 'Tolak' : 'Pilih Keputusan'}
-            </button>
-          </div>
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
-
-function InfoItem({ label, value }) {
-  if (!value) return null;
-  return (
-    <div>
-      <span className="text-xs text-foreground/50">{label}</span>
-      <p className="text-sm text-foreground/80">{value}</p>
-    </div>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={approve} menyimpan={saving} galat={galat}
+      judul="Tinjau desain style" keterangan={`${style.style_code} — ${style.style_name}`}
+      labelSimpan="Setujui" testId="owner-review-dialog"
+      aksiKiri={(
+        <Button type="button" variant="destructive" onClick={reject} disabled={saving} data-testid="owner-reject-option">
+          <XCircle />Tolak
+        </Button>
+      )}>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        {style.category && <BarisDetail label="Kategori">{style.category}</BarisDetail>}
+        <BarisDetail label="Klien">{style.client_name || style.buyer || 'Internal DA'}</BarisDetail>
+        {style.fabric_type && <BarisDetail label="Jenis kain">{style.fabric_type}</BarisDetail>}
+        {style.season && <BarisDetail label="Musim">{style.season}</BarisDetail>}
+        {style.description && <BarisDetail label="Deskripsi">{style.description}</BarisDetail>}
+        {style.submitted_for_review_by && (
+          <BarisDetail label="Diajukan oleh">
+            {style.submitted_for_review_by}
+            {style.review_notes && <span className="text-muted-foreground"> — {style.review_notes}</span>}
+          </BarisDetail>
+        )}
+      </dl>
+      <Isian label="Catatan" htmlFor="owner-review-notes" petunjuk="Wajib diisi bila menolak; opsional bila menyetujui.">
+        <Textarea id="owner-review-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Alasan penolakan atau catatan tambahan…" data-testid="owner-review-notes-input" />
+      </Isian>
+    </FormPopup>
   );
 }

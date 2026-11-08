@@ -4,37 +4,52 @@
  *
  * Backend: /api/procurement/*
  * Flows: Draft → Submit → Approve/Reject → Complete
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout; tab buatan → pil penyaring satu baris; kartu angka StatTile
+ * berketerangan; form buat PR & buat PO = FormPopup; detail = popup; daftar = tabel (kartu ringkas di HP), unduh
+ * Excel/CSV SEMUA baris hasil saringan (dulu hanya 15 baris halaman yang tampil). Data & alur tidak berubah.
  */
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import axios from 'axios';
-import OnwardCTA from './OnwardCTA';
 import {
-  Plus, RefreshCw, ChevronRight, Search, AlertTriangle,
+  Plus, RefreshCw, ChevronRight, ChevronDown, Search, AlertTriangle,
   CheckCircle2, XCircle, Clock, ShoppingCart, FileText,
-  Send, Trash2, History, Inbox, ShieldAlert, Info,
-  Check, Circle, Layers, Loader2, Package,
-  Table2, LayoutGrid, ArrowUpDown,
+  Send, Trash2, History, ShieldAlert, Info,
+  Check, Circle, Layers, Loader2, Package, ArrowUpDown, X,
 } from 'lucide-react';
-import { formatRupiah } from '@/lib/format';
+import { formatDateID, formatRupiah } from '@/lib/format';
 import { materialOptionLabel } from '@/lib/materialFields';
 import { MoneyInput } from '@/components/ui/money-input';
-import ExportCsvButton from '@/components/ui/export-csv-button';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import ViewToggle from '@/components/ui/view-toggle';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import PaginationLite from '@/components/ui/pagination-lite';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { DepartmentSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-// F13-B (sesi #12) — pengalih Tabel/Kartu yang DIINGAT + kolom CSV.
+// F13-B (sesi #12) — pengalih Tabel/Kartu yang DIINGAT.
 // PR adalah komitmen UANG: "PR mana yang paling besar & menunggu siapa" harus
 // bisa dijawab tanpa menggulir, dan bisa dibawa ke rapat sebagai berkas.
 const PR_VIEW_KEY = 'procurement_pr_view';
-const PR_CSV_HEAD = ['No. PR', 'Judul', 'Jenis', 'Departemen', 'Prioritas',
-  'Status', 'Nilai (Rp)', 'Pemohon', 'Dibutuhkan', 'Dibuat', 'Menunggu',
-  'No. PO'];
+const PAGE_SIZE = 15;
 
-// Label pendek tiap tahap untuk stepper ringkas di kartu daftar.
+// Label pendek tiap tahap untuk stepper ringkas di daftar.
 // Label panjangnya datang dari server (`chain[].label`) — SATU sumber kebenaran.
 const STAGE_SHORT = { dept: 'Dept', finance: 'Keuangan', final: 'Final' };
 
@@ -44,104 +59,63 @@ function fmtDT(v) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '-';
   return d.toLocaleString('id-ID', {
-    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
   });
 }
+const fmtTgl = (v) => (v ? formatDateID(v) : '—');
 
 const PRIORITY_CFG = {
-  low:    { label: 'Rendah',   color: 'text-muted-foreground bg-muted dark:bg-slate-400/10 border-border dark:border-slate-400/20' },
-  medium: { label: 'Sedang',  color: 'text-blue-600 dark:text-blue-400  bg-blue-50 dark:bg-blue-400/10  border-blue-300 dark:border-blue-400/20'  },
-  high:   { label: 'Tinggi',  color: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-400/10 border-amber-300 dark:border-amber-400/20' },
-  urgent: { label: 'Urgent',  color: 'text-red-700 dark:text-red-400   bg-red-50 dark:bg-red-400/10   border-red-300 dark:border-red-400/20'   },
+  low:    { label: 'Rendah',   tone: 'muted' },
+  medium: { label: 'Sedang',   tone: 'info' },
+  high:   { label: 'Tinggi',   tone: 'warning' },
+  urgent: { label: 'Mendesak', tone: 'danger' },
 };
 
 const STATUS_CFG = {
-  draft:            { label: 'Draft',                      icon: FileText,    color: 'text-muted-foreground bg-muted border-border dark:text-muted-foreground dark:bg-slate-400/10 dark:border-slate-400/20' },
-  submitted:        { label: 'Menunggu Persetujuan Dept',  icon: Clock,       color: 'text-amber-700 bg-amber-100 border-amber-300 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20' },
-  dept_approved:    { label: 'Menunggu Persetujuan Keuangan', icon: Clock,    color: 'text-orange-700 bg-orange-100 border-orange-300 dark:text-orange-400 dark:bg-orange-400/10 dark:border-orange-400/20' },
-  finance_approved: { label: 'Menunggu Persetujuan Final',  icon: Clock,      color: 'text-yellow-700 bg-yellow-100 border-yellow-300 dark:text-yellow-400 dark:bg-yellow-400/10 dark:border-yellow-400/20' },
-  approved:         { label: 'Disetujui',                  icon: CheckCircle2,color: 'text-emerald-700 bg-emerald-100 border-emerald-300 dark:text-emerald-400 dark:bg-emerald-400/10 dark:border-emerald-400/20' },
-  in_procurement:   { label: 'Sedang Pengadaan',           icon: ShoppingCart,color: 'text-blue-700 bg-blue-100 border-blue-300 dark:text-blue-400 dark:bg-blue-400/10 dark:border-blue-400/20' },
-  rejected:         { label: 'Ditolak',                    icon: XCircle,     color: 'text-red-700 bg-red-100 border-red-300 dark:text-red-400 dark:bg-red-400/10 dark:border-red-400/20' },
-  completed:        { label: 'Selesai',                    icon: CheckCircle2,color: 'text-sky-700 bg-sky-100 border-sky-300 dark:text-sky-400 dark:bg-sky-400/10 dark:border-sky-400/20' },
-  cancelled:        { label: 'Dibatalkan',                 icon: XCircle,     color: 'text-muted-foreground bg-muted border-border dark:text-zinc-500 dark:bg-zinc-500/10 dark:border-zinc-500/20' },
+  draft:            { label: 'Draf',                          tone: 'muted' },
+  submitted:        { label: 'Menunggu persetujuan dept',     tone: 'warning' },
+  dept_approved:    { label: 'Menunggu persetujuan keuangan', tone: 'warning' },
+  finance_approved: { label: 'Menunggu persetujuan final',    tone: 'warning' },
+  approved:         { label: 'Disetujui',                     tone: 'success' },
+  in_procurement:   { label: 'Sedang pengadaan',              tone: 'info' },
+  rejected:         { label: 'Ditolak',                       tone: 'danger' },
+  completed:        { label: 'Selesai',                       tone: 'success' },
+  cancelled:        { label: 'Dibatalkan',                    tone: 'muted' },
 };
 
 const TYPE_LABELS = {
-  asset: 'Aset Tetap', consumable: 'Barang Habis Pakai',
+  asset: 'Aset tetap', consumable: 'Barang habis pakai',
   service: 'Jasa', subscription: 'Langganan / SaaS',
-  maintenance: 'Kontrak Maintenance', rental: 'Sewa Alat/Fasilitas',
-  project: 'Berbasis Proyek', other: 'Lainnya',
+  maintenance: 'Kontrak pemeliharaan', rental: 'Sewa alat/fasilitas',
+  project: 'Berbasis proyek', other: 'Lainnya',
 };
-
-/**
- * TabButton — DI LUAR komponen induk dengan sengaja.
- *
- * Sebelumnya komponen ini didefinisikan DI DALAM `ProcurementRequestModule`.
- * Akibatnya React melihat TIPE komponen yang BARU pada setiap render, lalu
- * membongkar-pasang seluruh subtree-nya: fokus keyboard hilang dan state di
- * dalamnya ter-reset — persis saat pemakai sedang mengetik di penyaring.
- * Gejalanya terasa seperti "kadang-kadang aplikasinya nge-lag", jadi hampir
- * tidak pernah dilaporkan sebagai bug.
- */
-function TabButton({ id, label, count, testId, active, onSelect }) {
-  return (
-    <button
-      onClick={() => onSelect(id)}
-      className={`relative -mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-        active
-          ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
-          : 'border-transparent text-muted-foreground hover:text-foreground'
-      }`}
-      data-testid={testId}
-    >
-      {label}
-      {count > 0 && (
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-          id === 'inbox'
-            ? 'bg-amber-500 text-white'
-            : 'bg-foreground/10 text-foreground/70'
-        }`}>
-          {count}
-        </span>
-      )}
-    </button>
-  );
-}
 
 const fmtRp = formatRupiah;
 
-function StatusBadge({ status }) {
-  const c = STATUS_CFG[status] || STATUS_CFG.draft;
-  const Icon = c.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${c.color}`}>
-      <Icon size={10} /> {c.label}
-    </span>
-  );
+function PRStatusBadge({ status }) {
+  const c = STATUS_CFG[status] || { label: status || '—', tone: 'default' };
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
 }
 
 function PriorityBadge({ priority }) {
   const c = PRIORITY_CFG[priority] || PRIORITY_CFG.medium;
+  return <StatusBadge status={priority} label={c.label} tone={c.tone} />;
+}
+
+/** Penanda jenis dokumen di kotak persetujuan gabungan (PR, PR aksesoris, PO). */
+function KindBadges({ it }) {
   return (
-    <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${c.color}`}>
-      {c.label}
-    </span>
+    <>
+      {it.kind === 'acc_pr' && <StatusBadge status="acc_pr" label={<><Package className="h-3 w-3" />Aksesoris</>} tone="primary" />}
+      {/* 2026-08-07 — Purchase Order ikut ke kotak persetujuan gabungan.
+          PO adalah KOMITMEN UANG ke supplier, jadi harus mudah dikenali. */}
+      {it.kind === 'po' && <StatusBadge status="po" label={<><ShoppingCart className="h-3 w-3" />Purchase Order</>} tone="info" />}
+      {it.exceeds_pr_value && <StatusBadge status="exceeds" label="Melebihi nilai PR" tone="danger" />}
+    </>
   );
 }
 
-// ── Stats Card ────────────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, color = 'text-foreground' }) {
-  return (
-    <div className="bg-foreground/5 border border-foreground/10 rounded-xl p-4">
-      <div className="text-xs text-muted-foreground mb-1">{label}</div>
-      <div className={`text-2xl font-bold tabular-nums ${color}`}>{value}</div>
-      {sub && <div className="text-xs text-muted-foreground/60 dark:text-zinc-500 mt-0.5">{sub}</div>}
-    </div>
-  );
-}
-
-// ── Create PR Modal ───────────────────────────────────────────────────────────
+// ── Form buat PR (popup standar) ─────────────────────────────────────────────
 function CreatePRModal({ onClose, onCreated, token }) {
   const [form, setForm] = useState({
     title: '', description: '', justification: '',
@@ -284,139 +258,122 @@ function CreatePRModal({ onClose, onCreated, token }) {
     } finally { setSaving(false); }
   };
 
-  const inp = 'w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-blue-600 dark:border-blue-500/50';
-  const sel = inp + ' appearance-none';
-
   return (
-    <div className="fixed inset-0 bg-foreground/50 z-50 flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-card border border-foreground/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-foreground/10">
-          <h2 className="text-base font-semibold text-foreground">Buat Permintaan Pengadaan</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
-        </div>
-        <div className="p-5 space-y-4">
-          {error && <div className="text-red-700 dark:text-red-400 text-sm bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/20 rounded-lg px-3 py-2">{error}</div>}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <DocNumberField
-                policy={numPolicy}
-                value={form.request_number}
-                onChange={(v) => setForm(p => ({ ...p, request_number: v }))}
-                label="Nomor PR"
-                testId="pr-number"
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-muted-foreground mb-1 block">Judul Permintaan *</label>
-              <input className={inp} placeholder="mis. Pembelian Laptop Karyawan Baru" value={form.title} onChange={e => setForm(p=>({...p,title:e.target.value}))} />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Tipe Pengadaan</label>
-              <SmartNativeSelect className={sel} value={form.request_type} onChange={e => setForm(p=>({...p,request_type:e.target.value}))} data-testid="pr-form-type">
-                {requestTypes.map(rt => <option key={rt.value} value={rt.value}>{rt.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Prioritas</label>
-              <SmartNativeSelect className={sel} value={form.priority} onChange={e => setForm(p=>({...p,priority:e.target.value}))} data-testid="pr-form-priority">
-                {Object.entries(PRIORITY_CFG).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-muted-foreground mb-1 block">Departemen</label>
-              {/* 2026-11-07 (OR1): dari Struktur Organisasi; bawaan = departemen karyawan pemohon */}
-              <DepartmentSelect token={token} value={form.department} defaultToMine testId="pr-form-department"
-                className={sel} onChange={v => setForm(p => ({ ...p, department: v }))} />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-muted-foreground mb-1 block">Justifikasi / Alasan</label>
-              <textarea className={inp} rows={2} placeholder="Jelaskan mengapa pengadaan ini diperlukan" value={form.justification} onChange={e => setForm(p=>({...p,justification:e.target.value}))} />
-            </div>
-          </div>
-
-          <div className="border-t border-foreground/10 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold text-foreground">Items ({items.length})</span>
-              <button onClick={addItem} className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:text-blue-300">
-                <Plus size={12} /> Tambah Item
-              </button>
-            </div>
-            {items.map((it, i) => {
-              const opt = uomMap[it.material_id];
-              const f = factorOf(it);
-              const qtyBase = (Number(it.qty) || 0) * f;
-              return (
-                <div key={i} className="bg-foreground/5 border border-foreground/10 rounded-xl p-3 mb-2 space-y-2">
-                  <div className="flex gap-2">
-                    <SmartNativeSelect
-                      className={sel}
-                      value={it.material_id}
-                      onChange={e => pickMaterial(i, e.target.value)}
-                      data-testid={`pr-item-material-${i}`}
-                    >
-                      <option value="">Item bebas / non-master</option>
-                      {materials.map(m => (
-                        <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
-                      ))}
-                    </SmartNativeSelect>
-                    {items.length > 1 && (
-                      <button onClick={() => rmItem(i)} className="p-2 text-red-700 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 flex-shrink-0"
-                              data-testid={`pr-item-remove-${i}`}>
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                  <input className={inp} placeholder="Nama item *" value={it.name}
-                         onChange={e => setItem(i, 'name', e.target.value)}
-                         data-testid={`pr-item-name-${i}`} />
-                  <input className={inp} placeholder="Spesifikasi" value={it.specification} onChange={e => setItem(i,'specification',e.target.value)} />
-                  <div className="grid grid-cols-3 gap-2">
-                    <input type="number" min="0" step="0.01" className={inp} placeholder="Qty" value={it.qty}
-                           onChange={e => setItem(i,'qty',e.target.value)} data-testid={`pr-item-qty-${i}`} />
-                    {it.material_id && opt ? (
-                      <SmartNativeSelect className={sel} value={it.unit}
-                                         onChange={e => setItem(i, 'unit', e.target.value)}
-                                         data-testid={`pr-item-uom-${i}`}>
-                        {(opt.units || []).map(u => <option key={u.unit} value={u.unit}>{u.unit}</option>)}
-                      </SmartNativeSelect>
-                    ) : (
-                      <input className={inp} placeholder="Satuan" value={it.unit}
-                             onChange={e => setItem(i,'unit',e.target.value)}
-                             data-testid={`pr-item-uom-${i}`} />
-                    )}
-                    <MoneyInput unstyled className={inp} placeholder="Estimasi Harga" value={it.estimated_price}
-                           onChange={e => setItem(i,'estimated_price',e.target.value)}
-                           data-testid={`pr-item-price-${i}`} />
-                  </div>
-                  {it.material_id && opt && it.unit && it.unit !== opt.base_unit && (
-                    <p className="text-[11px] text-muted-foreground" data-testid={`pr-item-preview-${i}`}>
-                      1 {it.unit} = {f.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit} ⇒{' '}
-                      <span className="font-semibold text-foreground">
-                        {qtyBase.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit}
-                      </span>{' '}
-                      · harga per {opt.base_unit}: {fmtRp((Number(it.estimated_price) || 0) / (f || 1))}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-            <div className="text-right text-sm font-semibold text-foreground mt-2">
-              Total Estimasi: <span className="text-emerald-600 dark:text-emerald-400">{fmtRp(totalEst)}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 p-5 border-t border-foreground/10">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Batal</button>
-          <button onClick={submit} disabled={saving} className="px-5 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-foreground rounded-xl disabled:opacity-50">
-            {saving ? 'Menyimpan...' : 'Simpan Draft'}
-          </button>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="pr-create-form"
+      judul="Buat permintaan pengadaan"
+      keterangan="Disimpan sebagai draf. Ajukan ke penyetuju dari rincian permintaan."
+      onSimpan={submit} menyimpan={saving} galat={error} labelSimpan="Simpan draf"
+      aksiKiri={
+        // Total selalu terlihat di kaki popup (dulu di ujung daftar item, tertutup kaki saat item banyak).
+        <span className="text-sm text-muted-foreground" data-testid="pr-form-total">
+          Total estimasi: <span className="font-semibold tabular-nums text-foreground">{fmtRp(totalEst)}</span>
+        </span>
+      }>
+      <DocNumberField
+        policy={numPolicy}
+        value={form.request_number}
+        onChange={(v) => setForm(p => ({ ...p, request_number: v }))}
+        label="Nomor PR"
+        testId="pr-number"
+      />
+      <Isian label="Judul permintaan" wajib htmlFor="pr-form-title">
+        <Input id="pr-form-title" placeholder="mis. Pembelian laptop karyawan baru" value={form.title}
+          onChange={e => setForm(p => ({ ...p, title: e.target.value }))} data-testid="pr-form-title" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Isian label="Tipe pengadaan">
+          <SmartNativeSelect value={form.request_type} onChange={e => setForm(p => ({ ...p, request_type: e.target.value }))} data-testid="pr-form-type">
+            {requestTypes.map(rt => <option key={rt.value} value={rt.value}>{rt.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Prioritas">
+          <SmartNativeSelect value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value }))} data-testid="pr-form-priority">
+            {Object.entries(PRIORITY_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Departemen" petunjuk="Bawaan = departemen Anda.">
+          {/* 2026-11-07 (OR1): dari Struktur Organisasi; bawaan = departemen karyawan pemohon */}
+          <DepartmentSelect token={token} value={form.department} defaultToMine testId="pr-form-department"
+            className="w-full h-9" onChange={v => setForm(p => ({ ...p, department: v }))} />
+        </Isian>
       </div>
-    </div>
+      <Isian label="Justifikasi / alasan" htmlFor="pr-form-justification">
+        <Textarea id="pr-form-justification" rows={2} placeholder="Jelaskan mengapa pengadaan ini diperlukan"
+          value={form.justification} onChange={e => setForm(p => ({ ...p, justification: e.target.value }))} />
+      </Isian>
+
+      <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-foreground">Item ({items.length})</p>
+          <Button type="button" size="sm" variant="outline" onClick={addItem} data-testid="pr-item-add">
+            <Plus />Tambah item
+          </Button>
+        </div>
+        {items.map((it, i) => {
+          const opt = uomMap[it.material_id];
+          const f = factorOf(it);
+          const qtyBase = (Number(it.qty) || 0) * f;
+          return (
+            <div key={i} className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
+              <div className="flex gap-2">
+                <div className="min-w-0 flex-1 sm:max-w-sm">
+                  <SmartNativeSelect
+                    value={it.material_id}
+                    onChange={e => pickMaterial(i, e.target.value)}
+                    data-testid={`pr-item-material-${i}`}
+                  >
+                    <option value="">Item bebas / non-master</option>
+                    {materials.map(m => (
+                      <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
+                    ))}
+                  </SmartNativeSelect>
+                </div>
+                {items.length > 1 && (
+                  <Button type="button" variant="ghost" size="icon" className="ml-auto" onClick={() => rmItem(i)}
+                    title="Hapus item" aria-label="Hapus item" data-testid={`pr-item-remove-${i}`}>
+                    <Trash2 className="text-[hsl(var(--danger-text))]" />
+                  </Button>
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input placeholder="Nama item *" aria-label="Nama item" value={it.name}
+                  onChange={e => setItem(i, 'name', e.target.value)} data-testid={`pr-item-name-${i}`} />
+                <Input placeholder="Spesifikasi" aria-label="Spesifikasi" value={it.specification}
+                  onChange={e => setItem(i, 'specification', e.target.value)} />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <Input type="number" min="0" step="0.01" placeholder="Qty" aria-label="Qty" value={it.qty}
+                  onChange={e => setItem(i, 'qty', e.target.value)} data-testid={`pr-item-qty-${i}`} />
+                {it.material_id && opt ? (
+                  <SmartNativeSelect value={it.unit} onChange={e => setItem(i, 'unit', e.target.value)}
+                    data-testid={`pr-item-uom-${i}`}>
+                    {(opt.units || []).map(u => <option key={u.unit} value={u.unit}>{u.unit}</option>)}
+                  </SmartNativeSelect>
+                ) : (
+                  <Input placeholder="Satuan" aria-label="Satuan" value={it.unit}
+                    onChange={e => setItem(i, 'unit', e.target.value)} data-testid={`pr-item-uom-${i}`} />
+                )}
+                <MoneyInput placeholder="Estimasi harga" aria-label="Estimasi harga" value={it.estimated_price}
+                  onChange={e => setItem(i, 'estimated_price', e.target.value)} data-testid={`pr-item-price-${i}`} />
+              </div>
+              {it.material_id && opt && it.unit && it.unit !== opt.base_unit && (
+                <p className="text-xs text-muted-foreground" data-testid={`pr-item-preview-${i}`}>
+                  1 {it.unit} = {f.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit} ⇒{' '}
+                  <span className="font-semibold text-foreground">
+                    {qtyBase.toLocaleString('id-ID', { maximumFractionDigits: 4 })} {opt.base_unit}
+                  </span>{' '}
+                  · harga per {opt.base_unit}: {fmtRp((Number(it.estimated_price) || 0) / (f || 1))}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </FormPopup>
   );
 }
 
-// ── Create PO from PR Modal ───────────────────────────────────────────────────
+// ── Form buat PO dari PR (popup standar) ─────────────────────────────────────
 function CreatePOFromPRModal({ pr, token, onClose, onCreated }) {
   const [form, setForm] = useState({
     supplier_id: '', vendor_name: '', vendor_contact: '', vendor_address: '',
@@ -425,8 +382,6 @@ function CreatePOFromPRModal({ pr, token, onClose, onCreated }) {
   const [suppliers, setSuppliers] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const inp = 'w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none focus:border-blue-600 dark:border-blue-500/50';
-  const sel = inp + ' appearance-none';
 
   useEffect(() => {
     fetch(`${API}/api/procurement/suppliers/options`, { headers: { Authorization: `Bearer ${token}` } })
@@ -451,98 +406,70 @@ function CreatePOFromPRModal({ pr, token, onClose, onCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-foreground/60 z-[60] flex items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-card border border-foreground/10 rounded-2xl w-full max-w-lg" data-testid="create-po-from-pr-modal">
-        <div className="flex items-center justify-between p-5 border-b border-foreground/10">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">Buat Purchase Order</h2>
-            <p className="text-xs text-muted-foreground/60 dark:text-zinc-500 mt-0.5">Dari PR: {pr.request_number} — {pr.title}</p>
-          </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
-        </div>
-        <div className="p-5 space-y-3">
-          {error && <div className="text-red-700 dark:text-red-400 text-sm bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/20 rounded-lg px-3 py-2">{error}</div>}
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Supplier (Master) *</label>
-            <SmartNativeSelect
-              className={sel}
-              value={form.supplier_id}
-              onChange={(e) => {
-                const sid = e.target.value;
-                const s = suppliers.find((x) => x.id === sid);
-                // 2026-11-07 (Tahap 5): kontak & alamat ikut supplier baru (dulu mewarisi supplier sebelumnya)
-                const prevSup = suppliers.find((x) => x.id === form.supplier_id);
-                const fromPrev = (v, k) => !prevSup || v === (prevSup[k] || '');
-                setForm((p) => ({
-                  ...p,
-                  supplier_id: sid,
-                  vendor_name: s?.name || '',
-                  vendor_contact: s?.phone || (fromPrev(p.vendor_contact, 'phone') ? '' : p.vendor_contact),
-                  vendor_address: s?.address || (fromPrev(p.vendor_address, 'address') ? '' : p.vendor_address),
-                }));
-              }}
-              data-testid="po-vendor-name"
-            >
-              <option value="">Pilih supplier dari master</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
-              ))}
-            </SmartNativeSelect>
-            {suppliers.length === 0 && (
-              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                Master Supplier masih kosong. Tambahkan supplier di menu Master Supplier.
-              </p>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Kontak Vendor</label>
-              <input className={inp} placeholder="Telepon / Email" value={form.vendor_contact}
-                onChange={e => setForm(p=>({...p,vendor_contact:e.target.value}))} />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Tgl. Pengiriman Diharapkan</label>
-              <input type="date" className={inp} value={form.expected_delivery_date}
-                onChange={e => setForm(p=>({...p,expected_delivery_date:e.target.value}))} />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Alamat Vendor</label>
-            <input className={inp} placeholder="Alamat lengkap vendor" value={form.vendor_address}
-              onChange={e => setForm(p=>({...p,vendor_address:e.target.value}))} />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Catatan</label>
-            <textarea className={inp} rows={2} placeholder="Instruksi tambahan untuk vendor" value={form.notes}
-              onChange={e => setForm(p=>({...p,notes:e.target.value}))} />
-          </div>
-          {/* Item preview */}
-          <div className="bg-foreground/5 border border-foreground/10 rounded-xl p-3">
-            <p className="text-xs text-muted-foreground mb-2">Item dari PR ({(pr.items||[]).length} item):</p>
-            <div className="space-y-1">
-              {(pr.items||[]).map((it,i) => (
-                <div key={i} className="flex justify-between text-xs">
-                  <span className="text-foreground/80">{it.name} <span className="text-muted-foreground/60 dark:text-zinc-500">× {it.qty} {it.unit}</span></span>
-                  <span className="text-emerald-600 dark:text-emerald-400">{fmtRp(it.total_price)}</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between text-sm font-semibold mt-2 pt-2 border-t border-foreground/10">
-              <span className="text-foreground/80">Total Estimasi</span>
-              <span className="text-emerald-600 dark:text-emerald-400">{fmtRp(pr.total_estimated)}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex justify-end gap-3 p-5 border-t border-foreground/10">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Batal</button>
-          <button onClick={submit} disabled={saving}
-            className="px-5 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-foreground rounded-xl disabled:opacity-50"
-            data-testid="btn-confirm-create-po">
-            {saving ? 'Membuat PO...' : 'Buat PO'}
-          </button>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="create-po-from-pr-modal"
+      judul="Buat purchase order" keterangan={`Dari PR ${pr.request_number} — ${pr.title}`}
+      onSimpan={submit} menyimpan={saving} galat={error} labelSimpan="Buat PO">
+      <Isian label="Supplier (master)" wajib
+        petunjuk={suppliers.length === 0 ? 'Master Supplier masih kosong. Tambahkan supplier di menu Master Supplier.' : undefined}>
+        <SmartNativeSelect
+          value={form.supplier_id}
+          onChange={(e) => {
+            const sid = e.target.value;
+            const s = suppliers.find((x) => x.id === sid);
+            // 2026-11-07 (Tahap 5): kontak & alamat ikut supplier baru (dulu mewarisi supplier sebelumnya)
+            const prevSup = suppliers.find((x) => x.id === form.supplier_id);
+            const fromPrev = (v, k) => !prevSup || v === (prevSup[k] || '');
+            setForm((p) => ({
+              ...p,
+              supplier_id: sid,
+              vendor_name: s?.name || '',
+              vendor_contact: s?.phone || (fromPrev(p.vendor_contact, 'phone') ? '' : p.vendor_contact),
+              vendor_address: s?.address || (fromPrev(p.vendor_address, 'address') ? '' : p.vendor_address),
+            }));
+          }}
+          data-testid="po-vendor-name"
+        >
+          <option value="">Pilih supplier dari master</option>
+          {suppliers.map((s) => (
+            <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
+          ))}
+        </SmartNativeSelect>
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Kontak supplier" htmlFor="po-pr-contact">
+          <Input id="po-pr-contact" placeholder="Telepon / email" value={form.vendor_contact}
+            onChange={e => setForm(p => ({ ...p, vendor_contact: e.target.value }))} />
+        </Isian>
+        <Isian label="Tanggal kirim diharapkan">
+          <DatePicker value={form.expected_delivery_date} placeholder="Pilih tanggal" testId="po-pr-expected-date"
+            onChange={(v) => setForm(p => ({ ...p, expected_delivery_date: v }))} />
+        </Isian>
+      </div>
+      <Isian label="Alamat supplier" htmlFor="po-pr-address">
+        <Input id="po-pr-address" placeholder="Alamat lengkap supplier" value={form.vendor_address}
+          onChange={e => setForm(p => ({ ...p, vendor_address: e.target.value }))} />
+      </Isian>
+      <Isian label="Catatan" htmlFor="po-pr-notes">
+        <Textarea id="po-pr-notes" rows={2} placeholder="Instruksi tambahan untuk supplier" value={form.notes}
+          onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+      </Isian>
+      {/* Pratinjau item */}
+      <div className="rounded-lg border border-[var(--glass-border)] p-3">
+        <p className="mb-2 text-xs text-muted-foreground">Item dari PR ({(pr.items || []).length} item)</p>
+        <ul className="space-y-1">
+          {(pr.items || []).map((it, i) => (
+            <li key={i} className="flex justify-between gap-2 text-sm">
+              <span className="min-w-0 text-foreground">{it.name} <span className="text-muted-foreground">× {it.qty} {it.unit}</span></span>
+              <span className="shrink-0 tabular-nums">{fmtRp(it.total_price)}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-2 flex justify-between border-t border-[var(--glass-border)] pt-2 text-sm font-semibold">
+          <span>Total estimasi</span>
+          <span className="tabular-nums">{fmtRp(pr.total_estimated)}</span>
         </div>
       </div>
-    </div>
+    </FormPopup>
   );
 }
 
@@ -558,19 +485,10 @@ function ApprovalStepper({ chain, compact = false }) {
       <span className="inline-flex flex-wrap items-center gap-1" data-testid="pr-stepper-compact">
         {chain.map((s, i) => (
           <span key={s.stage} className="inline-flex items-center gap-1">
-            <span
-              className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${
-                s.done
-                  ? 'text-emerald-700 bg-emerald-100 border-emerald-300 dark:text-emerald-400 dark:bg-emerald-400/10 dark:border-emerald-400/20'
-                  : s.current
-                    ? 'text-amber-700 bg-amber-100 border-amber-300 dark:text-amber-400 dark:bg-amber-400/10 dark:border-amber-400/20'
-                    : 'text-muted-foreground bg-muted border-border'
-              }`}
-            >
-              {s.done ? <Check size={9} /> : s.current ? <Clock size={9} /> : <Circle size={9} />}
-              {STAGE_SHORT[s.stage] || s.label}
-            </span>
-            {i < chain.length - 1 && <ChevronRight size={10} className="text-muted-foreground/60" />}
+            <StatusBadge status={s.stage} tone={s.done ? 'success' : s.current ? 'warning' : 'muted'}
+              label={<>{s.done ? <Check className="h-3 w-3" /> : s.current ? <Clock className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+                {STAGE_SHORT[s.stage] || s.label}</>} />
+            {i < chain.length - 1 && <ChevronRight className="h-3 w-3 text-muted-foreground" />}
           </span>
         ))}
       </span>
@@ -578,56 +496,31 @@ function ApprovalStepper({ chain, compact = false }) {
   }
 
   return (
-    <div className="space-y-2" data-testid="pr-approval-stepper">
+    <ol className="space-y-2" data-testid="pr-approval-stepper">
       {chain.map((s) => (
-        <div
-          key={s.stage}
-          data-testid={`pr-stage-${s.stage}`}
-          className={`flex items-start gap-3 rounded-xl border px-3 py-2 ${
-            s.done
-              ? 'border-emerald-300 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10'
-              : s.current
-                ? 'border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10'
-                : 'border-foreground/10 bg-foreground/5'
-          }`}
-        >
-          <div
-            className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-              s.done
-                ? 'bg-emerald-600 text-white'
-                : s.current
-                  ? 'bg-amber-500 text-white'
-                  : 'bg-muted text-muted-foreground'
-            }`}
-          >
-            {s.done ? <Check size={11} /> : s.order}
-          </div>
+        <li key={s.stage} data-testid={`pr-stage-${s.stage}`}
+          className="flex items-start gap-3 rounded-lg border border-[var(--glass-border)] px-3 py-2">
+          <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+            s.done ? 'bg-[hsl(var(--success-strong))] text-white'
+              : s.current ? 'bg-[hsl(var(--warning))] text-white' : 'bg-foreground/10 text-muted-foreground'}`}>
+            {s.done ? <Check className="h-3 w-3" /> : s.order}
+          </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-foreground">{s.label}</span>
-              {s.done && (
-                <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">Selesai</span>
-              )}
-              {s.current && (
-                <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400">
-                  Menunggu sekarang
-                </span>
-              )}
-              {s.override && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
-                  <ShieldAlert size={9} /> Override admin
-                </span>
-              )}
+              <span className="text-sm font-medium text-foreground">{s.label}</span>
+              {s.done && <StatusBadge status="done" label="Selesai" tone="success" />}
+              {s.current && <StatusBadge status="current" label="Menunggu sekarang" tone="warning" />}
+              {s.override && <StatusBadge status="override" label={<><ShieldAlert className="h-3 w-3" />Ditembus admin</>} tone="warning" />}
             </div>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {s.done
                 ? `Oleh ${s.actor_name || '—'}${s.timestamp ? ` · ${fmtDT(s.timestamp)}` : ''}`
-                : `Menunggu ${s.role_hint || 'approver'}`}
+                : `Menunggu ${s.role_hint || 'penyetuju'}`}
             </p>
           </div>
-        </div>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
 
@@ -637,36 +530,22 @@ function ApprovalStepper({ chain, compact = false }) {
 function GateNotice({ item }) {
   if (item?.can_approve && item?.is_override) {
     return (
-      <div
-        className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10"
-        data-testid="pr-override-notice"
-      >
-        <ShieldAlert size={14} className="mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
-        <p className="text-xs text-amber-800 dark:text-amber-300">
-          {item.override_note
-            || 'Anda menembus aturan pemisahan wewenang sebagai admin/owner — tindakan ini dicatat di riwayat.'}
-        </p>
-      </div>
+      <Notice tone="warning" icon={ShieldAlert} testId="pr-override-notice">
+        {item.override_note
+          || 'Anda menembus aturan pemisahan wewenang sebagai admin/owner — tindakan ini dicatat di riwayat.'}
+      </Notice>
     );
   }
   if (!item?.can_approve && item?.blocked_reason) {
     // Hanya berguna saat masih ADA tahap yang menunggu. Pada PR yang sudah
     // selesai/ditolak, "tidak ada persetujuan yang menunggu" cuma kebisingan.
     if (!item?.stage) return null;
-    return (
-      <div
-        className="flex items-start gap-2 rounded-xl border border-border bg-muted px-3 py-2"
-        data-testid="pr-blocked-reason"
-      >
-        <Info size={14} className="mt-0.5 flex-shrink-0 text-muted-foreground" />
-        <p className="text-xs text-foreground/70">{item.blocked_reason}</p>
-      </div>
-    );
+    return <Notice tone="info" icon={Info} testId="pr-blocked-reason">{item.blocked_reason}</Notice>;
   }
   return null;
 }
 
-// ── Detail Modal ──────────────────────────────────────────────────────────────
+// ── Detail (popup standar) ────────────────────────────────────────────────────
 function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
   const [pr, setPr] = useState(item);
   const [note, setNote] = useState('');
@@ -720,13 +599,13 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
       if (action === 'approve') {
         setOkMsg(d.next_stage_label
           ? `Disetujui. Lanjut ke ${d.next_stage_label}.`
-          : 'Disetujui penuh — permintaan siap dijadikan Purchase Order.');
+          : 'Disetujui penuh — permintaan siap dijadikan purchase order.');
       }
       setNote('');
       await reload();
       onAction(d);
     } catch (e) {
-      setErr(e.response?.data?.detail || `Gagal ${action === 'approve' ? 'menyetujui' : action === 'reject' ? 'menolak' : action}`);
+      setErr(e.response?.data?.detail || `Gagal ${action === 'approve' ? 'menyetujui' : action === 'reject' ? 'menolak' : 'memproses'}`);
     } finally {
       setActing('');
     }
@@ -744,195 +623,164 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
   const canCreatePO = pr.status === 'approved' && !pr.linked_po_number
     && (item.kind || 'pr') === 'pr';
   const hasActions = canApprove || canReject || canSubmit || canComplete || canCreatePO;
+  const prItems = pr.items || [];
 
   return (
-    <div
-      className="fixed inset-0 bg-foreground/50 z-50 flex items-start justify-center p-4 pt-16"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="bg-card border border-foreground/10 rounded-2xl w-full max-w-2xl max-h-[82vh] overflow-y-auto"
-           data-testid="pr-detail-modal">
-        <div className="flex items-start justify-between p-5 border-b border-foreground/10">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">{pr.title}</h2>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="text-xs text-muted-foreground/60 dark:text-zinc-500">{pr.request_number}</span>
-              <StatusBadge status={pr.status} />
-              <PriorityBadge priority={pr.priority} />
-            </div>
-          </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" data-testid="pr-detail-close">✕</button>
-        </div>
+    <>
+      <DetailPopup open onClose={onClose} testId="pr-detail-modal"
+        judul={pr.title}
+        keterangan={pr.request_number}
+        status={<><PRStatusBadge status={pr.status} /><PriorityBadge priority={pr.priority} /></>}
+        aksi={prItems.length > 0 && (
+          <TombolUnduh namaBerkas={`item-${pr.request_number || 'pr'}`} namaLembar="Item PR" baris={prItems}
+            testId="pr-detail-unduh"
+            kolom={[
+              { label: 'Nama item', nilai: (it) => it.name },
+              { label: 'Spesifikasi', nilai: (it) => it.specification || '' },
+              { label: 'Qty', nilai: (it) => Number(it.qty || 0) },
+              { label: 'Satuan', nilai: (it) => it.unit || '' },
+              { label: 'Total (Rp)', nilai: (it) => Number(it.total_price || 0) },
+            ]} />
+        )}>
+        {okMsg && <Notice tone="success" icon={CheckCircle2} testId="pr-action-success">{okMsg}</Notice>}
+        {err && <Notice tone="danger" icon={AlertTriangle} testId="pr-action-error">{err}</Notice>}
 
-        <div className="p-5 space-y-4">
-          {okMsg && (
-            <div className="flex items-start gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 dark:border-emerald-500/30 dark:bg-emerald-500/10"
-                 data-testid="pr-action-success">
-              <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <p className="text-xs text-emerald-800 dark:text-emerald-300">{okMsg}</p>
-            </div>
-          )}
-          {err && (
-            <div className="flex items-start gap-2 rounded-xl border border-red-300 bg-red-50 px-3 py-2 dark:border-red-500/30 dark:bg-red-500/10"
-                 data-testid="pr-action-error">
-              <AlertTriangle size={14} className="mt-0.5 flex-shrink-0 text-red-600 dark:text-red-400" />
-              <p className="text-xs text-red-700 dark:text-red-300">{err}</p>
-            </div>
-          )}
-
+        <dl className="divide-y divide-[var(--glass-border)]">
           {pr.linked_po_number && (
-            <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-500/10 border border-blue-300 dark:border-blue-500/20 rounded-xl px-3 py-2 text-sm">
-              <FileText size={13} className="text-blue-600 dark:text-blue-400" />
-              <span className="text-foreground/80">Purchase Order terhubung:</span>
-              <span className="text-blue-600 dark:text-blue-400 font-semibold">{pr.linked_po_number}</span>
-            </div>
+            <BarisDetail label="Purchase order terhubung">
+              <span className="inline-flex items-center gap-1.5 font-medium"><FileText className="h-4 w-4 text-muted-foreground" />{pr.linked_po_number}</span>
+            </BarisDetail>
           )}
+          <BarisDetail label="Tipe">{TYPE_LABELS[pr.request_type] || pr.request_type || '—'}</BarisDetail>
+          <BarisDetail label="Departemen">{pr.department || '—'}</BarisDetail>
+          <BarisDetail label="Total estimasi"><span className="font-semibold tabular-nums">{fmtRp(pr.total_estimated)}</span></BarisDetail>
+          {pr.justification && <BarisDetail label="Justifikasi">{pr.justification}</BarisDetail>}
+        </dl>
 
-          <div className="grid grid-cols-3 gap-3 text-sm">
-            <div><div className="text-xs text-muted-foreground">Tipe</div><div className="text-foreground">{TYPE_LABELS[pr.request_type] || pr.request_type}</div></div>
-            <div><div className="text-xs text-muted-foreground">Departemen</div><div className="text-foreground">{pr.department || '-'}</div></div>
-            <div><div className="text-xs text-muted-foreground">Total Estimasi</div><div className="text-emerald-600 dark:text-emerald-400 font-semibold">{fmtRp(pr.total_estimated)}</div></div>
-          </div>
+        {pr.status === 'rejected' && pr.rejection_reason && (
+          <Notice tone="danger" title="Alasan penolakan" testId="pr-rejection-reason">{pr.rejection_reason}</Notice>
+        )}
 
-          {/* Rantai persetujuan — jumlah tahap mengikuti nilai PR */}
-          {Array.isArray(pr.chain) && pr.chain.length > 0 && (
-            <div>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                  <Layers size={13} /> Rantai Persetujuan
-                </span>
-                <span className="text-[11px] text-muted-foreground" data-testid="pr-chain-summary">
-                  {pr.total_stages} tahap untuk nilai {fmtRp(pr.total_estimated)}
-                  {pr.status === 'draft' ? ' (perkiraan — dibekukan saat diajukan)' : ''}
-                </span>
-              </div>
-              <ApprovalStepper chain={pr.chain} />
-              {pr.stage && (
-                <p className="mt-2 text-[11px] text-muted-foreground" data-testid="pr-next-approver">
-                  Berikutnya setelah tahap ini: {pr.next_approver_label}
-                </p>
-              )}
-            </div>
-          )}
-
-          {pr.justification && (
-            <div className="bg-foreground/5 border border-foreground/10 rounded-xl p-3">
-              <div className="text-xs text-muted-foreground mb-1">Justifikasi</div>
-              <p className="text-sm text-foreground/80">{pr.justification}</p>
-            </div>
-          )}
-
-          {pr.status === 'rejected' && pr.rejection_reason && (
-            <div className="rounded-xl border border-red-300 bg-red-50 p-3 dark:border-red-500/30 dark:bg-red-500/10"
-                 data-testid="pr-rejection-reason">
-              <div className="mb-1 text-xs font-semibold text-red-700 dark:text-red-400">Alasan Penolakan</div>
-              <p className="text-sm text-red-800 dark:text-red-300">{pr.rejection_reason}</p>
-            </div>
-          )}
-
+        {/* Rantai persetujuan — jumlah tahap mengikuti nilai PR */}
+        {Array.isArray(pr.chain) && pr.chain.length > 0 && (
           <div>
-            <div className="text-sm font-semibold text-foreground mb-2">Items ({(pr.items || []).length})</div>
-            <div className="space-y-1">
-              {(pr.items || []).map((it, i) => (
-                <div key={i} className="flex items-center justify-between bg-foreground/5 rounded-lg px-3 py-2 text-sm">
-                  <div>
-                    <span className="text-foreground">{it.name}</span>
-                    {it.specification && <span className="text-muted-foreground/60 dark:text-zinc-500 text-xs ml-2">{it.specification}</span>}
-                  </div>
-                  <div className="text-right">
-                    <span className="text-foreground/80">{it.qty} {it.unit}</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 ml-3">{fmtRp(it.total_price)}</span>
-                  </div>
-                </div>
-              ))}
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                <Layers className="h-4 w-4" /> Rantai persetujuan
+              </span>
+              <span className="text-xs text-muted-foreground" data-testid="pr-chain-summary">
+                {pr.total_stages} tahap untuk nilai {fmtRp(pr.total_estimated)}
+                {pr.status === 'draft' ? ' (perkiraan — dibekukan saat diajukan)' : ''}
+              </span>
             </div>
-          </div>
-
-          {/* Riwayat keputusan */}
-          <div>
-            <div className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
-              <History size={13} /> Riwayat
-            </div>
-            {loadTL ? (
-              <p className="text-xs text-muted-foreground">Memuat riwayat…</p>
-            ) : timeline.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Belum ada langkah — permintaan masih draft.</p>
-            ) : (
-              <div className="space-y-1" data-testid="pr-timeline">
-                {timeline.map((t, i) => (
-                  <div key={i} className="flex flex-wrap gap-2 text-xs">
-                    <span className="text-muted-foreground/60 dark:text-zinc-500 w-32 flex-shrink-0">{fmtDT(t.timestamp)}</span>
-                    <span className="text-foreground/80">{t.action_label || t.action}</span>
-                    {t.actor_name && <span className="text-muted-foreground/60 dark:text-zinc-500">— {t.actor_name}</span>}
-                    {t.override && (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-300">
-                        <ShieldAlert size={9} /> override
-                      </span>
-                    )}
-                    {t.comment && <span className="text-muted-foreground italic">“{t.comment}”</span>}
-                  </div>
-                ))}
-              </div>
+            <ApprovalStepper chain={pr.chain} />
+            {pr.stage && (
+              <p className="mt-2 text-xs text-muted-foreground" data-testid="pr-next-approver">
+                Berikutnya setelah tahap ini: {pr.next_approver_label}
+              </p>
             )}
           </div>
+        )}
 
-          <GateNotice item={pr} />
-
-          {hasActions && (
-            <div className="border-t border-foreground/10 pt-4 space-y-2">
-              {(canApprove || canReject) && (
-                <textarea
-                  className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none"
-                  rows={2}
-                  autoFocus={focusReject}
-                  placeholder={canReject ? 'Catatan persetujuan / alasan penolakan (wajib bila menolak)' : 'Catatan (opsional)'}
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  data-testid="pr-decision-note"
-                />
-              )}
-              <div className="flex gap-2 justify-end flex-wrap">
-                {canSubmit && (
-                  <button onClick={() => doAction('submit')} disabled={!!acting}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl disabled:opacity-50"
-                    data-testid="btn-submit-pr">
-                    <Send size={13} /> {acting === 'submit' ? 'Mengirim...' : 'Ajukan ke Approver'}
-                  </button>
-                )}
-                {canReject && (
-                  <button onClick={() => doAction('reject')} disabled={!!acting}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-red-600/20 hover:bg-red-600/40 text-red-700 dark:text-red-400 border border-red-300 dark:border-red-500/20 rounded-xl disabled:opacity-50"
-                    data-testid="btn-reject-pr">
-                    <XCircle size={13} /> {acting === 'reject' ? 'Menolak...' : 'Tolak'}
-                  </button>
-                )}
-                {canApprove && (
-                  <button onClick={() => doAction('approve')} disabled={!!acting}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl disabled:opacity-50"
-                    data-testid="btn-approve-pr">
-                    <CheckCircle2 size={13} />
-                    {acting === 'approve' ? 'Menyetujui...' : `Setujui — ${pr.stage_label || 'tahap ini'}`}
-                  </button>
-                )}
-                {canCreatePO && (
-                  <button onClick={() => setShowCreatePO(true)} disabled={!!acting}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl disabled:opacity-50"
-                    data-testid="btn-create-po-from-pr">
-                    <FileText size={13} /> Buat Purchase Order
-                  </button>
-                )}
-                {canComplete && (
-                  <button onClick={() => doAction('complete')} disabled={!!acting}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white rounded-xl disabled:opacity-50"
-                    data-testid="btn-complete-pr">
-                    <CheckCircle2 size={13} /> {acting === 'complete' ? 'Menyelesaikan...' : 'Tandai Selesai'}
-                  </button>
-                )}
-              </div>
+        <div>
+          <p className="mb-2 text-sm font-semibold text-foreground">Item ({prItems.length})</p>
+          {prItems.length === 0 ? <p className="text-sm text-muted-foreground">Tidak ada item.</p> : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nama item</TableHead>
+                    <TableHead>Spesifikasi</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {prItems.map((it, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="font-medium">{it.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{it.specification || '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{it.qty} {it.unit}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{fmtRp(it.total_price)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           )}
         </div>
-      </div>
+
+        {/* Riwayat keputusan */}
+        <div>
+          <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-foreground">
+            <History className="h-4 w-4" /> Riwayat
+          </p>
+          {loadTL ? (
+            <p className="text-sm text-muted-foreground">Memuat riwayat…</p>
+          ) : timeline.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Permintaan masih draf — riwayat muncul setelah diajukan.</p>
+          ) : (
+            <ul className="space-y-1" data-testid="pr-timeline">
+              {timeline.map((t, i) => (
+                <li key={i} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="w-32 shrink-0 text-xs text-muted-foreground">{fmtDT(t.timestamp)}</span>
+                  <span className="text-foreground">{t.action_label || t.action}</span>
+                  {t.actor_name && <span className="text-muted-foreground">— {t.actor_name}</span>}
+                  {t.override && <StatusBadge status="override" label="Ditembus admin" tone="warning" />}
+                  {t.comment && <span className="italic text-muted-foreground">“{t.comment}”</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <GateNotice item={pr} />
+
+        {hasActions && (
+          <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+            {(canApprove || canReject) && (
+              <Textarea
+                rows={2}
+                autoFocus={focusReject}
+                aria-label="Catatan keputusan"
+                placeholder={canReject ? 'Catatan persetujuan / alasan penolakan (wajib bila menolak)' : 'Catatan (opsional)'}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                data-testid="pr-decision-note"
+              />
+            )}
+            <div className="flex flex-wrap justify-end gap-2">
+              {canSubmit && (
+                <Button onClick={() => doAction('submit')} disabled={!!acting} data-testid="btn-submit-pr">
+                  {acting === 'submit' ? <Loader2 className="animate-spin" /> : <Send />}
+                  {acting === 'submit' ? 'Mengirim…' : 'Ajukan ke penyetuju'}
+                </Button>
+              )}
+              {canReject && (
+                <Button variant="destructive" onClick={() => doAction('reject')} disabled={!!acting} data-testid="btn-reject-pr">
+                  <XCircle />{acting === 'reject' ? 'Menolak…' : 'Tolak'}
+                </Button>
+              )}
+              {canApprove && (
+                <Button variant="success" onClick={() => doAction('approve')} disabled={!!acting} data-testid="btn-approve-pr">
+                  <CheckCircle2 />
+                  {acting === 'approve' ? 'Menyetujui…' : `Setujui — ${pr.stage_label || 'tahap ini'}`}
+                </Button>
+              )}
+              {canCreatePO && (
+                <Button onClick={() => setShowCreatePO(true)} disabled={!!acting} data-testid="btn-create-po-from-pr">
+                  <FileText />Buat purchase order
+                </Button>
+              )}
+              {canComplete && (
+                <Button variant="success" onClick={() => doAction('complete')} disabled={!!acting} data-testid="btn-complete-pr">
+                  <CheckCircle2 />{acting === 'complete' ? 'Menyelesaikan…' : 'Tandai selesai'}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </DetailPopup>
 
       {showCreatePO && (
         <CreatePOFromPRModal
@@ -945,94 +793,88 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
             // padahal PO-nya sudah terbentuk) — bug staleness yang terlihat saat
             // verifikasi UI 2026-08-07.
             setShowCreatePO(false);
-            setOkMsg('Purchase Order berhasil dibuat dari permintaan ini.');
+            setOkMsg('Purchase order berhasil dibuat dari permintaan ini.');
             await reload();
             onAction({});
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 
-// ── Kartu PR (dipakai daftar & kotak persetujuan) ────────────────────────────
+// ── Kartu PR (tampilan Kartu & HP) ───────────────────────────────────────────
 function PRCard({ it, onOpen, onQuickApprove, quickBusy, showChain = true }) {
   return (
     <div
       onClick={() => onOpen(it)}
-      className="bg-foreground/5 border border-foreground/10 hover:border-foreground/20 rounded-xl p-4 cursor-pointer transition-all group"
+      className="cursor-pointer rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 transition-colors hover:border-[hsl(var(--primary)/0.35)]"
       data-testid={`pr-card-${it.request_number}`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <StatusBadge status={it.status} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <PRStatusBadge status={it.status} />
             <PriorityBadge priority={it.priority} />
-            <span className="text-[10px] text-muted-foreground/60 dark:text-zinc-500">{it.request_number}</span>
-            {it.department && (
-              <span className="text-[10px] text-muted-foreground dark:text-zinc-500 bg-muted px-1.5 py-0.5 rounded">
-                {it.department}
-              </span>
-            )}
-            {it.kind === 'acc_pr' && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-violet-300 bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:border-violet-400/30 dark:bg-violet-400/10 dark:text-violet-400">
-                <Package size={9} /> Aksesoris
-              </span>
-            )}
-            {/* 2026-08-07 — Purchase Order ikut ke kotak persetujuan gabungan.
-                PO adalah KOMITMEN UANG ke supplier, jadi harus mudah dikenali. */}
-            {it.kind === 'po' && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-400">
-                <ShoppingCart size={9} /> Purchase Order
-              </span>
-            )}
-            {it.exceeds_pr_value && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-400">
-                Melebihi nilai PR
-              </span>
-            )}
-            {it.can_approve && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-400">
-                <CheckCircle2 size={9} /> Perlu keputusan Anda
-              </span>
-            )}
+            <KindBadges it={it} />
+            {it.can_approve && <StatusBadge status="perlu" label="Perlu keputusan Anda" tone="success" />}
           </div>
-          <h3 className="text-sm font-semibold text-foreground mt-1.5 leading-snug">{it.title}</h3>
-          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground/60 dark:text-zinc-500 flex-wrap">
+          <p className="mt-1.5 text-sm font-semibold leading-snug text-foreground">{it.title}</p>
+          <p className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            <span>{it.request_number}</span>
+            {it.department && <span>{it.department}</span>}
             <span>{it.requested_by_name || 'Admin'}</span>
-            <span>{it.created_at ? new Date(it.created_at).toLocaleDateString('id-ID') : '-'}</span>
-            <span className="text-emerald-600 dark:text-emerald-400 font-medium">{fmtRp(it.total_estimated)}</span>
+            <span>{fmtTgl(it.created_at)}</span>
+            <span className="font-medium text-foreground tabular-nums">{fmtRp(it.total_estimated)}</span>
             <span>{(it.items || []).length} item</span>
-          </div>
+          </p>
           {showChain && Array.isArray(it.chain) && it.chain.length > 0 && (
-            <div className="mt-2">
-              <ApprovalStepper chain={it.chain} compact />
-            </div>
+            <div className="mt-2"><ApprovalStepper chain={it.chain} compact /></div>
           )}
           {!it.can_approve && it.blocked_reason && it.stage && (
-            <p className="mt-1.5 text-[11px] text-muted-foreground" data-testid={`pr-blocked-${it.request_number}`}>
+            <p className="mt-1.5 text-xs text-muted-foreground" data-testid={`pr-blocked-${it.request_number}`}>
               {it.blocked_reason}
             </p>
           )}
         </div>
-        <div className="flex flex-shrink-0 items-center gap-2">
-          {onQuickApprove && it.can_approve && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onQuickApprove(it); }}
-              disabled={quickBusy === it.id}
-              className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-              data-testid={`btn-quick-approve-${it.request_number}`}
-            >
-              {quickBusy === it.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-              Setujui
-            </button>
-          )}
-          <ChevronRight size={16} className="text-muted-foreground/60 group-hover:text-muted-foreground mt-1" />
-        </div>
+        {onQuickApprove && it.can_approve && (
+          <Button size="sm" variant="success" disabled={quickBusy === it.id}
+            onClick={(e) => { e.stopPropagation(); onQuickApprove(it); }}
+            data-testid={`btn-quick-approve-${it.request_number}`}>
+            {quickBusy === it.id ? <Loader2 className="animate-spin" /> : <Check />}Setujui
+          </Button>
+        )}
       </div>
     </div>
   );
 }
+
+// ── Kolom tabel & unduhan ────────────────────────────────────────────────────
+const KOLOM_URUT = [
+  ['request_number', 'No. PR'], ['title', 'Judul'],
+  ['request_type', 'Jenis'], ['department', 'Departemen'],
+  ['priority', 'Prioritas'], ['status', 'Status'],
+  ['total_estimated', 'Nilai (Rp)'],
+  ['requested_by_name', 'Pemohon'],
+  ['needed_by', 'Dibutuhkan'],
+  ['created_at', 'Dibuat'],
+];
+const LABEL_URUT = Object.fromEntries(KOLOM_URUT);
+
+const KOLOM_UNDUH = [
+  { label: 'No. PR', nilai: (it) => it.request_number },
+  { label: 'Judul', nilai: (it) => it.title },
+  { label: 'Jenis', nilai: (it) => TYPE_LABELS[it.request_type] || it.request_type || '' },
+  { label: 'Departemen', nilai: (it) => it.department || '' },
+  { label: 'Prioritas', nilai: (it) => PRIORITY_CFG[it.priority]?.label || it.priority || '' },
+  { label: 'Status', nilai: (it) => STATUS_CFG[it.status]?.label || it.status || '' },
+  { label: 'Nilai (Rp)', nilai: (it) => Number(it.total_estimated || 0) },
+  { label: 'Pemohon', nilai: (it) => it.requested_by_name || '' },
+  { label: 'Dibutuhkan', nilai: (it) => (it.needed_by ? formatDateID(it.needed_by) : '') },
+  { label: 'Dibuat', nilai: (it) => (it.created_at ? formatDateID(it.created_at) : '') },
+  { label: 'Menunggu', nilai: (it) => it.next_approver_label || '' },
+  { label: 'No. PO', nilai: (it) => it.linked_po_number || '' },
+];
 
 // ── Main Module ───────────────────────────────────────────────────────────────
 export default function ProcurementRequestModule({ token, user, onNavigate }) {
@@ -1052,10 +894,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalRows, setTotalRows] = useState(0);
-  // F13-B (sesi #12) — PR adalah KOMITMEN UANG. Sebelum ini layarnya kartu
-  // saja: tidak ada kolom nilai yang bisa diurutkan, tidak ada unduhan.
-  // "PR mana yang menunggu persetujuan saya, urut dari nilai terbesar?" hanya
-  // bisa dijawab dengan menggulir. Pengurutan sengaja dikerjakan SERVER
+  // F13-B (sesi #12) — PR adalah KOMITMEN UANG. Pengurutan sengaja dikerjakan SERVER
   // (`sort_by`/`sort_dir`) supaya urutannya berlaku untuk SELURUH data, bukan
   // 15 baris yang kebetulan sedang terbuka.
   const [view, setView] = useState(() => {
@@ -1095,14 +934,20 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
     }
   }, [headers]);
 
+  /** Parameter daftar yang sama untuk layar dan unduhan (saringan + urutan). */
+  const listParams = useCallback(() => {
+    const params = { sort_by: sort.key, sort_dir: sort.dir };
+    if (filterStatus) params.status = filterStatus;
+    if (filterPriority) params.priority = filterPriority;
+    if (search) params.search = search;
+    if (tab === 'mine') params.my_only = true;
+    return params;
+  }, [filterStatus, filterPriority, search, tab, sort]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit: 15, sort_by: sort.key, sort_dir: sort.dir };
-      if (filterStatus) params.status = filterStatus;
-      if (filterPriority) params.priority = filterPriority;
-      if (search) params.search = search;
-      if (tab === 'mine') params.my_only = true;
+      const params = { page, limit: PAGE_SIZE, ...listParams() };
       const [listRes, dashRes] = await Promise.all([
         axios.get(`${API}/api/procurement/requests`, { headers, params }),
         axios.get(`${API}/api/procurement/dashboard`, { headers }),
@@ -1116,12 +961,25 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
     } finally {
       setLoading(false);
     }
-  }, [headers, page, filterStatus, filterPriority, search, tab, sort]);
+  }, [headers, page, listParams]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadInbox(); }, [loadInbox]);
 
   const refreshAll = useCallback(() => { load(); loadInbox(); }, [load, loadInbox]);
+
+  /** Unduhan = SEMUA baris hasil saringan & urutan saat ini (server, per 100 baris). */
+  const ambilSemua = useCallback(async () => {
+    const semua = [];
+    for (let p = 1; p <= 200; p += 1) {
+      const r = await axios.get(`${API}/api/procurement/requests`, {
+        headers, params: { page: p, limit: 100, ...listParams() },
+      });
+      semua.push(...(r.data?.items || []));
+      if (p >= (r.data?.pagination?.total_pages || 1)) break;
+    }
+    return semua;
+  }, [headers, listParams]);
 
   const quickApprove = async (it) => {
     setQuickBusy(it.id); setBanner(null);
@@ -1139,7 +997,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
         type: 'ok',
         text: d.next_stage_label
           ? `${it.request_number} disetujui — lanjut ke ${d.next_stage_label}.`
-          : `${it.request_number} disetujui penuh — siap dijadikan Purchase Order.`,
+          : `${it.request_number} disetujui penuh — siap dijadikan purchase order.`,
       });
       refreshAll();
     } catch (e) {
@@ -1150,311 +1008,231 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
   };
 
   const inboxValue = inbox.reduce((s, i) => s + Number(i.total_estimated || 0), 0);
-
-  // Yang diunduh = yang TERLIHAT. Karena halaman diambil dari server (dan sudah
-  // DIURUTKAN server), baris CSV adalah persis baris di layar — bukan kueri
-  // ulang yang bisa menghasilkan berkas berbeda dari layarnya.
   const prRows = items || [];
-  const csvRows = prRows.map((it) => [
-    it.request_number, it.title, TYPE_LABELS[it.request_type] || it.request_type,
-    it.department || '', PRIORITY_CFG[it.priority]?.label || it.priority,
-    STATUS_CFG[it.status]?.label || it.status, it.total_estimated ?? 0,
-    it.requested_by_name || '', it.needed_by ? String(it.needed_by).slice(0, 10) : '',
-    String(it.created_at || '').slice(0, 10), it.next_approver_label || '',
-    it.linked_po_number || '',
-  ]);
 
-  // Dipakai langsung (bukan dibungkus komponen dalam-render) — lihat komentar
-  // pada `TabButton` di atas berkas ini.
   const selectTab = (v) => { tabTouched.current = true; setTab(v); setPage(1); };
+  const adaSaringan = !!(search || filterStatus || filterPriority);
+
+  const tabOpsi = [
+    { key: 'all', label: 'Semua', count: stats?.total },
+    { key: 'inbox', label: 'Perlu keputusan', count: inbox.length },
+    { key: 'mine', label: 'Milik saya', count: stats?.my_requests },
+  ];
+
+  const kolomInbox = [
+    { kunci: 'judul', label: 'Permintaan', hp: 'judul', isi: (it) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="truncate font-medium" title={it.title}>{it.title}</p>
+        <p className="text-xs text-muted-foreground">{it.request_number}{it.department ? ` · ${it.department}` : ''}</p>
+      </div>) },
+    { kunci: 'jenis', label: 'Jenis', isi: (it) => (
+      <span className="inline-flex flex-wrap gap-1">
+        {it.kind === 'acc_pr' || it.kind === 'po' || it.exceeds_pr_value ? <KindBadges it={it} /> : <span className="text-sm">Permintaan pengadaan</span>}
+      </span>) },
+    { kunci: 'pemohon', label: 'Pemohon', isi: (it) => it.requested_by_name || '—' },
+    { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (it) => <span className="tabular-nums whitespace-nowrap">{fmtRp(it.total_estimated)}</span> },
+    { kunci: 'tahap', label: 'Tahap', isi: (it) => <ApprovalStepper chain={it.chain} compact /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => it.can_approve && (
+      <Button size="sm" variant="success" disabled={quickBusy === it.id} onClick={() => quickApprove(it)}
+        data-testid={`btn-quick-approve-${it.request_number}`}>
+        {quickBusy === it.id ? <Loader2 className="animate-spin" /> : <Check />}Setujui
+      </Button>) },
+  ];
+
+  const tableView = (
+    <div className="overflow-x-auto">
+      <Table data-testid="pr-table">
+        <TableHeader>
+          <TableRow>
+            {KOLOM_URUT.map(([k, label]) => (
+              <TableHead key={k} className={`whitespace-nowrap ${k === 'total_estimated' ? 'text-right' : ''}`}
+                aria-sort={sort.key === k ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => toggleSort(k)}
+                  data-testid={`pr-sort-${k}`} title={`Urutkan menurut ${label.toLowerCase()}`}
+                  className="-mx-2 h-7 px-2 font-semibold">
+                  {label}
+                  <ArrowUpDown className={sort.key === k ? 'text-primary' : 'opacity-30'} />
+                </Button>
+              </TableHead>
+            ))}
+            <TableHead className="whitespace-nowrap text-right">Persetujuan</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {prRows.map((it) => (
+            <TableRow key={it.id} className="cursor-pointer" onClick={() => setDetail(it)}
+              data-testid={`pr-row-${it.request_number}`}>
+              <TableCell className="whitespace-nowrap font-medium">{it.request_number}</TableCell>
+              <TableCell className="max-w-[16rem] truncate" title={it.title}>{it.title}</TableCell>
+              <TableCell className="whitespace-nowrap">{TYPE_LABELS[it.request_type] || it.request_type}</TableCell>
+              <TableCell className="whitespace-nowrap">{it.department || '—'}</TableCell>
+              <TableCell><PriorityBadge priority={it.priority} /></TableCell>
+              <TableCell><PRStatusBadge status={it.status} /></TableCell>
+              <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{formatRupiah(it.total_estimated || 0)}</TableCell>
+              <TableCell className="whitespace-nowrap">{it.requested_by_name || '—'}</TableCell>
+              <TableCell className="whitespace-nowrap">{fmtTgl(it.needed_by)}</TableCell>
+              <TableCell className="whitespace-nowrap">{fmtTgl(it.created_at)}</TableCell>
+              <TableCell className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                {/* Kolom ini menjawab "siapa yang ditunggu" — pertanyaan
+                    yang paling sering ditanyakan tentang PR yang mandek. */}
+                {it.can_approve ? (
+                  <Button size="sm" variant="success" disabled={quickBusy === it.id} onClick={() => quickApprove(it)}
+                    data-testid={`pr-quick-approve-${it.request_number}`}>
+                    {quickBusy === it.id ? <Loader2 className="animate-spin" /> : <Check />}Setujui
+                  </Button>
+                ) : (
+                  <span className="text-xs text-muted-foreground">{it.next_approver_label || '—'}</span>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+
+  const cardsView = (
+    <div className="space-y-2">
+      {prRows.map((it) => (
+        <PRCard key={it.id} it={it} onOpen={setDetail} onQuickApprove={quickApprove} quickBusy={quickBusy} />
+      ))}
+    </div>
+  );
 
   return (
-    <div className="p-4 space-y-4 max-w-7xl mx-auto" data-testid="procurement-module">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <ShoppingCart size={20} className="text-blue-600 dark:text-blue-400" /> Permintaan Pengadaan
-          </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Ajukan, setujui, dan pantau permintaan pembelian (PR) — jumlah tahap persetujuan
-            mengikuti nilai permintaan
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={refreshAll} className="p-2 text-muted-foreground hover:text-foreground rounded-lg hover:bg-foreground/5"
-                  data-testid="pr-refresh">
-            <RefreshCw size={16} className={loading || inboxLoading ? 'animate-spin' : ''} />
-          </button>
-          <button onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-sm"
-            data-testid="btn-open-create-pr">
-            <Plus size={14} /> Buat PR
-          </button>
-        </div>
-      </div>
-
-      {banner && (
-        <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 ${
-          banner.type === 'ok'
-            ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10'
-            : 'border-red-300 bg-red-50 dark:border-red-500/30 dark:bg-red-500/10'
-        }`} data-testid="pr-banner">
-          {banner.type === 'ok'
-            ? <CheckCircle2 size={14} className="mt-0.5 flex-shrink-0 text-emerald-600 dark:text-emerald-400" />
-            : <AlertTriangle size={14} className="mt-0.5 flex-shrink-0 text-red-600 dark:text-red-400" />}
-          <p className={`text-xs ${banner.type === 'ok' ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
-            {banner.text}
-          </p>
-          <button onClick={() => setBanner(null)} className="ml-auto text-xs text-muted-foreground hover:text-foreground">✕</button>
-        </div>
-      )}
-
-      {/* Stats */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label="Total PR" value={stats.total} />
-          <StatCard label="Menunggu Keputusan Saya" value={stats.my_pending_approval}
-                    color="text-amber-700 dark:text-amber-400" sub="hanya yang benar-benar hak Anda" />
-          <StatCard label="Disetujui" value={stats.approved} color="text-emerald-600 dark:text-emerald-400" />
-          <StatCard label="Nilai Disetujui" value={fmtRp(stats.total_value_approved_this_month)}
-                    color="text-sky-600 dark:text-sky-400" sub="bulan ini" />
-        </div>
-      )}
-
-      {/* Tabs — kotak persetujuan ada DI DALAM menu ini (permintaan owner) */}
-      <div className="flex items-center gap-1 border-b border-foreground/10 overflow-x-auto" data-testid="pr-tabs">
-        <TabButton id="all" label="Semua Permintaan" testId="pr-tab-all"
-          active={tab === 'all'} onSelect={selectTab} />
-        <TabButton id="inbox" label="Menunggu Persetujuan Saya" count={inbox.length}
-          testId="pr-tab-inbox" active={tab === 'inbox'} onSelect={selectTab} />
-        <TabButton id="mine" label="Permintaan Saya" count={stats?.my_requests}
-          testId="pr-tab-mine" active={tab === 'mine'} onSelect={selectTab} />
-      </div>
-
-      {tab === 'inbox' ? (
-        <div className="space-y-3" data-testid="pr-inbox-panel">
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-foreground/10 bg-foreground/5 px-3 py-2">
-            <span className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-              <Inbox size={14} className="text-amber-600 dark:text-amber-400" />
-              {inbox.length} permintaan menunggu keputusan Anda
-            </span>
-            <span className="text-xs text-muted-foreground">
-              Total nilai: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{fmtRp(inboxValue)}</span>
-            </span>
+    <PageLayout testId="procurement-module" title="Permintaan Pengadaan"
+      subtitle="Ajukan, setujui, dan pantau permintaan pembelian — jumlah tahap persetujuan mengikuti nilai permintaan."
+      actions={<>
+        {/* RC-FLOW-UX: onward — PR → Purchase Order → GRN (dulu kotak "Langkah berikutnya" selebar halaman). */}
+        {typeof onNavigate === 'function' && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="max-sm:px-2.5" aria-label="Langkah berikutnya" title="Langkah berikutnya"
+                data-testid="onward-cta"><span className="hidden sm:inline">Langkah berikutnya</span><ChevronDown /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuItem onSelect={() => onNavigate('proc-purchase-orders', {})} data-testid="onward-proc-purchase-orders">
+                <div>
+                  <p className="text-sm font-medium">Buat purchase order</p>
+                  <p className="text-xs text-muted-foreground">PR disetujui → terbitkan PO ke supplier</p>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onNavigate('wh-receiving', {})} data-testid="onward-wh-receiving">
+                <div>
+                  <p className="text-sm font-medium">Penerimaan barang</p>
+                  <p className="text-xs text-muted-foreground">Setelah barang datang, catat penerimaan (Portal Gudang)</p>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        <Button onClick={() => setShowCreate(true)} data-testid="btn-open-create-pr"><Plus />Buat PR</Button>
+      </>}
+      filters={<>
+        <FilterChips options={tabOpsi} value={tab} onChange={selectTab} hideWhenEmpty={false}
+          testId="pr-tab" ariaLabel="Pilih daftar" />
+        {tab !== 'inbox' && (<>
+          <div className="relative w-full sm:w-48">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input className="pl-8" placeholder="Cari judul / nomor PR"
+              value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              data-testid="pr-search" />
           </div>
-
+          <SmartNativeSelect className="w-44 h-9"
+            value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
+            data-testid="pr-filter-status">
+            <option value="">Semua status</option>
+            {Object.entries(STATUS_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect className="w-44 h-9"
+            value={filterPriority} onChange={(e) => { setFilterPriority(e.target.value); setPage(1); }}
+            data-testid="pr-filter-priority">
+            <option value="">Semua prioritas</option>
+            {Object.entries(PRIORITY_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </SmartNativeSelect>
+        </>)}
+      </>}
+      tools={<>
+        {tab === 'inbox' ? (
+          <TombolUnduh namaBerkas="menunggu-keputusan-saya" namaLembar="Menunggu keputusan" baris={inbox}
+            testId="pr-inbox-unduh" kolom={KOLOM_UNDUH} />
+        ) : (<>
+          {/* Di HP daftar selalu kartu ringkas → pilihan tampilan hanya di layar lebar (penyaring dapat ruang). */}
+          <div className="hidden sm:block"><ViewToggle value={view} onChange={setView} testId="pr-view" /></div>
+          <TombolUnduh namaBerkas="permintaan-pengadaan" namaLembar="Permintaan" baris={prRows}
+            ambilSemua={ambilSemua} testId="pr-export-csv" kolom={KOLOM_UNDUH} />
+        </>)}
+        <Button variant="outline" size="icon" onClick={refreshAll} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="pr-refresh">
+          <RefreshCw className={loading || inboxLoading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={<>
+        {banner && (
+          <Notice tone={banner.type === 'ok' ? 'success' : 'danger'} icon={banner.type === 'ok' ? CheckCircle2 : AlertTriangle}
+            testId="pr-banner"
+            action={<Button variant="ghost" size="icon-sm" onClick={() => setBanner(null)} title="Tutup" aria-label="Tutup"><X /></Button>}>
+            {banner.text}
+          </Notice>
+        )}
+        {stats && Number(stats.total) > 0 && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="pr-stats">
+            <StatTile label="Total PR" value={Number(stats.total).toLocaleString('id-ID')}
+              hint="Semua permintaan pengadaan, tanpa saringan." />
+            <StatTile label="Perlu keputusan saya" value={Number(stats.my_pending_approval || 0).toLocaleString('id-ID')}
+              accent="warning" hint="Hanya permintaan yang tahap aktifnya memang hak Anda (aturan sama dengan pil Perlu keputusan)." />
+            <StatTile label="Disetujui, belum diproses" value={Number(stats.approved || 0).toLocaleString('id-ID')}
+              accent="success" hint="Permintaan berstatus Disetujui yang belum dijadikan PO atau selesai." />
+            <StatTile label="Nilai disetujui bulan ini" value={fmtRp(stats.total_value_approved_this_month)}
+              hint="Jumlah nilai PR berstatus Disetujui atau Selesai yang diajukan sejak awal bulan ini (WIB)." />
+          </div>
+        )}
+        {tab === 'inbox' && inbox.length > 0 && (
+          <p className="text-sm text-muted-foreground" data-testid="pr-inbox-summary">
+            {inbox.length} permintaan menunggu keputusan Anda · total nilai{' '}
+            <span className="font-semibold text-foreground tabular-nums">{fmtRp(inboxValue)}</span>
+          </p>
+        )}
+      </>}
+      footer={tab !== 'inbox' && !loading && prRows.length > 0 && (
+        <div className="space-y-1">
+          {/* Pagination — halaman diambil dari server, jadi `total` dan `totalPages` datang dari server juga. */}
+          <PaginationLite page={page} totalPages={totalPages} total={totalRows} pageSize={PAGE_SIZE} onPageChange={setPage} />
+          <p className="text-xs text-muted-foreground">
+            Urut menurut {(LABEL_URUT[sort.key] || sort.key).toLowerCase()} — {sort.dir === 'desc' ? 'terbesar/terbaru dulu' : 'terkecil/terlama dulu'},
+            berlaku untuk seluruh data.
+          </p>
+        </div>
+      )}>
+      {tab === 'inbox' ? (
+        <div data-testid="pr-inbox-panel">
           {inboxLoading ? (
-            <div className="flex items-center justify-center py-16 text-muted-foreground/60">
-              <RefreshCw size={20} className="animate-spin mr-2" /> Memuat kotak persetujuan...
-            </div>
-          ) : inbox.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center" data-testid="pr-inbox-empty">
-              <Inbox size={36} className="mb-3 opacity-40 text-muted-foreground" />
-              <p className="text-sm text-foreground/70">Tidak ada permintaan yang menunggu keputusan Anda</p>
-              <p className="mt-1 max-w-md text-xs text-muted-foreground">
-                Kotak ini menggabungkan Permintaan Pengadaan dan Request Pembelian Aksesoris.
-                Permintaan muncul hanya saat memang giliran Anda: tahap yang aktif cocok dengan
-                peran Anda, bukan permintaan buatan Anda sendiri, dan Anda belum menyetujui
-                permintaan itu di tahap sebelumnya.
-              </p>
-            </div>
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat daftar persetujuan…</p>
           ) : (
-            <div className="space-y-2">
-              {inbox.map((it) => (
-                <PRCard key={it.id} it={it} onOpen={setDetail}
-                        onQuickApprove={quickApprove} quickBusy={quickBusy} />
-              ))}
-            </div>
+            <TabelData kolom={kolomInbox} baris={inbox} onKlikBaris={setDetail} testId="pr-inbox-table"
+              kosong={<EmptyState testId="pr-inbox-empty" title="Tidak ada permintaan yang menunggu keputusan Anda"
+                description="Daftar ini menggabungkan permintaan pengadaan dan request pembelian aksesoris. Permintaan muncul hanya saat giliran Anda: tahap aktif cocok dengan peran Anda, bukan permintaan buatan Anda sendiri, dan Anda belum menyetujuinya di tahap sebelumnya." />} />
           )}
         </div>
+      ) : loading ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat permintaan…</p>
+      ) : prRows.length === 0 ? (
+        <EmptyState icon={ShoppingCart}
+          title={adaSaringan ? 'Tidak ada permintaan yang cocok' : tab === 'mine' ? 'Anda belum pernah membuat permintaan pengadaan' : 'Belum ada permintaan pengadaan'}
+          description={adaSaringan ? 'Ubah kata pencarian atau saringan status dan prioritas.' : 'Buat permintaan untuk barang atau jasa yang perlu dibeli; penyetuju akan menerimanya sesuai nilai.'}
+          action={!adaSaringan && <Button onClick={() => setShowCreate(true)}><Plus />Buat permintaan pertama</Button>} />
       ) : (
         <>
-          {/* RC-FLOW-UX: onward — PR → Purchase Order → GRN. */}
-          <OnwardCTA
-            onNavigate={onNavigate}
-            title="Langkah Berikutnya"
-            actions={[
-              { module: 'proc-purchase-orders', label: 'Buat Purchase Order', icon: ShoppingCart, primary: true, hint: 'PR disetujui → terbitkan PO ke supplier' },
-              { module: 'wh-receiving', label: 'Penerimaan Barang (GRN)', hint: 'Setelah barang datang, catat penerimaan (Portal Gudang)' },
-            ]}
-          />
-
-          {/* Filters */}
-          <div className="flex flex-wrap gap-2 items-center">
-            <div className="relative flex-1 min-w-[180px]">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/60 dark:text-zinc-500" />
-              <input
-                className="w-full bg-foreground/5 border border-foreground/10 rounded-lg pl-8 pr-3 py-1.5 text-sm text-foreground placeholder-muted-foreground focus:outline-none"
-                placeholder="Cari judul atau nomor PR..."
-                value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                data-testid="pr-search"
-              />
-            </div>
-            <SmartNativeSelect
-              className="w-56 bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none"
-              value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
-              data-testid="pr-filter-status"
-            >
-              <option value="">Semua Status</option>
-              <option value="draft">Draft</option>
-              <option value="submitted">Menunggu Persetujuan Dept</option>
-              <option value="dept_approved">Menunggu Persetujuan Keuangan</option>
-              <option value="finance_approved">Menunggu Persetujuan Final</option>
-              <option value="approved">Disetujui</option>
-              <option value="in_procurement">Sedang Pengadaan</option>
-              <option value="rejected">Ditolak</option>
-              <option value="completed">Selesai</option>
-              <option value="cancelled">Dibatalkan</option>
-            </SmartNativeSelect>
-            <SmartNativeSelect
-              className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none"
-              value={filterPriority} onChange={(e) => { setFilterPriority(e.target.value); setPage(1); }}
-            >
-              <option value="">Semua Prioritas</option>
-              {Object.entries(PRIORITY_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </SmartNativeSelect>
-            <div className="inline-flex rounded-lg border border-foreground/10 overflow-hidden">
-              <button type="button" onClick={() => setView('table')} data-testid="pr-view-table"
-                className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                  ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-                <Table2 size={12} /> Tabel
-              </button>
-              <button type="button" onClick={() => setView('grid')} data-testid="pr-view-grid"
-                className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                  ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-                <LayoutGrid size={12} /> Kartu
-              </button>
-            </div>
-            <ExportCsvButton filename="permintaan-pengadaan" testId="pr-export-csv"
-              head={PR_CSV_HEAD} rows={csvRows}
-              note={`halaman ${page}/${totalPages} · Rp ${(items.reduce((s, r) => s + Number(r.total_estimated || 0), 0)).toLocaleString('id-ID')}`} />
-          </div>
-
-          {/* List */}
-          {loading ? (
-            <div className="flex items-center justify-center py-16 text-muted-foreground/60 dark:text-zinc-500">
-              <RefreshCw size={20} className="animate-spin mr-2" /> Memuat...
-            </div>
-          ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/60 dark:text-zinc-500">
-              <ShoppingCart size={36} className="mb-3 opacity-40" />
-              <p className="text-sm">
-                {tab === 'mine' ? 'Anda belum pernah membuat permintaan pengadaan' : 'Belum ada permintaan pengadaan'}
-              </p>
-              <button onClick={() => setShowCreate(true)}
-                className="mt-4 flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600/20 hover:bg-blue-600/40 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-500/20 rounded-xl">
-                <Plus size={13} /> Buat Permintaan Pertama
-              </button>
-            </div>
-          ) : view === 'table' ? (
-            <div className="rounded-xl border border-foreground/10 bg-card">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs" data-testid="pr-table">
-                  <thead className="bg-muted/50">
-                    <tr className="text-left">
-                      {[['request_number', 'No. PR'], ['title', 'Judul'],
-                        ['request_type', 'Jenis'], ['department', 'Departemen'],
-                        ['priority', 'Prioritas'], ['status', 'Status'],
-                        ['total_estimated', 'Nilai (Rp)'],
-                        ['requested_by_name', 'Pemohon'],
-                        ['needed_by', 'Dibutuhkan'],
-                        ['created_at', 'Dibuat']].map(([k, label]) => (
-                        <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
-                          <button type="button" onClick={() => toggleSort(k)}
-                            data-testid={`pr-sort-${k}`}
-                            className="inline-flex items-center gap-1 hover:text-primary">
-                            {label}
-                            <ArrowUpDown size={10}
-                              className={sort.key === k ? 'text-primary' : 'opacity-30'} />
-                          </button>
-                        </th>
-                      ))}
-                      <th className="px-2.5 py-2 font-semibold text-right">Persetujuan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((it) => (
-                      <tr key={it.id}
-                          className="border-t border-foreground/10 hover:bg-muted/40 cursor-pointer"
-                          onClick={() => setDetail(it)}
-                          data-testid={`pr-row-${it.request_number}`}>
-                        <td className="px-2.5 py-2 font-mono whitespace-nowrap">{it.request_number}</td>
-                        <td className="px-2.5 py-2 max-w-[240px] truncate" title={it.title}>{it.title}</td>
-                        <td className="px-2.5 py-2">{TYPE_LABELS[it.request_type] || it.request_type}</td>
-                        <td className="px-2.5 py-2">{it.department || '—'}</td>
-                        <td className="px-2.5 py-2">
-                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${PRIORITY_CFG[it.priority]?.color || ''}`}>
-                            {PRIORITY_CFG[it.priority]?.label || it.priority}
-                          </span>
-                        </td>
-                        <td className="px-2.5 py-2">
-                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border whitespace-nowrap ${STATUS_CFG[it.status]?.color || ''}`}>
-                            {STATUS_CFG[it.status]?.label || it.status}
-                          </span>
-                        </td>
-                        <td className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">
-                          {formatRupiah(it.total_estimated || 0)}
-                        </td>
-                        <td className="px-2.5 py-2">{it.requested_by_name || '—'}</td>
-                        <td className="px-2.5 py-2 whitespace-nowrap">{it.needed_by ? String(it.needed_by).slice(0, 10) : '—'}</td>
-                        <td className="px-2.5 py-2 whitespace-nowrap">{String(it.created_at || '').slice(0, 10)}</td>
-                        <td className="px-2.5 py-2 text-right whitespace-nowrap">
-                          {/* Kolom ini menjawab "siapa yang ditunggu" — pertanyaan
-                              yang paling sering ditanyakan tentang PR yang mandek. */}
-                          {it.can_approve ? (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); quickApprove(it); }}
-                              disabled={quickBusy === it.id}
-                              data-testid={`pr-quick-approve-${it.request_number}`}
-                              className="h-7 px-2.5 rounded-lg bg-emerald-600 text-white text-[11px] font-medium disabled:opacity-50">
-                              {quickBusy === it.id ? '...' : 'Setujui'}
-                            </button>
-                          ) : (
-                            <span className="text-muted-foreground text-[11px]">
-                              {it.next_approver_label || '—'}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="px-3 py-2 text-[11px] text-muted-foreground border-t border-foreground/10">
-                Menampilkan {items.length} dari {totalRows} permintaan · urut{' '}
-                <b>{sort.key}</b> {sort.dir === 'desc' ? 'terbesar dulu' : 'terkecil dulu'}{' '}
-                (diurutkan server, berlaku untuk seluruh data — bukan hanya halaman ini)
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {items.map((it) => (
-                <PRCard key={it.id} it={it} onOpen={setDetail}
-                        onQuickApprove={quickApprove} quickBusy={quickBusy} />
-              ))}
-            </div>
-          )}
-
-          {/* Pagination — SATU kontrol paginasi yang sama dengan layar lain
-              (`PaginationLite`). Halaman diambil dari server, jadi `total` dan
-              `totalPages` datang dari server juga: label "Menampilkan a–b dari
-              N" menyebut jumlah SEBENARNYA, bukan jumlah baris yang kebetulan
-              sedang dirender. */}
-          <PaginationLite
-            page={page}
-            totalPages={totalPages}
-            total={totalRows}
-            pageSize={15}
-            onPageChange={setPage}
-          />
+          {/* HP: selalu kartu ringkas (tanpa geser samping); layar lebar: sesuai pilihan Tabel/Kartu. */}
+          <div className="md:hidden">{cardsView}</div>
+          <div className="hidden md:block">{view === 'table' ? tableView : cardsView}</div>
         </>
       )}
 
-      {/* Modals */}
+      {/* Popup */}
       {showCreate && (
         <CreatePRModal token={token} onClose={() => setShowCreate(false)}
-                       onCreated={() => { setShowCreate(false); refreshAll(); }} />
+          onCreated={() => { setShowCreate(false); refreshAll(); }} />
       )}
       {detail && (
         <DetailModal
@@ -1464,6 +1242,6 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
           onAction={() => refreshAll()}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

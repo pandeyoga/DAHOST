@@ -1,25 +1,38 @@
+/**
+ * Revisi & persetujuan (Portal RnD › Style & Desain › tab "Revisi").
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, linimasa kartu → tabel (kartu ringkas di HP) + unduh
+ * Excel/CSV, rincian = popup, form = FormPopup, hapus lewat confirmDialog, jenis revisi = StatusBadge.
+ * Hanya tampilan yang berubah — API, isian, dan perbandingan revisi sama seperti sebelumnya.
+ */
 import { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { GitBranch, Plus, Trash2, Search, GitCompare } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { GitBranch, Plus, Trash2, Search, GitCompare, RefreshCw } from 'lucide-react';
 import { toast } from '../ui/sonner';
-import Modal from './Modal';
-import ConfirmDialog from './ConfirmDialog';
+import { formatDateID } from '@/lib/format';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, StatusBadge } from './moduleAtoms';
 import RnDRevisionCompare from './RnDRevisionCompare';
 import { apiPost, apiDelete } from '@/lib/api';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const TYPE_CONF = {
-  'design':    { label: 'Desain',      cls: 'bg-violet-500/20 text-violet-400 border-violet-500/30' },
-  'material':  { label: 'Material',    cls: 'bg-amber-500/20  text-amber-400  border-amber-500/30'  },
-  'fit':       { label: 'Fit',         cls: 'bg-sky-500/20    text-sky-400    border-sky-500/30'    },
-  'costing':   { label: 'Costing',     cls: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
-  'other':     { label: 'Lainnya',     cls: 'bg-muted/20   text-muted-foreground   border-border/30'   },
+  'design':    { label: 'Desain',   tone: 'primary' },
+  'material':  { label: 'Material', tone: 'warning' },
+  'fit':       { label: 'Fit',      tone: 'info' },
+  'costing':   { label: 'Biaya',    tone: 'success' },
+  'other':     { label: 'Lainnya',  tone: 'muted' },
 };
+const jenis = (t) => TYPE_CONF[t] || TYPE_CONF.other;
 
 const emptyForm = {
   style_id: '', style_code: '', style_name: '',
@@ -31,6 +44,11 @@ const emptyForm = {
   notes: '',
 };
 
+function JenisBadge({ type }) {
+  const j = jenis(type);
+  return <StatusBadge status={type} label={j.label} tone={j.tone} />;
+}
+
 export default function RnDRevisionsTab({ token }) {
   const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const [revisions, setRevisions] = useState([]);
@@ -40,8 +58,8 @@ export default function RnDRevisionsTab({ token }) {
   const [filterStyle, setFilterStyle] = useState('');
   const [showForm,  setShowForm]  = useState(false);
   const [form,      setForm]      = useState({ ...emptyForm });
-  const [delId,     setDelId]     = useState(null);
   const [compare,   setCompare]   = useState(null); // {styleId, left}
+  const [detail,    setDetail]    = useState(null);
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -73,6 +91,8 @@ export default function RnDRevisionsTab({ token }) {
     setForm(p => ({ ...p, style_id: sid, style_code: sel?.style_code || '', style_name: sel?.style_name || '' }));
   };
 
+  const openNew = () => { setForm({ ...emptyForm }); setShowForm(true); };
+
   const handleSave = async () => {
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
     if (!form.revision_name.trim()) return toast.error('Nama revisi wajib diisi');
@@ -86,11 +106,17 @@ export default function RnDRevisionsTab({ token }) {
     } catch { toast.error('Gagal menyimpan revisi'); }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (r) => {
+    const ok = await confirmDialog({
+      title: 'Hapus revisi ini?',
+      body: `Revisi "${r.revision_name || ''}" dihapus permanen.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
-      await apiDelete(`/api/dewi/rnd/revisions/${delId}`);  // 2026-11-06 (pola P6): lihat simpan revisi
+      await apiDelete(`/api/dewi/rnd/revisions/${r.id}`);  // 2026-11-06 (pola P6): lihat simpan revisi
       toast.success('Revisi dihapus');
-      setDelId(null);
+      setDetail(null);
       fetchRevisions();
     } catch { toast.error('Gagal menghapus'); }
   };
@@ -103,177 +129,156 @@ export default function RnDRevisionsTab({ token }) {
       || (r.changes_summary || '').toLowerCase().includes(q);
   });
 
-  return (
-    <div className="p-6 space-y-5" data-testid="rnd-revisions-tab">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <GitBranch className="w-5 h-5 text-violet-500" /> Revisi & Approval
-          </h1>
-          <p className="text-sm text-foreground/50 mt-0.5">Tracking riwayat perubahan design</p>
-        </div>
-        <Button onClick={() => { setForm({ ...emptyForm }); setShowForm(true); }}
-          className="gap-2" data-testid="create-revision-btn">
-          <Plus className="w-4 h-4" /> Tambah Revisi
-        </Button>
-      </div>
+  const bandingkan = (r) => setCompare({ styleId: r.style_id, left: r.id });
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
-          <Input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Cari revisi..." className="pl-9" />
-        </div>
-        <SmartNativeSelect value={filterStyle} onChange={e => setFilterStyle(e.target.value)}
-          className="border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground min-w-[200px]">
-          <option value="">Semua Style</option>
-          {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
-        </SmartNativeSelect>
-        <Button variant="outline" className="gap-2" disabled={!filterStyle}
+  const kolom = [
+    { kunci: 'revisi', label: 'Revisi', hp: 'judul', isi: (r) => (
+      <div className="min-w-0 md:max-w-[18rem]">
+        <p className="truncate font-medium text-foreground" title={r.revision_name}>{r.revision_name}</p>
+        <p className="text-xs text-muted-foreground">#{r.revision_number}</p>
+      </div>) },
+    { kunci: 'style', label: 'Style', hp: 'keterangan', isi: (r) => r.style_code || '—' },
+    { kunci: 'jenis', label: 'Jenis', isi: (r) => <JenisBadge type={r.revision_type} /> },
+    { kunci: 'ringkasan', label: 'Perubahan', isi: (r) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        {r.changes_summary && <p className="truncate text-sm" title={r.changes_summary}>{r.changes_summary}</p>}
+        {(r.old_value || r.new_value) && (
+          <p className="truncate text-xs text-muted-foreground" title={`${r.old_value || '—'} → ${r.new_value || '—'}`}>
+            {r.old_value || '—'} → {r.new_value || '—'}
+          </p>
+        )}
+        {!r.changes_summary && !r.old_value && !r.new_value && <span className="text-muted-foreground">—</span>}
+      </div>) },
+    { kunci: 'oleh', label: 'Dicatat oleh', isi: (r) => r.created_by_name || '—' },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (r) => <span className="md:whitespace-nowrap">{formatDateID(r.created_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex justify-end gap-1">
+        <Button variant="outline" size="sm" onClick={() => bandingkan(r)}
+          data-testid={`compare-revision-${r.id}`} title="Bandingkan revisi ini dengan versi lain">
+          <GitCompare />Bandingkan
+        </Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(r)} title="Hapus" aria-label="Hapus"
+          data-testid={`delete-revision-${r.id}`}>
+          <Trash2 className="text-[hsl(var(--danger-text))]" />
+        </Button>
+      </div>) },
+  ];
+
+  return (
+    <PageLayout testId="rnd-revisions-tab" title="Revisi & persetujuan"
+      subtitle="Riwayat perubahan desain per style, bisa dibandingkan antarversi."
+      actions={<>
+        <Button variant="outline" disabled={!filterStyle}
           title={filterStyle ? 'Bandingkan dua revisi style ini' : 'Pilih satu style dulu'}
           onClick={() => setCompare({ styleId: filterStyle, left: '' })}
           data-testid="compare-revisions-btn">
-          <GitCompare className="w-4 h-4" /> Bandingkan Revisi
+          <GitCompare />Bandingkan revisi
         </Button>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center h-32 items-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-500" />
+        <Button onClick={openNew} data-testid="create-revision-btn"><Plus />Tambah revisi</Button>
+      </>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Cari revisi atau style" className="pl-8" data-testid="revision-search" />
         </div>
-      ) : filtered.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <GitBranch className="w-10 h-10 text-foreground/20 mx-auto mb-3" />
-          <p className="text-foreground/50 text-sm">Belum ada revisi.</p>
-          <Button variant="outline" className="mt-3" onClick={() => setShowForm(true)}>+ Catat Revisi Pertama</Button>
-        </GlassCard>
+        <SmartNativeSelect value={filterStyle} onChange={e => setFilterStyle(e.target.value)}
+          className="w-56" data-testid="revision-style-filter">
+          <option value="">Semua style</option>
+          {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="revisi-desain" namaLembar="Revisi" baris={filtered} testId="revision-unduh"
+          kolom={[
+            { label: 'No. revisi', nilai: (r) => r.revision_number ?? '' },
+            { label: 'Nama revisi', nilai: (r) => r.revision_name || '' },
+            { label: 'Kode style', nilai: (r) => r.style_code || '' },
+            { label: 'Nama style', nilai: (r) => r.style_name || '' },
+            { label: 'Jenis', nilai: (r) => jenis(r.revision_type).label },
+            { label: 'Ringkasan perubahan', nilai: (r) => r.changes_summary || '' },
+            { label: 'Sebelum', nilai: (r) => r.old_value || '' },
+            { label: 'Sesudah', nilai: (r) => r.new_value || '' },
+            { label: 'Catatan', nilai: (r) => r.notes || '' },
+            { label: 'Dicatat oleh', nilai: (r) => r.created_by_name || '' },
+            { label: 'Tanggal', nilai: (r) => (r.created_at ? formatDateID(r.created_at) : '') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={fetchRevisions} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      {loading && revisions.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat revisi…</p>
       ) : (
-        <div className="relative">
-          {/* Timeline line */}
-          <div className="absolute left-6 top-0 bottom-0 w-px bg-violet-500/20" />
-          <div className="space-y-4">
-            {filtered.map((r, idx) => {
-              const tc = TYPE_CONF[r.revision_type] || TYPE_CONF.other;
-              return (
-                <div key={r.id} className="relative pl-14">
-                  {/* Timeline dot */}
-                  <div className="absolute left-4 top-4 w-4 h-4 rounded-full bg-violet-500/30 border-2 border-violet-500 flex items-center justify-center">
-                    <div className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                  </div>
-                  <GlassCard className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-semibold text-foreground text-sm">{r.revision_name}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full border ${tc.cls}`}>{tc.label}</span>
-                          <span className="text-xs text-foreground/40 font-mono">#{r.revision_number}</span>
-                        </div>
-                        <div className="text-xs text-foreground/50">
-                          {r.style_code} · {r.created_by_name} · {new Date(r.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
-                        </div>
-                        {r.changes_summary && <p className="text-sm text-foreground/70 mt-2">{r.changes_summary}</p>}
-                        {(r.old_value || r.new_value) && (
-                          <div className="flex gap-3 mt-2">
-                            {r.old_value && (
-                              <div className="text-xs bg-red-500/10 border border-red-500/20 rounded px-2 py-1 text-red-400">
-                                Sebelum: {r.old_value}
-                              </div>
-                            )}
-                            {r.new_value && (
-                              <div className="text-xs bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-1 text-emerald-400">
-                                Sesudah: {r.new_value}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {r.notes && <p className="text-xs text-foreground/40 italic mt-2">{r.notes}</p>}
-                      </div>
-                      <div className="flex items-center gap-1 ml-3">
-                        <Button variant="ghost" size="sm"
-                          onClick={() => setCompare({ styleId: r.style_id, left: r.id })}
-                          data-testid={`compare-revision-${r.id}`}
-                          title="Bandingkan revisi ini dengan versi lain"
-                          className="h-7 px-2 text-xs gap-1">
-                          <GitCompare className="w-3.5 h-3.5" /> Bandingkan
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setDelId(r.id)}
-                          className="h-7 w-7 p-0 text-red-500 hover:bg-red-500/10">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </GlassCard>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <TabelData kolom={kolom} baris={filtered} onKlikBaris={setDetail} testId="revision-table"
+          kosong={<EmptyState icon={GitBranch}
+            title={revisions.length ? 'Tidak ada revisi yang cocok' : 'Belum ada revisi'}
+            description={revisions.length ? 'Ubah kata pencarian.' : 'Catat perubahan desain, material, fit, atau biaya per style.'}
+            action={!revisions.length && <Button onClick={openNew}><Plus />Catat revisi pertama</Button>} />} />
       )}
 
-      {/* Create Form Modal */}
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Catat Revisi Baru">
-        <div className="space-y-4">
-          <div>
-            <Label>Style <span className="text-red-400">*</span></Label>
-            <SmartNativeSelect value={form.style_id} onChange={e => setStyleField(e.target.value)}
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
-              <option value="">-- Pilih Style --</option>
-              {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="revision-detail"
+          judul={detail.revision_name}
+          keterangan={[detail.style_code, detail.style_name].filter(Boolean).join(' · ') || undefined}
+          status={<JenisBadge type={detail.revision_type} />}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { bandingkan(detail); setDetail(null); }}><GitCompare />Bandingkan</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="No. revisi">#{detail.revision_number}</BarisDetail>
+            <BarisDetail label="Ringkasan perubahan">{detail.changes_summary || '—'}</BarisDetail>
+            <BarisDetail label="Sebelum">{detail.old_value || '—'}</BarisDetail>
+            <BarisDetail label="Sesudah">{detail.new_value || '—'}</BarisDetail>
+            {detail.notes && <BarisDetail label="Catatan">{detail.notes}</BarisDetail>}
+            <BarisDetail label="Dicatat">{formatDateID(detail.created_at)}{detail.created_by_name ? ` · ${detail.created_by_name}` : ''}</BarisDetail>
+          </dl>
+        </DetailPopup>
+      )}
+
+      {/* Form catat revisi (popup standar) */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} onSimpan={handleSave}
+        judul="Catat revisi baru" keterangan="Riwayat perubahan desain untuk satu style."
+        labelSimpan="Simpan revisi" testId="revision-form">
+        <Isian label="Style" wajib>
+          <SmartNativeSelect value={form.style_id} onChange={e => setStyleField(e.target.value)}
+            className="w-full" data-testid="revision-style-select">
+            <option value="">Pilih style</option>
+            {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Nama revisi" wajib htmlFor="rev-nama">
+            <Input id="rev-nama" value={form.revision_name}
+              onChange={e => f('revision_name', e.target.value)}
+              placeholder="Contoh: Ubah kancing depan" data-testid="revision-name-input" />
+          </Isian>
+          <Isian label="Jenis revisi">
+            <SmartNativeSelect value={form.revision_type} onChange={e => f('revision_type', e.target.value)}
+              searchable={false} className="w-full" data-testid="revision-type-select">
+              {Object.entries(TYPE_CONF).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </SmartNativeSelect>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Nama Revisi <span className="text-red-400">*</span></Label>
-              <Input className="mt-1" value={form.revision_name}
-                onChange={e => f('revision_name', e.target.value)}
-                placeholder="Contoh: Ubah kancing depan" />
-            </div>
-            <div>
-              <Label>Tipe Revisi</Label>
-              <SmartNativeSelect value={form.revision_type} onChange={e => f('revision_type', e.target.value)}
-                className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
-                {Object.entries(TYPE_CONF).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-          </div>
-          <div>
-            <Label>Ringkasan Perubahan</Label>
-            <textarea value={form.changes_summary} onChange={e => f('changes_summary', e.target.value)}
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground h-20 resize-none"
-              placeholder="Jelaskan apa yang berubah..." />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Nilai Sebelumnya</Label>
-              <Input className="mt-1" value={form.old_value}
-                onChange={e => f('old_value', e.target.value)} placeholder="Kondisi lama" />
-            </div>
-            <div>
-              <Label>Nilai Baru</Label>
-              <Input className="mt-1" value={form.new_value}
-                onChange={e => f('new_value', e.target.value)} placeholder="Kondisi baru" />
-            </div>
-          </div>
-          <div>
-            <Label>Catatan Tambahan</Label>
-            <Input className="mt-1" value={form.notes} onChange={e => f('notes', e.target.value)} />
-          </div>
+          </Isian>
         </div>
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-          <Button onClick={handleSave} data-testid="save-revision-btn">Simpan Revisi</Button>
+        <Isian label="Ringkasan perubahan" htmlFor="rev-ringkas">
+          <Textarea id="rev-ringkas" rows={3} value={form.changes_summary} onChange={e => f('changes_summary', e.target.value)}
+            placeholder="Jelaskan apa yang berubah…" />
+        </Isian>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Nilai sebelumnya" htmlFor="rev-lama">
+            <Input id="rev-lama" value={form.old_value}
+              onChange={e => f('old_value', e.target.value)} placeholder="Kondisi lama" />
+          </Isian>
+          <Isian label="Nilai baru" htmlFor="rev-baru">
+            <Input id="rev-baru" value={form.new_value}
+              onChange={e => f('new_value', e.target.value)} placeholder="Kondisi baru" />
+          </Isian>
         </div>
-      </Modal>
-
-      {delId && (
-        <ConfirmDialog
-          onConfirm={handleDelete}
-          onCancel={() => setDelId(null)}
-          title="Hapus Revisi?"
-          message="Data revisi akan dihapus permanen."
-        />
-      )}
+        <Isian label="Catatan tambahan" htmlFor="rev-catatan">
+          <Input id="rev-catatan" value={form.notes} onChange={e => f('notes', e.target.value)} />
+        </Isian>
+      </FormPopup>
 
       {compare && (
         <RnDRevisionCompare
@@ -283,6 +288,6 @@ export default function RnDRevisionsTab({ token }) {
           onClose={() => setCompare(null)}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

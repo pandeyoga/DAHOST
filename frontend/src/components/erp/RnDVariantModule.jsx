@@ -1,35 +1,48 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
+/**
+ * Varian produk RnD (tab "Varian produk" di menu Style & Desain).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): dulu 644 varian tampil sebagai kartu berulang (gulir tanpa ujung) — kini
+ * tabel 25 baris per halaman (kartu ringkas di HP) + unduh Excel/CSV; klik baris = popup rincian ukuran & SKU;
+ * temuan SKU yang tidak sesuai aturan dibuka di popup (dulu panel yang memanjang di atas daftar); form =
+ * FormPopup panjang; hapus lewat confirmDialog. Isian, aturan SKU, dan panggilan API tidak berubah.
+ */
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
+import {
+  Plus, Trash2, Pencil, Search, X, Palette, Ruler, AlertTriangle, Wrench, CheckCircle2, Save, RefreshCw,
+} from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Layers, Plus, Trash2, Pencil, Search, X, Palette, Ruler,
-  AlertTriangle, Wrench, CheckCircle2, Save,
-} from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from '../ui/sonner';
-import Modal from './Modal';
-import ConfirmDialog from './ConfirmDialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
+const PER_HALAMAN = 25;
 
 const STATUS_OPTS = [
-  { value: 'active',   label: 'Aktif' },
-  { value: 'draft',    label: 'Draft' },
-  { value: 'archived', label: 'Arsip' },
+  { value: 'active',   label: 'Aktif',      tone: 'success' },
+  { value: 'draft',    label: 'Draf',       tone: 'muted' },
+  { value: 'archived', label: 'Diarsipkan', tone: 'muted' },
 ];
-
-const STATUS_COLOR = {
-  active:   'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 border-emerald-400 dark:border-emerald-500/30',
-  draft:    'bg-amber-100 dark:bg-amber-500/20 text-amber-600 border-amber-400 dark:border-amber-500/30',
-  archived: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-500 border-border dark:border-zinc-500/30',
-};
+const statusOf = (s) => STATUS_OPTS.find(o => o.value === s) || { label: 'Aktif', tone: 'muted' };
 
 const NEW_COLOR = '__new__';
 
+/** Aturan SKU dari server ("{STYLE}-{COLOR_CODE}-{SIZE}") dalam kata yang dipahami staf. */
+const aturanTeks = (c) => String(c || '{STYLE}-{COLOR_CODE}-{SIZE}')
+  .replace('COLOR_CODE', 'KODE WARNA').replace('SIZE', 'UKURAN');
+
 /** Hex untuk swatch. Dokumen lama menyimpan HEX di `color_code`; dokumen baru
- *  memakai `color_hex` (dan `color_code` berisi KODE master, mis. NVY). */
+ *  memakai `color_hex` (dan `color_code` berisi KODE master, mis. NVY).
+ *  (Nilai ini ikut terkirim saat menyimpan Ubah varian — jangan diubah.) */
 const swatchOf = (v) => {
   const hx = String(v?.color_hex || '').trim();
   if (hx.startsWith('#')) return hx;
@@ -56,6 +69,16 @@ const canonicalSku = (styleCode, colorCode, size) =>
   [styleCode, colorCode, size].map(s => String(s || '').trim().toUpperCase())
     .filter(Boolean).join('-');
 
+const qtyTotal = (v) => sizeRows(v).reduce((t, s) => t + (Number(s.qty_plan) || 0), 0);
+const skuKurang = (v) => sizeRows(v).filter(s => !s.sku).length;
+
+function Swatch({ hex, className = 'h-4 w-4' }) {
+  return (
+    <span className={`inline-block shrink-0 rounded border border-[var(--glass-border)] ${className}`}
+      style={hex ? { backgroundColor: hex } : undefined} aria-hidden="true" />
+  );
+}
+
 async function readErr(res, fallback) {
   try {
     const data = await res.json();
@@ -72,7 +95,7 @@ export default function RnDVariantModule({ token }) {
   const [loading, setLoading]   = useState(false);
   const [search, setSearch]     = useState('');
   const [filterStyle, setFilterStyle] = useState('');
-  const [delId, setDelId]       = useState(null);
+  const [detail, setDetail]     = useState(null);   // varian yang dibuka di popup rincian
 
   // ── SKU audit (bug §2.5.1 — SKU R&D terbalik dari SSOT) ──
   const [audit, setAudit]       = useState(null);
@@ -129,7 +152,9 @@ export default function RnDVariantModule({ token }) {
 
   const loadAudit = useCallback(async () => {
     try {
-      const qs = filterStyle ? `?style_id=${filterStyle}` : '';
+      // 2026-11-08: server memeriksa 500 varian terbaru bila `limit` tidak dikirim — data uji 644 varian (VPS 921),
+      // sehingga jumlah "SKU tidak sesuai aturan" bisa kurang. Minta batas maksimum yang diizinkan server (2000).
+      const qs = `?limit=2000${filterStyle ? `&style_id=${filterStyle}` : ''}`;
       const res = await fetch(`${API}/api/dewi/rnd/variants/sku-audit${qs}`, { headers: h });
       if (res.ok) setAudit(await res.json());
     } catch { /* ignore */ }
@@ -361,7 +386,7 @@ export default function RnDVariantModule({ token }) {
       });
       return n;
     });
-    toast.success('SKU di-generate mengikuti SSOT: {STYLE}-{KODE WARNA}-{UKURAN}');
+    toast.success('SKU dibuat otomatis mengikuti aturan {STYLE}-{KODE WARNA}-{UKURAN}');
   };
 
   // ─────────────────────────── save ───────────────────────────
@@ -373,7 +398,7 @@ export default function RnDVariantModule({ token }) {
     const chosen = colorRows.filter(r => r.color_id || r.name);
     if (chosen.length === 0) return toast.error('Tambahkan minimal satu warna');
     const pending = colorRows.find(r => r.isNew && !r.color_id);
-    if (pending) return toast.error('Ada warna baru yang belum disimpan ke master — klik "Simpan ke Master"');
+    if (pending) return toast.error('Ada warna baru yang belum disimpan ke master — klik "Simpan ke master"');
 
     setSaving(true);
     try {
@@ -427,12 +452,18 @@ export default function RnDVariantModule({ token }) {
     finally { setSaving(false); }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (v) => {
+    const ok = await confirmDialog({
+      title: 'Hapus varian ini?',
+      body: `${v.color || 'Varian'} · ${v.style_code || ''} dihapus permanen.`,
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await fetch(`${API}/api/dewi/rnd/variants/${delId}`, { method: 'DELETE', headers: h });
+      const res = await fetch(`${API}/api/dewi/rnd/variants/${v.id}`, { method: 'DELETE', headers: h });
       if (!res.ok) { toast.error(await readErr(res, 'Gagal menghapus')); return; }
       toast.success('Varian dihapus');
-      setDelId(null);
+      setDetail(null);
       loadVariants(); loadAudit();
     } catch { toast.error('Gagal menghapus'); }
   };
@@ -443,7 +474,7 @@ export default function RnDVariantModule({ token }) {
       const res = await fetch(`${API}/api/dewi/rnd/variants/${vid}/fix-sku`, { method: 'POST', headers: h });
       if (!res.ok) { toast.error(await readErr(res, 'Gagal memperbaiki SKU')); return; }
       const out = await res.json();
-      toast.success(`${out.changed_count} SKU diperbaiki mengikuti SSOT`);
+      toast.success(`${out.changed_count} SKU diperbaiki mengikuti aturan`);
       loadVariants(); loadAudit();
     } catch { toast.error('Gagal memperbaiki SKU'); }
     finally { setFixing(''); }
@@ -462,416 +493,402 @@ export default function RnDVariantModule({ token }) {
   const activeColors = colorRows.filter(r => r.color_id || r.name);
   const cleanSizesView = sizes;
 
-  return (
-    <div className="p-6" data-testid="rnd-variant-module">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Layers className="w-5 h-5 text-violet-500" /> Varian Produk
-          </h1>
-          <p className="text-sm text-foreground/50 mt-0.5">
-            Banyak warna sekaligus (dari master warna) × ukuran bebas per style — SKU mengikuti SSOT
-          </p>
-        </div>
-        <Button onClick={openNew} className="gap-2" data-testid="rnd-variant-add-btn">
-          <Plus className="w-4 h-4" /> Tambah Varian
+  // Tampilan saja: varian yang belum punya hex memakai hex master warnanya (data dari /color-options).
+  const hexMaster = useMemo(() => Object.fromEntries((colorOpts || []).map(c => [c.color_id, c.hex])), [colorOpts]);
+  const warnaTampil = (v) => {
+    const hx = String(v?.color_hex || '').trim();
+    if (hx.startsWith('#')) return hx;
+    const legacy = String(v?.color_code || '').trim();
+    if (legacy.startsWith('#')) return legacy;
+    return hexMaster[v?.color_id] || null;
+  };
+
+  const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, PER_HALAMAN);
+  const muatUlang = () => { loadVariants(); loadAudit(); };
+  const adaAudit = audit && (audit.drift_variants > 0 || audit.colors_not_in_master > 0);
+
+  const kolom = [
+    { kunci: 'warna', label: 'Warna', hp: 'judul', isi: (v) => (
+      <span className="inline-flex items-center gap-2">
+        <Swatch hex={warnaTampil(v)} />
+        <span className="font-medium">{v.color || '(tanpa nama)'}</span>
+        {codeOf(v) && <span className="text-xs text-muted-foreground">{codeOf(v)}</span>}
+      </span>) },
+    { kunci: 'style', label: 'Style', hp: 'keterangan', isi: (v) => (
+      <span className="text-sm"><span className="tabular-nums">{v.style_code}</span>{v.style_name ? ` — ${v.style_name}` : ''}</span>) },
+    { kunci: 'ukuran', label: 'Ukuran', isi: (v) => sizeRows(v).map(s => s.size).join(', ') || '—' },
+    { kunci: 'sku', label: 'SKU', isi: (v) => {
+      const n = sizeRows(v).length;
+      const kurang = skuKurang(v);
+      if (!n) return <span className="text-muted-foreground">—</span>;
+      return kurang
+        ? <span className="text-[hsl(var(--warning-text))]">{kurang} belum dibuat</span>
+        : <span className="tabular-nums">{n} SKU</span>;
+    } },
+    { kunci: 'qty', label: 'Qty rencana', rata: 'kanan', isi: (v) => {
+      const q = qtyTotal(v);
+      return q > 0 ? <span className="tabular-nums">{q} pcs</span> : <span className="text-muted-foreground">—</span>;
+    } },
+    { kunci: 'status', label: 'Status', isi: (v) => <StatusBadge status={v.status} label={statusOf(v.status).label} tone={statusOf(v.status).tone} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (v) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openEdit(v)} title="Ubah varian" aria-label="Ubah varian"
+          data-testid={`rnd-variant-edit-${v.id}`}>
+          <Pencil />
         </Button>
-      </div>
+        <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(v)} title="Hapus varian" aria-label="Hapus varian"
+          className="text-[hsl(var(--danger-text))]" data-testid={`rnd-variant-del-${v.id}`}>
+          <Trash2 />
+        </Button>
+      </div>) },
+  ];
 
-      {/* SKU tidak sesuai SSOT */}
-      {audit && (audit.drift_variants > 0 || audit.colors_not_in_master > 0) && (
-        <GlassCard className="p-4 mb-5 border-amber-400 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10"
-          data-testid="rnd-sku-audit-banner">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-              <div>
-                <div className="text-sm font-semibold text-amber-800 dark:text-amber-200">
-                  {audit.drift_rows} SKU tidak sesuai SSOT
-                  {audit.colors_not_in_master > 0 && ` · ${audit.colors_not_in_master} varian warnanya belum ada di master`}
-                </div>
-                <div className="text-xs text-amber-700/80 dark:text-amber-300/80 mt-0.5">
-                  Aturan SSOT: <span className="font-mono">{audit.convention}</span>. SKU lama tidak diubah
-                  otomatis — perbaiki per baris supaya Anda yang memutuskan.
-                </div>
-              </div>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setShowAudit(v => !v)}
-              className="h-8 text-xs" data-testid="rnd-sku-audit-toggle">
-              {showAudit ? 'Sembunyikan' : `Lihat ${audit.items.length} varian`}
-            </Button>
-          </div>
+  const kolomUnduh = [
+    { label: 'Kode style', nilai: (v) => v.style_code || '' },
+    { label: 'Nama style', nilai: (v) => v.style_name || '' },
+    { label: 'Warna', nilai: (v) => v.color || '' },
+    { label: 'Kode warna', nilai: (v) => codeOf(v) },
+    { label: 'Ukuran', nilai: (v) => sizeRows(v).map(s => s.size).join(', ') },
+    { label: 'SKU', nilai: (v) => sizeRows(v).map(s => s.sku).filter(Boolean).join(', ') },
+    { label: 'SKU belum dibuat', nilai: (v) => skuKurang(v) },
+    { label: 'Qty rencana (pcs)', nilai: (v) => qtyTotal(v) },
+    { label: 'Status', nilai: (v) => statusOf(v.status).label },
+    { label: 'Catatan', nilai: (v) => v.notes || '' },
+  ];
 
-          {showAudit && (
-            <div className="mt-4 space-y-3" data-testid="rnd-sku-audit-panel">
-              {audit.items.map(it => (
-                <div key={it.variant_id} className="rounded-lg border border-amber-300 dark:border-amber-500/30 bg-background/70 p-3">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded border border-foreground/20"
-                        style={{ backgroundColor: it.color_hex }} />
-                      <span className="text-sm font-medium text-foreground">{it.color || '(tanpa nama)'}</span>
-                      {it.color_in_master ? (
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/70">{it.color_code}</span>
-                      ) : (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-500/40">
-                          belum ada di master warna
-                        </span>
-                      )}
-                      <span className="text-xs text-foreground/50">{it.style_code}</span>
-                    </div>
-                    <Button size="sm" variant="outline" disabled={fixing === it.variant_id}
-                      onClick={() => fixSku(it.variant_id)} className="h-7 text-xs gap-1"
-                      data-testid={`rnd-sku-fix-${it.variant_id}`}>
-                      <Wrench className="w-3 h-3" /> {fixing === it.variant_id ? 'Memperbaiki…' : 'Perbaiki SKU'}
-                    </Button>
-                  </div>
-                  <div className="mt-2 overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-foreground/40">
-                          <th className="text-left px-2 py-1 font-medium">Ukuran</th>
-                          <th className="text-left px-2 py-1 font-medium">SKU sekarang</th>
-                          <th className="text-left px-2 py-1 font-medium">SKU seharusnya (SSOT)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {it.rows.filter(r => !r.ok).map((r, i) => (
-                          <tr key={i} className="border-t border-foreground/5">
-                            <td className="px-2 py-1 font-semibold text-foreground">{r.size}</td>
-                            <td className="px-2 py-1 font-mono text-red-600 dark:text-red-400 line-through">{r.sku_now || '—'}</td>
-                            <td className="px-2 py-1 font-mono text-emerald-600 dark:text-emerald-400">{r.sku_canonical || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </GlassCard>
-      )}
+  const auditBaris = (audit?.items || []).flatMap(it => (it.rows || []).filter(r => !r.ok).map(r => ({ ...r, it })));
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-5">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-foreground/40" />
+  return (
+    <PageLayout testId="rnd-variant-module" title="Varian produk"
+      subtitle={`Warna dari master × ukuran per style; SKU mengikuti aturan ${aturanTeks(audit?.convention)}.`}
+      actions={<Button onClick={openNew} data-testid="rnd-variant-add-btn"><Plus />Tambah varian</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Cari warna / kode / style..." className="pl-9" data-testid="rnd-variant-search" />
+            placeholder="Cari warna, kode, atau style" className="pl-8" data-testid="rnd-variant-search" />
         </div>
         <SmartNativeSelect value={filterStyle} onChange={e => setFilterStyle(e.target.value)}
-          data-testid="rnd-variant-filter-style"
-          className="border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground min-w-[200px]">
-          <option value="">Semua Style</option>
+          className="w-56" wrapperClassName="w-56" aria-label="Style" data-testid="rnd-variant-filter-style">
+          <option value="">Semua style</option>
           {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
         </SmartNativeSelect>
-      </div>
-
-      {/* Table */}
-      {loading ? (
-        <div className="flex justify-center h-32 items-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-violet-500" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <Layers className="w-10 h-10 text-foreground/20 mx-auto mb-3" />
-          <p className="text-foreground/50 text-sm">Belum ada varian produk.</p>
-          <Button variant="outline" className="mt-3" onClick={openNew}>+ Tambah Varian Pertama</Button>
-        </GlassCard>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="varian-produk-rnd" namaLembar="Varian" baris={filtered} kolom={kolomUnduh}
+          testId="rnd-variant-unduh" />
+        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={adaAudit ? (
+        <Notice tone="warning" icon={AlertTriangle} testId="rnd-sku-audit-banner"
+          title={`${audit.drift_rows} SKU tidak sesuai aturan${audit.colors_not_in_master > 0 ? ` · ${audit.colors_not_in_master} varian warnanya belum ada di master` : ''}`}
+          action={(
+            <Button variant="outline" size="sm" onClick={() => setShowAudit(true)} data-testid="rnd-sku-audit-toggle">
+              Lihat {audit.items.length} varian
+            </Button>
+          )}>
+          Aturan: <span className="tabular-nums">{aturanTeks(audit.convention)}</span>. SKU lama tidak diubah otomatis —
+          perbaiki per varian supaya Anda yang memutuskan.
+        </Notice>
+      ) : null}
+      footer={!loading && filtered.length > PER_HALAMAN ? (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={PER_HALAMAN} onPageChange={setPage} />
+      ) : null}>
+      {loading && variants.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat varian…</p>
       ) : (
-        <div className="space-y-4">
-          {filtered.map(v => (
-            <GlassCard key={v.id} className="p-4" data-testid={`rnd-variant-card-${v.id}`}>
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg border border-foreground/20 shadow-sm flex-shrink-0"
-                    style={{ backgroundColor: swatchOf(v) }} />
-                  <div>
-                    <div className="font-semibold text-foreground flex items-center gap-2">
-                      {v.color}
-                      {codeOf(v) && (
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300">
-                          {codeOf(v)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-foreground/50">{v.style_code} — {v.style_name}</div>
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_COLOR[v.status] || ''}`}>
-                    {STATUS_OPTS.find(s => s.value === v.status)?.label || v.status}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(v)}
-                    className="h-8 w-8 p-0" data-testid={`rnd-variant-edit-${v.id}`}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setDelId(v.id)}
-                    className="h-8 w-8 p-0 text-red-700 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-500/10"
-                    data-testid={`rnd-variant-del-${v.id}`}>
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-              {sizeRows(v).length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {sizeRows(v).map((s, i) => (
-                    <div key={i} className="text-xs bg-foreground/5 border border-foreground/10 rounded-lg px-2.5 py-1.5">
-                      <span className="font-bold text-foreground">{s.size}</span>
-                      {s.qty_plan > 0 && <span className="text-foreground/50 ml-1">× {s.qty_plan} pcs</span>}
-                      {s.sku
-                        ? <div className="text-foreground/40 font-mono mt-0.5">{s.sku}</div>
-                        : <div className="text-amber-600 dark:text-amber-400 mt-0.5">SKU belum dibuat</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {v.notes && <p className="text-xs text-foreground/40 mt-2">{v.notes}</p>}
-            </GlassCard>
-          ))}
-        </div>
+        <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="rnd-variant-table"
+          kosong={<EmptyState title={variants.length ? 'Tidak ada varian yang cocok' : 'Belum ada varian produk'}
+            description={variants.length ? 'Ubah kata pencarian atau pilihan style.' : 'Tambah varian: pilih style, warna dari master, lalu ukuran.'}
+            action={!variants.length && <Button onClick={openNew}><Plus />Tambah varian</Button>} />} />
       )}
 
-      {/* ───────────────────────── Form Modal ───────────────────────── */}
-      <Modal open={showForm} onClose={() => setShowForm(false)}
-        title={editing ? 'Edit Varian' : 'Tambah Varian (bisa banyak warna sekaligus)'} size="3xl">
-        <div className="space-y-5">
-          <div>
-            <Label>Style Produk <span className="text-red-700 dark:text-red-400">*</span></Label>
-            <SmartNativeSelect value={styleId} onChange={e => onStyleChange(e.target.value)}
-              data-testid="rnd-variant-style-select"
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
-              <option value="">-- Pilih Style --</option>
-              {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
-            </SmartNativeSelect>
+      {/* ── Rincian satu varian ── */}
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} testId="rnd-variant-detail"
+          judul={`${detail.color || 'Varian'} · ${detail.style_code || ''}`}
+          keterangan={detail.style_name}
+          status={<StatusBadge status={detail.status} label={statusOf(detail.status).label} tone={statusOf(detail.status).tone} />}
+          aksi={<>
+            <Button size="sm" variant="outline" onClick={() => { const v = detail; setDetail(null); openEdit(v); }}><Pencil />Ubah</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail)}><Trash2 />Hapus</Button>
+          </>}>
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Style">{detail.style_code} — {detail.style_name}</BarisDetail>
+            <BarisDetail label="Warna">
+              <span className="inline-flex items-center gap-2"><Swatch hex={warnaTampil(detail)} />{detail.color || '—'}
+                {codeOf(detail) && <span className="text-xs text-muted-foreground">{codeOf(detail)}</span>}</span>
+            </BarisDetail>
+            {detail.notes && <BarisDetail label="Catatan">{detail.notes}</BarisDetail>}
+          </dl>
+          <TabelData baris={sizeRows(detail)} kunci={(s) => s.size} testId="rnd-variant-detail-sizes"
+            kosong={<EmptyState title="Varian ini belum punya ukuran." className="py-6" />}
+            kolom={[
+              { kunci: 'size', label: 'Ukuran', hp: 'judul', isi: (s) => <span className="font-medium">{s.size}</span> },
+              { kunci: 'sku', label: 'SKU', isi: (s) => (s.sku
+                ? <span className="text-xs">{s.sku}</span>
+                : <span className="text-[hsl(var(--warning-text))]">SKU belum dibuat</span>) },
+              { kunci: 'qty', label: 'Qty rencana', rata: 'kanan', isi: (s) => <span className="tabular-nums">{Number(s.qty_plan) || 0} pcs</span> },
+            ]} />
+        </DetailPopup>
+      )}
+
+      {/* ── SKU tidak sesuai aturan ── */}
+      {showAudit && adaAudit && (
+        <DetailPopup open onClose={() => setShowAudit(false)} testId="rnd-sku-audit-panel"
+          judul="SKU tidak sesuai aturan"
+          keterangan={`Aturan: ${aturanTeks(audit.convention)}. Perbaiki per varian.`}
+          aksi={(
+            <TombolUnduh namaBerkas="sku-tidak-sesuai-aturan" namaLembar="SKU" baris={auditBaris} testId="rnd-sku-audit-unduh"
+              kolom={[
+                { label: 'Style', nilai: (r) => r.it.style_code || '' },
+                { label: 'Warna', nilai: (r) => r.it.color || '' },
+                { label: 'Kode warna', nilai: (r) => r.it.color_code || '' },
+                { label: 'Warna ada di master', nilai: (r) => (r.it.color_in_master ? 'Ya' : 'Belum') },
+                { label: 'Ukuran', nilai: (r) => r.size },
+                { label: 'SKU sekarang', nilai: (r) => r.sku_now || '' },
+                { label: 'SKU seharusnya', nilai: (r) => r.sku_canonical || '' },
+              ]} />
+          )}>
+          <TabelData baris={audit.items} kunci={(it) => it.variant_id} testId="rnd-sku-audit-table"
+            kolom={[
+              { kunci: 'warna', label: 'Warna', hp: 'judul', isi: (it) => (
+                <span className="inline-flex items-center gap-2"><Swatch hex={it.color_hex} />{it.color || '(tanpa nama)'}</span>) },
+              { kunci: 'master', label: 'Master warna', isi: (it) => (it.color_in_master
+                ? <span className="text-xs">{it.color_code}</span>
+                : <StatusBadge status="missing" label="Belum ada di master" tone="danger" />) },
+              { kunci: 'style', label: 'Style', isi: (it) => <span className="text-sm">{it.style_code}</span> },
+              { kunci: 'salah', label: 'SKU sekarang → seharusnya', isi: (it) => (
+                <div className="space-y-0.5">
+                  {(it.rows || []).filter(r => !r.ok).map((r, i) => (
+                    <p key={i} className="text-xs">
+                      <span className="font-medium">{r.size}:</span>{' '}
+                      <span className="text-[hsl(var(--danger-text))] line-through">{r.sku_now || '—'}</span>{' → '}
+                      <span className="text-[hsl(var(--success-text))]">{r.sku_canonical || '—'}</span>
+                    </p>
+                  ))}
+                </div>) },
+              { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+                <Button size="sm" variant="outline" disabled={fixing === it.variant_id}
+                  onClick={() => fixSku(it.variant_id)} data-testid={`rnd-sku-fix-${it.variant_id}`}>
+                  <Wrench />{fixing === it.variant_id ? 'Memperbaiki…' : 'Perbaiki SKU'}
+                </Button>) },
+            ]} />
+        </DetailPopup>
+      )}
+
+      {/* ───────────────────────── Form ───────────────────────── */}
+      <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave}
+        menyimpan={saving} testId="rnd-variant-form"
+        judul={editing ? 'Ubah varian' : 'Tambah varian'}
+        keterangan={editing ? undefined : 'Bisa banyak warna sekaligus: satu varian dibuat per warna.'}
+        labelSimpan={editing ? 'Simpan' : `Simpan ${activeColors.length || ''} varian`.replace('  ', ' ')}>
+        <Isian label="Style produk" wajib>
+          <SmartNativeSelect value={styleId} onChange={e => onStyleChange(e.target.value)}
+            className="w-full" aria-label="Style produk" data-testid="rnd-variant-style-select">
+            <option value="">— Pilih style —</option>
+            {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+
+        {/* ── WARNA (multi) ── */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+              <Palette className="h-4 w-4" /> Warna
+              {!editing && <span className="text-xs font-normal text-muted-foreground">(bisa lebih dari satu)</span>}
+            </p>
+            {!editing && (
+              <Button type="button" variant="outline" size="sm" onClick={addColorRow} data-testid="rnd-variant-add-color">
+                <Plus /> Tambah warna
+              </Button>
+            )}
           </div>
 
-          {/* ── WARNA (multi) ── */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <Label className="flex items-center gap-1">
-                <Palette className="w-4 h-4" /> Warna
-                {!editing && <span className="text-xs font-normal text-foreground/50">(bisa lebih dari satu)</span>}
-              </Label>
-              {!editing && (
-                <Button type="button" variant="outline" size="sm" onClick={addColorRow}
-                  className="h-7 text-xs gap-1" data-testid="rnd-variant-add-color">
-                  <Plus className="w-3 h-3" /> Tambah Warna
-                </Button>
-              )}
-            </div>
-
-            <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] divide-y divide-foreground/5">
-              {colorRows.length === 0 && (
-                <div className="p-4 text-center text-sm text-foreground/40">
-                  Belum ada warna. Klik "Tambah Warna".
-                </div>
-              )}
-              {colorRows.map((r, idx) => (
-                <div key={r.key} className="p-3" data-testid={`rnd-variant-color-row-${idx}`}>
-                  <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-md border border-foreground/20 flex-shrink-0 shadow-sm"
-                      style={{ backgroundColor: r.hex }} />
-                    <SmartNativeSelect
-                      value={r.isNew ? NEW_COLOR : (r.color_id || '')}
-                      onChange={e => pickColor(r.key, e.target.value)}
-                      data-testid={`rnd-variant-color-select-${idx}`}
-                      className="flex-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
-                      <option value="">-- Pilih warna dari master --</option>
-                      {colorOpts.map(c => (
-                        <option key={c.color_id} value={c.color_id}>{`${c.name} (${c.code})`}</option>
-                      ))}
-                      <option value={NEW_COLOR}>+ Warna baru…</option>
-                    </SmartNativeSelect>
-                    {r.code && (
-                      <span className="text-[11px] font-mono px-2 py-1 rounded bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300">
-                        {r.code}
-                      </span>
-                    )}
-                    {!editing && (
-                      <Button variant="ghost" size="sm" onClick={() => removeColorRow(r.key)}
-                        className="h-8 w-8 p-0 text-red-700 dark:text-red-500"
-                        data-testid={`rnd-variant-del-color-${idx}`}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    )}
-                  </div>
-
-                  {r.isNew && (
-                    <div className="mt-2 ml-9 grid grid-cols-[1fr_110px_44px_auto] gap-2 items-center">
-                      <Input value={r.draft.name} onChange={e => setDraft(r.key, 'name', e.target.value)}
-                        placeholder="Nama warna baru (mis. Navy Blue)" className="h-9 text-sm"
-                        data-testid={`rnd-variant-new-color-name-${idx}`} />
-                      <Input value={r.draft.code} onChange={e => setDraft(r.key, 'code', e.target.value.toUpperCase())}
-                        placeholder="KODE" className="h-9 text-sm font-mono"
-                        data-testid={`rnd-variant-new-color-code-${idx}`} />
-                      <input type="color" value={r.draft.hex}
-                        onChange={e => setDraft(r.key, 'hex', e.target.value)}
-                        className="w-11 h-9 rounded border border-input cursor-pointer bg-background" />
-                      <Button type="button" size="sm" onClick={() => saveNewColor(r)}
-                        className="h-9 text-xs gap-1" data-testid={`rnd-variant-save-color-${idx}`}>
-                        <Save className="w-3 h-3" /> Simpan ke Master
-                      </Button>
-                      <p className="col-span-4 text-[11px] text-foreground/50">
-                        Kode dipakai di SKU (mis. NVY). Warna ini ditulis ke master warna yang sama
-                        dengan produksi &amp; gudang — tidak perlu pindah menu.
-                      </p>
-                    </div>
+          <div className="divide-y divide-[var(--glass-border)] rounded-lg border border-[var(--glass-border)]">
+            {colorRows.length === 0 && (
+              <p className="p-4 text-center text-sm text-muted-foreground">Warna belum dipilih. Klik "Tambah warna".</p>
+            )}
+            {colorRows.map((r, idx) => (
+              <div key={r.key} className="p-3" data-testid={`rnd-variant-color-row-${idx}`}>
+                <div className="flex items-center gap-2">
+                  <Swatch hex={r.hex} className="h-7 w-7 rounded-md" />
+                  <SmartNativeSelect
+                    value={r.isNew ? NEW_COLOR : (r.color_id || '')}
+                    onChange={e => pickColor(r.key, e.target.value)}
+                    className="w-full" wrapperClassName="min-w-0 flex-1" aria-label="Warna dari master"
+                    data-testid={`rnd-variant-color-select-${idx}`}>
+                    <option value="">— Pilih warna dari master —</option>
+                    {colorOpts.map(c => (
+                      <option key={c.color_id} value={c.color_id}>{`${c.name} (${c.code})`}</option>
+                    ))}
+                    <option value={NEW_COLOR}>+ Warna baru…</option>
+                  </SmartNativeSelect>
+                  {r.code && <span className="text-xs text-muted-foreground">{r.code}</span>}
+                  {!editing && (
+                    <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeColorRow(r.key)}
+                      className="text-[hsl(var(--danger-text))]" title="Hapus baris warna" aria-label="Hapus baris warna"
+                      data-testid={`rnd-variant-del-color-${idx}`}>
+                      <Trash2 />
+                    </Button>
                   )}
                 </div>
-              ))}
+
+                {r.isNew && (
+                  <div className="mt-2 space-y-1.5 sm:ml-9">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input value={r.draft.name} onChange={e => setDraft(r.key, 'name', e.target.value)}
+                        placeholder="Nama warna baru (mis. Biru dongker)" className="min-w-0 flex-1 basis-48"
+                        aria-label="Nama warna baru" data-testid={`rnd-variant-new-color-name-${idx}`} />
+                      <Input value={r.draft.code} onChange={e => setDraft(r.key, 'code', e.target.value.toUpperCase())}
+                        placeholder="Kode" className="w-24" aria-label="Kode warna"
+                        data-testid={`rnd-variant-new-color-code-${idx}`} />
+                      <input type="color" value={r.draft.hex} aria-label="Contoh warna"
+                        onChange={e => setDraft(r.key, 'hex', e.target.value)}
+                        className="h-9 w-11 cursor-pointer rounded border border-input bg-background" />
+                      <Button type="button" size="sm" variant="success" onClick={() => saveNewColor(r)}
+                        data-testid={`rnd-variant-save-color-${idx}`}>
+                        <Save /> Simpan ke master
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Kode dipakai di SKU (mis. NVY). Warna ini ditulis ke master warna yang sama dengan produksi
+                      &amp; gudang — tidak perlu pindah menu.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── UKURAN & SKU (matriks warna × ukuran) ── */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+              <Ruler className="h-4 w-4" /> Ukuran &amp; SKU
+              <span className="text-xs font-normal text-muted-foreground">
+                {sizeSource === 'default' ? '(daftar bawaan — simpan untuk jadikan milik style ini)' : `(daftar style ${styleCode})`}
+              </span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={addSize} data-testid="rnd-variant-add-size">
+                <Plus /> Tambah ukuran
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => persistSizeList(false)}
+                disabled={!styleId} data-testid="rnd-variant-save-sizes">
+                <Save /> Simpan daftar ukuran{sizeDirty ? ' *' : ''}
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={autoGenSKU} data-testid="rnd-variant-autogen-sku">
+                Buat SKU otomatis
+              </Button>
             </div>
           </div>
 
-          {/* ── UKURAN & SKU (matriks warna × ukuran) ── */}
-          <div>
-            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-              <Label className="flex items-center gap-1">
-                <Ruler className="w-4 h-4" /> Ukuran &amp; SKU
-                <span className="text-xs font-normal text-foreground/50">
-                  {sizeSource === 'default' ? '(daftar bawaan — simpan untuk jadikan milik style ini)' : `(daftar style ${styleCode})`}
-                </span>
-              </Label>
-              <div className="flex gap-2 flex-wrap">
-                <Button type="button" variant="outline" size="sm" onClick={addSize}
-                  className="h-7 text-xs gap-1" data-testid="rnd-variant-add-size">
-                  <Plus className="w-3 h-3" /> Tambah Ukuran
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => persistSizeList(false)}
-                  disabled={!styleId} className="h-7 text-xs gap-1" data-testid="rnd-variant-save-sizes">
-                  <Save className="w-3 h-3" /> Simpan Daftar Ukuran{sizeDirty ? ' *' : ''}
-                </Button>
-                <Button type="button" variant="outline" size="sm" onClick={autoGenSKU}
-                  className="h-7 text-xs" data-testid="rnd-variant-autogen-sku">
-                  Auto-generate SKU
-                </Button>
-              </div>
-            </div>
+          {sizeDirty && (
+            <Notice tone="warning">Daftar ukuran berubah — ikut tersimpan ke style saat Anda menekan Simpan.</Notice>
+          )}
 
-            {sizeDirty && (
-              <div className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 rounded-md px-2 py-1.5 mb-2">
-                Daftar ukuran berubah — akan ikut tersimpan ke style saat Anda menekan Simpan.
-              </div>
-            )}
-
-            <div className="overflow-x-auto rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-              <table className="w-full text-sm" data-testid="rnd-variant-matrix">
-                <thead className="bg-foreground/5">
-                  <tr>
-                    <th rowSpan="2" className="text-left px-3 py-2 text-xs text-foreground/50 w-56 align-bottom">Ukuran</th>
+          <div className="rounded-lg border border-[var(--glass-border)]">
+            <Table data-testid="rnd-variant-matrix">
+              <TableHeader>
+                <TableRow>
+                  <TableHead rowSpan={2} className="w-56 align-bottom">Ukuran</TableHead>
+                  {activeColors.map(r => (
+                    <TableHead key={r.key} colSpan={2} className="border-l border-[var(--glass-border)] text-center">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Swatch hex={r.hex} className="h-3 w-3" />
+                        {r.name || '(warna)'}{r.code ? ` · ${r.code}` : ''}
+                      </span>
+                    </TableHead>
+                  ))}
+                  <TableHead rowSpan={2} className="w-9" />
+                </TableRow>
+                <TableRow>
+                  {activeColors.map(r => (
+                    <Fragment key={`hdr-${r.key}`}>
+                      <TableHead className="h-8 border-l border-[var(--glass-border)] text-xs">SKU</TableHead>
+                      <TableHead className="h-8 w-20 text-right text-xs">Qty</TableHead>
+                    </Fragment>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cleanSizesView.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={2 + activeColors.length * 2} className="py-6 text-center text-sm text-muted-foreground">
+                      Belum ada ukuran. Klik "Tambah ukuran" — bebas, boleh "All Size" atau "28/30".
+                    </TableCell>
+                  </TableRow>
+                )}
+                {cleanSizesView.map((sz, i) => (
+                  <TableRow key={i}>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <Input value={sz} onChange={e => renameSize(i, e.target.value)}
+                          placeholder="Ukuran" className="h-8 min-w-[72px] text-sm font-medium" aria-label="Ukuran"
+                          data-testid={`rnd-variant-size-input-${i}`} />
+                        {unmatchedSizes.has(sz) && (
+                          <span title="Belum ada di master ukuran produksi — nanti perlu dipadankan saat masuk PO produksi">
+                            <StatusBadge status="unmatched" label="Belum dipadankan" tone="warning" />
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
                     {activeColors.map(r => (
-                      <th key={r.key} colSpan="2" className="text-center px-2 py-1.5 text-xs text-foreground/60 border-l border-foreground/10">
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="w-3 h-3 rounded-sm border border-foreground/20" style={{ backgroundColor: r.hex }} />
-                          {r.name || '(warna)'}{r.code ? ` · ${r.code}` : ''}
-                        </span>
-                      </th>
-                    ))}
-                    <th rowSpan="2" className="w-9" />
-                  </tr>
-                  <tr>
-                    {activeColors.map(r => (
-                      <Fragment key={`hdr-${r.key}`}>
-                        <th className="text-left px-2 py-1 text-[10px] text-foreground/40 border-l border-foreground/10">SKU</th>
-                        <th className="text-right px-2 py-1 text-[10px] text-foreground/40 w-20">Qty</th>
+                      <Fragment key={`${r.key}-${i}`}>
+                        <TableCell className="border-l border-[var(--glass-border)]">
+                          <Input value={cellVal(r.key, sz, 'sku')}
+                            onChange={e => setCell(r.key, sz, 'sku', e.target.value)}
+                            placeholder={canonicalSku(styleCode, r.code || r.name, sz) || 'SKU'}
+                            className="h-8 text-xs" aria-label={`SKU ${sz}`}
+                            data-testid={`rnd-variant-sku-${i}-${r.code || r.key}`} />
+                        </TableCell>
+                        <TableCell>
+                          <Input type="number" min="0" value={cellVal(r.key, sz, 'qty_plan')}
+                            onChange={e => setCell(r.key, sz, 'qty_plan', e.target.value)}
+                            className="h-8 text-right text-sm tabular-nums" aria-label={`Qty ${sz}`}
+                            data-testid={`rnd-variant-qty-${i}-${r.code || r.key}`} />
+                        </TableCell>
                       </Fragment>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {cleanSizesView.length === 0 && (
-                    <tr><td colSpan={2 + activeColors.length * 2} className="px-3 py-6 text-center text-sm text-foreground/40">
-                      Belum ada ukuran. Klik "Tambah Ukuran" — bebas, boleh "All Size" atau "28/30".
-                    </td></tr>
-                  )}
-                  {cleanSizesView.map((sz, i) => (
-                    <tr key={i} className="border-t border-foreground/5">
-                      <td className="px-3 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <Input value={sz} onChange={e => renameSize(i, e.target.value)}
-                            placeholder="Ukuran" className="h-7 text-xs font-semibold min-w-[72px]"
-                            data-testid={`rnd-variant-size-input-${i}`} />
-                          {unmatchedSizes.has(sz) && (
-                            <span title="Belum ada di master ukuran produksi — nanti perlu dipadankan manual saat masuk PO produksi"
-                              className="text-[9px] px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40 whitespace-nowrap">
-                              belum dipadankan
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      {activeColors.map(r => (
-                        <Fragment key={`${r.key}-${i}`}>
-                          <td className="px-2 py-1.5 border-l border-foreground/10">
-                            <Input value={cellVal(r.key, sz, 'sku')}
-                              onChange={e => setCell(r.key, sz, 'sku', e.target.value)}
-                              placeholder={canonicalSku(styleCode, r.code || r.name, sz) || 'SKU'}
-                              className="h-7 text-xs font-mono"
-                              data-testid={`rnd-variant-sku-${i}-${r.code || r.key}`} />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input type="number" min="0" value={cellVal(r.key, sz, 'qty_plan')}
-                              onChange={e => setCell(r.key, sz, 'qty_plan', e.target.value)}
-                              className="h-7 text-xs text-right"
-                              data-testid={`rnd-variant-qty-${i}-${r.code || r.key}`} />
-                          </td>
-                        </Fragment>
-                      ))}
-                      <td className="px-1 py-1.5">
-                        <Button variant="ghost" size="sm" onClick={() => removeSize(i)}
-                          className="h-7 w-7 p-0 text-red-700 dark:text-red-500"
-                          data-testid={`rnd-variant-del-size-${i}`}>
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {!editing && activeColors.length > 0 && cleanSizesView.length > 0 && (
-              <p className="text-[11px] text-foreground/50 mt-2 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                Simpan akan membuat <b className="text-foreground">{activeColors.length} varian</b>
-                {' '}(satu per warna), masing-masing dengan {cleanSizesView.length} ukuran.
-              </p>
-            )}
+                    <TableCell className="px-1">
+                      <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeSize(i)}
+                        className="text-[hsl(var(--danger-text))]" title="Hapus ukuran" aria-label="Hapus ukuran"
+                        data-testid={`rnd-variant-del-size-${i}`}>
+                        <X />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Status</Label>
-              <SmartNativeSelect value={status} onChange={e => setStatus(e.target.value)}
-                data-testid="rnd-variant-status" className="w-full mt-1">
-                {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <Label>Catatan</Label>
-              <Input className="mt-1" value={notes} onChange={e => setNotes(e.target.value)}
-                data-testid="rnd-variant-notes" />
-            </div>
-          </div>
+          {!editing && activeColors.length > 0 && cleanSizesView.length > 0 && (
+            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+              <CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--success-text))]" />
+              Simpan akan membuat <b className="text-foreground">{activeColors.length} varian</b>
+              {' '}(satu per warna), masing-masing dengan {cleanSizesView.length} ukuran.
+            </p>
+          )}
         </div>
 
-        <div className="flex justify-end gap-3 mt-6">
-          <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>
-          <Button onClick={handleSave} disabled={saving} data-testid="rnd-variant-save-btn">
-            {saving ? 'Menyimpan…' : (editing ? 'Simpan' : `Simpan ${activeColors.length || ''} Varian`)}
-          </Button>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Status">
+            <SmartNativeSelect value={status} onChange={e => setStatus(e.target.value)}
+              className="w-full" aria-label="Status" data-testid="rnd-variant-status">
+              {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Catatan" htmlFor="rnd-variant-notes">
+            <Input id="rnd-variant-notes" value={notes} onChange={e => setNotes(e.target.value)}
+              data-testid="rnd-variant-notes" />
+          </Isian>
         </div>
-      </Modal>
-
-      {delId && (
-        <ConfirmDialog
-          onConfirm={handleDelete}
-          onCancel={() => setDelId(null)}
-          title="Hapus Varian?"
-          message="Data varian akan dihapus permanen."
-        />
-      )}
-    </div>
+      </FormPopup>
+    </PageLayout>
   );
 }

@@ -63,8 +63,11 @@ async def list_products(request: Request,
         query["category_id"] = category
 
     total = await db.rahaza_materials.count_documents(query)
+    # 2026-11-08 (Standar UI/UX v2): `id` sebagai pemutus urutan — layar Produk Final kini mengambil SEMUA
+    # halaman (limit 200 + offset) untuk ringkasan; tanpa pemutus, baris bernama model & ukuran sama bisa
+    # muncul dua kali di halaman berbeda dan baris lain terlewat (data uji: 614 unik dari 615).
     mats = await db.rahaza_materials.find(query, {"_id": 0}).sort(
-        [("model_name", 1), ("size_code", 1)]).skip(offset).limit(limit).to_list(limit)
+        [("model_name", 1), ("size_code", 1), ("id", 1)]).skip(offset).limit(limit).to_list(limit)
     if not mats:
         return {"ok": True, "data": [], "total": total,
                 "summary": {"total": total, "synced": 0, "no_bom": 0, "never_produced": 0}}

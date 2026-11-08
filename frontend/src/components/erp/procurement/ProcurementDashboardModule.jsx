@@ -4,78 +4,71 @@
  * Membaca `/api/procurement/overview` + `/pipeline` yang meng-agregat SELURUH
  * koleksi siklus pengadaan (PR, PO, GR, inspeksi QC, AP, master supplier,
  * price list, PR aksesoris) — bukan satu koleksi saja.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, kartu angka StatTile berketerangan, daftar = tabel
+ * + unduh. "Alur pengadaan" dulu berjudul "90 hari" padahal permintaan & faktur dihitung SEMUA WAKTU
+ * (lihat `procurement_pipeline`) — kini periode ditulis per baris dan status memakai label Indonesia
+ * (dulu kode mentah "paid/sent").
  */
 import { useCallback, useEffect, useState } from 'react';
-import {
-  AlertTriangle, ArrowRight, BadgeCheck, Banknote, Boxes, Building2,
-  CalendarClock, CheckCircle2, ClipboardList, FileText, PackageCheck,
-  RefreshCw, ShieldAlert, ShoppingCart, Tag, TrendingUp, Truck,
-} from 'lucide-react';
+import { ArrowRight, RefreshCw } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import PageLayout from '../layout/PageLayout';
+import { Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { EP, apiGet, fmtDate, fmtRp } from './procApi';
 
-function Kpi({ icon: Icon, label, value, sub, tone = 'default', onClick, testId }) {
-  const TONE = {
-    default: 'text-foreground',
-    info: 'text-blue-600 dark:text-blue-400',
-    warn: 'text-amber-700 dark:text-amber-400',
-    danger: 'text-red-700 dark:text-red-400',
-    ok: 'text-emerald-600 dark:text-emerald-400',
-  };
+// Label status per tahap (sama dengan label di layar Permintaan, PO, Penerimaan, dan Faktur).
+const STATUS_TAHAP = {
+  requests: {
+    draft: 'Draf', submitted: 'Menunggu persetujuan dept', dept_approved: 'Menunggu persetujuan keuangan',
+    finance_approved: 'Menunggu persetujuan final', approved: 'Disetujui', in_procurement: 'Sedang pengadaan',
+    rejected: 'Ditolak', completed: 'Selesai', cancelled: 'Dibatalkan',
+  },
+  purchase_orders: {
+    draft: 'Draf', pending_approval: 'Menunggu persetujuan', approved: 'Disetujui',
+    partially_received: 'Diterima sebagian', fully_received: 'Diterima penuh', rejected: 'Ditolak',
+    cancelled: 'Dibatalkan',
+  },
+  goods_receipts: {
+    draft: 'Draf', received: 'Diterima', completed: 'Selesai', partial_received: 'Diterima sebagian',
+  },
+  ap_invoices: {
+    draft: 'Draf', sent: 'Terbit', issued: 'Terbit', approved: 'Disetujui', overdue: 'Lewat jatuh tempo',
+    partial_paid: 'Dibayar sebagian', partial: 'Dibayar sebagian', paid: 'Lunas', posted: 'Terposting',
+    voided: 'Dibatalkan', void: 'Dibatalkan', cancelled: 'Dibatalkan',
+  },
+};
+const labelStatus = (tahap, s) => STATUS_TAHAP[tahap]?.[s] || (s === 'unknown' ? 'Tanpa status' : s);
+
+// Periode tiap tahap mengikuti query backend (`procurement_pipeline`).
+const TAHAP = [
+  { key: 'requests', label: 'Permintaan pengadaan', periode: 'Semua waktu' },
+  { key: 'purchase_orders', label: 'Purchase order', periode: '90 hari (tanggal PO)' },
+  { key: 'goods_receipts', label: 'Penerimaan barang', periode: '90 hari (tanggal dibuat)' },
+  { key: 'ap_invoices', label: 'Faktur pemasok', periode: 'Semua waktu' },
+];
+
+function Bagian({ judul, keterangan, alat, children, testId }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={!onClick}
-      data-testid={testId}
-      className={`text-left w-full rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-4 transition-colors ${onClick ? 'hover:bg-[var(--glass-bg-hover)] cursor-pointer' : 'cursor-default'}`}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.25)]">
-          <Icon className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
-        </span>
-        <span className="text-xs text-muted-foreground line-clamp-1">{label}</span>
+    <GlassCard className="p-4 space-y-3 min-w-0" data-testid={testId}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-base font-semibold text-foreground">{judul}</h3>
+          {keterangan && <p className="text-sm text-muted-foreground">{keterangan}</p>}
+        </div>
+        {alat && <div className="flex items-center gap-2">{alat}</div>}
       </div>
-      <div className={`text-2xl font-bold tabular-nums ${TONE[tone]}`}>{value}</div>
-      {sub && <div className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">{sub}</div>}
-    </button>
+      {children}
+    </GlassCard>
   );
 }
 
-function FunnelBar({ title, rows, icon: Icon }) {
-  const total = (rows || []).reduce((s, r) => s + (r.count || 0), 0);
-  return (
-    <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Icon className="w-4 h-4 text-[hsl(var(--primary))]" />
-          <h4 className="text-sm font-semibold">{title}</h4>
-        </div>
-        <span className="text-xs text-muted-foreground tabular-nums">{total} dok</span>
-      </div>
-      {(rows || []).length === 0 ? (
-        <p className="text-xs text-muted-foreground py-2">Belum ada dokumen pada periode ini.</p>
-      ) : (
-        <div className="space-y-1.5">
-          {rows.map((r) => (
-            <div key={r.status} className="flex items-center gap-2">
-              <span className="text-[11px] w-36 shrink-0 text-muted-foreground line-clamp-1">{r.status}</span>
-              <div className="flex-1 h-2 rounded-full bg-[hsl(var(--muted)/0.6)] overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-[hsl(var(--primary))]"
-                  style={{ width: `${total ? Math.max(4, (r.count / total) * 100) : 0}%` }}
-                />
-              </div>
-              <span className="text-[11px] tabular-nums w-8 text-right">{r.count}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+const Kosong = ({ children }) => <p className="text-sm text-muted-foreground">{children}</p>;
 
 export default function ProcurementDashboardModule({ token, onNavigate }) {
   const [ov, setOv] = useState(null);
@@ -103,203 +96,197 @@ export default function ProcurementDashboardModule({ token, onNavigate }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64" data-testid="proc-dashboard-loading">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[hsl(var(--primary))]" />
-      </div>
-    );
-  }
-
   const k = ov?.kpi || {};
   const alerts = ov?.alerts || {};
+  const go = (id) => (onNavigate ? () => onNavigate(id) : undefined);
+
+  // PO terlambat + PO yang dijadwalkan tiba ≤ 7 hari → satu tabel "perlu perhatian".
+  const poPerhatian = [
+    ...(alerts.po_overdue || []).map((p) => ({ ...p, _kunci: `t-${p.id}`, keadaan: 'terlambat' })),
+    ...(alerts.po_due_soon || []).map((p) => ({ ...p, _kunci: `s-${p.id}`, keadaan: 'segera' })),
+  ];
+  const tahapBaris = TAHAP.map((t) => {
+    const rows = pipe?.[t.key] || [];
+    return {
+      ...t,
+      jumlah: rows.reduce((s, r) => s + (r.count || 0), 0),
+      rincian: rows.map((r) => `${labelStatus(t.key, r.status)} ${r.count}`).join(' · '),
+    };
+  });
+  const recentPr = ov?.recent?.requests || [];
+  const recentPo = ov?.recent?.purchase_orders || [];
 
   return (
-    <div className="space-y-5" data-testid="proc-dashboard-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Dashboard Pengadaan</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Ringkasan siklus pengadaan: permintaan, pesanan, penerimaan, dan faktur supplier.
+    <PageLayout testId="proc-dashboard-page" title="Dashboard Pengadaan"
+      subtitle="Ringkasan siklus pengadaan: permintaan, pesanan, penerimaan, dan faktur pemasok."
+      tools={
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang"
+          aria-label="Muat ulang" data-testid="proc-dashboard-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      }
+      summary={loading && !ov ? (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="proc-dashboard-loading">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-[var(--radius-md)]" />)}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Di dashboard, kartu angka inilah isi utama layar (penanda untuk alat ukur tata letak). */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-konten-utama="">
+            <StatTile label="Permintaan menunggu" value={k.pr_pending ?? 0} accent={k.pr_pending ? 'warning' : 'default'}
+              sub={`dari ${k.pr_total ?? 0} permintaan seluruhnya`}
+              hint="Buka permintaan" onClick={go('proc-requests')} testId="proc-kpi-pr-pending" />
+            <StatTile label="PO berjalan" value={k.po_open ?? 0}
+              sub={`Nilai ${fmtRp(k.open_po_value)} · ${k.po_pending_approval ?? 0} menunggu persetujuan`}
+              hint="Buka PO" onClick={go('proc-purchase-orders')} testId="proc-kpi-po-open" />
+            <StatTile label="Hutang pemasok" value={fmtRp(k.ap_outstanding)} accent={k.ap_outstanding ? 'danger' : 'default'}
+              sub={`${k.ap_unpaid ?? 0} faktur belum lunas (tanpa CMT)`}
+              hint="Buka faktur" onClick={go('proc-ap-invoices')} testId="proc-kpi-ap" />
+            <StatTile label="Belanja bulan ini" value={fmtRp(k.po_value_this_month)}
+              sub="PO bulan ini, tanpa draf/ditolak/batal"
+              hint="Buka analisis" onClick={go('proc-analytics')} testId="proc-kpi-spend-month" />
+          </div>
+          {/* Angka pendukung dalam satu kalimat (dulu 4 kartu tambahan → 8 kartu berjejer). */}
+          <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-sm text-muted-foreground" data-testid="proc-dashboard-sekunder">
+            {poPerhatian.length === 0 && (<>
+              <span className="text-[hsl(var(--success-text))]" data-testid="proc-alert-po">Tidak ada PO terlambat</span>
+              <span aria-hidden="true">·</span>
+            </>)}
+            <span data-testid="proc-kpi-gr">Penerimaan barang <b className="tabular-nums text-foreground">{k.gr_received ?? 0}</b>
+              {' '}({k.gr_draft ?? 0} draf, {k.qc_pending ?? 0} belum QC)</span>
+            <span aria-hidden="true">·</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
+              data-testid="proc-kpi-suppliers">
+              <span>Pemasok aktif <b className="tabular-nums">{k.suppliers_active ?? 0}</b>/{k.suppliers_total ?? 0}</span>
+            </Button>
+            <span aria-hidden="true">·</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-suppliers')} disabled={!onNavigate}
+              data-testid="proc-kpi-price-rows">
+              <span>Daftar harga aktif <b className="tabular-nums">{k.price_list_rows ?? 0}</b></span>
+            </Button>
+            <span aria-hidden="true">·</span>
+            <Button variant="link" size="sm" className="h-auto p-0" onClick={go('proc-accessory-pr')} disabled={!onNavigate}
+              data-testid="proc-kpi-acc-pr">
+              <span>Request aksesoris <b className="tabular-nums">{k.accessory_pr_total ?? 0}</b>
+                {' '}({k.accessory_pr_awaiting_approval ?? 0} menunggu, {k.accessory_pr_pending ?? 0} berjalan)</span>
+            </Button>
           </p>
         </div>
-        <Button variant="secondary" onClick={load} data-testid="proc-dashboard-refresh">
-          <RefreshCw className="w-4 h-4 mr-1.5" /> Muat Ulang
-        </Button>
-      </div>
-
-      {err && (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm">
-          {err}
-        </div>
-      )}
-
-      {/* KPI utama */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi icon={ClipboardList} label="Permintaan menunggu" value={k.pr_pending ?? 0}
-             sub={`${k.pr_total ?? 0} total permintaan`} tone="warn"
-             onClick={() => onNavigate?.('proc-requests')} testId="proc-kpi-pr-pending" />
-        <Kpi icon={ShoppingCart} label="PO berjalan" value={k.po_open ?? 0}
-             sub={`Nilai ${fmtRp(k.open_po_value)}`} tone="info"
-             onClick={() => onNavigate?.('proc-purchase-orders')} testId="proc-kpi-po-open" />
-        <Kpi icon={Truck} label="Penerimaan diterima" value={k.gr_received ?? 0}
-             sub={`${k.gr_draft ?? 0} draft menunggu`} tone="ok"
-             testId="proc-kpi-gr" />
-        <Kpi icon={Banknote} label="Hutang supplier" value={fmtRp(k.ap_outstanding)}
-             sub={`${k.ap_unpaid ?? 0} faktur belum lunas`} tone="danger"
-             onClick={() => onNavigate?.('proc-ap-invoices')} testId="proc-kpi-ap" />
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Kpi icon={Building2} label="Supplier aktif" value={k.suppliers_active ?? 0}
-             sub={`${k.suppliers_total ?? 0} total di master`}
-             onClick={() => onNavigate?.('proc-suppliers')} testId="proc-kpi-suppliers" />
-        <Kpi icon={Tag} label="Baris daftar harga" value={k.price_list_rows ?? 0}
-             sub="Harga per satuan beli"
-             onClick={() => onNavigate?.('proc-suppliers')} testId="proc-kpi-price-rows" />
-        <Kpi icon={TrendingUp} label="Belanja bulan ini" value={fmtRp(k.po_value_this_month)}
-             sub={`${k.po_completed ?? 0} PO selesai`}
-             onClick={() => onNavigate?.('proc-analytics')} testId="proc-kpi-spend-month" />
-        <Kpi icon={PackageCheck} label="Request aksesoris" value={k.accessory_pr_total ?? 0}
-             sub={`${k.accessory_pr_awaiting_approval ?? 0} menunggu persetujuan · ${k.accessory_pr_pending ?? 0} berjalan`}
-             onClick={() => onNavigate?.('proc-accessory-pr')} testId="proc-kpi-acc-pr" />
-      </div>
-
-      {/* Antrean kerja + peringatan */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <ShieldAlert className="w-4 h-4 text-red-600 dark:text-red-400" />
-            <h3 className="font-semibold text-sm">PO melewati tanggal terima</h3>
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-              {(alerts.po_overdue || []).length}
-            </span>
-          </div>
-          {(alerts.po_overdue || []).length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 py-3">
-              <CheckCircle2 className="w-4 h-4" /> Tidak ada PO yang telat.
-            </div>
-          ) : (
-            <div className="space-y-2" data-testid="proc-alert-overdue">
-              {(alerts.po_overdue || []).slice(0, 6).map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => onNavigate?.('proc-purchase-orders')}
-                  className="w-full text-left flex items-center gap-3 p-2 rounded-lg border border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]"
-                >
-                  <span className="font-mono text-xs">{p.po_number}</span>
-                  <span className="text-xs text-muted-foreground line-clamp-1 flex-1">{p.vendor_name}</span>
-                  <span className="text-xs text-red-600 dark:text-red-400">{fmtDate(p.expected_delivery_date)}</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                </button>
-              ))}
-            </div>
-          )}
-        </GlassCard>
-
-        <GlassCard className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <CalendarClock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-            <h3 className="font-semibold text-sm">Jatuh tempo 7 hari</h3>
-            <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-              {(alerts.po_due_soon || []).length}
-            </span>
-          </div>
-          {(alerts.po_due_soon || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground py-3">Tidak ada PO jatuh tempo minggu ini.</p>
-          ) : (
-            <div className="space-y-2" data-testid="proc-alert-due-soon">
-              {(alerts.po_due_soon || []).slice(0, 6).map((p) => (
-                <div key={p.id} className="flex items-center gap-3 p-2 rounded-lg border border-[var(--glass-border)]">
-                  <span className="font-mono text-xs">{p.po_number}</span>
-                  <span className="text-xs text-muted-foreground line-clamp-1 flex-1">{p.vendor_name}</span>
-                  <span className="text-xs text-amber-700 dark:text-amber-400">{fmtDate(p.expected_delivery_date)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </GlassCard>
-      </div>
+      )}>
+      {err && <Notice tone="danger" title="Dashboard gagal dimuat">{err}</Notice>}
 
       {(alerts.po_without_supplier_master || 0) > 0 && (
-        <div className="flex items-start gap-3 p-4 rounded-xl border border-amber-300 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/10"
-             data-testid="proc-alert-unlinked-supplier">
-          <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-              {alerts.po_without_supplier_master} PO belum tertaut Master Supplier
-            </p>
-            <p className="text-xs text-amber-700 dark:text-amber-400/80 mt-0.5">
-              PO lama masih memakai nama supplier teks bebas. Jalankan tarik data di Master Supplier
-              supaya penilaian supplier tidak terpecah oleh perbedaan ejaan.
-            </p>
-          </div>
-          <Button size="sm" variant="secondary" onClick={() => onNavigate?.('proc-suppliers')}
-                  data-testid="proc-alert-goto-suppliers">
-            Buka Master Supplier
-          </Button>
-        </div>
+        <Notice tone="warning" testId="proc-alert-unlinked-supplier"
+          title={`${alerts.po_without_supplier_master} PO belum tertaut Master Supplier`}
+          action={
+            <Button size="sm" variant="outline" onClick={() => onNavigate?.('proc-suppliers')}
+              data-testid="proc-alert-goto-suppliers">
+              Buka Master Supplier
+            </Button>
+          }>
+          PO lama masih memakai nama pemasok teks bebas. Jalankan tarik data di Master Supplier supaya penilaian
+          pemasok tidak terpecah oleh perbedaan ejaan.
+        </Notice>
       )}
 
-      {/* Funnel P2P */}
-      <div>
-        <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-          <BadgeCheck className="w-4 h-4 text-[hsl(var(--primary))]" />
-          Alur Pengadaan 90 Hari
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-          <FunnelBar title="Permintaan" rows={pipe?.requests} icon={ClipboardList} />
-          <FunnelBar title="Purchase Order" rows={pipe?.purchase_orders} icon={ShoppingCart} />
-          <FunnelBar title="Penerimaan" rows={pipe?.goods_receipts} icon={Truck} />
-          <FunnelBar title="Faktur Supplier" rows={pipe?.ap_invoices} icon={FileText} />
-        </div>
-      </div>
+      {poPerhatian.length > 0 && (
+        <Bagian judul="PO perlu perhatian" testId="proc-alert-po"
+          keterangan="PO berjalan yang lewat tanggal terima atau dijadwalkan tiba 7 hari ke depan."
+          alat={(
+            <TombolUnduh namaBerkas="po-perlu-perhatian" namaLembar="PO perlu perhatian" baris={poPerhatian}
+              testId="proc-alert-po-unduh"
+              kolom={[
+                { label: 'No. PO', nilai: (p) => p.po_number },
+                { label: 'Pemasok', nilai: (p) => p.vendor_name || '' },
+                { label: 'Tanggal terima', nilai: (p) => fmtDate(p.expected_delivery_date) },
+                { label: 'Keadaan', nilai: (p) => (p.keadaan === 'terlambat' ? 'Terlambat' : 'Tiba ≤ 7 hari') },
+              ]} />
+          )}>
+          <TabelData baris={poPerhatian} kunci={(p) => p._kunci} testId="proc-alert-po-table"
+              onKlikBaris={onNavigate ? () => onNavigate('proc-purchase-orders') : undefined}
+              kolom={[
+                { kunci: 'po', label: 'No. PO', hp: 'judul', isi: (p) => <span className="font-mono text-xs">{p.po_number}</span> },
+                { kunci: 'pemasok', label: 'Pemasok', hp: 'keterangan', isi: (p) => p.vendor_name || '—' },
+                { kunci: 'tgl', label: 'Tanggal terima', isi: (p) => fmtDate(p.expected_delivery_date) },
+                { kunci: 'keadaan', label: 'Keadaan', isi: (p) => (p.keadaan === 'terlambat'
+                  ? <StatusBadge status="overdue" label="Terlambat" tone="danger" />
+                  : <StatusBadge status="pending" label="Tiba ≤ 7 hari" tone="warning" />) },
+              ]} />
+        </Bagian>
+      )}
+        <Bagian judul="Dokumen per tahap" testId="proc-pipeline"
+          alat={
+            <TombolUnduh namaBerkas="dokumen-pengadaan-per-tahap" namaLembar="Per tahap" baris={tahapBaris}
+              testId="proc-pipeline-unduh"
+              kolom={[
+                { label: 'Tahap', nilai: (t) => t.label },
+                { label: 'Periode', nilai: (t) => t.periode },
+                { label: 'Jumlah dokumen', nilai: (t) => t.jumlah },
+                { label: 'Rincian status', nilai: (t) => t.rincian },
+              ]} />
+          }>
+          <TabelData baris={tahapBaris} kunci={(t) => t.key} testId="proc-pipeline-table"
+            kolom={[
+              { kunci: 'tahap', label: 'Tahap', hp: 'judul', isi: (t) => <span className="font-medium">{t.label}</span> },
+              { kunci: 'periode', label: 'Periode', hp: 'keterangan', isi: (t) => <span className="text-muted-foreground">{t.periode}</span> },
+              { kunci: 'jumlah', label: 'Jumlah', rata: 'kanan', isi: (t) => <span className="tabular-nums">{t.jumlah}</span> },
+              { kunci: 'rincian', label: 'Rincian status', isi: (t) => (t.rincian || <span className="text-muted-foreground">Belum ada dokumen</span>) },
+            ]} />
+        </Bagian>
 
-      {/* Aktivitas terbaru */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <GlassCard className="p-4">
-          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-            <ClipboardList className="w-4 h-4" /> Permintaan Terbaru
-          </h3>
-          {(ov?.recent?.requests || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground py-3">Belum ada permintaan pengadaan.</p>
-          ) : (
-            <table className="w-full text-sm" data-testid="proc-recent-pr">
-              <tbody>
-                {ov.recent.requests.map((r) => (
-                  <tr key={r.id} className="border-b border-[var(--glass-border)] last:border-0">
-                    <td className="py-2 font-mono text-xs w-32">{r.request_number}</td>
-                    <td className="py-2 text-xs line-clamp-1">{r.title}</td>
-                    <td className="py-2 text-xs text-right tabular-nums">{fmtRp(r.total_estimated)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Bagian judul="Permintaan terbaru" testId="proc-recent-pr"
+          alat={recentPr.length > 0 && (
+            <>
+              <TombolUnduh namaBerkas="permintaan-terbaru" namaLembar="Permintaan" baris={recentPr} testId="proc-recent-pr-unduh"
+                kolom={[
+                  { label: 'No. permintaan', nilai: (r) => r.request_number },
+                  { label: 'Judul', nilai: (r) => r.title },
+                  { label: 'Estimasi (Rp)', nilai: (r) => Number(r.total_estimated || 0) },
+                ]} />
+              {onNavigate && (
+                <Button variant="link" size="sm" onClick={() => onNavigate('proc-requests')}>
+                  Semua<ArrowRight />
+                </Button>
+              )}
+            </>
+          )}>
+          {recentPr.length === 0 ? <Kosong>Belum ada permintaan pengadaan.</Kosong> : (
+            <TabelData baris={recentPr} testId="proc-recent-pr-table"
+              kolom={[
+                { kunci: 'no', label: 'No. permintaan', hp: 'judul', isi: (r) => <span className="font-mono text-xs">{r.request_number}</span> },
+                { kunci: 'judul', label: 'Judul', hp: 'keterangan', isi: (r) => <span className="line-clamp-1">{r.title}</span> },
+                { kunci: 'nilai', label: 'Estimasi', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.total_estimated)}</span> },
+              ]} />
           )}
-        </GlassCard>
+        </Bagian>
 
-        <GlassCard className="p-4">
-          <h3 className="font-semibold text-sm mb-3 flex items-center gap-2">
-            <Boxes className="w-4 h-4" /> Purchase Order Terbaru
-          </h3>
-          {(ov?.recent?.purchase_orders || []).length === 0 ? (
-            <p className="text-sm text-muted-foreground py-3">Belum ada purchase order.</p>
-          ) : (
-            <table className="w-full text-sm" data-testid="proc-recent-po">
-              <tbody>
-                {ov.recent.purchase_orders.map((p) => (
-                  <tr key={p.id} className="border-b border-[var(--glass-border)] last:border-0">
-                    <td className="py-2 font-mono text-xs w-36">{p.po_number}</td>
-                    <td className="py-2 text-xs line-clamp-1">{p.vendor_name}</td>
-                    <td className="py-2 text-xs text-right tabular-nums">{fmtRp(p.total_value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <Bagian judul="Purchase order terbaru" testId="proc-recent-po"
+          alat={recentPo.length > 0 && (
+            <>
+              <TombolUnduh namaBerkas="po-terbaru" namaLembar="PO" baris={recentPo} testId="proc-recent-po-unduh"
+                kolom={[
+                  { label: 'No. PO', nilai: (p) => p.po_number },
+                  { label: 'Pemasok', nilai: (p) => p.vendor_name || '' },
+                  { label: 'Nilai (Rp)', nilai: (p) => Number(p.total_value || 0) },
+                ]} />
+              {onNavigate && (
+                <Button variant="link" size="sm" onClick={() => onNavigate('proc-purchase-orders')}>
+                  Semua<ArrowRight />
+                </Button>
+              )}
+            </>
+          )}>
+          {recentPo.length === 0 ? <Kosong>Belum ada purchase order.</Kosong> : (
+            <TabelData baris={recentPo} testId="proc-recent-po-table"
+              kolom={[
+                { kunci: 'no', label: 'No. PO', hp: 'judul', isi: (p) => <span className="font-mono text-xs">{p.po_number}</span> },
+                { kunci: 'pemasok', label: 'Pemasok', hp: 'keterangan', isi: (p) => <span className="line-clamp-1">{p.vendor_name}</span> },
+                { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtRp(p.total_value)}</span> },
+              ]} />
           )}
-        </GlassCard>
+        </Bagian>
       </div>
-    </div>
+    </PageLayout>
   );
 }
