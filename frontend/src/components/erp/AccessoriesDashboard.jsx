@@ -228,7 +228,7 @@ export default function AccessoriesDashboard({ token }) {
             {/* Dulu spanduk kuning terpisah; kini kartu yang bisa diklik (saringan Belum dinilai) */}
             <StatTile label="Belum dinilai (HPP kosong)" value={fmtNum(dash.unvalued_items)} testId="acc-kpi-belum-dinilai"
               accent={dash.unvalued_items ? 'warning' : 'default'} onClick={() => setSaring('belum')}
-              hint="Nilai stok jadi lebih rendah" />
+              hint="Lihat item" />
             <StatTile label="Permintaan menunggu" value={fmtNum(dash.pending_requests)} testId="acc-kpi-request-pending"
               sub={`Perlu diserahkan ${fmtNum(dash.ready_to_deliver)} · PR berjalan ${fmtNum(dash.pending_pr)}`} />
           </div>
