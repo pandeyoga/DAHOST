@@ -38,9 +38,7 @@ import PaginationLite from '@/components/ui/pagination-lite';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
-import { Isian } from '@/components/ui/form-popup';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import RnDRevisionCompare, { authImageUrl } from './RnDRevisionCompare';
@@ -576,44 +574,20 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
   );
 }
 
-/**
- * Popup keputusan bergaya FormPopup "pendek" (kepala · isi · kaki Batal + aksi). Ditulis di sini karena tombol aksinya
- * harus merah untuk "Tolak" (FormPopup selalu hijau) — warna sesuai Standar UI/UX v2 (Setujui hijau, Tolak merah).
- */
+/** Popup keputusan = FormPopup pendek; tombol simpan hijau untuk "Setujui", merah untuk "Tolak" (warnaSimpan). */
 function PopupKeputusan({ decision, notes, setNotes, busy, onBatal, onKirim }) {
   const tolak = decision?.action === 'reject';
-  const kirim = (e) => { e.preventDefault(); if (!busy) onKirim(); };
   return (
-    <Dialog open={!!decision} onOpenChange={(v) => { if (!v && !busy) onBatal(); }}>
-      <DialogContent data-testid="rnd-decision-dialog"
-        className={cn('flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-lg',
-          'max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:max-w-none',
-          'max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none')}>
-        <form onSubmit={kirim} className="flex min-h-0 flex-1 flex-col">
-          <div className="border-b border-[var(--glass-border)] px-5 py-4 pr-12">
-            <DialogTitle className="text-base font-semibold">{tolak ? 'Tolak' : 'Setujui'} {decision?.item?.kind_label?.toLowerCase()}</DialogTitle>
-            <DialogDescription className="mt-1 text-sm text-muted-foreground">
-              {decision?.item?.code} — {decision?.item?.title}
-              {!tolak && decision?.item?.next_step ? ` · ${decision.item.next_step}` : ''}
-            </DialogDescription>
-          </div>
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-            <Isian htmlFor="rnd-notes" wajib={tolak && !!decision?.item?.reject_requires_notes}
-              label={tolak ? 'Alasan penolakan' : 'Catatan persetujuan'}
-              petunjuk={tolak ? (decision?.item?.reject_requires_notes ? 'Wajib diisi.' : 'Opsional.') : 'Opsional.'}>
-              <Textarea id="rnd-notes" value={notes} rows={3} data-testid="rnd-decision-notes" onChange={(e) => setNotes(e.target.value)}
-                placeholder={tolak ? 'Mis. proporsi lengan perlu diperbaiki, bahan terlalu tebal untuk musim ini' : 'Mis. lanjutkan ke pembuatan sample'} />
-            </Isian>
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--glass-border)] px-5 py-3">
-            <Button type="button" variant="outline" onClick={onBatal} disabled={busy} data-testid="rnd-decision-cancel">Batal</Button>
-            <Button type="submit" variant={tolak ? 'destructive' : 'success'} disabled={busy} data-testid="rnd-decision-submit">
-              {busy ? <Loader2 className="animate-spin" /> : (tolak ? <XCircle /> : <CheckCircle2 />)}
-              {tolak ? 'Tolak' : 'Setujui'}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={!!decision} onClose={onBatal} testId="rnd-decision-dialog"
+      judul={`${tolak ? 'Tolak' : 'Setujui'} ${decision?.item?.kind_label?.toLowerCase() || ''}`}
+      keterangan={`${decision?.item?.code || ''} — ${decision?.item?.title || ''}${!tolak && decision?.item?.next_step ? ` · ${decision.item.next_step}` : ''}`}
+      onSimpan={onKirim} menyimpan={busy} labelSimpan={tolak ? 'Tolak' : 'Setujui'} warnaSimpan={tolak ? 'destructive' : 'success'}>
+      <Isian htmlFor="rnd-notes" wajib={tolak && !!decision?.item?.reject_requires_notes}
+        label={tolak ? 'Alasan penolakan' : 'Catatan persetujuan'}
+        petunjuk={tolak ? (decision?.item?.reject_requires_notes ? 'Wajib diisi.' : 'Opsional.') : 'Opsional.'}>
+        <Textarea id="rnd-notes" value={notes} rows={3} data-testid="rnd-decision-notes" onChange={(e) => setNotes(e.target.value)}
+          placeholder={tolak ? 'Mis. proporsi lengan perlu diperbaiki, bahan terlalu tebal untuk musim ini' : 'Mis. lanjutkan ke pembuatan sample'} />
+      </Isian>
+    </FormPopup>
   );
 }
