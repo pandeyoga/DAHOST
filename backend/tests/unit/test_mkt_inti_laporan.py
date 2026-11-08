@@ -286,3 +286,18 @@ def test_m08_detail_toko_kpi_bulan_berjalan():
 
 def test_m26_rentang_30_hari_termasuk_hari_ini():
     assert "daysAgoWIB(days - 1)" in _fe("components/erp/PeriodSelector.jsx")
+
+
+def test_pola_omzet_kreator_memakai_definisi_baku(db):
+    """Audit §8 — omzet kreator dulu hanya membuang status "cancelled" (ejaan "canceled",
+    pesanan belum dibayar, dan data contoh ikut)."""
+    from core import creator_weekly_report as cw
+    d0 = datetime(2026, 8, 3, 10, tzinfo=timezone.utc)
+    db.marketing_orders.docs += [
+        {"id": "c1", "creator_id": "K1", "status": "completed", "order_date": d0, "revenue_product": 100.0},
+        {"id": "c2", "creator_id": "K1", "status": "canceled", "order_date": d0, "revenue_product": 900.0},
+        {"id": "c3", "creator_id": "K1", "status": "new", "order_date": d0, "revenue_product": 900.0},
+        {"id": "c4", "creator_id": "K1", "status": "completed", "order_date": d0, "revenue_product": 900.0,
+         "_seed_origin": True}]
+    out = run(cw._order_revenue(db, ["K1"], {"start": "2026-08-01", "end": "2026-08-07"}))
+    assert out["K1"] == {"orders": 1, "revenue": 100.0}
