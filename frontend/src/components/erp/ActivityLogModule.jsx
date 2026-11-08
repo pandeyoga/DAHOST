@@ -169,9 +169,9 @@ export default function ActivityLogModule({ token }) {
   const kolom = [
     { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (l) => <span className="whitespace-nowrap text-sm tabular-nums">{waktu(l.timestamp)}</span> },
     { kunci: 'pengguna', label: 'Pengguna', hp: 'judul', isi: (l) => <span className="font-medium">{l.user_name || '—'}</span> },
-    { kunci: 'aksi', label: 'Aksi', isi: (l) => <StatusBadge status={golonganAksi(l.action)} label={labelAksi(l.action)} tone={NADA[golonganAksi(l.action)]} className="max-w-[16rem] truncate" /> },
+    { kunci: 'aksi', label: 'Aksi', isi: (l) => <StatusBadge status={golonganAksi(l.action)} label={labelAksi(l.action)} tone={NADA[golonganAksi(l.action)]} className="max-w-full whitespace-normal break-words md:max-w-[16rem] md:truncate md:whitespace-nowrap" /> },
     { kunci: 'modul', label: 'Modul', isi: (l) => <span className="text-sm">{labelModul(l.module)}</span> },
-    { kunci: 'rincian', label: 'Rincian', isi: (l) => <p className="line-clamp-2 text-sm text-muted-foreground md:max-w-[28rem]" title={l.details}>{l.details || '—'}</p> },
+    { kunci: 'rincian', label: 'Rincian', isi: (l) => <p className="break-words text-sm text-muted-foreground md:line-clamp-2 md:max-w-[28rem]" title={l.details}>{l.details || '—'}</p> },
   ];
 
   const keteranganKartu = `Dari ${filtered.length} aktivitas di daftar (${BATAS} terbaru, mengikuti saringan).`;

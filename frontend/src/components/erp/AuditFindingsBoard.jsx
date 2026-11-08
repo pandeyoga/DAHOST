@@ -115,14 +115,14 @@ export default function AuditFindingsBoard() {
       ) : !data ? (
         <p className="py-6 text-center text-sm text-muted-foreground" data-testid="audit-board-loading">Memuat papan temuan…</p>
       ) : (<>
+        <TabelData kolom={kolom} baris={rows} onKlikBaris={setDetail} testId="audit-findings-table"
+          kosong={<EmptyState title="Tidak ada temuan yang cocok" description="Ubah saringan atau kata pencarian." />} />
         <p className="text-xs text-muted-foreground">
           Sumber: {(data.sumber || []).length} dokumen temuan & rencana perbaikan.{' '}
           <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setLihatSumber(true)} data-testid="audit-sumber">
             <FileText />Lihat sumber
           </Button>
         </p>
-        <TabelData kolom={kolom} baris={rows} onKlikBaris={setDetail} testId="audit-findings-table"
-          kosong={<EmptyState title="Tidak ada temuan yang cocok" description="Ubah saringan atau kata pencarian." />} />
       </>)}
 
       {detail && (

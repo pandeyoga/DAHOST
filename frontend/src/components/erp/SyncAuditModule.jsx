@@ -80,7 +80,8 @@ const GANTI = [
   [/\bSSOT\b/g, 'sumber data resmi'],
   [/\bfulfillment\b/g, 'pemenuhan pesanan'],
   [/Stock Opname/g, 'Stok opname'],
-  [/stock opname/gi, 'stok opname'],
+  [/stock[\s\u00a0]+opname/gi, 'stok opname'],
+  [/\bstock\b/gi, 'stok'],
   [/Integritas Rujukan Lintas Koleksi/g, 'Keutuhan rujukan antar data'],
   [/option_code\s*=\s*['"]NA['"]/g, 'kode opsi "NA"'],
   [/\boption_code\b/g, 'kode opsi'],
@@ -219,23 +220,6 @@ export default function SyncAuditModule({ onNavigate }) {
           action={{ label: 'Periksa ulang', onClick: load }} />
       ) : (
         <>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <p className="min-w-0 text-xs text-muted-foreground sm:flex-1">
-              Diperiksa {report.generated_at ? formatDateTimeID(report.generated_at) : '—'}. Skor turun 25 per temuan kritis,
-              10 per tinggi, 3 per sedang.
-            </p>
-            {onNavigate && (
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => onNavigate('sku-bridge')} data-testid="audit-goto-bridge">
-                  <Link2 />Jembatan SKU<ArrowRight />
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => onNavigate('fulfillment')} data-testid="audit-goto-fulfillment">
-                  <Boxes />Antrean gudang<ArrowRight />
-                </Button>
-              </div>
-            )}
-          </div>
-
           <Bagian judul={`Temuan (${fmt(findings.length)})`} testId="audit-findings-section"
             alat={findings.length > 0 && (
               <TombolUnduh namaBerkas="sinkronisasi-data-temuan" namaLembar="Temuan" baris={findings} testId="sync-findings-unduh"
@@ -257,6 +241,23 @@ export default function SyncAuditModule({ onNavigate }) {
                   </Button>) : null) },
               ]} />
           </Bagian>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <p className="min-w-0 text-xs text-muted-foreground sm:flex-1">
+              Diperiksa {report.generated_at ? formatDateTimeID(report.generated_at) : '—'}. Skor turun 25 per temuan kritis,
+              10 per tinggi, 3 per sedang.
+            </p>
+            {onNavigate && (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => onNavigate('sku-bridge')} data-testid="audit-goto-bridge">
+                  <Link2 />Jembatan SKU<ArrowRight />
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => onNavigate('fulfillment')} data-testid="audit-goto-fulfillment">
+                  <Boxes />Antrean gudang<ArrowRight />
+                </Button>
+              </div>
+            )}
+          </div>
 
           {sections.map(([key, sec]) => {
             const rujukan = key === 'E' ? (sec.rows || []) : [];
