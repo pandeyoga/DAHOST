@@ -182,7 +182,12 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const pendingCount = leaves.filter(l => l.status === 'pending_approval' || l.status === 'pending_hr_approval').length;
+  // 2026-11-08 (keputusan pemilik): "Setujui yang tampil" hanya mengirim pengajuan menunggu yang tampil
+  // (sesuai penyaring status & kelompok), bukan semua pengajuan menunggu di server.
+  const pendingIds = leaves
+    .filter(l => l.status === 'pending_approval' || l.status === 'pending_hr_approval')
+    .map(l => l.id).filter(Boolean);
+  const pendingCount = pendingIds.length;
 
   // ── Live working days preview ────────────────────────────────────────────────
   useEffect(() => {
@@ -295,10 +300,18 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
 
   // ── Bulk approve ────────────────────────────────────────────────────────────
   const bulkApprove = async () => {
+    const ids = pendingIds;
+    if (ids.length === 0) return;
+    const ok = await confirmDialog({
+      title: `Setujui ${ids.length} pengajuan?`,
+      body: `Hanya ${ids.length} pengajuan menunggu yang tampil di daftar ini (sesuai penyaring) yang disetujui. Saldo cuti dan absensi diperbarui per pengajuan.`,
+      confirmLabel: `Setujui ${ids.length}`,
+    });
+    if (!ok) return;
     setBulkApproving(true);
     try {
       const r = await fetch(`${API}/api/rahaza/leaves/bulk-approve`, {
-        method: 'POST', headers, body: JSON.stringify({}) });
+        method: 'POST', headers, body: JSON.stringify({ leave_ids: ids }) });
       const d = await r.json().catch(() => ({}));
       // 2026-11-06 (pola P6): dulu penolakan server (bukan approver, dsb.) tampil sebagai sukses
       if (!r.ok) { toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyetujui sekaligus'); return; }
@@ -469,8 +482,8 @@ export default function RahazaLeaveModule({ token, onNavigate, bagian }) {
       actions={<>
         {pendingCount > 0 && (
           <Button variant="outline" onClick={bulkApprove} disabled={bulkApproving} data-testid="bulk-approve-btn"
-            title="Menyetujui SEMUA pengajuan yang menunggu (tidak terbatas pada penyaring)">
-            <CheckCheck />{bulkApproving ? 'Menyetujui…' : 'Setujui semua yang menunggu'}
+            title="Menyetujui pengajuan menunggu yang tampil di daftar (sesuai penyaring)">
+            <CheckCheck />{bulkApproving ? 'Menyetujui…' : `Setujui yang tampil (${pendingCount})`}
           </Button>
         )}
         <Button onClick={() => setRequestModal(true)} data-testid="new-request-btn">
