@@ -19,7 +19,12 @@ const TARGET = {
   bom: ['rnd-master-product-hub', 'bom'], accessories: ['rnd-master-product-hub', 'bom'], hpp: ['rnd-master-product-hub', 'bom'],
   techpack: ['rnd-design-hub', 'techpack'], photo: ['rnd-master-product-hub', 'models'], weight: ['rnd-master-product-hub', 'models'], sop: ['rnd-master-product-hub', 'models'],
 };
-const kalimat = (s) => { const t = String(s || '').toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); };
+// Teks dari server → kalimat biasa: huruf besar hanya di awal, singkatan umum tetap (BOM, HPP, SOP, SKU, PIC, RnD).
+const SINGKATAN = { bom: 'BOM', hpp: 'HPP', sop: 'SOP', sku: 'SKU', pic: 'PIC', rnd: 'RnD', po: 'PO', qc: 'QC' };
+const kalimat = (s) => {
+  const t = String(s || '').replace(/_/g, ' ').toLowerCase().replace(/[a-z]+/g, (w) => SINGKATAN[w] || w);
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+};
 
 export function RnDCompletenessBoard({ token, onNavigate }) {
   const [data, setData] = useState(null);

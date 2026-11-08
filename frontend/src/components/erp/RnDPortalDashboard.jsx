@@ -61,8 +61,13 @@ const NAMA_SUMBER = {
   dewi_rnd_styles: 'Style RnD', dewi_rnd_sample_requests: 'Permintaan sample', dewi_rnd_tech_packs: 'Tech pack',
   dewi_rnd_patterns: 'Pola',
 };
-const kalimat = (s) => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t; };
-const labelTahap = (s) => kalimat(s).replace(/^Draft/, 'Draf');
+// Teks dari server → kalimat biasa: huruf besar hanya di awal, singkatan umum tetap (BOM, HPP, SOP, SKU, PIC, RnD).
+const SINGKATAN = { bom: 'BOM', hpp: 'HPP', sop: 'SOP', sku: 'SKU', pic: 'PIC', rnd: 'RnD', po: 'PO', qc: 'QC' };
+const kalimat = (s) => {
+  const t = String(s || '').replace(/_/g, ' ').toLowerCase().replace(/[a-z]+/g, (w) => SINGKATAN[w] || w);
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+};
+const labelTahap = (s) => kalimat(s).replace(/^Draft/, 'Draf');
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const STATUS_DOK = { draft: 'draf', approved: 'disetujui', rejected: 'ditolak', pending: 'menunggu', submitted: 'diajukan', in_progress: 'dikerjakan', done: 'selesai', completed: 'selesai' };
