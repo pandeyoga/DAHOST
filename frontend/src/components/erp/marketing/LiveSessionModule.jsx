@@ -239,7 +239,7 @@ export default function LiveSessionModule({ token }) {
               kolom={[{ label: 'Peringkat', nilai: (h) => topHosts.indexOf(h) + 1 }, { label: 'Host', nilai: (h) => h.host },
                 { label: 'Sesi', nilai: (h) => h.sessions }, { label: 'Omzet', nilai: (h) => Number(h.revenue) || 0 }]} />
           </div>
-          <TabelData baris={topHosts} kunci="host" testId="live-top-hosts" kolom={[
+          <TabelData baris={topHosts} kunci={(r) => r.host} testId="live-top-hosts" kolom={[
             { kunci: 'r', label: 'Peringkat', isi: (h) => <span className="tabular-nums text-muted-foreground">#{topHosts.indexOf(h) + 1}</span> },
             { kunci: 'host', label: 'Host', hp: 'judul', isi: (h) => <span className="font-medium">{h.host}</span> },
             { kunci: 'sesi', label: 'Sesi', rata: 'kanan', hp: 'keterangan', isi: (h) => <span className="tabular-nums">{fmt(h.sessions)} sesi</span> },

@@ -40,6 +40,8 @@ const MARKETING_ROLES = [
   'staff_marketing', 'marketing_kol', 'cs_staff',
 ];
 
+const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
+
 export function CreateTaskDialog({ open, onOpenChange, onCreated, token, accounts = [] }) {
   const [submitting, setSubmitting] = useState(false);
   const [staffList, setStaffList] = useState([]);
@@ -203,7 +205,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
       galat={galat} labelSimpan="Buat tugas" testId="create-task-dialog">
       <Isian label="Judul tugas" wajib htmlFor="task-title">
         <Input id="task-title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-          placeholder="Contoh: Input penjualan harian Shopee Official" data-testid="task-title-input" />
+          placeholder="Contoh: Input penjualan Shopee Official" data-testid="task-title-input" />
       </Isian>
       <Isian label="Deskripsi" htmlFor="task-desc">
         <Textarea id="task-desc" value={form.description} rows={3} placeholder="Langkah-langkah atau catatan"
@@ -235,23 +237,23 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
             <div className="min-w-0 flex-1">
               <DatePicker value={tglTenggat} onChange={(v) => aturTenggat(v, jamTenggat)} placeholder="Tanpa tenggat" testId="task-due-input" />
             </div>
-            <Input type="time" className="w-28" value={jamTenggat} disabled={!tglTenggat} aria-label="Jam tenggat"
+            <Input type="time" className="w-32" value={jamTenggat} disabled={!tglTenggat} aria-label="Jam tenggat"
               onChange={(e) => aturTenggat(tglTenggat, e.target.value)} data-testid="task-due-time" />
           </div>
         </Isian>
-      </div>
       <Isian label="Akun / toko marketplace" wajib={form.task_type === 'data_entry'} htmlFor="task-account"
         galat={form.task_type === 'data_entry' && !form.account_id ? 'Tugas jenis Input data wajib memilih akun toko.' : undefined}>
         <SmartNativeSelect id="task-account" value={form.account_id || ''}
           onChange={(e) => setForm(f => ({ ...f, account_id: e.target.value }))} data-testid="task-account-select">
           <option value="">{accounts.length === 0 ? 'Belum ada akun aktif' : 'Tidak terkait akun'}</option>
-          {accounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} (${acc.platform})`}</option>)}
+          {accounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${NAMA_PLATFORM[acc.platform] || acc.platform}`}</option>)}
         </SmartNativeSelect>
       </Isian>
+      </div>
 
       {/* ── AKSI DALAM SISTEM (opsional) ── */}
       <div className="space-y-3 border-t border-[var(--glass-border)] pt-3">
-        <Isian label="Aksi dalam sistem (opsional)" htmlFor="task-action"
+        <Isian label="Aksi dalam sistem (opsional)" htmlFor="task-action" className="sm:w-1/2 sm:pr-2"
           petunjuk="Pilih bila tugas perlu menjalankan aksi langsung dari papan, bukan sekadar pengingat.">
           <SmartNativeSelect id="task-action" value={form.related_entity || ''} searchable={false}
             onChange={(e) => setForm(f => ({ ...f, related_entity: e.target.value }))} data-testid="task-action-entity-select">

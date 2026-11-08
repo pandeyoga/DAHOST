@@ -9,7 +9,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { AccountBadge } from './marketing/AccountBadge';
 import { StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 
@@ -146,7 +145,7 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
       {/* Account Badge */}
       {account && (
         <div className="mb-2">
-          <AccountBadge account={account} size="xs" />
+          <span className="text-xs text-muted-foreground">Toko: <span className="text-foreground">{account.account_name}</span></span>
         </div>
       )}
 

@@ -114,7 +114,7 @@ export default function AnalyticsTab({ authH }) {
         <>
           <section className="space-y-2">
             <p className="text-base font-semibold">Performa host · {labelBulan}</p>
-            <TabelData kolom={kolomHost} baris={paged} kunci="host_id" testId="host-performance-table"
+            <TabelData kolom={kolomHost} baris={paged} kunci={(r) => r.host_id} testId="host-performance-table"
               kosong={<EmptyState icon={BarChart3} title="Belum ada data performa bulan ini"
                 description="Performa muncul setelah shift selesai dan performanya dicatat di tab Shift." />} />
             {hostPerformance.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
@@ -128,7 +128,7 @@ export default function AnalyticsTab({ authH }) {
                   kolom={[{ label: 'Jenis shift', nilai: (x) => SHIFT[x.shift_type] || x.shift_type }, { label: 'Jumlah shift', nilai: (x) => x.count },
                     { label: 'Rata-rata omzet per shift', nilai: (x) => Number(x.avg_revenue) || 0 }]} />
               </div>
-              <TabelData kolom={kolomRingkas('Jenis shift', (x) => SHIFT[x.shift_type] || x.shift_type)} baris={perShift} kunci="shift_type"
+              <TabelData kolom={kolomRingkas('Jenis shift', (x) => SHIFT[x.shift_type] || x.shift_type)} baris={perShift} kunci={(r) => r.shift_type}
                 testId="analytics-per-shift" kosong={<EmptyState title="Belum ada shift bulan ini" />} />
             </section>
             <section className="space-y-2">
@@ -138,7 +138,7 @@ export default function AnalyticsTab({ authH }) {
                   kolom={[{ label: 'Hari', nilai: (x) => HARI[x.day] || x.day }, { label: 'Jumlah shift', nilai: (x) => x.count },
                     { label: 'Rata-rata omzet per shift', nilai: (x) => Number(x.avg_revenue) || 0 }]} />
               </div>
-              <TabelData kolom={kolomRingkas('Hari', (x) => HARI[x.day] || x.day)} baris={perHari} kunci="day"
+              <TabelData kolom={kolomRingkas('Hari', (x) => HARI[x.day] || x.day)} baris={perHari} kunci={(r) => r.day}
                 testId="analytics-per-day" kosong={<EmptyState title="Belum ada shift bulan ini" />} />
             </section>
           </div>

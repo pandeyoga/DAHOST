@@ -230,7 +230,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="space-y-2">
             <p className="text-base font-semibold">Pangsa omzet per platform</p>
-            <TabelData baris={platformShare} kunci="platform" testId="live-platform-share" kolom={[
+            <TabelData baris={platformShare} kunci={(r) => r.platform} testId="live-platform-share" kolom={[
               { kunci: 'p', label: 'Platform', hp: 'judul', isi: (p) => <span className="font-medium">{labelPlatform(p.platform)}</span> },
               { kunci: 's', label: 'Sesi', rata: 'kanan', isi: (p) => angka(FMT_NUM(p.sessions)) },
               { kunci: 'o', label: 'Pesanan', rata: 'kanan', isi: (p) => angka(FMT_NUM(p.orders)) },
@@ -247,7 +247,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
                 kolom={[{ label: 'Tanggal', nilai: (d) => tgl(d.date) }, { label: 'Sesi', nilai: (d) => d.sessions },
                   { label: 'Pesanan', nilai: (d) => d.orders }, { label: 'Omzet', nilai: (d) => Number(d.revenue) || 0 }]} />
             </div>
-            <TabelData baris={harian.paged} kunci="date" testId="live-daily" kolom={[
+            <TabelData baris={harian.paged} kunci={(r) => r.date} testId="live-daily" kolom={[
               { kunci: 'd', label: 'Tanggal', hp: 'judul', isi: (d) => <span className="tabular-nums">{tgl(d.date)}</span> },
               { kunci: 's', label: 'Sesi', rata: 'kanan', isi: (d) => angka(FMT_NUM(d.sessions)) },
               { kunci: 'o', label: 'Pesanan', rata: 'kanan', isi: (d) => angka(FMT_NUM(d.orders)) },
@@ -280,7 +280,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
             Barang yang paling laku saat live — dari rincian produk per sesi, bukan taksiran.
             {products.data.length > 0 && <> {FMT_NUM(products.totals.products)} produk teratas: {FMT_NUM(products.totals.units_sold)} unit · {FMT_IDR(products.totals.revenue)}. Pangsa dihitung di antara produk di daftar ini.</>}
           </p>
-          <TabelData baris={products.data} kunci="rank" testId="live-products-table" kolom={[
+          <TabelData baris={products.data} kunci={(r) => r.rank} testId="live-products-table" kolom={[
             { kunci: 'rank', label: '#', isi: (p) => <span className="tabular-nums text-muted-foreground">{p.rank}</span> },
             { kunci: 'nama', label: 'Produk', hp: 'judul', isi: (p) => (
               <span><span className="font-medium">{p.name || '—'}</span>
@@ -299,7 +299,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
       )}
 
       {activeTab === 'leaderboard' && (
-        <TabelData baris={leaderboard} kunci="host_name" testId="live-host-ranking" kolom={[
+        <TabelData baris={leaderboard} kunci={(r) => r.host_name} testId="live-host-ranking" kolom={[
           { kunci: 'rank', label: 'Peringkat', isi: (h) => <span className="font-semibold tabular-nums">#{h.rank}</span> },
           { kunci: 'host', label: 'Host', hp: 'judul', isi: (h) => <span className="font-medium">{h.host_name}</span> },
           { kunci: 'sesi', label: 'Sesi', rata: 'kanan', hp: 'keterangan', isi: (h) => angka(`${FMT_NUM(h.total_sessions)} sesi`) },
@@ -314,7 +314,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
         <section className="space-y-2">
           <p className="text-sm text-muted-foreground">Omzet per minggu. Tinggi batang = omzet minggu itu (arahkan kursor untuk angkanya); angka lengkap di tabel.</p>
           <MiniBarChart data={trend} valueKey="revenue" labelKey="period" labelFn={labelMinggu} />
-          <TabelData baris={trend} kunci="period" testId="live-trend" kolom={[
+          <TabelData baris={trend} kunci={(r) => r.period} testId="live-trend" kolom={[
             { kunci: 'p', label: 'Minggu', hp: 'judul', isi: (t) => labelMinggu(t.period) },
             { kunci: 'r', label: 'Omzet', rata: 'kanan', hp: 'nilai', isi: (t) => <span className="font-medium tabular-nums">{FMT_IDR(t.revenue)}</span> },
             { kunci: 's', label: 'Sesi', rata: 'kanan', isi: (t) => angka(FMT_NUM(t.sessions)) },
@@ -329,7 +329,7 @@ export default function LiveSessionAnalyticsDashboard({ user, headers }) {
           <p className="text-sm text-muted-foreground">
             Skor 0–100 dibanding akun lain: 50 dari omzet, 30 dari konversi, 20 dari jumlah sesi.
           </p>
-          <TabelData baris={accountHealth} kunci="account_name" testId="live-account-health" kolom={[
+          <TabelData baris={accountHealth} kunci={(r) => `${r.account_name}-${r.platform}`} testId="live-account-health" kolom={[
             { kunci: 'akun', label: 'Akun toko', hp: 'judul', isi: (a) => <span className="font-medium">{a.account_name}</span> },
             { kunci: 'platform', label: 'Platform', hp: 'keterangan', isi: (a) => labelPlatform(a.platform) },
             { kunci: 'sesi', label: 'Sesi', rata: 'kanan', isi: (a) => angka(FMT_NUM(a.sessions)) },

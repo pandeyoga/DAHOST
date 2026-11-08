@@ -508,7 +508,7 @@ function ContentCalendarBase({ token }) {
           </Isian>
         </div>
         <Isian label="Judul / hook" wajib htmlFor="cc-title">
-          <Input id="cc-title" value={form.title} placeholder="Hook atau judul konten yang menarik"
+          <Input id="cc-title" value={form.title} placeholder="Contoh: 3 gaya hijab ke kantor"
             onChange={e => setForm(f => ({...f, title: e.target.value}))} />
         </Isian>
         <Isian label="Deskripsi" htmlFor="cc-desc">

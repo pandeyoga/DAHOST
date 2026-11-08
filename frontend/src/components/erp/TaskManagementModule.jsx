@@ -249,7 +249,7 @@ export default function TaskManagementModule({ token }) {
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       </>}
-      summary={(
+      summary={view === 'table' && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="task-stats">
           {COLUMNS.map((c) => (
             <StatTile key={c.id} label={c.title} value={angka(c.id)}

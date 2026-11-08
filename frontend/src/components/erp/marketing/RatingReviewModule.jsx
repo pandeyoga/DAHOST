@@ -351,7 +351,7 @@ export default function RatingReviewModule({ token }) {
       subtitle="Ulasan produk dari semua platform, balasan, dan kategori keluhan."
       actions={<Button onClick={() => openForm()} data-testid="reviews-create"><Plus />Tambah ulasan</Button>}
       filters={<>
-        <div className="relative w-full sm:w-44">
+        <div className="relative w-full sm:w-40">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Cari pesanan atau produk" value={searchQuery} className="pl-8"
             onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }} data-testid="reviews-search" />
@@ -363,7 +363,7 @@ export default function RatingReviewModule({ token }) {
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={String(filterRating)} onChange={(e) => { setFilterRating(parseInt(e.target.value, 10) || 0); setCurrentPage(1); }}
-          className="w-36" searchable={false}>
+          className="w-40" searchable={false}>
           <option value="0">Semua bintang</option>
           {[1, 2, 3, 4, 5].map((n) => <option key={n} value={String(n)}>{n} bintang</option>)}
         </SmartNativeSelect>
