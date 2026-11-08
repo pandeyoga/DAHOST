@@ -173,10 +173,11 @@ async def get_weekly_digest(
     })
 
     # --- Inventory: Low stock alerts ---
-    low_stock_count = await db.rahaza_materials.count_documents({
-        "active": True,
-        "$expr": {"$lt": ["$total_qty", "$min_stock"]}
-    })
+    # 8 Nov 2026 (keputusan owner): pembaca stok RESMI `core.stock_thresholds` — sama dengan Dashboard Gudang
+    # (`/rahaza/materials?low_stock=true`) dan Alert & Reorder (`/warehouse/alerts`). Dulu kolom tersimpan
+    # `total_qty < min_stock` (tidak terpelihara; null ikut terhitung) → 1.111 material, padahal resminya 43.
+    from core import stock_thresholds
+    low_stock_count = (await stock_thresholds.summary(db))["alerts"]
 
     # --- Marketing: Live sessions revenue --- (RC-07: field SSOT gmv/total_orders;
     # session_date bertipe STRING "YYYY-MM-DD")
