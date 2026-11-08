@@ -24,10 +24,13 @@ LIVEHOST_TOKEN_HOURS = 24
 UPLOAD_DIR = '/app/uploads/livehost'
 UUID_PATH_REGEX = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
 
-# Ensure upload directory exists
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(f'{UPLOAD_DIR}/scripts', exist_ok=True)
-os.makedirs(f'{UPLOAD_DIR}/training', exist_ok=True)
+# Ensure upload directory exists. Di server (container) selalu bisa; di runner CI/uji (bukan root, tanpa /app)
+# pembuatan folder ditolak — jangan sampai impor modul gagal karenanya (unggahan memang tidak dipakai di uji).
+for _dir in (UPLOAD_DIR, f'{UPLOAD_DIR}/scripts', f'{UPLOAD_DIR}/training'):
+    try:
+        os.makedirs(_dir, exist_ok=True)
+    except OSError:
+        pass
 
 # Notification SSOT integration
 from utils.notif_unified import (  # noqa: E402
