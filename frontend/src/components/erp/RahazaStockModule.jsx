@@ -312,7 +312,7 @@ export default function RahazaStockModule({ token }) {
             {/* U8 — dulu juga kotak berisi deretan 43 pil kode barang; rinciannya ada di Alert & Reorder (tabel + unduh). */}
             <StatTile testId="stock-summary-low" label="Di bawah ambang stok" value={fmtNum(reorderAlerts.length, 0)}
               accent={reorderAlerts.length > 0 ? 'warning' : 'default'}
-              hint="Rincian di Alert & Reorder"
+              hint="Buka rincian"
               onClick={() => {
                 if (window.location.hash === '#warehouse-smart') window.location.hash = '';
                 window.location.hash = '#warehouse-smart';
