@@ -309,9 +309,13 @@ async def predict_attrition(
 
         # Get leave requests (last 6 months)
         since180 = _now() - timedelta(days=180)
+        # 2026-11-09 (audit HR P6): dulu `created_at` (tersimpan sebagai datetime) dibandingkan dengan TEKS ISO →
+        # Mongo tidak pernah mencocokkan beda tipe, hitungan selalu 0. Kini memakai `from_date` (teks YYYY-MM-DD,
+        # tipe sama) dan hanya pengajuan yang tidak ditolak/dibatalkan.
         leave_count = await db.rahaza_leave_requests.count_documents({
             "employee_id": emp_id,
-            "created_at": {"$gte": since180.isoformat()}
+            "from_date": {"$gte": since180.strftime("%Y-%m-%d")},
+            "status": {"$nin": ["rejected", "cancelled", "draft"]},
         })
 
         # Years of service
@@ -356,10 +360,10 @@ Format JSON response:
   "priority_actions": ["aksi prioritas 1", "aksi prioritas 2"]
 }"""
 
-    user_prompt = f"Data karyawan aktif:\n{ai_json(emp_data[:10])}"
-
-    raw = await _call_ai(system_prompt, user_prompt, "attrition", user.get("id"))
-    analysis = _restore_attrition(_parse_json_response(raw), ps, ref_map)
+    # 2026-11-09 (audit HR P6): dulu hanya 10 karyawan pertama yang dikirim (`emp_data[:10]`) walau dasbor
+    # menyebut "semua karyawan aktif". Kini semua karyawan dianalisis, per kelompok `ATTRITION_BATCH` orang
+    # (satu panggilan AI per kelompok), lalu hasilnya digabung.
+    analysis = await _attrition_batches(system_prompt, emp_data, ps, ref_map, user.get("id"))
 
     # Save to DB
     doc = {
@@ -374,6 +378,36 @@ Format JSON response:
 
     # K27: `raw_employee_data` (berisi base_salary) DIHAPUS dari respons.
     return ok(data={"analysis": analysis, "generated_at": doc["generated_at"]})
+
+
+ATTRITION_BATCH = 40
+
+
+def batches(rows: list, size: int = ATTRITION_BATCH) -> list:
+    """Bagi daftar menjadi kelompok berukuran `size` (kelompok terakhir boleh lebih kecil)."""
+    size = max(1, int(size or ATTRITION_BATCH))
+    return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+
+async def _attrition_batches(system_prompt: str, emp_data: list, ps: Pseudonymizer, ref_map: dict,
+                             user_id) -> dict:
+    """Analisis semua karyawan per kelompok; gabungkan `employees`, ringkasan departemen, dan aksi prioritas."""
+    gabung: dict = {"employees": [], "department_summary": [], "overall_insights": "", "priority_actions": []}
+    kelompok = batches(emp_data)
+    insights = []
+    for i, rows in enumerate(kelompok, 1):
+        catatan = f" (kelompok {i} dari {len(kelompok)})" if len(kelompok) > 1 else ""
+        raw = await _call_ai(system_prompt, f"Data karyawan aktif{catatan}:\n{ai_json(rows)}", "attrition", user_id)
+        part = _restore_attrition(_parse_json_response(raw), ps, ref_map)
+        gabung["employees"] += [e for e in part.get("employees") or [] if isinstance(e, dict)]
+        gabung["department_summary"] += [d for d in part.get("department_summary") or [] if isinstance(d, dict)]
+        for a in part.get("priority_actions") or []:
+            if a not in gabung["priority_actions"]:
+                gabung["priority_actions"].append(a)
+        if part.get("overall_insights"):
+            insights.append(str(part["overall_insights"]))
+    gabung["overall_insights"] = "\n\n".join(insights)
+    return gabung
 
 
 def _restore_attrition(analysis: dict, ps: Pseudonymizer, ref_map: dict) -> dict:

@@ -117,14 +117,17 @@ async def generate_schedule(request: Request, gen_request: GenerateScheduleReque
     db = get_db()
     
     # Fetch employees
-    query = {"status": "active"}
+    # 2026-11-09 (audit HR H7/P5): karyawan aktif = `active: true` (field `status` tidak dipakai data karyawan,
+    # dulu selalu 0 karyawan → jadwal otomatis tidak pernah bisa dibuat). Pesan dalam bahasa Indonesia.
+    query = {"active": {"$ne": False}}
     if gen_request.department:
         query["department"] = gen_request.department
     
     employees = await db["rahaza_employees"].find(query).to_list(length=500)
     
     if not employees:
-        raise HTTPException(400, "No employees found for scheduling")
+        raise HTTPException(400, "Tidak ada karyawan aktif untuk dijadwalkan"
+                                 + (f" di departemen {gen_request.department}." if gen_request.department else "."))
     
     # Fetch shift templates
     templates = await db["rahaza_shift_templates"].find(
@@ -132,7 +135,7 @@ async def generate_schedule(request: Request, gen_request: GenerateScheduleReque
     ).to_list(length=50)
     
     if not templates:
-        raise HTTPException(400, "No shift templates found")
+        raise HTTPException(400, "Pola shift yang dipilih tidak ditemukan.")
     
     # Generate schedule logic
     schedule = await _generate_schedule_logic(
