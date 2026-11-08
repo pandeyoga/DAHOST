@@ -307,7 +307,7 @@ export default function ProductLaunchModule({ token }) {
       </>}
       tools={<>
         <ViewToggle value={viewMode} onChange={setViewMode} options={VIEWS} testId="launch-view" />
-        <TombolUnduh namaBerkas="peluncuran-produk" namaLembar="Peluncuran" baris={items} ambilSemua={ambilSemua} testId="launch-export-csv"
+        <TombolUnduh label={<span className="max-sm:sr-only">Unduh</span>} namaBerkas="peluncuran-produk" namaLembar="Peluncuran" baris={items} ambilSemua={ambilSemua} testId="launch-export-csv"
           kolom={[
             { label: 'Kode master', nilai: (it) => it.model_code || it.model || '' },
             { label: 'Produk', nilai: (it) => it.product_name },

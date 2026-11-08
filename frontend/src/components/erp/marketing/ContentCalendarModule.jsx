@@ -353,7 +353,7 @@ function ContentCalendarBase({ token }) {
       </>}
       tools={<>
         <ViewToggle value={view} onChange={setView} options={VIEWS} testId="content-view" />
-        <TombolUnduh namaBerkas={view === 'calendar' ? `kalender-konten-${year}-${String(month).padStart(2, '0')}` : 'kalender-konten'}
+        <TombolUnduh label={<span className="max-sm:sr-only">Unduh</span>} namaBerkas={view === 'calendar' ? `kalender-konten-${year}-${String(month).padStart(2, '0')}` : 'kalender-konten'}
           namaLembar="Konten" baris={view === 'calendar' ? calendarData : visibleList} ambilSemua={ambilSemua} testId="content-export-csv"
           kolom={[
             { label: 'Tanggal', nilai: (e) => tgl(e.date) },

@@ -244,7 +244,7 @@ export default function TaskManagementModule({ token }) {
       </>}
       tools={<>
         <ViewToggle value={view} onChange={setView} options={VIEWS} testId="task-view" />
-        <TombolUnduh namaBerkas="tugas-marketing" namaLembar="Tugas" baris={tasks} ambilSemua={ambilSemua} kolom={kolomUnduh} testId="task-unduh" />
+        <TombolUnduh label={<span className="max-sm:sr-only">Unduh</span>} namaBerkas="tugas-marketing" namaLembar="Tugas" baris={tasks} ambilSemua={ambilSemua} kolom={kolomUnduh} testId="task-unduh" />
         <Button onClick={fetchTasks} variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-tasks-btn">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
