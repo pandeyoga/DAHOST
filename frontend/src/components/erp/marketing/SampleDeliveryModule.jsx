@@ -374,15 +374,15 @@ export default function SampleDeliveryModule({ token }) {
           onChange={(v) => { setFilterAccountId(v); setCurrentPage(1); }}
           label="" includeAll allLabel="Semua toko" required={false} className="w-44"
           testId="sample-filter-account" />
-        <SmartNativeSelect value={filterShipmentStatus} onChange={(e) => { setFilterShipmentStatus(e.target.value); setCurrentPage(1); }} className="w-44" searchable={false}>
+        <SmartNativeSelect value={filterShipmentStatus} onChange={(e) => { setFilterShipmentStatus(e.target.value); setCurrentPage(1); }} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false}>
           <option value="">Semua status kirim</option>
           {Object.entries(SHIPMENT_STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterProgress} onChange={(e) => { setFilterProgress(e.target.value); setCurrentPage(1); }} className="w-48" searchable={false}>
+        <SmartNativeSelect value={filterProgress} onChange={(e) => { setFilterProgress(e.target.value); setCurrentPage(1); }} className="w-48" wrapperClassName="w-48 max-w-full" searchable={false}>
           <option value="">Semua tindak lanjut</option>
           {Object.entries(PROGRESS_STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setCurrentPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua platform</option>
           <option value="tiktok">TikTok</option>
           <option value="instagram">Instagram</option>

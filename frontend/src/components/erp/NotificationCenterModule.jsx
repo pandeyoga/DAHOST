@@ -203,20 +203,20 @@ function NotifListTab({ headers, summary, onChanged, goConfig }) {
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari penerima atau isi" className="pl-8"
             data-testid="notif-search" />
         </div>
-        <SmartNativeSelect value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-40" searchable={false}
+        <SmartNativeSelect value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}
           data-testid="notif-filter-status">
           <option value="all">Semua status</option>
           <option value="queued">Menunggu kirim</option>
           <option value="sent">Terkirim</option>
           <option value="failed">Gagal</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterChannel} onChange={(e) => setFilterChannel(e.target.value)} className="w-40" searchable={false}
+        <SmartNativeSelect value={filterChannel} onChange={(e) => setFilterChannel(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}
           data-testid="notif-filter-channel">
           <option value="all">Semua saluran</option>
           <option value="whatsapp">WhatsApp</option>
           <option value="email">Email</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterEvent} onChange={(e) => setFilterEvent(e.target.value)} className="w-52" searchable={false}
+        <SmartNativeSelect value={filterEvent} onChange={(e) => setFilterEvent(e.target.value)} className="w-52" wrapperClassName="w-52 max-w-full" searchable={false}
           data-testid="notif-filter-event">
           <option value="all">Semua jenis</option>
           {['stage_change', 'invoice_issued', 'invoice_overdue', 'manual'].map((e) => <option key={e} value={e}>{EVENT_LABEL[e]}</option>)}

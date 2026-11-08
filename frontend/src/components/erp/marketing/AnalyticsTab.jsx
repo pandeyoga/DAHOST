@@ -89,7 +89,7 @@ export default function AnalyticsTab({ authH }) {
       filters={
         <div className="flex items-center gap-1">
           <Button variant="outline" size="icon" onClick={() => changeMonth(-1)} title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
-          <SmartNativeSelect value={month} onChange={(e) => setMonth(e.target.value)} className="w-44" searchable={false} data-testid="analytics-month-selector">
+          <SmartNativeSelect value={month} onChange={(e) => setMonth(e.target.value)} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false} data-testid="analytics-month-selector">
             {!BULAN.some((b) => b.value === month) && <option value={month}>{month}</option>}
             {BULAN.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
           </SmartNativeSelect>

@@ -205,16 +205,16 @@ export default function ContentPerformanceView({ token }) {
       subtitle="KPI konten per konten, kreator, jenis, toko, atau platform."
       filters={<>
         <PeriodPicker value={periode} onChange={setPeriode} testId="perf-period" />
-        <SmartNativeSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="w-44" searchable={false}
+        <SmartNativeSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false}
           data-testid="perf-group-by">
           {GROUPS.map((g) => <option key={g.v} value={g.v}>{g.l}</option>)}
         </SmartNativeSelect>
         {perContent && <>
-          <SmartNativeSelect value={kpiState} onChange={(e) => setKpiState(e.target.value)} className="w-40" searchable={false}
+          <SmartNativeSelect value={kpiState} onChange={(e) => setKpiState(e.target.value)} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}
             data-testid="perf-kpi-state">
             {KPI_STATES.map((x) => <option key={x.v} value={x.v}>{x.l}</option>)}
           </SmartNativeSelect>
-          <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)} className="w-48" searchable={false}
+          <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)} className="w-48" wrapperClassName="w-48 max-w-full" searchable={false}
             data-testid="perf-sort">
             {SORTS.map((x) => <option key={x.v} value={x.v}>{x.l}</option>)}
           </SmartNativeSelect>

@@ -219,7 +219,7 @@ export default function CreatorScorecardView({ token, onNavigate }) {
     <PageLayout testId="creator-scorecard-view" title="Scorecard kreator"
       subtitle="Target vs pencapaian kreator per bulan, dari tiga sumber angka yang terpisah."
       filters={<>
-        <SmartNativeSelect value={bulan} onChange={(e) => setBulan(e.target.value)} className="w-44" searchable={false}
+        <SmartNativeSelect value={bulan} onChange={(e) => setBulan(e.target.value)} className="w-44" wrapperClassName="w-44 max-w-full" searchable={false}
           data-testid="scorecard-month">
           {bulanPilihan.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
         </SmartNativeSelect>

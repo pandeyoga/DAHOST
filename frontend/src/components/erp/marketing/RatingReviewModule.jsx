@@ -68,7 +68,7 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
   const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <SmartNativeSelect value={activeAccount?.id || ''} className="w-36" data-testid={testId}
+    <SmartNativeSelect value={activeAccount?.id || ''} className="w-36" wrapperClassName="w-36 max-w-full" data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
       <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
@@ -358,20 +358,20 @@ export default function RatingReviewModule({ token }) {
         </div>
         <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="reviews-account"
           onChange={(acc) => { setActiveAccount(acc); setCurrentPage(1); }} />
-        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua balasan</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={String(filterRating)} onChange={(e) => { setFilterRating(parseInt(e.target.value, 10) || 0); setCurrentPage(1); }}
-          className="w-40" searchable={false}>
+          className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="0">Semua bintang</option>
           {[1, 2, 3, 4, 5].map((n) => <option key={n} value={String(n)}>{n} bintang</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setCurrentPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setCurrentPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua platform</option>
           {platforms.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }} className="w-40">
+        <SmartNativeSelect value={filterCategory} onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full">
           <option value="">Semua kategori</option>
           {categories.map(c => <option key={c.value} value={c.value}>{kalimat(c.label)}</option>)}
         </SmartNativeSelect>

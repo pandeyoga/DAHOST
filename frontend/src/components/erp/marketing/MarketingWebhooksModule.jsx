@@ -209,7 +209,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
             className="pl-8" data-testid="input-webhook-search" />
         </div>
         <SmartNativeSelect value={filterPlatform} onChange={(e) => { setFilterPlatform(e.target.value); setSkip(0); }}
-          className="w-40" data-testid="select-platform" searchable={false}>
+          className="w-40" wrapperClassName="w-40 max-w-full" data-testid="select-platform" searchable={false}>
           <option value="">Semua platform</option>
           <option value="tokopedia">Tokopedia</option>
           <option value="shopee">Shopee</option>
@@ -217,7 +217,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
           <option value="manual">Manual</option>
         </SmartNativeSelect>
         <SmartNativeSelect value={filterProcessed} onChange={(e) => { setFilterProcessed(e.target.value); setSkip(0); }}
-          className="w-44" data-testid="select-processed" searchable={false}>
+          className="w-44" wrapperClassName="w-44 max-w-full" data-testid="select-processed" searchable={false}>
           <option value="">Semua status</option>
           <option value="true">Diproses</option>
           <option value="false">Menunggu atau galat</option>

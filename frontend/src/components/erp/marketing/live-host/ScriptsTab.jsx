@@ -109,7 +109,7 @@ export default function ScriptsTab({ authH }) {
     <PageLayout testId="scripts-tab" title="Naskah live" subtitle="Naskah pembuka, demo, promo, dan penutup untuk host live."
       actions={<Button onClick={bukaBaru} data-testid="add-script-btn"><Plus />Tambah naskah</Button>}
       filters={
-        <SmartNativeSelect value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="w-48" searchable={false}
+        <SmartNativeSelect value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="w-48" wrapperClassName="w-48 max-w-full" searchable={false}
           data-testid="filter-script-category">
           <option value="all">Semua kategori</option>
           {Object.entries(KATEGORI_NASKAH).map(([k, v]) => <option key={k} value={k}>{v}</option>)}

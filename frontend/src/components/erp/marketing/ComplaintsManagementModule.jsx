@@ -99,7 +99,7 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   const aktif = accounts.filter((a) => a.status === 'active' || !a.status);
   const daftar = activeAccount && !aktif.some((a) => a.id === activeAccount.id) ? [activeAccount, ...aktif] : aktif;
   return (
-    <SmartNativeSelect value={activeAccount?.id || ''} className={lebar} data-testid={testId}
+    <SmartNativeSelect value={activeAccount?.id || ''} className={lebar} wrapperClassName={`${lebar} max-w-full`} wrapperClassName={`${lebar} max-w-full`} data-testid={testId}
       onChange={(e) => onChange(daftar.find((a) => a.id === e.target.value) || null)}>
       <option value="">Semua toko</option>
       {daftar.map((a) => <option key={a.id} value={a.id}>{`${a.account_name} · ${labelPlatform(a.platform)}`}</option>)}
@@ -369,20 +369,20 @@ export default function ComplaintsManagementModule({ token, onNavigate }) {
         </div>
         <PilihAkun accounts={masterAccounts} activeAccount={activeAccount} testId="complaint-account" lebar="w-36"
           onChange={(acc) => { setActiveAccount(acc); setPage(1); }} />
-        <SmartNativeSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="w-36" searchable={false}>
+        <SmartNativeSelect value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="w-36" wrapperClassName="w-36 max-w-full" searchable={false}>
           <option value="">Semua status</option>
           {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={slaFilter} onChange={(e) => { setSlaFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}
+        <SmartNativeSelect value={slaFilter} onChange={(e) => { setSlaFilter(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}
           data-testid="complaint-sla-filter">
           <option value="">Semua tenggat</option>
           {Object.entries(SLA_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={catFilter} onChange={(e) => { setCatFilter(e.target.value); setPage(1); }} className="w-40">
+        <SmartNativeSelect value={catFilter} onChange={(e) => { setCatFilter(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full">
           <option value="">Semua kategori</option>
           {Object.entries(CATEGORY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-40" searchable={false}>
+        <SmartNativeSelect value={platformFilter} onChange={(e) => { setPlatformFilter(e.target.value); setPage(1); }} className="w-40" wrapperClassName="w-40 max-w-full" searchable={false}>
           <option value="">Semua platform</option>
           <option value="shopee">Shopee</option>
           <option value="tiktok">TikTok</option>
