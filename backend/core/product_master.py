@@ -337,8 +337,52 @@ def master_images(model: dict) -> list:
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Harga jual RESMI per SKU (keputusan owner 9 Nov 2026 — klarifikasi B1)
+# ══════════════════════════════════════════════════════════════════════════════
+# Harga resmi disimpan PER SKU di master barang jadi (`rahaza_materials(type fg).retail_price_master`,
+# 583 dari 1.274 SKU terisi dari Excel). Dulu katalog hanya membaca harga MODEL
+# (`rahaza_models.retail_price`, 0 dari 138 terisi) sehingga semua item lahir Rp 0. Sekarang SATU urutan:
+# harga per SKU → harga model (cadangan) → 0, dan sumbernya selalu ikut dilaporkan.
+OFFICIAL_PRICE_SOURCE_LABEL = {
+    'sku': 'Harga resmi per SKU',
+    'model': 'Harga resmi model (cadangan)',
+    'none': 'Belum ada harga resmi',
+}
+
+
+def official_price(fg: dict = None, model: dict = None) -> tuple:
+    """(harga, sumber) — `'sku'` | `'model'` | `'none'`. Satu-satunya urutan harga resmi."""
+    sku_price = _f((fg or {}).get('retail_price_master'))
+    if sku_price > 0:
+        return round(sku_price, 2), 'sku'
+    model_price = _f((model or {}).get('retail_price'))
+    if model_price > 0:
+        return round(model_price, 2), 'model'
+    return 0.0, 'none'
+
+
+async def official_price_map(db, fg_ids) -> dict:
+    """{fg_id: (harga, sumber)} untuk banyak FG sekaligus (2 kueri, bukan N+1)."""
+    ids = sorted({i for i in (fg_ids or []) if i})
+    if not ids:
+        return {}
+    fgs = await db.rahaza_materials.find(
+        {'id': {'$in': ids}}, {'_id': 0, 'id': 1, 'model_id': 1, 'retail_price_master': 1}).to_list(len(ids))
+    mids = sorted({f.get('model_id') for f in fgs if f.get('model_id')})
+    models = {}
+    if mids:
+        models = {m['id']: m for m in await db.rahaza_models.find(
+            {'id': {'$in': mids}}, {'_id': 0, 'id': 1, 'retail_price': 1}).to_list(len(mids))}
+    return {f['id']: official_price(f, models.get(f.get('model_id'))) for f in fgs}
+
+
 def master_display_fields(model: dict) -> dict:
-    """Field master yang DISALIN ke FG & item katalog (harus punya penyegar — M7)."""
+    """Field master yang DISALIN ke FG & item katalog (harus punya penyegar — M7).
+
+    `retail_price_master` di sini = harga MODEL saja (tingkat model). Item katalog memakai
+    :func:`official_price` (per SKU dulu) — jangan menyalin angka ini langsung ke item.
+    """
     hpp, src = resolve_hpp(model)
     return {
         'category_id': model.get('category_id'),
@@ -373,13 +417,15 @@ async def propagate_master_changes(db, model: dict, *, refresh_name: bool = Fals
     # HPP standar ditulis lewat `core.product_costing.apply_model_cost` saja.
     hpp_fields = {k: fields.pop(k) for k in ('hpp', 'hpp_source')}
 
-    fg_patch = {k: v for k, v in fields.items() if k != 'retail_price_master'}
+    fields.pop('retail_price_master', None)   # harga resmi item = per SKU (lihat di bawah)
+    fg_patch = dict(fields)
     fg_patch['updated_at'] = now
     res_fg = await db.rahaza_materials.update_many(
         {'type': 'fg', 'model_id': model['id']}, {'$set': fg_patch})
 
-    fg_ids = [m['id'] async for m in db.rahaza_materials.find(
-        {'type': 'fg', 'model_id': model['id']}, {'_id': 0, 'id': 1})]
+    fg_docs = [m async for m in db.rahaza_materials.find(
+        {'type': 'fg', 'model_id': model['id']}, {'_id': 0, 'id': 1, 'retail_price_master': 1})]
+    fg_ids = [m['id'] for m in fg_docs]
 
     item_patch = dict(fields)
     item_patch['updated_at'] = now
@@ -388,6 +434,19 @@ async def propagate_master_changes(db, model: dict, *, refresh_name: bool = Fals
         item_q['$or'].extend([{'fg_material_id': {'$in': fg_ids}},
                               {'material_id': {'$in': fg_ids}}])
     res_items = await db.marketing_catalog_items.update_many(item_q, {'$set': item_patch})
+    # 2026-11-09 (klarifikasi B1) — kolom pembanding "harga resmi master" di item katalog = harga per SKU
+    # FG-nya, cadangan harga model. Dulu SEMUA item model ini ditimpa harga model (per SKU hilang).
+    # `harga_jual` toko TIDAK disentuh (itu aksi "Isi harga dari master").
+    for fg in fg_docs:
+        price, src = official_price(fg, model)
+        await db.marketing_catalog_items.update_many(
+            {'$or': [{'fg_material_id': fg['id']}, {'material_id': fg['id']}]},
+            {'$set': {'retail_price_master': price, 'retail_price_source': src}})
+    price, src = official_price(None, model)
+    await db.marketing_catalog_items.update_many(
+        {'model_id': model['id'], 'fg_material_id': {'$in': [None, '']},
+         'material_id': {'$in': [None, '']}},
+        {'$set': {'retail_price_master': price, 'retail_price_source': src}})
     if float(hpp_fields.get('hpp') or 0) > 0:
         empty = {'$or': [{'hpp': {'$exists': False}}, {'hpp': None}, {'hpp': {'$lte': 0}}]}
         fill = {**hpp_fields, 'hpp_updated_at': now}

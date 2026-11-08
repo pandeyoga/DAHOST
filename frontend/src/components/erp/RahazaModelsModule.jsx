@@ -620,7 +620,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                 <MoneyInput glass value={form.base_hpp}
                   onChange={(e) => setForm({ ...form, base_hpp: e.target.value })} data-testid="model-form-base-hpp" />
               </Isian>
-              <Isian label="Harga jual resmi (Rp)" petunjuk="Jadi nilai awal harga di katalog.">
+              <Isian label="Harga jual resmi (Rp)" petunjuk="Cadangan bila SKU belum punya harga sendiri (Portal RnD › Master produk › Harga jual per SKU).">
                 <MoneyInput glass value={form.retail_price}
                   onChange={(e) => setForm({ ...form, retail_price: e.target.value })} data-testid="model-form-retail-price" />
               </Isian>

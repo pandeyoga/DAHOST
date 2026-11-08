@@ -560,6 +560,7 @@ from routes.rahaza_production import router as rahaza_production_router
 from routes.rahaza_orders import router as rahaza_orders_router
 from routes.rahaza_bom import router as rahaza_bom_router
 from routes.rahaza_variants import router as rahaza_variants_router  # Fase 2: Colors + Model Variants + SKU
+from routes.rahaza_sku_prices import router as rahaza_sku_prices_router  # 2026-11-09: harga jual resmi per SKU
 from routes.rahaza_product_categories import router as rahaza_product_categories_router  # F2: Master Kategori Produk
 from routes.rahaza_material_requirements import router as rahaza_material_requirements_router  # Fase 5: MRP-lite agregasi kebutuhan material
 from routes.product_costing import router as product_costing_router  # 2026-08-23: HPP per potong & per model
@@ -747,6 +748,7 @@ app.include_router(rahaza_production_router, dependencies=_DENY_MKT)
 app.include_router(rahaza_orders_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(rahaza_bom_router, dependencies=_DENY_MKT)
 app.include_router(rahaza_variants_router)  # Fase 2: Colors + Model Variants + SKU
+app.include_router(rahaza_sku_prices_router, dependencies=_DENY_EXTERNAL_AND_MKT)  # 2026-11-09: harga jual resmi per SKU (B2)
 app.include_router(rahaza_product_categories_router)  # F2: Master Kategori Produk (K-2)
 app.include_router(rahaza_material_requirements_router, dependencies=_DENY_EXTERNAL_AND_MKT)  # Fase 5: MRP-lite agregasi kebutuhan material
 app.include_router(product_costing_router, dependencies=_DENY_MKT)  # 2026-08-23: HPP per potong & per model (/api/costing)
