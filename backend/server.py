@@ -1458,6 +1458,9 @@ app.include_router(executive_report_router, dependencies=_DENY_EXTERNAL)
 # ─── Task 1.2: HR Shift Management ───────────────────────────────────────────
 from routes.hr_shifts import router as hr_shifts_router
 app.include_router(hr_shifts_router, dependencies=_DENY_EXTERNAL)
+# Tahap C audit HR (9 Nov 2026): Portal Saya › Jadwal Shift (ganti/tukar shift, persetujuan atasan → SDM)
+from routes.hr_shift_portal import router as hr_shift_portal_router
+app.include_router(hr_shift_portal_router, dependencies=_DENY_EXTERNAL)
 
 # ─── Task 2.4: Multi-Level Approval Workflow ─────────────────────────────────
 from routes.approval_multilevel import router as approval_multilevel_router

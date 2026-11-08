@@ -156,12 +156,11 @@ class TestPrediksiKeluar:
 
 
 class TestJadwalOtomatisFilter:
-    def test_karyawan_active_true_ditemukan(self, monkeypatch):
-        import routes.dewi_shift_scheduler as m
+    def test_karyawan_active_true_ditemukan(self):
+        """Penjadwal (kini `core.shift_roster.karyawan_lingkup`, Tahap C) memakai `active` ≠ false."""
+        from core.shift_roster import karyawan_lingkup
         db = FakeDB()
         db.rahaza_employees.docs = [{"id": "e1", "name": "Satu", "active": True, "department": "Produksi"},
-                                    {"id": "e2", "name": "Dua", "active": False, "department": "Produksi"}]
-        monkeypatch.setattr(m, "get_db", lambda: db)
-        q = m._filter_karyawan(None) if hasattr(m, "_filter_karyawan") else {"active": {"$ne": False}}
-        from _fake_mongo import match
-        assert [e["id"] for e in db.rahaza_employees.docs if match(e, q)] == ["e1"]
+                                    {"id": "e2", "name": "Dua", "active": False, "department": "Produksi"},
+                                    {"id": "e3", "name": "Tiga", "department": "Produksi", "status": "x"}]
+        assert [e["id"] for e in run(karyawan_lingkup(db, departemen="Produksi"))] == ["e1", "e3"]

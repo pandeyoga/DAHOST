@@ -128,6 +128,11 @@ def _to_hr_shape(doc: Dict) -> Dict:
     d.setdefault("is_default", False)
     d.setdefault("color", "#64748b")
     d.setdefault("description", "")
+    # Tahap C (audit HR, 9 Nov 2026): toleransi terlambat PER SHIFT (None = ikut setelan umum) + jam mulai istirahat.
+    if d.get("toleransi_menit") in (None, "") and d.get("grace_minutes") not in (None, ""):
+        d["toleransi_menit"] = d.get("grace_minutes")
+    d.setdefault("toleransi_menit", None)
+    d.setdefault("istirahat_mulai", None)
     if not d.get("status"):
         d["status"] = "active" if d.get("active", True) else "inactive"
     return d
@@ -231,6 +236,7 @@ async def create_shift(db, data: Dict) -> Dict:
     eff = _calc_effective_hours(
         data["start_time"], data["end_time"],
         int(data.get("break_duration_minutes", 60)), overnight)
+    tambahan = field_toleransi_istirahat(data)
     doc = {
         "id": str(_uuid.uuid4()),
         # kanonik
@@ -255,9 +261,49 @@ async def create_shift(db, data: Dict) -> Dict:
         "status": "active",
         "created_at": now,
         "updated_at": now,
+        **tambahan["set"],
     }
     await db.rahaza_shifts.insert_one(doc)
     return {k: v for k, v in doc.items() if k != "_id"}
+
+
+MAKS_TOLERANSI = 240
+
+
+def field_toleransi_istirahat(data: Dict, isian_ada=None) -> Dict:
+    """Field shift Tahap C → {set: {...}, unset: [...]}.
+
+    * `toleransi_menit` (0–240): toleransi terlambat KHUSUS shift ini; disalin ke `grace_minutes` yang sudah dibaca
+      aturan absen (`core.attendance_rules`). Kosong/None = ikut setelan umum (kedua field dihapus).
+    * `istirahat_mulai` (JJ:MM): jam mulai istirahat — acuan jam masuk cuti setengah hari pagi (keputusan Q5).
+    `isian_ada` = nama field yang benar-benar dikirim (ubah sebagian); None = semua dianggap dikirim (buat baru)."""
+    ada = set(isian_ada) if isian_ada is not None else {"toleransi_menit", "istirahat_mulai"}
+    out: Dict = {"set": {}, "unset": []}
+    if "toleransi_menit" in ada:
+        v = data.get("toleransi_menit")
+        if v in (None, ""):
+            out["unset"] += ["toleransi_menit", "grace_minutes"]
+        else:
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                raise ValueError("Toleransi terlambat harus angka menit.")
+            if not 0 <= n <= MAKS_TOLERANSI:
+                raise ValueError(f"Toleransi terlambat harus 0–{MAKS_TOLERANSI} menit.")
+            out["set"].update({"toleransi_menit": n, "grace_minutes": n})
+    if "istirahat_mulai" in ada:
+        v = str(data.get("istirahat_mulai") or "").strip()
+        if not v:
+            out["unset"].append("istirahat_mulai")
+        else:
+            try:
+                _parse_time(v)
+            except Exception:
+                raise ValueError("Jam mulai istirahat tidak valid. Gunakan JJ:MM.")
+            out["set"]["istirahat_mulai"] = v[:5]
+    if isian_ada is None:
+        out["unset"] = []
+    return out
 
 
 def _hari_sebelum(iso: str) -> str:

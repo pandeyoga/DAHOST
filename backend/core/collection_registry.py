@@ -220,6 +220,9 @@ REGISTRY: dict[str, str] = {
     "hr_ai_results": "lain",
     "hr_issued_documents": "lain",
     "hr_shift_assignments": "lain",
+    # 2026-11-09 (Tahap C audit HR): pola rotasi shift + permintaan ganti/tukar shift Portal Saya
+    "hr_shift_pola": "hr",
+    "hr_shift_requests": "hr",
     "hris_assignments": "hr",
     "hris_cycles": "hr",
     "hris_kpi_assignments": "hr",
@@ -605,7 +608,7 @@ dewi_org_positions dewi_org_units dewi_perf_cycles dewi_perf_kpis dewi_recruitme
 dewi_rnd_materials dewi_rnd_patterns dewi_rnd_revisions dewi_rnd_sample_costing dewi_rnd_styles
 dewi_rnd_tech_packs dewi_rnd_variants dewi_toko_channels dewi_toko_products employee_documents
 employee_expense_categories employee_per_diem_rates fx_rates garments hr_issued_documents
-hr_shift_assignments hris_cycles hris_kpi_assignments marketing_account_targets marketing_budgets
+hr_shift_assignments hr_shift_pola hris_cycles hris_kpi_assignments marketing_account_targets marketing_budgets
 marketing_catalog_items marketing_catalogs marketing_creator_catalog marketing_creator_targets
 marketing_kol_creators marketing_livehost_scripts marketing_livehost_training marketing_livehosts
 marketing_platform_accounts marketing_sku_bridge marketing_targets marketing_task_templates
@@ -627,6 +630,7 @@ workspace_shares workspace_versions
 """
 
 _TRANSAKSI = """
+hr_shift_requests
 acc_loans acc_opname_lines acc_opname_sessions acc_purchase_requests acc_stock_movements
 accessory_shipment_items accessory_shipments approval_requests bank_recon_matches bank_recon_sessions
 bank_recon_txns buyer_shipment_items buyer_shipments buyer_short_records cmt_delivery_notes
