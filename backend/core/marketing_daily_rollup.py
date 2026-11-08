@@ -432,6 +432,14 @@ async def recompute_daily(db, account_id: str, date: str, *,
             set_fields[f"fulfillment.{k}"] = fulfillment[k]
     for k in MODULE_RETURN_FULFILLMENT_KEYS:
         set_fields[f"fulfillment.{k}"] = flat["fulfillment"].get(k, 0)
+    # Q-5 (keputusan owner 9 Nov 2026) — angka yang DIKETIK (manual, impor rekap, tugas,
+    # override yang dipaksa hitung ulang) dulu hilang tanpa jejak saat pesanan hari itu
+    # diimpor. Sekarang nilai lamanya disimpan supaya selisih manual vs pesanan bisa
+    # ditelusuri (uji s1: manual Rp1.000.000 → turunan Rp6.855.287).
+    if existing and src and src not in _shape.DERIVED_SOURCES:
+        set_fields["previous_source"] = src
+        set_fields["previous_metrics"] = existing.get("metrics") or {}
+        set_fields["replaced_by_orders_at"] = now
     # jejak override sebelumnya dihapus saat kembali menjadi turunan
     unset_fields = {"override_reason": "", "override_by": "", "override_at": ""}
 
