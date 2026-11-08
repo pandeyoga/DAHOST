@@ -3,7 +3,7 @@ import { Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -71,53 +71,35 @@ export default function ScriptModal({ script, accounts, authH, onClose, onSucces
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-sm font-medium">Kategori</Label>
-              <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
-                <SelectTrigger className="mt-1 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="opening">Pembuka</SelectItem>
-                  <SelectItem value="demo">Demo produk</SelectItem>
-                  <SelectItem value="promo">Promo</SelectItem>
-                  <SelectItem value="closing">Penutup</SelectItem>
-                  <SelectItem value="faq">Tanya jawab</SelectItem>
-                  <SelectItem value="objection_handling">Menangani keberatan</SelectItem>
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect className="mt-1" value={form.category} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, category: _v })); }} searchable={false}>
+                  <option value="opening">Pembuka</option>
+                  <option value="demo">Demo produk</option>
+                  <option value="promo">Promo</option>
+                  <option value="closing">Penutup</option>
+                  <option value="faq">Tanya jawab</option>
+                  <option value="objection_handling">Menangani keberatan</option>
+                </SmartNativeSelect>
             </div>
             <div>
               <Label className="text-sm font-medium">Bahasa</Label>
-              <Select value={form.language} onValueChange={(v) => setForm((f) => ({ ...f, language: v }))}>
-                <SelectTrigger className="mt-1 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="indonesia">Indonesia</SelectItem>
-                  <SelectItem value="english">Inggris</SelectItem>
-                  <SelectItem value="mandarin">Mandarin</SelectItem>
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect className="mt-1" value={form.language} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, language: _v })); }} searchable={false}>
+                  <option value="indonesia">Indonesia</option>
+                  <option value="english">Inggris</option>
+                  <option value="mandarin">Mandarin</option>
+                </SmartNativeSelect>
             </div>
           </div>
 
           <div>
             <Label className="text-sm font-medium">Akun toko (opsional)</Label>
-            <Select
-              value={form.account_id || 'global'}
-              onValueChange={(v) => setForm((f) => ({ ...f, account_id: v === 'global' ? '' : v }))}
-            >
-              <SelectTrigger className="mt-1 h-9">
-                <SelectValue placeholder="Semua akun toko" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="global">Semua akun toko</SelectItem>
+            <SmartNativeSelect className="mt-1" value={form.account_id || 'global'} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, account_id: _v === 'global' ? '' : _v })); }}>
+                <option value="global">Semua akun toko</option>
                 {accounts.map((acc) => (
-                  <SelectItem key={acc.id} value={acc.id}>
-                    {acc.account_name} ({acc.platform})
-                  </SelectItem>
+                  <option key={acc.id} value={acc.id}>
+                    {acc.account_name} · {({ shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram' })[acc.platform] || acc.platform}
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </SmartNativeSelect>
           </div>
 
           <div>

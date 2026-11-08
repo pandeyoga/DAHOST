@@ -3,7 +3,7 @@ import { Clock, Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FormPopup from '@/components/ui/form-popup';
 import DatePicker from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
@@ -74,37 +74,29 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
       testId="livehost-addshift">
           <div>
             <Label className="text-sm font-medium">Host live *</Label>
-            <Select value={form.host_id} onValueChange={(v) => setForm((f) => ({ ...f, host_id: v }))}>
-              <SelectTrigger className="mt-1 h-9" data-testid="select-host">
-                <SelectValue placeholder="Pilih host live" />
-              </SelectTrigger>
-              <SelectContent>
+            <SmartNativeSelect className="mt-1" value={form.host_id} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, host_id: _v })); }} data-testid="select-host">
+                <option value="">Pilih host live</option>
                 {hosts.map((h) => (
-                  <SelectItem key={h.id} value={h.id}>
+                  <option key={h.id} value={h.id}>
                     {h.name}
-                  </SelectItem>
+                  </option>
                 ))}
-              </SelectContent>
-            </Select>
+              </SmartNativeSelect>
           </div>
 
           <div>
             <Label className="text-sm font-medium">Akun toko *</Label>
-            <Select value={form.account_id} onValueChange={(v) => setForm((f) => ({ ...f, account_id: v }))}>
-              <SelectTrigger className="mt-1 h-9" data-testid="select-account">
-                <SelectValue placeholder="Pilih akun toko" />
-              </SelectTrigger>
-              <SelectContent>
+            <SmartNativeSelect className="mt-1" value={form.account_id} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, account_id: _v })); }} data-testid="select-account">
+                <option value="">Pilih akun toko</option>
                 {availableAccounts.map((a) => {
                   const cfg = getPlatformConfig(a.platform);
                   return (
-                    <SelectItem key={a.id} value={a.id}>
-                      {cfg.icon} {a.account_name} ({cfg.label})
-                    </SelectItem>
+                    <option key={a.id} value={a.id}>
+                      {a.account_name} · {a.platform === 'tiktok' ? 'TikTok' : cfg.label}
+                    </option>
                   );
                 })}
-              </SelectContent>
-            </Select>
+              </SmartNativeSelect>
             {form.host_id && hostAssignedIds.length === 0 && (
               <p className="text-xs text-[hsl(var(--warning-text))] mt-1">
                 Host belum di-assign ke akun manapun. Edit host untuk menambah assignment.
@@ -132,18 +124,13 @@ export default function AddShiftModal({ hosts, accounts, authH, onClose, onSucce
             </div>
             <div>
               <Label className="text-sm font-medium">Jenis shift</Label>
-              <Select value={form.shift_type} onValueChange={(v) => setForm((f) => ({ ...f, shift_type: v }))}>
-                <SelectTrigger className="mt-1 h-9" data-testid="select-shift-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="morning">Pagi</SelectItem>
-                  <SelectItem value="afternoon">Siang</SelectItem>
-                  <SelectItem value="evening">Sore</SelectItem>
-                  <SelectItem value="night">Malam</SelectItem>
-                  <SelectItem value="custom">Atur sendiri</SelectItem>
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect className="mt-1" value={form.shift_type} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, shift_type: _v })); }} data-testid="select-shift-type" searchable={false}>
+                  <option value="morning">Pagi</option>
+                  <option value="afternoon">Siang</option>
+                  <option value="evening">Sore</option>
+                  <option value="night">Malam</option>
+                  <option value="custom">Atur sendiri</option>
+                </SmartNativeSelect>
             </div>
           </div>
 

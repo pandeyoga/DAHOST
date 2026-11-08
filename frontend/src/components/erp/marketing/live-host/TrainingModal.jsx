@@ -3,7 +3,7 @@ import { Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -72,17 +72,12 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
 
           <div>
             <Label className="text-sm font-medium">Kategori</Label>
-            <Select value={form.category} onValueChange={(v) => setForm((f) => ({ ...f, category: v }))}>
-              <SelectTrigger className="mt-1 h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="product_knowledge">Pengetahuan produk</SelectItem>
-                <SelectItem value="platform_rules">Aturan platform</SelectItem>
-                <SelectItem value="engagement">Teknik interaksi</SelectItem>
-                <SelectItem value="sales_techniques">Teknik penjualan</SelectItem>
-              </SelectContent>
-            </Select>
+            <SmartNativeSelect className="mt-1" value={form.category} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, category: _v })); }} searchable={false}>
+                <option value="product_knowledge">Pengetahuan produk</option>
+                <option value="platform_rules">Aturan platform</option>
+                <option value="engagement">Teknik interaksi</option>
+                <option value="sales_techniques">Teknik penjualan</option>
+              </SmartNativeSelect>
           </div>
 
           <div>
@@ -99,17 +94,12 @@ export default function TrainingModal({ training, authH, onClose, onSuccess }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-sm font-medium">Jenis materi</Label>
-              <Select value={form.content_type} onValueChange={(v) => setForm((f) => ({ ...f, content_type: v }))}>
-                <SelectTrigger className="mt-1 h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="video">Video</SelectItem>
-                  <SelectItem value="pdf">PDF</SelectItem>
-                  <SelectItem value="quiz">Kuis</SelectItem>
-                  <SelectItem value="external_link">Tautan luar</SelectItem>
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect className="mt-1" value={form.content_type} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, content_type: _v })); }} searchable={false}>
+                  <option value="video">Video</option>
+                  <option value="pdf">PDF</option>
+                  <option value="quiz">Kuis</option>
+                  <option value="external_link">Tautan luar</option>
+                </SmartNativeSelect>
             </div>
             <div>
               <Label className="text-sm font-medium">Durasi (menit)</Label>

@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FormPopup from '@/components/ui/form-popup';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -133,17 +133,12 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-sm font-medium">Jenis kerja</Label>
-              <Select value={form.employment_type} onValueChange={(v) => setForm((f) => ({ ...f, employment_type: v }))}>
-                <SelectTrigger className="mt-1 h-9" data-testid="select-employment">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="full_time">Penuh waktu</SelectItem>
-                  <SelectItem value="part_time">Paruh waktu</SelectItem>
-                  <SelectItem value="freelance">Freelance</SelectItem>
-                  <SelectItem value="contract">Kontrak</SelectItem>
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect className="mt-1" value={form.employment_type} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, employment_type: _v })); }} data-testid="select-employment" searchable={false}>
+                  <option value="full_time">Penuh waktu</option>
+                  <option value="part_time">Paruh waktu</option>
+                  <option value="freelance">Lepas</option>
+                  <option value="contract">Kontrak</option>
+                </SmartNativeSelect>
             </div>
             <div>
               <Label className="text-sm font-medium">Tarif per jam (Rp)</Label>
@@ -223,16 +218,11 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
           {isEdit && (
             <div>
               <Label className="text-sm font-medium">Status</Label>
-              <Select value={form.status} onValueChange={(v) => setForm((f) => ({ ...f, status: v }))}>
-                <SelectTrigger className="mt-1 h-9" data-testid="select-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Aktif</SelectItem>
-                  <SelectItem value="inactive">Nonaktif</SelectItem>
-                  <SelectItem value="on_leave">Cuti</SelectItem>
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect className="mt-1" value={form.status} onChange={(e) => { const _v = e.target.value; setForm((f) => ({ ...f, status: _v })); }} data-testid="select-status" searchable={false}>
+                  <option value="active">Aktif</option>
+                  <option value="inactive">Nonaktif</option>
+                  <option value="on_leave">Cuti</option>
+                </SmartNativeSelect>
             </div>
           )}
 

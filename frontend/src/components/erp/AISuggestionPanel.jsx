@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Bot, Check, Pencil, X, Loader2 } from 'lucide-react';
 
 const STATUS_LABEL = {
@@ -78,12 +78,9 @@ export default function AISuggestionPanel({ suggestion, fields, decideUrl, heade
           <div key={f.key}>
             <p className="text-xs text-muted-foreground">{f.label}</p>
             {editing && f.options ? (
-              <Select value={draft[f.key] ?? values[f.key] ?? ''} onValueChange={v => setDraft(d => ({ ...d, [f.key]: v }))}>
-                <SelectTrigger className="h-8 text-xs" data-testid={`${testId}-edit-${f.key}`}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {f.options.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect value={draft[f.key] ?? values[f.key] ?? ''} onChange={(e) => { const _v = e.target.value; setDraft(d => ({ ...d, [f.key]: _v })); }} data-testid={`${testId}-edit-${f.key}`}>
+                  {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </SmartNativeSelect>
             ) : editing && f.type === 'number' ? (
               <Input type="number" className="h-8 text-xs" value={draft[f.key] ?? values[f.key] ?? ''}
                 onChange={e => setDraft(d => ({ ...d, [f.key]: e.target.value === '' ? null : Number(e.target.value) }))} />
