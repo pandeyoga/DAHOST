@@ -14,6 +14,7 @@ from data.permission_catalog import (
 )
 import logging
 from utils.query_guards import q_int
+from utils.waktu import mongo_utc  # 8 Nov 2026: datetime naif dari Mongo dikirim berzona UTC
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ async def get_users(request: Request):
     if not check_role(user, ['admin']):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
-    return serialize_doc(await db.users.find({}, {'password': 0, '_id': 0}).sort('created_at', -1).to_list(500))
+    return serialize_doc(mongo_utc(await db.users.find({}, {'password': 0, '_id': 0}).sort('created_at', -1).to_list(500)))
 
 @router.post("/users")
 async def create_user(request: Request):
@@ -150,7 +151,8 @@ async def get_activity_logs(request: Request):
     if sp.get('user_id'):
         query['user_id'] = sp['user_id']  # NEW: filter by user
     limit = q_int(sp.get('limit'), default=100, name='limit', minimum=1, maximum=500)
-    return serialize_doc(await db.activity_logs.find(query, {'_id': 0}).sort('timestamp', -1).limit(limit).to_list(500))
+    return serialize_doc(mongo_utc(
+        await db.activity_logs.find(query, {'_id': 0}).sort('timestamp', -1).limit(limit).to_list(500)))
 
 @router.delete("/activity-logs/{log_id}")
 async def delete_activity_log(log_id: str, request: Request):
@@ -507,7 +509,7 @@ async def get_rbac_audit(request: Request):
         q['action'] = sp['action']
     limit = q_int(sp.get('limit'), default=200, name='limit', minimum=1, maximum=1000, clamp=True)
     rows = await db.rahaza_audit_logs.find(q, {'_id': 0}).sort('timestamp', -1).limit(limit).to_list(500)
-    return {'items': serialize_doc(rows), 'total': len(rows)}
+    return {'items': serialize_doc(mongo_utc(rows)), 'total': len(rows)}
 
 @router.get("/permissions")
 async def get_permissions(request: Request):

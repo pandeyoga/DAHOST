@@ -79,6 +79,23 @@ def as_aware_utc(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
+def mongo_utc(obj):
+    """Hasil baca Mongo → setiap datetime NAIF diberi zona UTC (rekursif dict/list); nilai lain apa adanya.
+
+    8 Nov 2026: Motor dibuka tanpa `tz_aware` (database.py), jadi datetime yang DISIMPAN sebagai UTC kembali NAIF
+    dan `serialize_doc` mengirim "2026-11-08T02:00:00" tanpa zona. Browser membacanya sebagai jam LOKAL ⇒ di WIB
+    tampil 7 jam lebih awal. BSON datetime selalu UTC, jadi menandainya UTC selalu benar UNTUK DOKUMEN DARI MONGO.
+    STRING tidak disentuh (isi string tanpa zona tidak bisa dipastikan maknanya). Dipakai di endpoint yang mengirim
+    dokumen Mongo apa adanya (log aktivitas, pengguna, audit peran, pengaturan sistem, pengumuman)."""
+    if isinstance(obj, datetime):
+        return obj.replace(tzinfo=timezone.utc) if obj.tzinfo is None else obj
+    if isinstance(obj, dict):
+        return {k: mongo_utc(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [mongo_utc(v) for v in obj]
+    return obj
+
+
 def to_wib(dt: datetime | None) -> datetime | None:
     """Ubah datetime apa pun (naive dianggap UTC) menjadi AWARE WIB."""
     aware = as_aware_utc(dt)
