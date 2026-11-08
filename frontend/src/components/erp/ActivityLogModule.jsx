@@ -82,6 +82,51 @@ export function golonganAksi(a) {
 }
 const NADA = { buat: 'success', ubah: 'primary', hapus: 'danger', masuk: 'info', lain: 'default' };
 
+// ─── Rincian log: ditulis server dalam bentuk teknis (ID acak, kamus data, kata Inggris) ──────────────────────
+// Hanya untuk tampilan: diterjemahkan seperlunya. Teks asli tetap ada di popup ("Teks asli dari sistem") dan di unduhan.
+const RE_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const KATA_TUNGGAL = {
+  expense: 'Biaya', revenue: 'Pendapatan', income: 'Pendapatan', asset: 'Aset', liability: 'Kewajiban', equity: 'Modal',
+  cogs: 'HPP', sales: 'Penjualan', purchase: 'Pembelian', payroll: 'Penggajian', inventory: 'Persediaan',
+};
+const ISTILAH_DATA = { cmt_vendor: 'vendor CMT', customer: 'pelanggan', supplier: 'pemasok', channel: 'kanal', bank: 'bank' };
+const GANTI_RINCIAN = [
+  [/\s*\{['"][\s\S]*$/, (m, posisi) => (posisi === 0 ? 'Ringkasan angka proses' : ' — ringkasan angka proses')],
+  [/\bscope=all\b/g, 'semua data'],
+  [/\bscope=([a-z_]+)/g, (m, k) => `bagian ${k === 'bom' ? 'BOM' : k.replace(/_/g, ' ')}`],
+  [/\bfields=\[([^\]]*)\]?/g, (m, isi) => `${(isi.match(/'[^']*'/g) || []).length} kolom diubah`],
+  [/^Cascade deleted ([^:]+):/i, '$1 dihapus beserta turunannya:'],
+  [/^Created PO:/, 'PO dibuat:'],
+  [/\b(Created|Updated|Archived|Deleted) platform account\b/g, (m, k) => `Akun toko ${({ Created: 'dibuat', Updated: 'diubah', Archived: 'diarsipkan', Deleted: 'dihapus' })[k]}`],
+  [/\bCreated training\b/g, 'Pelatihan dibuat'],
+  [/\bCreated script\b/g, 'Skrip dibuat'],
+  [/\b(Created|Deleted) accrual (\w+) for (\d{4}-\d{2})/g, (m, k, j, p) => `Akrual ${({ utility: 'utilitas', other: 'lainnya' })[j] || j} ${k === 'Created' ? 'dibuat' : 'dihapus'} untuk periode ${p}`],
+  [/\bwith (\d+) items?\b/g, 'berisi $1 barang'],
+  [/^User (\S+) logged in$/, 'Pengguna $1 masuk'],
+  [/^User (\S+) /, 'Pengguna $1 '],
+  [/\bvia HR Inbox\b/g, 'lewat kotak masuk SDM'],
+  [/\bRack\b/g, 'Rak'], [/\bpositions\b/g, 'posisi'], [/\bZone:/g, 'Zona:'], [/\bBuilding:/g, 'Gedung:'],
+  [/\bqty\b/g, 'jumlah'],
+  [/\bactive=True\b/g, 'aktif'], [/\bactive=False\b/g, 'tidak aktif'],
+  [/\bcatalog=/g, 'katalog '], [/\bversion=/g, 'versi '], [/\bclient=/g, 'klien '], [/\bartikel=/g, 'artikel '],
+  [/\btotal=(\d+)/g, 'total $1'], [/\bcreated=(\d+)/g, 'dibuat $1'],
+  [/\bid=/g, ''],
+  [/\bCreated\b/g, 'Dibuat'], [/\bDeleted\b/g, 'Dihapus'], [/\bUpdated\b/g, 'Diubah'], [/\bArchived\b/g, 'Diarsipkan'],
+  [/\(([a-z_]+)\)/g, (m, k) => `(${ISTILAH_DATA[k] || k.replace(/_/g, ' ')})`],
+  [RE_UUID, (m) => `#${m.slice(0, 8)}`],
+  // kode_bergaris_bawah → kata berspasi (alamat email dibiarkan apa adanya)
+  [/\S+/g, (kata) => (kata.includes('@') ? kata : kata.replace(/\b[a-z]+(?:_[a-z0-9]+)+\b/g, (m) => ISTILAH_DATA[m] || m.replace(/_/g, ' ')))],
+];
+const AWAL_TEKNIS = /^([a-z]+_[a-z0-9_]+|scope=|catalog=|\{)/;
+export function rapikanRincian(teks, { diPopup = false } = {}) {
+  const t = String(teks || '').trim();
+  if (!t) return '—';
+  if (KATA_TUNGGAL[t.toLowerCase()]) return KATA_TUNGGAL[t.toLowerCase()];
+  const hasil = GANTI_RINCIAN.reduce((s, [re, ke]) => s.replace(re, ke), t).replace(/\s{2,}/g, ' ').trim();
+  const ringkasan = /ringkasan angka proses$/i.test(hasil) ? (diPopup ? ' (isi lengkap di teks asli di bawah)' : ' (buka rincian)') : '';
+  return (AWAL_TEKNIS.test(t) ? kalimat(hasil) : hasil) + ringkasan || '—';
+}
+
 // Waktu dari server tersimpan UTC tetapi dikirim tanpa zona ("2026-11-07T22:19:14") → baca sebagai UTC,
 // bukan jam perangkat (dulu tampil mundur 7 jam di perangkat WIB).
 const instan = (ts) => (typeof ts === 'string' && /T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(ts) ? `${ts}Z` : ts);
@@ -146,7 +191,7 @@ export default function ActivityLogModule({ token }) {
     if (filterAction && l.action !== filterAction) return false;
     if (searchText) {
       const q = searchText.toLowerCase();
-      const teks = `${l.details || ''} ${l.user_name || ''} ${l.module || ''} ${labelModul(l.module)} ${labelAksi(l.action)}`;
+      const teks = `${l.details || ''} ${rapikanRincian(l.details)} ${l.user_name || ''} ${l.module || ''} ${labelModul(l.module)} ${labelAksi(l.action)}`;
       if (!teks.toLowerCase().includes(q)) return false;
     }
     const tgl = tanggalWIB(l.timestamp);
@@ -169,9 +214,9 @@ export default function ActivityLogModule({ token }) {
   const kolom = [
     { kunci: 'waktu', label: 'Waktu', hp: 'keterangan', isi: (l) => <span className="whitespace-nowrap text-sm tabular-nums">{waktu(l.timestamp)}</span> },
     { kunci: 'pengguna', label: 'Pengguna', hp: 'judul', isi: (l) => <span className="font-medium">{l.user_name || '—'}</span> },
-    { kunci: 'aksi', label: 'Aksi', isi: (l) => <StatusBadge status={golonganAksi(l.action)} label={labelAksi(l.action)} tone={NADA[golonganAksi(l.action)]} className="max-w-full whitespace-normal break-words md:max-w-[16rem] md:truncate md:whitespace-nowrap" /> },
+    { kunci: 'aksi', label: 'Aksi', isi: (l) => <StatusBadge status={golonganAksi(l.action)} label={labelAksi(l.action)} tone={NADA[golonganAksi(l.action)]} className="max-w-full whitespace-normal break-words md:max-w-[14rem] md:truncate md:whitespace-nowrap" /> },
     { kunci: 'modul', label: 'Modul', isi: (l) => <span className="text-sm">{labelModul(l.module)}</span> },
-    { kunci: 'rincian', label: 'Rincian', isi: (l) => <p className="break-words text-sm text-muted-foreground md:line-clamp-2 md:max-w-[28rem]" title={l.details}>{l.details || '—'}</p> },
+    { kunci: 'rincian', label: 'Rincian', isi: (l) => { const r = rapikanRincian(l.details); return <p className="break-words text-sm text-muted-foreground md:line-clamp-2 md:max-w-[22rem]" title={r}>{r}</p>; } },
   ];
 
   const keteranganKartu = `Dari ${filtered.length} aktivitas di daftar (${BATAS} terbaru, mengikuti saringan).`;
@@ -253,8 +298,14 @@ export default function ActivityLogModule({ token }) {
             <BarisDetail label="Aksi">{labelAksi(detail.action)}</BarisDetail>
             <BarisDetail label="Modul">{labelModul(detail.module)}</BarisDetail>
             <BarisDetail label="Waktu">{waktu(detail.timestamp)}</BarisDetail>
-            <BarisDetail label="Rincian"><span className="whitespace-pre-wrap break-words">{detail.details || '—'}</span></BarisDetail>
+            <BarisDetail label="Rincian"><span className="whitespace-pre-wrap break-words">{rapikanRincian(detail.details, { diPopup: true })}</span></BarisDetail>
           </dl>
+          {detail.details && rapikanRincian(detail.details) !== String(detail.details).trim() && (
+            <details className="mt-3 text-sm" data-testid="activity-log-raw">
+              <summary className="cursor-pointer text-muted-foreground">Teks asli dari sistem (untuk teknisi)</summary>
+              <p className="mt-2 whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">{detail.details}</p>
+            </details>
+          )}
         </DetailPopup>
       )}
     </PageLayout>
