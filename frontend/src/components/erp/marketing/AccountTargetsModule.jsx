@@ -274,7 +274,7 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
   return (
     <PageLayout
       testId="account-targets-module"
-      title={scope === 'management' ? 'Siklus Marketing' : 'Siklus target, anggaran & omzet'}
+      title="Target & anggaran"
       subtitle="Target, anggaran, omzet, marjin, dan ROI per toko dalam satu layar."
       filters={(
         <div className="flex items-center gap-1">

@@ -45,8 +45,8 @@ export default function RahazaFGValuationModule({ token }) {
   return (
     <PageLayout
       testId="rahaza-fgval-page"
-      title="Nilai Persediaan Barang Jadi"
-      subtitle="Stok barang jadi × harga rata-rata, dibandingkan saldo buku besar."
+      title="Nilai persediaan"
+      subtitle="Barang jadi: stok × harga rata-rata, dibandingkan saldo buku besar."
       filters={<>
         <span className="text-sm text-muted-foreground">Stok dan saldo buku besar per</span>
         <div className="w-44"><DatePicker value={asOf} onChange={(v) => setAsOf(v || todayWIB())} bolehKosong={false} testId="fgval-asof" /></div>

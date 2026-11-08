@@ -36,7 +36,7 @@
     {"modul": "phase7-reports", "nama": "Laporan Maklon", "deskripsi": "Kinerja lini maklon."},
     {"modul": "mgmt-reports", "nama": "Laporan Umum", "deskripsi": "Laporan operasional umum."},
     {"modul": "mgmt-rahaza-customers", "nama": "Data Pelanggan", "deskripsi": "Daftar pelanggan dan riwayat transaksinya."},
-    {"modul": "rnd-dashboard", "nama": "Ringkasan RnD", "deskripsi": "Progres pengembangan produk."},
+    {"modul": "rnd-dashboard", "nama": "Dashboard RnD", "deskripsi": "Progres pengembangan produk."},
     {"modul": "unified-approval-hub", "nama": "Pusat Persetujuan", "deskripsi": "Semua pengajuan yang menunggu keputusan."},
     {"modul": "mgmt-okr", "nama": "OKR Tracker", "deskripsi": "Sasaran dan capaian tim."},
     {"modul": "mgmt-tools", "nama": "Digest Mingguan", "deskripsi": "Ringkasan mingguan otomatis."},

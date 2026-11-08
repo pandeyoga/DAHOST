@@ -2267,8 +2267,8 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
             out.append({"http": 423, "code": "periode_terkunci", "message": (
                 "Commit dibatalkan: berkas ini menyentuh periode yang sudah DITUTUP "
                 f"untuk toko {account.get('account_name', '')} — {', '.join(locked_hits)}. "
-                "Minta SPV Marketing membuka periode itu (Siklus Marketing → Buka "
-                "Periode), atau buang baris bulan tersebut dari berkas.")})
+                "Minta SPV Marketing membuka periode itu (Target & Anggaran › Siklus → Buka "
+                "periode), atau buang baris bulan tersebut dari berkas.")})
 
     # ── F12 — BERKAS MILIK TOKO LAIN (bukti, bukan dugaan) ────────────────────
     # Diletakkan PALING AKHIR supaya pesan pertama yang dilihat staf untuk keadaan

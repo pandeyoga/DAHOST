@@ -81,7 +81,7 @@ export default function RnDAnalyticsModule({ token }) {
       subtitle="Jumlah style, sample request, riset material, dan revisi di Portal RnD."
       tools={<>
         {data && (
-          <TombolUnduh namaBerkas="ringkasan-rnd" namaLembar="Ringkasan RnD" baris={rincian} testId="rnd-analytics-unduh"
+          <TombolUnduh namaBerkas="rnd-analytics" namaLembar="RnD Analytics" baris={rincian} testId="rnd-analytics-unduh"
             kolom={[
               { label: 'Bagian', nilai: (r) => r.bagian },
               { label: 'Keadaan', nilai: (r) => r.keadaan },
@@ -105,7 +105,7 @@ export default function RnDAnalyticsModule({ token }) {
       {loading && !data ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : !data ? (
-        <GlassCard><EmptyState title="Ringkasan RnD belum bisa dimuat" description="Tekan muat ulang untuk mencoba lagi." /></GlassCard>
+        <GlassCard><EmptyState title="RnD Analytics belum bisa dimuat" description="Tekan muat ulang untuk mencoba lagi." /></GlassCard>
       ) : (
         <GlassCard className="p-0 overflow-hidden">
           <TabelData baris={rincian} testId="rnd-analytics-table"

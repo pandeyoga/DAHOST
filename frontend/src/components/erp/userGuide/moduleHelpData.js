@@ -37,7 +37,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Pilih Periode', icon: Filter, action: 'Ganti rentang waktu data (Hari Ini / 7 Hari / 30 Hari)', when: 'Saat ingin lihat tren historis' },
-      { label: 'Refresh', icon: RefreshCw, action: 'Muat ulang data dashboard', when: 'Manual update; auto-refresh 5 menit' },
+      { label: 'Muat ulang', icon: RefreshCw, action: 'Muat ulang data dashboard', when: 'Manual update; auto-refresh 5 menit' },
     ],
     tips: [
       'Refresh otomatis tiap 5 menit, tidak perlu reload manual',
@@ -617,7 +617,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Pilih Periode', icon: Filter, action: 'Ganti rentang waktu tampilan dashboard', when: 'Analisis tren mingguan/bulanan' },
-      { label: 'Refresh', icon: RefreshCw, action: 'Perbarui data real-time', when: 'Update manual data terkini' },
+      { label: 'Muat ulang', icon: RefreshCw, action: 'Perbarui data real-time', when: 'Update manual data terkini' },
     ],
     tips: [
       'Dashboard diperbarui otomatis setiap 5 menit',
@@ -628,7 +628,7 @@ export const MODULE_HELP = {
   },
 
   'mgmt-overview': {
-    title: 'Ikhtisar Manajemen',
+    title: 'Ringkasan Bisnis',
     icon: LayoutGrid,
     purpose: 'Ringkasan operasional harian dari seluruh portal — produksi, gudang, keuangan, SDM. Satu halaman untuk monitoring cepat semua aspek bisnis.',
     whoUses: 'Manager Operasional, Direktur',
@@ -687,7 +687,7 @@ export const MODULE_HELP = {
   },
 
   'mgmt-reports': {
-    title: 'Laporan Bisnis',
+    title: 'Laporan Umum',
     icon: BarChart4,
     purpose: 'Laporan komprehensif bisnis garmen — produksi, progres WO, keuangan, pengiriman, rework, dan material. Semua data terintegrasi dari sistem Rahaza.',
     whoUses: 'Manager, Direktur, Akuntan',
@@ -701,13 +701,13 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Filter Tanggal', icon: Filter, action: 'Filter laporan berdasarkan periode', when: 'Laporan bulanan/mingguan' },
-      { label: 'Export Excel', icon: Download, action: 'Unduh laporan dalam format Excel (.xlsx)', when: 'Untuk distribusi atau analisis lanjutan' },
+      { label: 'Unduh', icon: Download, action: 'Unduh laporan dalam format Excel (.xlsx)', when: 'Untuk distribusi atau analisis lanjutan' },
       { label: 'Terapkan Filter', icon: Search, action: 'Terapkan filter yang dipilih', when: 'Setelah mengisi kriteria filter' },
     ],
     tips: [
       'Klik tab laporan di kiri untuk ganti jenis laporan',
       'Filter tanggal sangat membantu mempersempit data',
-      'Export Excel untuk laporan ke manajemen atau klien',
+      'Unduh (Excel) untuk laporan ke manajemen atau klien',
     ],
     relatedScenarios: ['s1'],
   },
@@ -741,7 +741,7 @@ export const MODULE_HELP = {
   'mgmt-roles': {
     title: 'Peran & Hak Akses',
     icon: ClipboardList,
-    purpose: 'SATU tempat untuk mengatur akses: portal yang boleh dibuka, menu yang disembunyikan, dan izin aksi/approval per peran.',
+    purpose: 'SATU tempat untuk mengatur akses: portal yang boleh dibuka, menu yang disembunyikan, dan izin aksi/persetujuan per peran.',
     whoUses: 'Administrator Sistem (Super Admin)',
     sections: [
       'Daftar Peran (kiri) — cari peran, lihat jumlah pengguna / portal / izin',
@@ -758,7 +758,7 @@ export const MODULE_HELP = {
     tips: [
       'Buat peran sesuai jabatan nyata: Operator, Supervisor, QC Inspector, dll.',
       'Setelah membuat peran, assign ke pengguna di tab Pengguna',
-      'Pakai Preset (Lihat saja / Operator / Approver / Penuh) supaya tidak perlu mencentang satu-satu',
+      'Pakai Preset (Lihat saja / Operator / Penyetuju / Penuh) supaya tidak perlu mencentang satu-satu',
       'Tombol "Bandingkan" berguna saat audit: lihat selisih izin antar dua peran',
     ],
     warnings: [
@@ -779,7 +779,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Terapkan Filter', icon: Filter, action: 'Terapkan kriteria filter yang dipilih', when: 'Mencari aktivitas spesifik' },
-      { label: 'Export', icon: Download, action: 'Unduh log aktivitas ke Excel', when: 'Untuk keperluan audit' },
+      { label: 'Unduh', icon: Download, action: 'Unduh log aktivitas ke Excel', when: 'Untuk keperluan audit' },
     ],
     tips: [
       'Log tidak bisa dihapus atau diubah — ini adalah catatan permanen',
@@ -826,7 +826,7 @@ export const MODULE_HELP = {
   },
 
   'mgmt-help': {
-    title: 'Panduan Penggunaan',
+    title: 'Panduan Sistem',
     icon: BookOpen,
     purpose: 'Panduan lengkap cara menggunakan seluruh modul ERP PT Rahaza. Berisi skenario step-by-step, persona pengguna, tips, dan diagram alur proses.',
     whoUses: 'Semua Pengguna',
@@ -859,7 +859,7 @@ export const MODULE_HELP = {
       'PO Belum Terima — purchase order yang belum datang',
     ],
     buttons: [
-      { label: 'Refresh', icon: RefreshCw, action: 'Perbarui data dashboard', when: 'Cek status terkini' },
+      { label: 'Muat ulang', icon: RefreshCw, action: 'Perbarui data dashboard', when: 'Cek status terkini' },
     ],
     tips: [
       'Perhatikan "Stok Kritis" — material dengan stok <10% dari minimum reorder',
@@ -869,7 +869,7 @@ export const MODULE_HELP = {
   },
 
   'wh-receiving': {
-    title: 'Penerimaan Barang (GR)',
+    title: 'Penerimaan Barang',
     icon: Package,
     purpose: 'Proses penerimaan material dari supplier ke gudang. Verifikasi kesesuaian barang datang dengan Purchase Order, lalu buat Goods Receipt untuk update stok.',
     whoUses: 'Staf Gudang, Kepala Gudang',
@@ -895,7 +895,7 @@ export const MODULE_HELP = {
   },
 
   'wh-putaway': {
-    title: 'Putaway (Penempatan Barang)',
+    title: 'Penyimpanan',
     icon: Boxes,
     purpose: 'Tempatkan material yang baru diterima ke lokasi bin yang tepat di gudang. Sistem mencatat lokasi setiap material untuk kemudahan pencarian stok.',
     whoUses: 'Staf Gudang',
@@ -930,7 +930,7 @@ export const MODULE_HELP = {
       { label: 'Mulai Opname', icon: ClipboardList, action: 'Buat sesi opname baru', when: 'Jadwal opname periodik (bulanan/triwulan)' },
       { label: 'Input Hitungan', icon: Edit, action: 'Masukkan qty hasil hitung fisik', when: 'Saat tim menghitung di gudang' },
       { label: 'Finalize', icon: CheckCircle2, action: 'Selesaikan opname dan posting ke GL', when: 'Semua item sudah dihitung dan diverifikasi' },
-      { label: 'Export Excel', icon: Download, action: 'Unduh data opname ke Excel', when: 'Dokumentasi atau analisis lanjutan' },
+      { label: 'Unduh', icon: Download, action: 'Unduh data opname ke Excel', when: 'Dokumentasi atau analisis lanjutan' },
     ],
     tips: [
       'Lakukan opname saat gudang tidak ada aktivitas (malam/weekend)',
@@ -1045,7 +1045,7 @@ export const MODULE_HELP = {
       'Detail — lihat detail per material termasuk lokasi bin',
     ],
     buttons: [
-      { label: 'Export Excel', icon: Download, action: 'Unduh laporan stok ke Excel', when: 'Laporan stok mingguan/bulanan' },
+      { label: 'Unduh', icon: Download, action: 'Unduh laporan stok ke Excel', when: 'Laporan stok mingguan/bulanan' },
       { label: 'Refresh', icon: RefreshCw, action: 'Perbarui tampilan stok', when: 'Cek stok terkini setelah transaksi' },
     ],
     tips: [
@@ -1056,7 +1056,7 @@ export const MODULE_HELP = {
   },
 
   'wh-material-issue': {
-    title: 'Permintaan Material (MI)',
+    title: 'Pengeluaran Material',
     icon: Package,
     purpose: 'Proses pengeluaran material dari gudang ke lini produksi berdasarkan Work Order. Setiap MI harus disetujui supervisor sebelum material dikeluarkan.',
     whoUses: 'PPIC, Supervisor Produksi, Kepala Gudang',
@@ -1129,7 +1129,7 @@ export const MODULE_HELP = {
   //   - maklon-billing (Maklon Invoices)
 
   'fin-approval': {
-    title: 'Persetujuan Keuangan',
+    title: 'Persetujuan Perubahan Faktur',
     icon: CheckCircle2,
     purpose: 'Kelola alur persetujuan (approval) untuk transaksi keuangan — pembayaran besar, jurnal manual, atau invoice dengan nilai di atas batas tertentu.',
     whoUses: 'Manajer Keuangan, Direktur',
@@ -1191,7 +1191,7 @@ export const MODULE_HELP = {
   },
 
   'fin-cash': {
-    title: 'Kas & Rekening Bank',
+    title: 'Rekening & Mutasi',
     icon: FileText,
     purpose: 'Kelola akun kas dan rekening bank perusahaan — saldo terkini, mutasi, dan rekonsiliasi bank.',
     whoUses: 'Akuntan, Kasir, Manajer Keuangan',
@@ -1211,7 +1211,7 @@ export const MODULE_HELP = {
   },
 
   'fin-expenses': {
-    title: 'Pengeluaran',
+    title: 'Pengeluaran & Klaim',
     icon: FileText,
     purpose: 'Catat biaya operasional perusahaan — listrik, air, telepon, pemeliharaan, keperluan kantor, dan biaya lain. Jurnal terbentuk otomatis ke akun beban yang dipilih.',
     whoUses: 'Akuntan, Staf Keuangan',
@@ -1229,7 +1229,7 @@ export const MODULE_HELP = {
   },
 
   'fin-hpp': {
-    title: 'HPP (Harga Pokok Produksi)',
+    title: 'HPP',
     icon: BarChart4,
     purpose: 'Kalkulasi dan analisis Harga Pokok Produksi per model garmen. Meliputi biaya bahan baku, biaya tenaga kerja langsung, dan biaya overhead pabrik.',
     whoUses: 'Akuntan Biaya, Manajer Keuangan, PPIC',
@@ -1302,7 +1302,7 @@ export const MODULE_HELP = {
     sections: [
       'Neraca Saldo — semua akun dengan saldo debit/kredit',
       'Filter Periode — pilih tanggal/bulan',
-      'Export — download ke Excel',
+      'Unduh — simpan ke Excel',
     ],
     tips: [
       'Cek trial balance bulanan sebelum tutup buku',
@@ -1323,7 +1323,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Filter Periode', icon: Filter, action: 'Filter transaksi berdasarkan tanggal', when: 'Review transaksi periode tertentu' },
-      { label: 'Export Excel', icon: Download, action: 'Download buku besar ke Excel', when: 'Audit atau rekonsiliasi' },
+      { label: 'Unduh', icon: Download, action: 'Unduh buku besar ke Excel', when: 'Audit atau rekonsiliasi' },
     ],
     tips: [
       'Gunakan untuk menelusuri "dari mana" saldo akun berasal',
@@ -1369,7 +1369,7 @@ export const MODULE_HELP = {
   },
 
   'fin-pnl': {
-    title: 'Laporan Laba Rugi (P&L)',
+    title: 'Laba Rugi',
     icon: BarChart4,
     purpose: 'Laporan Laba Rugi periodik — pendapatan, beban produksi, beban operasional, dan laba bersih. Dasar pengambilan keputusan manajemen.',
     whoUses: 'Manajer Keuangan, Direktur',
@@ -1382,7 +1382,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Pilih Periode', icon: Filter, action: 'Ganti periode laporan L/R', when: 'Analisis bulanan, triwulan, atau tahunan' },
-      { label: 'Export Excel', icon: Download, action: 'Download laporan L/R ke Excel', when: 'Laporan untuk direksi atau investor' },
+      { label: 'Unduh', icon: Download, action: 'Unduh laporan laba rugi ke Excel', when: 'Laporan untuk direksi atau investor' },
     ],
     tips: [
       'Bandingkan dua periode untuk analisis tren profitabilitas',
@@ -1403,7 +1403,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Pilih Tanggal', icon: Calendar, action: 'Lihat posisi neraca per tanggal tertentu', when: 'Laporan akhir bulan/tahun' },
-      { label: 'Export Excel', icon: Download, action: 'Download neraca ke Excel', when: 'Laporan resmi' },
+      { label: 'Unduh', icon: Download, action: 'Unduh neraca ke Excel', when: 'Laporan resmi' },
     ],
     tips: [
       'Neraca dibuat per tanggal spesifik (bukan periode)',
@@ -1423,7 +1423,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Filter', icon: Filter, action: 'Filter jurnal berdasarkan kriteria', when: 'Mencari jurnal tertentu' },
-      { label: 'Export', icon: Download, action: 'Export daftar jurnal ke Excel', when: 'Audit atau rekonsiliasi' },
+      { label: 'Unduh', icon: Download, action: 'Unduh daftar jurnal ke Excel', when: 'Audit atau rekonsiliasi' },
     ],
     tips: [
       'Jurnal otomatis dibuat oleh sistem saat ada transaksi (sales, purchase, payroll)',
@@ -1460,7 +1460,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Pilih Periode', icon: Filter, action: 'Ganti periode laporan arus kas', when: 'Analisis bulanan' },
-      { label: 'Ekspor Excel', icon: Download, action: 'Download 2 sheet: per kategori + per akun', when: 'Laporan resmi' },
+      { label: 'Unduh', icon: Download, action: 'Unduh 2 sheet: per kategori + per akun', when: 'Laporan resmi' },
     ],
     tips: [
       'Arus kas operasi negatif berturut-turut = tanda bahaya likuiditas',
@@ -1474,7 +1474,7 @@ export const MODULE_HELP = {
     icon: BarChart4,
     purpose: 'Kertas kerja 10 kolom seperti sheet N-Lajur Excel: saldo awal · mutasi · saldo akhir, lalu tiap akun dipisah ke kolom Laba Rugi atau Neraca. Baris laba/rugi bersih menyeimbangkan kedua pasangan kolom.',
     whoUses: 'Akuntan',
-    sections: ['Filter periode & tampilkan akun saldo 0', 'Tabel 10 kolom + baris Jumlah, Laba Bersih, Total', 'Ekspor Excel dengan angka yang sama persis dengan layar'],
+    sections: ['Filter periode & tampilkan akun saldo 0', 'Tabel 10 kolom + baris Jumlah, Laba Bersih, Total', 'Unduh Excel dengan angka yang sama persis dengan layar'],
     tips: ['Laba bersih di neraca lajur harus sama dengan Laporan Laba Rugi periode yang sama', 'Kolom Neraca D = K dan kolom L/R D = K setelah baris laba — kalau tidak, ada jurnal ke akun yang tidak ada di bagan'],
   },
 
@@ -1483,7 +1483,7 @@ export const MODULE_HELP = {
     icon: BarChart4,
     purpose: 'Laba rugi Jan–Des dalam satu tabel (ala sheet Laba-12): per akun per bulan, total tahun, laba kotor, laba operasi, laba bersih, dan akumulasi s/d bulan.',
     whoUses: 'Akuntan, Direktur',
-    sections: ['Pilih tahun', 'Kolom Total = Σ 12 bulan', 'Ekspor Excel'],
+    sections: ['Pilih tahun', 'Kolom Total = Σ 12 bulan', 'Unduh Excel'],
     tips: ['Jurnal penutup tahun (year_end_close) tidak ikut dihitung', 'Angka bulan = jurnal posted bertanggal di bulan itu'],
   },
 
@@ -1492,7 +1492,7 @@ export const MODULE_HELP = {
     icon: BarChart4,
     purpose: 'Posisi keuangan per akhir tiap bulan Jan–Des (ala sheet Neraca-12). Setiap kolom harus seimbang: Aset = Liabilitas + Ekuitas (termasuk laba berjalan komputasi).',
     whoUses: 'Akuntan, Direktur',
-    sections: ['Pilih tahun', 'Baris "Selisih" harus 0 di semua kolom', 'Ekspor Excel'],
+    sections: ['Pilih tahun', 'Baris "Selisih" harus 0 di semua kolom', 'Unduh Excel'],
     tips: ['Kolom Des harus sama dengan laporan Neraca per 31 Des', 'Saldo awal go-live muncul mulai kolom bulan tanggal jurnal pembuka'],
   },
 
@@ -1534,7 +1534,7 @@ export const MODULE_HELP = {
     sections: [
       'Daftar Karyawan — semua karyawan aktif dan tidak aktif',
       'Form Tambah/Edit — data lengkap karyawan',
-      'Detail Karyawan — riwayat jabatan, dokumen',
+      'Rincian karyawan (popup) — riwayat jabatan, dokumen',
     ],
     buttons: [
       { label: 'Tambah Karyawan', icon: Plus, action: 'Daftarkan karyawan baru ke sistem', when: 'Ada karyawan baru bergabung' },
@@ -1560,7 +1560,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Input Absensi', icon: Plus, action: 'Catat kehadiran manual atau koreksi data', when: 'Koreksi data mesin absensi atau input manual' },
-      { label: 'Export Rekap', icon: Download, action: 'Unduh rekap absensi ke Excel', when: 'Laporan absensi bulanan' },
+      { label: 'Unduh rekap', icon: Download, action: 'Unduh rekap absensi ke Excel', when: 'Laporan absensi bulanan' },
     ],
     tips: [
       'Data absensi terintegrasi langsung dengan perhitungan payroll',
@@ -1600,13 +1600,13 @@ export const MODULE_HELP = {
       'Buat Payroll Run — pilih periode bulan dan karyawan',
       'Review Slip Gaji — verifikasi perhitungan sebelum finalize',
       'Finalize — konfirmasi dan kunci data payroll bulan ini',
-      'Cetak/Export Slip — download slip gaji per karyawan',
+      'Cetak/Unduh slip — unduh slip gaji per karyawan',
     ],
     buttons: [
       { label: 'Buat Payroll Run', icon: Plus, action: 'Mulai proses penggajian bulan baru', when: 'Akhir bulan, setelah data absensi final' },
       { label: 'Finalize', icon: CheckCircle2, action: 'Kunci data payroll — tidak bisa diubah lagi', when: 'Semua slip sudah diverifikasi dan benar' },
       { label: 'Cetak Slip Gaji', icon: Printer, action: 'Download slip gaji PDF per karyawan', when: 'Distribusikan ke karyawan' },
-      { label: 'Export Excel', icon: Download, action: 'Export rekap payroll ke Excel', when: 'Laporan ke direktur atau akuntan' },
+      { label: 'Unduh', icon: Download, action: 'Unduh rekap payroll ke Excel', when: 'Laporan ke direktur atau akuntan' },
     ],
     tips: [
       'Semua nominal dalam format Rp. (Rupiah) — Rp 5.200.000',
@@ -1657,7 +1657,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Filter Periode', icon: Filter, action: 'Pilih periode laporan', when: 'Laporan bulanan/triwulan' },
-      { label: 'Export Excel', icon: Download, action: 'Download laporan ke Excel', when: 'Laporan untuk manajemen' },
+      { label: 'Unduh', icon: Download, action: 'Unduh laporan ke Excel', when: 'Laporan untuk manajemen' },
     ],
     tips: [
       'Semua nilai gaji/upah dalam format Rp. (Rupiah)',
@@ -1745,7 +1745,7 @@ export const MODULE_HELP = {
     ],
     buttons: [
       { label: 'Filter', icon: Filter, action: 'Filter data berdasarkan model/periode/lini', when: 'Analisis per model atau period tertentu' },
-      { label: 'Export', icon: Download, action: 'Download grafik dan data', when: 'Presentasi atau laporan kualitas' },
+      { label: 'Unduh', icon: Download, action: 'Unduh grafik dan data', when: 'Presentasi atau laporan kualitas' },
     ],
     tips: [
       'Fokus tindakan perbaikan pada defect yang ada di 20% pertama (kiri grafik)',
@@ -1849,7 +1849,7 @@ export const MODULE_HELP = {
 
   // Tahap 9 (7 Nov 2026): kalender libur pindah dari Master Proses (Produksi) ke Portal SDM.
   'hr-holiday-calendar': {
-    title: 'Kalender libur',
+    title: 'Kalender Libur',
     icon: Calendar,
     purpose: 'Satu kalender hari libur perusahaan: libur nasional, cuti bersama, libur pabrik, dan hari kerja pengganti. Dipakai menghitung hari cuti, pembagi gaji harian, dan absensi.',
     whoUses: 'Staf SDM, Manajer SDM',
@@ -2147,7 +2147,7 @@ export const MODULE_HELP = {
   },
 
   'proc-requests': {
-    title: 'Permintaan Pengadaan (PR)',
+    title: 'Permintaan Pengadaan',
     icon: ClipboardList,
     purpose: 'Divisi mengajukan kebutuhan barang/jasa, melewati rantai persetujuan, lalu diterbitkan menjadi Purchase Order. Item PR bisa ditautkan ke material master beserta satuan belinya.',
     whoUses: 'Semua divisi (pengaju), Dept Head & Manajer (penyetuju), Pengadaan (penerbit PO)',
@@ -2173,14 +2173,14 @@ export const MODULE_HELP = {
   },
 
   'proc-purchase-orders': {
-    title: 'Purchase Order (PO)',
+    title: 'Purchase Order',
     icon: FileText,
     purpose: 'Pesanan resmi ke supplier: pilih supplier dari master, input qty & harga dalam SATUAN BELI (mis. karton), sistem menyimpan hasil konversi ke satuan dasar untuk stok & jurnal.',
     whoUses: 'Staf & Manajer Pengadaan',
     sections: [
       'Daftar PO — filter status/tanggal/supplier + halaman (pagination)',
       'Form PO — supplier master, item material atau bebas, satuan beli, harga, tanggal kirim',
-      'Detail PO — riwayat penerimaan, sisa qty, nilai, cetak PDF/Excel',
+      'Lihat detail (popup) — riwayat penerimaan, sisa qty, nilai, cetak PDF/Excel',
     ],
     buttons: [
       { label: 'Buat PO', icon: Plus, action: 'Terbitkan PO baru ke supplier', when: 'PR disetujui atau stok perlu diisi' },
@@ -2201,7 +2201,7 @@ export const MODULE_HELP = {
   },
 
   'proc-accessory-pr': {
-    title: 'Request Aksesoris (Pembelian)',
+    title: 'Request Aksesoris',
     icon: Sparkles,
     purpose: 'Permintaan pembelian aksesoris (kancing, label, hangtag, kemasan) dari divisi aksesoris — pintunya dipindah ke Pengadaan karena semua pembelian kini satu tempat.',
     whoUses: 'Admin Aksesoris, Staf Pengadaan',
@@ -2219,17 +2219,17 @@ export const MODULE_HELP = {
   },
 
   'proc-3way-match': {
-    title: 'Rekonsiliasi 3-Arah (PO ↔ Penerimaan ↔ Faktur)',
+    title: 'Rekonsiliasi PO',
     icon: ListChecks,
     purpose: 'Membandingkan qty & nilai yang DIPESAN, DITERIMA, dan DIFAKTUR dalam satuan dasar, sehingga selisih (kurang/lebih kirim, faktur kelebihan) terlihat sebelum dibayar.',
     whoUses: 'Pengadaan, Keuangan, Auditor internal',
     sections: [
       'KPI — jumlah PO cocok, menunggu, selisih, kelebihan/kekurangan',
       'Tabel per PO — ordered vs received vs invoiced + status kecocokan',
-      'Detail per PO — daftar penerimaan & faktur yang menempel pada PO',
+      'Klik baris PO — popup rincian penerimaan & faktur yang menempel pada PO',
     ],
     buttons: [
-      { label: 'Buka Detail', icon: Eye, action: 'Lihat rincian penerimaan & faktur satu PO', when: 'Ada tanda selisih pada baris PO' },
+      { label: 'Klik baris PO', icon: Eye, action: 'Buka popup rincian penerimaan & faktur satu PO', when: 'Ada tanda selisih pada baris PO' },
       { label: 'Filter', icon: Filter, action: 'Saring per status kecocokan / supplier / periode', when: 'Menelusuri kasus tertentu' },
     ],
     tips: [
@@ -2271,11 +2271,11 @@ export const MODULE_HELP = {
     whoUses: 'Manajer Pengadaan, Manajemen',
     sections: [
       'Tabel Penilaian — accept rate, grade, jumlah penerimaan, nilai belanja',
-      'Detail Supplier — riwayat PO & inspeksi QC pembentuk nilai',
+      'Rincian (popup) — riwayat PO & inspeksi QC pembentuk nilai satu supplier',
     ],
     buttons: [
       { label: 'Ubah Periode', icon: CalendarClock, action: 'Hitung ulang penilaian untuk rentang hari tertentu', when: 'Evaluasi bulanan/kuartalan' },
-      { label: 'Buka Detail', icon: Eye, action: 'Melihat data pembentuk nilai satu supplier', when: 'Sebelum keputusan lanjut/stop kerja sama' },
+      { label: 'Rincian', icon: Eye, action: 'Buka popup data pembentuk nilai satu supplier', when: 'Sebelum keputusan lanjut/stop kerja sama' },
     ],
     tips: [
       'Grade A–D dihitung dari accept rate; gunakan bersama ketepatan waktu kirim, bukan salah satu saja',

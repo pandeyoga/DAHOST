@@ -25,8 +25,8 @@
       "langkah": [
         "Invoice AR dibuat dari pengiriman (maklon/marketing) atau manual.",
         "Invoice diposting → jurnal Dr Piutang / Cr Pendapatan.",
-        "Pembayaran dicatat di 'Kas & Bank' → jurnal Dr Kas / Cr Piutang.",
-        "Sisa umur piutang dipantau di 'Aging Piutang'."
+        "Pembayaran dicatat di 'Rekening & Mutasi' → jurnal Dr Kas / Cr Piutang.",
+        "Sisa umur piutang dipantau di 'Piutang Reseller' › Umur piutang."
       ]
     },
     {
@@ -51,7 +51,7 @@
         "PR menjadi Purchase Order di Portal Gudang.",
         "Barang datang (GRN) → 'Rekonsiliasi PO' mencocokkan PO ↔ GRN ↔ Invoice (3-way match).",
         "Invoice AP disetujui di 'Persetujuan Invoice' → jurnal Dr Persediaan/Beban / Cr Hutang.",
-        "Pembayaran di 'Kas & Bank' → jurnal Dr Hutang / Cr Kas."
+        "Pembayaran di 'Rekening & Mutasi' → jurnal Dr Hutang / Cr Kas."
       ]
     },
     {
@@ -95,8 +95,8 @@
       ],
       "langkah": [
         "Kas kecil diisi ulang lewat 'Kas Kecil' dengan batas saldo tertentu.",
-        "Kasbon karyawan dicatat di 'Kasbon & Pinjaman' dan dipotong lewat penggajian.",
-        "Klaim perjalanan dinas masuk 'Settlement Dinas' untuk diselesaikan."
+        "Kasbon karyawan dicatat di 'Kasbon & Uang Muka' dan dipotong lewat penggajian.",
+        "Klaim perjalanan dinas masuk 'Perjalanan Dinas' untuk diselesaikan."
       ]
     },
     {
@@ -141,7 +141,7 @@
   "fitur": [
     {
       "modul": "finance-dashboard",
-      "nama": "Dashboard Keuangan",
+      "nama": "Beranda Keuangan",
       "deskripsi": "Ringkasan kas, piutang, hutang, dan laba berjalan."
     },
     {
@@ -161,12 +161,12 @@
     },
     {
       "modul": "fin-ai-cashflow",
-      "nama": "Prediksi Kas",
+      "nama": "Arus Kas › Perkiraan",
       "deskripsi": "Perkiraan arus kas berbasis AI."
     },
     {
       "modul": "fin-ar-360",
-      "nama": "Aging Piutang",
+      "nama": "Piutang Reseller › Umur piutang",
       "deskripsi": "Umur piutang per pelanggan."
     },
     {
@@ -186,12 +186,12 @@
     },
     {
       "modul": "fin-approval",
-      "nama": "Persetujuan Invoice",
+      "nama": "Persetujuan Perubahan Faktur",
       "deskripsi": "Persetujuan invoice supplier sebelum dibayar."
     },
     {
       "modul": "fin-cash",
-      "nama": "Kas & Bank",
+      "nama": "Rekening & Mutasi",
       "deskripsi": "Semua penerimaan dan pengeluaran uang."
     },
     {
@@ -201,7 +201,7 @@
     },
     {
       "modul": "fin-bank-transfer",
-      "nama": "Transfer Bank",
+      "nama": "Transfer Antar Rekening",
       "deskripsi": "Pemindahan dana antar rekening."
     },
     {
@@ -216,17 +216,17 @@
     },
     {
       "modul": "fin-kasbon",
-      "nama": "Kasbon & Pinjaman",
+      "nama": "Kasbon & Uang Muka",
       "deskripsi": "Pinjaman karyawan dan cicilannya."
     },
     {
       "modul": "fin-settlement-queue",
-      "nama": "Settlement Dinas",
+      "nama": "Perjalanan Dinas",
       "deskripsi": "Penyelesaian uang muka perjalanan dinas."
     },
     {
       "modul": "fin-accounting-master-hub",
-      "nama": "Master Akuntansi",
+      "nama": "Pengaturan Keuangan",
       "deskripsi": "Bagan Akun (COA) dan Posting Profile; tab Saldo Awal untuk mengunggah neraca penutup pembukuan lama (template Excel → pratinjau → posting jurnal pembuka terkunci)."
     },
     {
@@ -236,7 +236,7 @@
     },
     {
       "modul": "fin-acctg-adjust-hub",
-      "nama": "Penyesuaian",
+      "nama": "Akrual & Tutup Buku",
       "deskripsi": "Akrual, jurnal berulang, dan tutup periode."
     },
     {
@@ -246,7 +246,7 @@
     },
     {
       "modul": "fin-cost-centers",
-      "nama": "Pusat Biaya",
+      "nama": "Pengaturan Keuangan › Pusat biaya",
       "deskripsi": "Pengelompokan biaya per unit kerja."
     },
     {
@@ -268,7 +268,7 @@
         "tidak terjurnal",
         "posting profile"
       ],
-      "a": "Cek 'Master Akuntansi' → Posting Profile. Setiap event type (mis. inventory_receive, cogs_shipment, payroll) harus punya pemetaan akun Debit/Kredit yang menunjuk akun POSTABLE, bukan akun header/grup. Bila akun tujuannya header, posting akan ditolak."
+      "a": "Cek 'Pengaturan Keuangan' → Pemetaan akun otomatis. Setiap event type (mis. inventory_receive, cogs_shipment, payroll) harus punya pemetaan akun Debit/Kredit yang menunjuk akun POSTABLE, bukan akun header/grup. Bila akun tujuannya header, posting akan ditolak."
     },
     {
       "q": "Neraca Saldo tidak balance.",
@@ -296,7 +296,7 @@
         "periode terkunci",
         "koreksi periode lama"
       ],
-      "a": "Periode terkunci menolak jurnal baru. Pilihannya: buka kembali periode lewat 'Penyesuaian' (butuh hak akses), atau catat koreksi di periode berjalan sebagai jurnal penyesuaian."
+      "a": "Periode terkunci menolak jurnal baru. Pilihannya: buka kembali periode lewat 'Akrual & Tutup Buku' (butuh hak akses), atau catat koreksi di periode berjalan sebagai jurnal penyesuaian."
     },
     {
       "q": "Bagaimana melihat laba rugi atau neraca 12 bulan sekaligus seperti di Excel?",
@@ -307,7 +307,7 @@
         "per bulan",
         "tabel bulanan"
       ],
-      "a": "Laporan Keuangan → tab 'Laba Rugi 12 Bln' atau 'Neraca 12 Bln': pilih tahun, semua bulan Jan–Des tampil dalam satu tabel dengan kolom Total dan akumulasi; tombol 'Ekspor Excel' menghasilkan berkas dengan angka yang sama persis dengan layar."
+      "a": "Menu 'Laba Rugi' › Per bulan atau 'Neraca' › Akhir tiap bulan: pilih tahun, semua bulan Jan–Des tampil dalam satu tabel dengan kolom Total dan akumulasi; tombol 'Unduh' menghasilkan berkas dengan angka yang sama persis dengan layar."
     },
     {
       "q": "Arus kas per akun menampilkan 'tag bawaan' — apa artinya?",
