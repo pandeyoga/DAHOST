@@ -383,7 +383,8 @@ SEED_TEMPLATE = [
     ("6-3200", "BPJS Kesehatan (Employer)", "EXPENSE", False, {}),
     ("6-3300", "BPJS Ketenagakerjaan (Employer)", "EXPENSE", False, {}),
     ("6-3400", "Biaya Perjalanan Dinas", "EXPENSE", False, {"is_travel_expense": True}),
-    ("6-3500", "Biaya Reimbursement Karyawan", "EXPENSE", False, {"is_reimbursement": True}),
+    # 2026-11-08 (keputusan owner): nama Indonesia; data lama diganti scripts/migrations/2026_11_08_nama_akun_indonesia.py
+    ("6-3500", "Biaya Penggantian Klaim Karyawan", "EXPENSE", False, {"is_reimbursement": True}),
 
     # OTHER ────────────────────────────────────────────────────────────────
     ("7-0000", "PENDAPATAN & BEBAN LAIN-LAIN", "OTHER_INCOME", True, {}),
@@ -398,7 +399,7 @@ SEED_TEMPLATE = [
     ("6-4101", "Biaya Layanan Bank", "EXPENSE", False, {"is_service_fee": True}),
     
     # Phase 9A: Bad Debt Expense ──────────────────────────────────────────────
-    ("6-4400", "Beban Kerugian Piutang (Bad Debt Expense)", "EXPENSE", False, {"is_bad_debt_expense": True}),
+    ("6-4400", "Beban Kerugian Piutang Tak Tertagih", "EXPENSE", False, {"is_bad_debt_expense": True}),
 
     # Phase 10A: Asset Disposal Accounts ───────────────────────────────────────
     ("4-2200", "Keuntungan Penjualan Aset Tetap", "REVENUE", False, {"is_gain_on_disposal": True}),
