@@ -13,11 +13,7 @@
  * Overview dan pemakainya harus mencari tabnya sendiri.
  */
 import React, { useState, useEffect } from 'react';
-import {
-  LayoutDashboard, BarChart3, MousePointer,
-  CalendarCheck, Calendar, CalendarRange,
-} from 'lucide-react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import HubTabs from './hubs/HubTabs';
 import MarketingOverviewDashboard  from './marketing/MarketingOverviewDashboard';
 import SalesPerformanceDashboard   from './marketing/SalesPerformanceDashboard';
 import AdsPerformanceDashboard     from './marketing/AdsPerformanceDashboard';
@@ -100,66 +96,22 @@ export default function MarketingReportsHub({ token, onNavigate, moduleId, initi
     } catch (e) { /* history tidak tersedia */ }
   };
 
+  // Standar UI/UX v2 (8 Nov 2026): satu kepala hub tipis + baris tab standar (HubTabs, mode terkendali).
+  // Modul di dalam tab tidak mengulang judulnya; tombolnya pindah ke baris tab (dulu kepala ganda + tab beremoji).
+  const TABS = [
+    { key: 'overview', label: 'Ringkasan', Component: MarketingOverviewDashboard },
+    { key: 'sales', label: 'Performa penjualan', Component: SalesPerformanceDashboard },
+    { key: 'ads', label: 'Performa iklan', Component: AdsPerformanceDashboard },
+    { key: 'daily', label: 'Laporan harian', Component: DailyReportModule },
+    { key: 'weekly', label: 'Rapat mingguan', Component: WeeklyMeetingReportModule },
+    { key: 'monthly', label: 'Laporan bulanan', Component: MonthlyReportModule },
+  ];
+
   return (
-    <div className="h-full" data-testid="marketing-reports-hub">
-      {/* Hub Header */}
-      <div className="px-4 md:px-6 py-4 border-b bg-background">
-        <h1 className="text-xl font-bold tracking-tight">Laporan &amp; Analytics Marketing</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Overview eksekutif, performa penjualan, iklan, laporan harian, rapat mingguan &amp; bulanan PIC
-        </p>
-      </div>
-
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={selectTab} className="h-full flex flex-col">
-        <div className="px-4 md:px-6 pt-4 border-b bg-background">
-          <TabsList className="h-9 flex-wrap">
-            <TabsTrigger value="overview" className="gap-1.5" data-testid="tab-overview">
-              <LayoutDashboard size={13} />
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="sales" className="gap-1.5" data-testid="tab-sales-perf">
-              <BarChart3 size={13} />
-              Sales Performa
-            </TabsTrigger>
-            <TabsTrigger value="ads" className="gap-1.5" data-testid="tab-ads-perf">
-              <MousePointer size={13} />
-              Ads Performa
-            </TabsTrigger>
-            <TabsTrigger value="daily" className="gap-1.5" data-testid="tab-daily-report">
-              <CalendarCheck size={13} />
-              Laporan Harian
-            </TabsTrigger>
-            <TabsTrigger value="weekly" className="gap-1.5" data-testid="tab-weekly-report">
-              <CalendarRange size={13} />
-              Rapat Mingguan
-            </TabsTrigger>
-            <TabsTrigger value="monthly" className="gap-1.5" data-testid="tab-monthly-report">
-              <Calendar size={13} />
-              Laporan Bulanan
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent value="overview" className="flex-1 overflow-auto m-0">
-          <MarketingOverviewDashboard token={token} onNavigate={onNavigate} />
-        </TabsContent>
-        <TabsContent value="sales" className="flex-1 overflow-auto m-0">
-          <SalesPerformanceDashboard token={token} />
-        </TabsContent>
-        <TabsContent value="ads" className="flex-1 overflow-auto m-0">
-          <AdsPerformanceDashboard token={token} />
-        </TabsContent>
-        <TabsContent value="daily" className="flex-1 overflow-auto m-0 p-4 md:p-6">
-          <DailyReportModule token={token} />
-        </TabsContent>
-        <TabsContent value="weekly" className="flex-1 overflow-auto m-0 p-4 md:p-6">
-          {activeTab === 'weekly' && <WeeklyMeetingReportModule token={token} />}
-        </TabsContent>
-        <TabsContent value="monthly" className="flex-1 overflow-auto m-0 p-4 md:p-6">
-          <MonthlyReportModule token={token} />
-        </TabsContent>
-      </Tabs>
+    <div data-testid="marketing-reports-hub">
+      <HubTabs hubId={HUB_ID} title="Laporan marketing"
+        subtitle="Ringkasan eksekutif, performa penjualan dan iklan, laporan harian, rapat mingguan, dan laporan bulanan PIC."
+        tabs={TABS} value={activeTab} onValueChange={selectTab} token={token} onNavigate={onNavigate} />
     </div>
   );
 }

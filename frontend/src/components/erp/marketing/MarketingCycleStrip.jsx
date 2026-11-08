@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Target, Wallet, TrendingUp, AlertTriangle, Info } from 'lucide-react';
-import { GlassPanel } from '@/components/ui/glass';
+import { Info } from 'lucide-react';
 import { formatRupiah } from '@/lib/format';
+import { StatTile } from '../moduleAtoms';
 
 // FASE D (2026-08-16) — angka RESMI satu bulan kerja marketing, diambil apa adanya
 // dari SSOT `core/marketing_cycle.py` lewat `GET /api/marketing/cycle/overview`.
@@ -30,25 +30,6 @@ const monthLabel = (period) => {
   return `${names[Number(m) - 1] || m} ${y}`;
 };
 
-function Stat({ testId, icon: Icon, label, value, foot, tone = 'default' }) {
-  const tones = {
-    default: 'text-foreground',
-    warn: 'text-amber-600 dark:text-amber-400',
-    bad: 'text-red-600 dark:text-red-400',
-    good: 'text-emerald-600 dark:text-emerald-400',
-  };
-  return (
-    <GlassPanel className="p-5" data-testid={testId}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-xs uppercase text-muted-foreground tracking-wider">{label}</div>
-        <Icon className="w-4 h-4 text-primary" />
-      </div>
-      <div className={`text-2xl font-bold tabular-nums ${tones[tone]}`}>{value}</div>
-      <div className="text-xs text-muted-foreground mt-1">{foot}</div>
-    </GlassPanel>
-  );
-}
-
 export function MarketingCycleStrip({ token, period }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -70,79 +51,74 @@ export function MarketingCycleStrip({ token, period }) {
 
   if (err) {
     return (
-      <GlassPanel className="p-4 text-sm text-red-600 dark:text-red-400"
-        data-testid="cycle-strip-error">
+      <p className="text-sm text-[hsl(var(--danger-text))]" data-testid="cycle-strip-error">
         Angka siklus bulan {monthLabel(period)} tidak bisa dimuat: {err}
-      </GlassPanel>
+      </p>
     );
   }
   if (!data) {
-    return <GlassPanel className="p-5 text-sm text-muted-foreground"
-      data-testid="cycle-strip-loading">Memuat angka siklus bulan {monthLabel(period)}…</GlassPanel>;
+    return <p className="text-sm text-muted-foreground" data-testid="cycle-strip-loading">Memuat angka siklus bulan {monthLabel(period)}…</p>;
   }
 
   const t = data.totals || {};
-  const revTone = t.revenue_pct >= t.pace_pct ? 'good' : (t.revenue_pct >= t.pace_pct * 0.7 ? 'warn' : 'bad');
-  const budgetTone = t.total_used_pct >= 100 ? 'bad' : (t.total_used_pct >= 80 ? 'warn' : 'default');
   const attention = data.attention || [];
+  const adaTarget = Number(t.target_revenue || 0) > 0;
+  const adaAnggaran = Number(t.total_plan || 0) > 0;
+  const adaBiaya = Number(t.total_spend || 0) > 0;
+  const pct1 = (v) => `${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
+  // Persen tanpa pembanding (target/anggaran 0) = "—" + alasan, bukan 0,0% merah (Standar UI/UX v2 #9).
+  const revAccent = !adaTarget ? 'default' : t.revenue_pct >= t.pace_pct ? 'success' : (t.revenue_pct >= t.pace_pct * 0.7 ? 'warning' : 'danger');
+  const budgetAccent = !adaAnggaran ? 'default' : t.total_used_pct >= 100 ? 'danger' : (t.total_used_pct >= 80 ? 'warning' : 'default');
 
   return (
-    <div className="space-y-3" data-testid="marketing-cycle-strip">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="text-base font-semibold text-foreground">
-          Siklus {monthLabel(period)} — angka resmi
-        </h3>
-        <span className="text-xs text-muted-foreground" data-testid="cycle-strip-progress">
-          hari ke-{data.progress?.days_elapsed} dari {data.progress?.days_total} ·
-          {' '}{t.accounts} toko · {t.accounts_with_target} bertarget
+    <div className="space-y-2" data-testid="marketing-cycle-strip">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-base font-semibold">Siklus {monthLabel(period)} — angka resmi</p>
+        <span className="text-sm text-muted-foreground" data-testid="cycle-strip-progress">
+          Hari ke-{data.progress?.days_elapsed} dari {data.progress?.days_total} · {t.accounts} toko · {t.accounts_with_target} bertarget
         </span>
       </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Stat testId="cycle-target" icon={Target} label="Target vs Omzet"
-          value={`${(t.revenue_pct ?? 0).toFixed(1)}%`} tone={revTone}
-          foot={`${compact(t.revenue)} dari ${compact(t.target_revenue)} · laju bulan ${(t.pace_pct ?? 0).toFixed(0)}%`} />
-        <Stat testId="cycle-budget" icon={Wallet} label="Anggaran Terpakai"
-          value={`${(t.total_used_pct ?? 0).toFixed(1)}%`} tone={budgetTone}
-          foot={`${compact(t.total_spend)} dari ${compact(t.total_plan)} · sisa ${compact(t.total_remaining)}`} />
-        <Stat testId="cycle-roas" icon={TrendingUp} label="ROAS · ROI"
-          value={`${(t.roas ?? 0).toFixed(2)}×`}
-          tone={t.roi_reliable ? (t.roi_pct >= 0 ? 'good' : 'bad') : 'warn'}
-          foot={t.roi_reliable
-            ? `ROI ${(t.roi_pct ?? 0).toFixed(1)}% · laba kotor ${compact(t.gross_profit)}`
-            : `ROI belum bisa dipercaya — HPP baru ${(t.hpp_coverage_pct ?? 0).toFixed(0)}% unit`} />
-        <Stat testId="cycle-attention" icon={AlertTriangle} label="Perlu Perhatian"
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile testId="cycle-target" label="Omzet terhadap target" accent={revAccent}
+          value={adaTarget ? pct1(t.revenue_pct) : '—'}
+          sub={adaTarget
+            ? `${compact(t.revenue)} dari ${compact(t.target_revenue)} · laju bulan ${pct1(t.pace_pct)}`
+            : `Belum ada target bulan ini · omzet ${compact(t.revenue)}`} />
+        <StatTile testId="cycle-budget" label="Anggaran terpakai" accent={budgetAccent}
+          value={adaAnggaran ? pct1(t.total_used_pct) : '—'}
+          sub={adaAnggaran
+            ? `${compact(t.total_spend)} dari ${compact(t.total_plan)} · sisa ${compact(t.total_remaining)}`
+            : `Belum ada rencana anggaran · terpakai ${compact(t.total_spend)}`} />
+        <StatTile testId="cycle-roas" label="ROAS · ROI"
+          accent={!adaBiaya ? 'default' : t.roi_reliable ? (t.roi_pct >= 0 ? 'success' : 'danger') : 'warning'}
+          value={adaBiaya ? `${Number(t.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}×` : '—'}
+          sub={!adaBiaya ? 'Belum ada biaya iklan bulan ini'
+            : t.roi_reliable
+              ? `ROI ${pct1(t.roi_pct)} · laba kotor ${compact(t.gross_profit)}`
+              : `ROI belum bisa dipercaya — HPP baru ${pct1(t.hpp_coverage_pct)} unit`} />
+        <StatTile testId="cycle-attention" label="Perlu perhatian"
+          accent={(t.flags_red ?? 0) > 0 ? 'danger' : ((t.flags_yellow ?? 0) > 0 ? 'warning' : 'default')}
           value={`${t.flags_red ?? 0} merah`}
-          tone={(t.flags_red ?? 0) > 0 ? 'bad' : ((t.flags_yellow ?? 0) > 0 ? 'warn' : 'good')}
-          foot={`${t.flags_yellow ?? 0} kuning · ${attention.length} toko ditandai`} />
+          sub={`${t.flags_yellow ?? 0} kuning · ${attention.length} toko ditandai`} />
       </div>
-
       {attention.length > 0 && (
-        <GlassPanel className="p-3" data-testid="cycle-attention-list">
-          <div className="text-xs text-muted-foreground mb-2">
-            Toko yang ditandai (peringkat dari backend, bukan urutan layar):
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {attention.slice(0, 6).map(a => (
-              <span key={a.account_id}
-                data-testid={`cycle-attention-${a.account_code || a.account_id}`}
-                className="text-xs px-2 py-1 rounded-full border border-[var(--glass-border)] bg-[var(--glass-bg)] text-foreground">
-                {a.account_name}
-                <span className="text-muted-foreground"> · {a.flags.length} tanda</span>
-              </span>
-            ))}
-          </div>
-        </GlassPanel>
+        <p className="text-sm text-muted-foreground" data-testid="cycle-attention-list">
+          Toko ditandai (peringkat dari server):{' '}
+          {attention.slice(0, 6).map((a, i) => (
+            <span key={a.account_id} data-testid={`cycle-attention-${a.account_code || a.account_id}`}>
+              {i > 0 && ' · '}<span className="text-foreground">{a.account_name}</span> ({a.flags.length} tanda)
+            </span>
+          ))}
+          {attention.length > 6 ? ` · +${attention.length - 6} lainnya` : ''}
+        </p>
       )}
-
-      <div className="flex items-start gap-2 text-xs text-muted-foreground">
-        <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        <span data-testid="cycle-strip-note">
-          {data.label} Angka di atas adalah <b>rekap turunan sebulan penuh</b> (menghormati
-          koreksi SPV), sedangkan kartu di bawah menjumlah <b>input harian pada rentang tanggal
-          yang dipilih</b> — kalau rentangnya bukan satu bulan penuh, keduanya memang berbeda.
+      <p className="flex items-start gap-1.5 text-xs text-muted-foreground" data-testid="cycle-strip-note">
+        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span title={String(data.label || '').replace(/Pencairan\s*\/\s*Settlement/gi, 'Pencairan')}>
+          Angka siklus = rekap sebulan penuh (omzet sebelum potongan platform, menghormati koreksi SPV); kartu periode
+          di bawah = input harian pada rentang yang dipilih, jadi bisa berbeda.
         </span>
-      </div>
+      </p>
     </div>
   );
 }

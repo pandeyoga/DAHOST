@@ -7,8 +7,8 @@ const fmtCompact = formatAngkaRingkas;
 const fmtFull = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 const fmtDateShort = (d) => {
   if (!d) return '';
-  const date = new Date(d);
-  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+  const date = new Date(`${String(d).slice(0, 10)}T00:00:00Z`);
+  return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', timeZone: 'UTC' });
 };
 
 function CustomTooltip({ active, payload, label }) {
@@ -16,7 +16,7 @@ function CustomTooltip({ active, payload, label }) {
   return (
     <div className="rounded-lg bg-[var(--card-surface)] border border-[var(--glass-border)] p-3 shadow-lg">
       <div className="text-xs text-muted-foreground mb-2">
-        {new Date(label).toLocaleDateString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+        {new Date(`${String(label).slice(0, 10)}T00:00:00Z`).toLocaleDateString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
       </div>
       {payload.map((p, i) => (
         <div key={i} className="flex items-center justify-between gap-3 text-xs">
@@ -34,15 +34,13 @@ function CustomTooltip({ active, payload, label }) {
 /**
  * RevenueChart — line chart untuk trend revenue total vs live.
  * Data shape: [{ date: 'YYYY-MM-DD', total: number, live: number }, ...]
+ * Standar UI/UX v2 (8 Nov 2026): warna token (dulu hex), label Indonesia, kosong tanpa kotak abu.
  */
 export function RevenueChart({ data = [], height = 280 }) {
   if (!data || data.length === 0) {
     return (
-      <div
-        className="h-72 flex items-center justify-center text-sm text-muted-foreground rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)]"
-        data-testid="revenue-chart-empty"
-      >
-        Belum ada data revenue untuk periode ini
+      <div className="flex h-40 items-center justify-center text-sm text-muted-foreground" data-testid="revenue-chart-empty">
+        Belum ada omzet pada periode ini
       </div>
     );
   }
@@ -66,8 +64,8 @@ export function RevenueChart({ data = [], height = 280 }) {
           <Line
             type="monotone"
             dataKey="total"
-            name="Total Revenue"
-            stroke="#60a5fa"
+            name="Omzet total"
+            stroke="hsl(var(--primary))"
             strokeWidth={2.5}
             dot={{ r: 3 }}
             activeDot={{ r: 5 }}
@@ -75,8 +73,8 @@ export function RevenueChart({ data = [], height = 280 }) {
           <Line
             type="monotone"
             dataKey="live"
-            name="Live Revenue"
-            stroke="#f472b6"
+            name="Omzet live"
+            stroke="hsl(var(--warning))"
             strokeWidth={2.5}
             dot={{ r: 3 }}
             activeDot={{ r: 5 }}

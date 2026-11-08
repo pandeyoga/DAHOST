@@ -35,6 +35,8 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
+import { CHIP_CLASS, CHIP_ACTIVE_CLASS } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 
@@ -48,15 +50,15 @@ const PAGE_SIZE = 25;
    merah = tidak masuk sama sekali. */
 const ACTIONS = [
   { key: 'baru', label: 'baru', help: 'akan DIBUAT sebagai baris baru',
-    cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' },
+    cls: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))]' },
   { key: 'diperbarui', label: 'diperbarui', help: 'baris yang sudah ada akan BERUBAH',
-    cls: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300' },
+    cls: 'bg-[hsl(var(--info)/0.12)] text-[hsl(var(--info-text))]' },
   { key: 'sebagian', label: 'sebagian', help: 'hanya sebagian field yang boleh ditimpa',
-    cls: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' },
+    cls: 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]' },
   { key: 'dilewati', label: 'dilewati', help: 'dibiarkan apa adanya (tidak ada perubahan)',
     cls: 'bg-muted text-muted-foreground' },
   { key: 'ditolak', label: 'ditolak', help: 'TIDAK masuk — alasannya disebut per baris',
-    cls: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300' },
+    cls: 'bg-[hsl(var(--destructive)/0.10)] text-[hsl(var(--danger-text))]' },
 ];
 const ACTION_CLS = Object.fromEntries(ACTIONS.map((a) => [a.key, a.cls]));
 
@@ -118,7 +120,7 @@ export default function ImportPlanPanel({
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/40">
         <div>
           <p className="text-xs font-semibold">Apa yang akan berubah kalau Simpan ditekan</p>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-xs text-muted-foreground">
             Dihitung dengan aturan yang sama seperti penyimpanan — bukan perkiraan.
             {data?.mode_forced && (
               <> Jenis data ini <b>selalu</b> memperbarui baris lama (snapshot
@@ -131,9 +133,9 @@ export default function ImportPlanPanel({
             <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={qLive} onChange={(e) => setQLive(e.target.value)}
               placeholder="cari acuan / field / alasan"
-              className="h-7 pl-7 w-52 text-[11px]" data-testid="import-plan-search" />
+              className="h-7 pl-7 w-52 text-xs" data-testid="import-plan-search" />
           </div>
-          <Button size="sm" variant="outline" className="h-7 text-[11px]"
+          <Button size="sm" variant="outline" className="h-7 text-xs"
             disabled={!total}
             onClick={() => onDownload && onDownload(
               `sessions/${sessionId}/plan.csv`, `rencana-impor.csv`,
@@ -147,15 +149,15 @@ export default function ImportPlanPanel({
 
       {/* PENGHALANG SELURUH COMMIT — menetap, bukan toast. */}
       {blockers.length > 0 && (
-        <div className="m-3 rounded-[var(--radius-md)] border border-red-500/50 bg-red-500/10 p-3"
+        <div className="m-3 rounded-[var(--radius-md)] border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] p-3"
           data-testid="import-plan-blockers">
-          <p className="text-xs font-semibold text-red-700 dark:text-red-300 flex items-center gap-1.5">
+          <p className="text-xs font-semibold text-[hsl(var(--danger-text))] flex items-center gap-1.5">
             <ShieldAlert className="w-4 h-4" />
             Simpan akan DITOLAK — {blockers.length} penghalang
           </p>
           <ul className="mt-1.5 space-y-1">
             {blockers.map((b, i) => (
-              <li key={b.code || i} className="text-[11px] leading-relaxed">• {b.message}</li>
+              <li key={b.code || i} className="text-xs leading-relaxed">• {b.message}</li>
             ))}
           </ul>
         </div>
@@ -167,15 +169,15 @@ export default function ImportPlanPanel({
           harus tetap terbaca saat staf menimbang — dan tetap ada kalau ia
           menggulir bolak-balik. */}
       {warnings.length > 0 && (
-        <div className="m-3 rounded-[var(--radius-md)] border border-amber-500/50 bg-amber-500/10 p-3"
+        <div className="m-3 rounded-[var(--radius-md)] border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] p-3"
           data-testid="import-plan-warnings">
-          <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+          <p className="text-xs font-semibold text-[hsl(var(--warning-text))] flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4" />
             Periksa dulu sebelum Simpan — {warnings.length} temuan
           </p>
           <ul className="mt-1.5 space-y-1">
             {warnings.map((w, i) => (
-              <li key={w.code || i} className="text-[11px] leading-relaxed">• {w.message}</li>
+              <li key={w.code || i} className="text-xs leading-relaxed">• {w.message}</li>
             ))}
           </ul>
         </div>
@@ -184,31 +186,28 @@ export default function ImportPlanPanel({
       {/* Chip jumlah = penyaring. Angka yang tidak bisa diklik memaksa staf
           menggulir mencari barisnya sendiri. */}
       <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border">
-        <button type="button" onClick={() => { setOnly(''); setPage(1); }}
-          className={`px-2 py-0.5 rounded-full text-[11px] border ${
-            only ? 'border-border text-muted-foreground' : 'border-primary text-primary font-semibold'}`}
+        <Button type="button" variant="outline" aria-pressed={!only} onClick={() => { setOnly(''); setPage(1); }}
+          className={cn(CHIP_CLASS, !only && CHIP_ACTIVE_CLASS)}
           data-testid="import-plan-filter-all">
-          semua {counts.total || 0}
-        </button>
+          Semua ({counts.total || 0})
+        </Button>
         {ACTIONS.map((a) => (
-          <button key={a.key} type="button" title={a.help}
+          <Button key={a.key} type="button" variant="outline" title={a.help} aria-pressed={only === a.key}
             disabled={!counts[a.key]}
             onClick={() => { setOnly(a.key); setPage(1); }}
-            className={`px-2 py-0.5 rounded-full text-[11px] ${a.cls}
-              ${only === a.key ? 'ring-2 ring-primary/60' : ''}
-              ${!counts[a.key] ? 'opacity-40' : ''}`}
+            className={cn(CHIP_CLASS, only === a.key && CHIP_ACTIVE_CLASS)}
             data-testid={`import-plan-filter-${a.key}`}>
-            {counts[a.key] || 0} {a.label}
-          </button>
+            {a.label} ({counts[a.key] || 0})
+          </Button>
         ))}
-        <span className="text-[11px] text-muted-foreground ml-auto" data-testid="import-plan-count">
+        <span className="text-xs text-muted-foreground ml-auto" data-testid="import-plan-count">
           {changed} baris menyentuh data · {counts.dilewati || 0} tidak diapa-apakan
           {' '}· {counts.ditolak || 0} tidak masuk
         </span>
       </div>
 
       {err && (
-        <p className="px-3 py-3 text-[11px] text-red-600 dark:text-red-400"
+        <p className="px-3 py-3 text-xs text-[hsl(var(--danger-text))]"
           data-testid="import-plan-error">
           Gagal menghitung rencana: {err}
         </p>
@@ -219,7 +218,7 @@ export default function ImportPlanPanel({
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
       ) : !rows.length && !err ? (
-        <p className="px-3 py-6 text-center text-[11px] text-muted-foreground"
+        <p className="px-3 py-6 text-center text-xs text-muted-foreground"
           data-testid="import-plan-empty">
           {counts.total
             ? 'Tidak ada baris yang cocok dengan penyaring/pencarian ini.'
@@ -227,7 +226,7 @@ export default function ImportPlanPanel({
         </p>
       ) : (
         <div className="overflow-x-auto max-h-[380px]">
-          <table className="w-full text-[11px]" data-testid="import-plan-table">
+          <table className="w-full text-xs" data-testid="import-plan-table">
             <thead className="bg-muted/60 sticky top-0">
               <tr>
                 <th className="px-2 py-1.5 text-left font-semibold">Baris</th>
@@ -243,7 +242,7 @@ export default function ImportPlanPanel({
                   data-testid={`import-plan-row-${r.row}`}>
                   <td className="px-2 py-1.5 text-muted-foreground">{r.row}</td>
                   <td className="px-2 py-1.5">
-                    <Badge className={`text-[10px] ${ACTION_CLS[r.action] || ''}`}>
+                    <Badge className={`text-xs ${ACTION_CLS[r.action] || ''}`}>
                       {r.action}
                     </Badge>
                   </td>
@@ -272,7 +271,7 @@ export default function ImportPlanPanel({
                   <td className="px-2 py-1.5 text-muted-foreground max-w-[26rem]">
                     {(r.why || []).join(' · ') || '—'}
                     {r.status_now ? (
-                      <div className="text-[10px] opacity-70">
+                      <div className="text-xs opacity-70">
                         status sekarang: {r.status_now}
                       </div>
                     ) : null}
@@ -286,7 +285,7 @@ export default function ImportPlanPanel({
 
       {pages > 1 && (
         <div className="flex items-center justify-between px-3 py-1.5 border-t border-border">
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             Halaman {page} dari {pages} · {total} baris
           </span>
           <div className="flex items-center gap-1">

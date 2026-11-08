@@ -1,105 +1,72 @@
+/**
+ * PeriodSelector — pemilih rentang tanggal Dashboard Marketing. Nilai: { date_from, date_to } 'YYYY-MM-DD' (WIB).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): dulu 5 tombol pil + popup berisi dua input tanggal bawaan peramban. Kini satu
+ * pilihan (bentuk sama dengan PeriodPicker standar) + dua DatePicker untuk "Pilih tanggal". Pilihan cepat tetap
+ * sama (Bulan ini, Hari ini, 7/30/90 hari) dan nilai yang dikirim tidak berubah.
+ */
 import { useState } from 'react';
-import { Calendar } from 'lucide-react';
-import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { GlassInput } from '@/components/ui/glass';
-import { todayWIB, daysAgoWIB, monthStartWIB, daysBetweenISO } from '@/lib/waktu';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
+import { todayWIB, daysAgoWIB, monthStartWIB } from '@/lib/waktu';
 
-// Semua tanggal preset = kalender WIB (lib/waktu), bukan tanggal UTC/perangkat.
-// FASE D (2026-08-16) — "Bulan Ini" ada karena SEMUA target & anggaran marketing
-// bersifat BULANAN. Tanpa preset ini, bawaan 30 hari terakhir selalu menyerempet dua
-// bulan, jadi omzet di layar tidak pernah bisa dibandingkan dengan targetnya.
+const PRESETS = [
+  { key: 'month', label: 'Bulan ini' },
+  { key: '0', label: 'Hari ini' },
+  { key: '7', label: '7 hari terakhir' },
+  { key: '30', label: '30 hari terakhir' },
+  { key: '90', label: '90 hari terakhir' },
+  { key: 'custom', label: 'Pilih tanggal' },
+];
+
+const rentangPreset = (key) => {
+  const to = todayWIB();
+  if (key === 'month') return { date_from: monthStartWIB(), date_to: to };
+  const days = Number(key);
+  return { date_from: days === 0 ? to : daysAgoWIB(days), date_to: to };
+};
+
+const presetDari = (value) => {
+  if (!value?.date_from || !value?.date_to) return 'custom';
+  const hit = PRESETS.find((p) => p.key !== 'custom' && (() => {
+    const r = rentangPreset(p.key);
+    return r.date_from === value.date_from && r.date_to === value.date_to;
+  })());
+  return hit ? hit.key : 'custom';
+};
 
 export function PeriodSelector({ value, onChange }) {
-  const [isCustom, setIsCustom] = useState(false);
-  const [customFrom, setCustomFrom] = useState(value.date_from || daysAgoWIB(30));
-  const [customTo, setCustomTo] = useState(value.date_to || todayWIB());
-
-  const presets = [
-    { label: 'Bulan Ini', month: true },
-    { label: 'Hari Ini', days: 0 },
-    { label: '7 Hari', days: 7 },
-    { label: '30 Hari', days: 30 },
-    { label: '90 Hari', days: 90 },
-  ];
-
-  const handlePreset = (preset) => {
-    const to = todayWIB();
-    const from = preset.month ? monthStartWIB() : (preset.days === 0 ? to : daysAgoWIB(preset.days));
-    onChange({ date_from: from, date_to: to });
-    setIsCustom(false);
-  };
-
-  const handleCustomApply = () => {
-    if (!customFrom || !customTo) return;
-    if (new Date(customFrom) > new Date(customTo)) {
-      toast.error('Tanggal mulai harus lebih kecil dari tanggal akhir');
-      return;
-    }
-    onChange({ date_from: customFrom, date_to: customTo });
-    setIsCustom(false);
-  };
-
-  const currentLabel = () => {
-    if (!value.date_from || !value.date_to) return 'Pilih Periode';
-    if (value.date_from === monthStartWIB() && value.date_to === todayWIB()) return 'Bulan Ini';
-    const diffDays = daysBetweenISO(value.date_from, value.date_to);
-    
-    if (diffDays === 0) return 'Hari Ini';
-    if (diffDays === 7) return '7 Hari Terakhir';
-    if (diffDays === 30) return '30 Hari Terakhir';
-    if (diffDays === 90) return '90 Hari Terakhir';
-    return `${value.date_from} - ${value.date_to}`;
-  };
+  const [custom, setCustom] = useState(() => presetDari(value) === 'custom');
+  const preset = custom ? 'custom' : presetDari(value);
 
   return (
-    <Popover open={isCustom} onOpenChange={setIsCustom}>
-      <div className="flex items-center gap-2" data-testid="period-selector">
-        {presets.map(preset => (
-          <Button
-            key={preset.label}
-            variant="outline"
-            size="sm"
-            onClick={() => handlePreset(preset)}
-            data-testid={preset.month ? 'period-month' : `period-${preset.days}d`}
-          >
-            {preset.label}
-          </Button>
-        ))}
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" data-testid="period-custom">
-            <Calendar className="w-4 h-4 mr-2" />
-            {isCustom ? 'Custom' : currentLabel()}
-          </Button>
-        </PopoverTrigger>
-      </div>
-
-      <PopoverContent className="w-80 p-4">
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Tanggal Mulai</label>
-            <GlassInput
-              type="date"
-              value={customFrom}
-              onChange={e => setCustomFrom(e.target.value)}
-              data-testid="custom-date-from"
-            />
+    <div className="flex flex-wrap items-center gap-2" data-testid="period-selector">
+      <SmartNativeSelect className="w-44" value={preset} searchable={false} aria-label="Periode" data-testid="period-preset"
+        onChange={(e) => {
+          const k = e.target.value;
+          if (k === 'custom') { setCustom(true); return; }
+          setCustom(false);
+          onChange(rentangPreset(k));
+        }}>
+        {PRESETS.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+      </SmartNativeSelect>
+      {preset === 'custom' ? (
+        <>
+          <div className="w-40">
+            <DatePicker value={value.date_from || ''} max={value.date_to || undefined} bolehKosong={false}
+              onChange={(v) => onChange({ ...value, date_from: v })} testId="custom-date-from" />
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Tanggal Akhir</label>
-            <GlassInput
-              type="date"
-              value={customTo}
-              onChange={e => setCustomTo(e.target.value)}
-              data-testid="custom-date-to"
-            />
+          <span className="text-sm text-muted-foreground">s/d</span>
+          <div className="w-40">
+            <DatePicker value={value.date_to || ''} min={value.date_from || undefined} bolehKosong={false}
+              onChange={(v) => onChange({ ...value, date_to: v })} testId="custom-date-to" />
           </div>
-          <Button onClick={handleCustomApply} className="w-full" size="sm" data-testid="apply-custom-period">
-            Terapkan
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+        </>
+      ) : (
+        <span className="text-sm text-muted-foreground" data-testid="period-range">
+          {formatTanggalID(value.date_from)} – {formatTanggalID(value.date_to)}
+        </span>
+      )}
+    </div>
   );
 }

@@ -7,6 +7,9 @@
  *
  * Bagian `catatan_data` (kejujuran data) ditampilkan MENONJOL, bukan di catatan
  * kaki: laporan yang tidak menyebut lubangnya sendiri akan dipakai seolah lengkap.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout, DatePicker (dulu input tanggal bawaan), 7 kartu → 4 StatTile + satu
+ * kalimat, tabel 21 kolom → 8 kolom + popup rincian per toko (baris gabungan di bawah), kanal = tabel + unduh.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -14,20 +17,22 @@ import {
   Info, TrendingUp, TrendingDown, Minus, Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Label } from '@/components/ui/label';
-import { GlassInput } from '@/components/ui/glass';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import { PageHeader } from '../moduleAtoms';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import DatePicker from '@/components/ui/date-picker';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatTile } from '../moduleAtoms';
 import { toast } from 'sonner';
 import { todayWIB, toWIBDate, addDaysISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 const num = (n) => Number(n || 0).toLocaleString('id-ID');
+// Teks dari server memakai istilah "Settlement" — di layar cukup "Pencairan" (istilah staf).
+const bersihkanIstilah = (t) => String(t || '').replace(/Pencairan\s*\/\s*Settlement/gi, 'Pencairan').replace(/\bsettlement\b/gi, 'pencairan');
 const pct = (v) => (v === null || v === undefined ? '—' : `${v}%`);
 
 const KANAL = [
@@ -53,25 +58,14 @@ function Delta({ d }) {
   if (!d) return <span className="text-muted-foreground">—</span>;
   const p = d.persen;
   if (p === null || p === undefined) {
-    return <span className="text-muted-foreground text-[11px]">— (pembanding 0)</span>;
+    return <span className="text-xs text-muted-foreground">— (pembanding 0)</span>;
   }
   const Icon = p > 0 ? TrendingUp : p < 0 ? TrendingDown : Minus;
-  const tone = p > 0 ? 'text-emerald-500' : p < 0 ? 'text-red-500' : 'text-muted-foreground';
+  const tone = p > 0 ? 'text-[hsl(var(--success-text))]' : p < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground';
   return (
     <span className={`inline-flex items-center gap-1 ${tone} tabular-nums`}>
       <Icon className="w-3 h-3" />{p > 0 ? '+' : ''}{p}%
     </span>
-  );
-}
-
-function Tile({ label, value, sub, tone = '', testId }) {
-  return (
-    <div className="rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] p-3"
-      data-testid={testId}>
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className={`text-xl font-bold tabular-nums ${tone}`}>{value}</p>
-      {sub && <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div>}
-    </div>
   );
 }
 
@@ -82,6 +76,8 @@ export default function WeeklyMeetingReportModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [detailToko, setDetailToko] = useState(null);
+  const [catatanBuka, setCatatanBuka] = useState(false);
 
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
@@ -140,211 +136,151 @@ export default function WeeklyMeetingReportModule({ token }) {
 
   const g = data?.gabungan || {};
   const per = data?.per_toko || [];
+  const sumber = (src) => (src === 'orders_auto' ? 'Turunan pesanan' : src === 'manual_override' ? 'Diganti SPV'
+    : src === 'import' ? 'Impor rekap' : src === 'manual' ? 'Manual' : 'Lainnya');
+  const baris = per.length ? [...per, { account_id: '__gabungan__', account_code: 'Gabungan', account_name: `${g.toko_berdata ?? 0}/${g.toko ?? 0} toko berdata`,
+    omzet: g.omzet, nilai_retur: g.nilai_retur, omzet_setelah_retur: g.omzet_setelah_retur, vs_minggu_lalu: g.vs_minggu_lalu,
+    pesanan: g.pesanan, pcs: g.pcs, aov: g.aov, pencapaian_target_persen: g.pencapaian_target_persen,
+    target: { lengkap: true, revenue: g.target_prorata }, iklan: { terisi: true, spend: g.iklan_spend, roas: g.roas }, _gabungan: true }] : [];
+  const [detail, setDetail] = [detailToko, setDetailToko];
+
+  const kolom = [
+    { kunci: 'toko', label: 'Toko', hp: 'judul', isi: (s) => (
+      <div data-testid={`weekly-row-${s.account_code}`}>
+        <p className={s._gabungan ? 'font-semibold' : 'font-medium'}>{s._gabungan ? 'Gabungan' : s.account_name}</p>
+        <p className="text-xs text-muted-foreground">{s._gabungan ? s.account_name : s.account_code}</p>
+      </div>) },
+    { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (s) => <span className="tabular-nums font-semibold md:whitespace-nowrap">{rp(s.omzet)}</span> },
+    { kunci: 'retur', label: 'Setelah retur', rata: 'kanan', isi: (s) => (
+      <div className="md:whitespace-nowrap" data-testid={`weekly-retur-${s.account_code}`}>
+        <p className="tabular-nums">{rp(s.omzet_setelah_retur)}</p>
+        {(s.nilai_retur || 0) > 0 && <p className="text-xs text-[hsl(var(--warning-text))]">retur {rp(s.nilai_retur)}</p>}
+      </div>) },
+    { kunci: 'vs', label: 'vs minggu lalu', rata: 'kanan', isi: (s) => <Delta d={s.vs_minggu_lalu?.omzet} /> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{num(s.pesanan)}</span> },
+    { kunci: 'target', label: 'Capai target', rata: 'kanan', isi: (s) => (s.target?.lengkap
+      ? <span className="tabular-nums" title={`Target prorata ${rp(s.target.revenue)}`}>{pct(s.pencapaian_target_persen)}</span>
+      : <span className="text-muted-foreground">Belum ada target</span>) },
+    { kunci: 'iklan', label: 'Iklan', rata: 'kanan', isi: (s) => (s.iklan?.terisi
+      ? <span className="tabular-nums md:whitespace-nowrap">{rp(s.iklan.spend)}<span className="block text-xs text-muted-foreground">ROAS {s.iklan.roas ?? '—'}</span></span>
+      : <span className="text-muted-foreground">Belum diimpor</span>) },
+    { kunci: 'hari', label: 'Hari berdata', rata: 'kanan', isi: (s) => (s._gabungan ? '—' : <span className="tabular-nums">{s.hari_berdata}/7</span>) },
+  ];
+
+  const kanalRows = KANAL.map(([k, label]) => ({ k, label, nilai: g.kanal?.[k] || 0, persen: g.kanal_persen?.[k] ?? 0 }));
 
   return (
-    <div className="space-y-5" data-testid="weekly-report-module">
-      <PageHeader
-        eyebrow="PORTAL MARKETING · LAPORAN"
-        title="Laporan Rapat Mingguan"
-        subtitle="Per toko & gabungan — siap dibacakan, dicetak, dan diarsipkan"
-        icon={CalendarRange}
-        actions={(
-          <>
-            <Button variant="outline" size="sm" onClick={load} data-testid="weekly-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => download('excel')}
-              disabled={busy === 'excel'} data-testid="weekly-export-excel">
-              {busy === 'excel' ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                : <Download className="w-3.5 h-3.5 mr-1.5" />} Excel
-            </Button>
-            <Button size="sm" onClick={() => download('pdf')}
-              disabled={busy === 'pdf'} data-testid="weekly-export-pdf">
-              {busy === 'pdf' ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                : <FileText className="w-3.5 h-3.5 mr-1.5" />} PDF
-            </Button>
-          </>
-        )}
-      />
-
-      <div className="rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] p-3
-        flex flex-wrap items-end gap-3">
-        <Button variant="outline" size="sm" onClick={() => shift(-7)} data-testid="weekly-prev">
-          <ChevronLeft className="w-3.5 h-3.5" /> Minggu lalu
+    <PageLayout testId="weekly-report-module" title="Laporan rapat mingguan"
+      subtitle="Per toko dan gabungan — siap dibacakan, dicetak, dan diarsipkan."
+      actions={<>
+        <Button variant="outline" onClick={() => download('excel')} disabled={busy === 'excel'} data-testid="weekly-export-excel">
+          {busy === 'excel' ? <Loader2 className="animate-spin" /> : <Download />}Unduh Excel
         </Button>
-        <div>
-          <Label className="text-xs">Minggu (tanggal apa pun di minggu itu)</Label>
-          <GlassInput type="date" value={weekStart} data-testid="weekly-date"
-            onChange={(e) => e.target.value && setWeekStart(mondayOf(e.target.value))} />
-        </div>
-        <Button variant="outline" size="sm" onClick={() => shift(7)} data-testid="weekly-next">
-          Minggu depan <ChevronRight className="w-3.5 h-3.5" />
+        <Button variant="outline" onClick={() => download('pdf')} disabled={busy === 'pdf'} data-testid="weekly-export-pdf">
+          {busy === 'pdf' ? <Loader2 className="animate-spin" /> : <FileText />}Unduh PDF
         </Button>
-        <div className="min-w-[220px]">
-          <Label className="text-xs">Lingkup</Label>
-          <Select value={accountId || '__all__'}
-            onValueChange={(v) => setAccountId(v === '__all__' ? '' : v)}>
-            <SelectTrigger data-testid="weekly-account" className="h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">Semua Toko + Gabungan</SelectItem>
-              {accounts.map((a) => (
-                <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {data?.periode && (
-          <div className="ml-auto text-right">
-            <p className="text-sm font-bold" data-testid="weekly-period-label">
-              {data.periode.minggu} · {data.periode.label}
-            </p>
-            <p className="text-[11px] text-muted-foreground">
-              {data.periode.dasar_minggu} · pembanding: {data.periode.minggu_sebelumnya?.label}
-            </p>
+      </>}
+      filters={<>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon" onClick={() => shift(-7)} data-testid="weekly-prev" title="Minggu lalu" aria-label="Minggu lalu"><ChevronLeft /></Button>
+          <div className="w-44" title="Pilih tanggal apa pun di minggu itu">
+            <DatePicker value={weekStart} onChange={(v) => v && setWeekStart(mondayOf(v))} bolehKosong={false} testId="weekly-date" />
           </div>
+          <Button variant="outline" size="icon" onClick={() => shift(7)} data-testid="weekly-next" title="Minggu depan" aria-label="Minggu depan"><ChevronRight /></Button>
+        </div>
+        <SmartNativeSelect className="w-56" value={accountId} onChange={(e) => setAccountId(e.target.value)} data-testid="weekly-account">
+          <option value="">Semua toko + gabungan</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}
+        </SmartNativeSelect>
+        {data?.periode && (
+          <span className="text-sm text-muted-foreground" data-testid="weekly-period-label"
+            title={`${data.periode.dasar_minggu} · pembanding: ${data.periode.minggu_sebelumnya?.label || '—'}`}>
+            {data.periode.minggu} · {data.periode.label}
+          </span>
         )}
-      </div>
-
-      {loading ? (
-        <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16" />)}</div>
+      </>}
+      tools={(
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="weekly-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      )}
+      summary={data && (<>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Omzet gabungan" value={rp(g.omzet)} testId="weekly-tile-omzet"
+            sub={<>vs minggu lalu <Delta d={g.vs_minggu_lalu?.omzet} /></>} />
+          <StatTile label="Pesanan" value={num(g.pesanan)} testId="weekly-tile-pesanan"
+            sub={`${num(g.pcs)} pcs · rata-rata ${rp(g.aov)}`} />
+          <StatTile label="Capai target prorata" value={pct(g.pencapaian_target_persen)} testId="weekly-tile-target"
+            sub={`Target ${rp(g.target_prorata)}`} />
+          <StatTile label="Belanja iklan" value={rp(g.iklan_spend)} testId="weekly-tile-iklan"
+            sub={`ROAS ${g.roas ?? '—'}`} />
+        </div>
+        <div className="space-y-0.5 text-sm text-muted-foreground">
+          <p data-testid="weekly-tile-setelah-retur">Setelah retur {rp(g.omzet_setelah_retur)}
+            {(g.retur || 0) > 0 ? ` (retur ${num(g.retur)} pesanan · ${rp(g.nilai_retur)})` : ' (tidak ada retur minggu ini)'}.</p>
+          <p data-testid="weekly-tile-belum-kirim">Belum dikirim {num(g.belum_dikirim)} pesanan ({rp(g.nilai_belum_dikirim)}).</p>
+        </div>
+      </>)}>
+      {loading && !data ? (
+        <div className="space-y-2">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12" />)}</div>
       ) : !data ? null : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
-            <Tile label="Omzet gabungan" value={rp(g.omzet)} testId="weekly-tile-omzet"
-              sub={<>vs minggu lalu <Delta d={g.vs_minggu_lalu?.omzet} /></>} />
-            {/* SESI #9 — omzet setelah retur, berdampingan dengan bruto */}
-            <Tile label="Setelah retur" value={rp(g.omzet_setelah_retur)}
-              testId="weekly-tile-setelah-retur"
-              sub={(g.retur || 0) > 0
-                ? <>retur {num(g.retur)} pesanan · {rp(g.nilai_retur)}</>
-                : 'tidak ada retur minggu ini'} />
-            <Tile label="Pesanan" value={num(g.pesanan)} sub={`${num(g.pcs)} pcs`}
-              testId="weekly-tile-pesanan" />
-            <Tile label="AOV" value={rp(g.aov)} testId="weekly-tile-aov" />
-            <Tile label="Target prorata" value={rp(g.target_prorata)}
-              sub={`capai ${pct(g.pencapaian_target_persen)}`} testId="weekly-tile-target" />
-            <Tile label="Belanja iklan" value={rp(g.iklan_spend)}
-              sub={`ROAS ${g.roas ?? '—'}`} testId="weekly-tile-iklan" />
-            <Tile label="Belum dikirim" value={num(g.belum_dikirim)} tone="text-amber-500"
-              sub={rp(g.nilai_belum_dikirim)} testId="weekly-tile-belum-kirim" />
-          </div>
-
           {(data.catatan_data || []).length > 0 && (
-            <div className="rounded-[var(--radius-md)] border border-amber-500/40 bg-amber-500/5 p-3"
-              data-testid="weekly-data-notes">
-              <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-amber-500" />
-                Catatan kejujuran data — wajib dibaca sebelum menyimpulkan
+            // Tetap menonjol (warna peringatan, di atas tabel) tetapi ringkas: isi lengkap dibuka satu klik.
+            <div className="space-y-1" data-testid="weekly-data-notes">
+              <p className="flex flex-wrap items-center gap-1.5 text-sm text-[hsl(var(--warning-text))]">
+                <Info className="h-4 w-4 shrink-0" />
+                <b>{data.catatan_data.length} catatan kejujuran data — baca sebelum menyimpulkan.</b>
+                <Button variant="link" size="sm" className="h-auto p-0 text-sm" onClick={() => setCatatanBuka((v) => !v)}
+                  aria-expanded={catatanBuka} data-testid="weekly-data-notes-toggle">
+                  {catatanBuka ? 'Sembunyikan' : 'Baca catatan'}
+                </Button>
               </p>
-              <ol className="list-decimal ml-5 space-y-1">
-                {data.catatan_data.map((n, i) => (
-                  <li key={i} className="text-xs">{n}</li>
-                ))}
-              </ol>
+              {catatanBuka && (
+                <ol className="ml-6 list-decimal space-y-1 text-sm text-muted-foreground">
+                  {data.catatan_data.map((n, i) => <li key={i}>{bersihkanIstilah(n)}</li>)}
+                </ol>
+              )}
             </div>
           )}
 
-          <div className="rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] overflow-x-auto">
-            <table className="w-full text-xs" data-testid="weekly-table">
-              <thead className="bg-muted/60"><tr>
-                {['Kode', 'Toko', 'Omzet', 'Retur', 'Setelah retur', 'vs Mg lalu', 'Pesanan', 'Pcs', 'AOV',
-                  'Target prorata', 'Capai', 'Live', 'Video', 'Kartu Produk',
-                  'Pemenuhan', 'Batal', 'Belum kirim', 'Iklan', 'ROAS', 'Hari berdata',
-                  'Sumber angka'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>))}
-              </tr></thead>
-              <tbody>
-                {per.map((s) => (
-                  <tr key={s.account_id} className="border-t border-border hover:bg-muted/30"
-                    data-testid={`weekly-row-${s.account_code}`}>
-                    <td className="px-3 py-2 font-mono">{s.account_code}</td>
-                    <td className="px-3 py-2 font-medium">{s.account_name}</td>
-                    <td className="px-3 py-2 tabular-nums font-semibold">{rp(s.omzet)}</td>
-                    <td className="px-3 py-2 tabular-nums"
-                      data-testid={`weekly-retur-${s.account_code}`}>
-                      {(s.nilai_retur || 0) > 0
-                        ? <span className="text-amber-600 dark:text-amber-400">
-                          {rp(s.nilai_retur)} <span className="text-[10px] text-muted-foreground">· {num(s.pesanan_mentah?.retur)} pesanan</span>
-                        </span>
-                        : <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums font-semibold">{rp(s.omzet_setelah_retur)}</td>
-                    <td className="px-3 py-2"><Delta d={s.vs_minggu_lalu?.omzet} /></td>
-                    <td className="px-3 py-2 tabular-nums">{num(s.pesanan)}</td>
-                    <td className="px-3 py-2 tabular-nums">{num(s.pcs)}</td>
-                    <td className="px-3 py-2 tabular-nums">{rp(s.aov)}</td>
-                    <td className="px-3 py-2 tabular-nums">
-                      {s.target?.lengkap ? rp(s.target.revenue)
-                        : <span className="text-muted-foreground">belum ada target</span>}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums">{pct(s.pencapaian_target_persen)}</td>
-                    <td className="px-3 py-2 tabular-nums">{rp(s.kanal?.live)}</td>
-                    <td className="px-3 py-2 tabular-nums">{rp(s.kanal?.video)}</td>
-                    <td className="px-3 py-2 tabular-nums">{rp(s.kanal?.product_card)}</td>
-                    <td className="px-3 py-2 tabular-nums">{pct(s.pemenuhan?.fulfillment_rate)}</td>
-                    <td className="px-3 py-2 tabular-nums">{num(s.pesanan_mentah?.batal)}</td>
-                    <td className="px-3 py-2 tabular-nums">{num(s.pesanan_mentah?.belum_dikirim)}</td>
-                    <td className="px-3 py-2 tabular-nums">
-                      {s.iklan?.terisi ? rp(s.iklan.spend)
-                        : <span className="text-muted-foreground">belum diimpor</span>}
-                    </td>
-                    <td className="px-3 py-2 tabular-nums">{s.iklan?.roas ?? '—'}</td>
-                    <td className="px-3 py-2 tabular-nums">{s.hari_berdata}/7</td>
-                    <td className="px-3 py-2">
-                      {(s.sumber_angka || []).length === 0
-                        ? <span className="text-muted-foreground">—</span>
-                        : (s.sumber_angka || []).map((src) => (
-                          <Badge key={src} variant="outline" className="text-[10px] mr-1">
-                            {src === 'orders_auto' ? 'turunan pesanan'
-                              : src === 'manual_override' ? 'diganti SPV'
-                                : src === 'import' ? 'impor rekap' : src}
-                          </Badge>
-                        ))}
-                    </td>
-                  </tr>
-                ))}
-                <tr className="border-t-2 border-border bg-muted/40 font-semibold">
-                  <td className="px-3 py-2" colSpan={2}>GABUNGAN ({g.toko_berdata}/{g.toko} toko berdata)</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.omzet)}</td>
-                  <td className="px-3 py-2 tabular-nums">
-                    {(g.nilai_retur || 0) > 0 ? rp(g.nilai_retur) : '—'}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.omzet_setelah_retur)}</td>
-                  <td className="px-3 py-2"><Delta d={g.vs_minggu_lalu?.omzet} /></td>
-                  <td className="px-3 py-2 tabular-nums">{num(g.pesanan)}</td>
-                  <td className="px-3 py-2 tabular-nums">{num(g.pcs)}</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.aov)}</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.target_prorata)}</td>
-                  <td className="px-3 py-2 tabular-nums">{pct(g.pencapaian_target_persen)}</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.kanal?.live)}</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.kanal?.video)}</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.kanal?.product_card)}</td>
-                  <td className="px-3 py-2">—</td>
-                  <td className="px-3 py-2 tabular-nums">{num(g.batal)}</td>
-                  <td className="px-3 py-2 tabular-nums">{num(g.belum_dikirim)}</td>
-                  <td className="px-3 py-2 tabular-nums">{rp(g.iklan_spend)}</td>
-                  <td className="px-3 py-2 tabular-nums">{g.roas ?? '—'}</td>
-                  <td className="px-3 py-2">—</td>
-                  <td className="px-3 py-2">—</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <TabelData kolom={kolom} baris={baris} kunci={(s) => s.account_id} onKlikBaris={(s) => !s._gabungan && setDetail(s)}
+            testId="weekly-table"
+            kosong={<EmptyState icon={CalendarRange} title="Belum ada data minggu ini" description="Pilih minggu lain atau toko lain." />} />
 
-          <div className="rounded-[var(--radius-md)] border border-border bg-[hsl(var(--card))] p-3">
-            <p className="text-xs font-semibold mb-2">Pecahan omzet per kanal (gabungan)</p>
-            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5" data-testid="weekly-kanal">
-              {KANAL.map(([k, label]) => (
-                <div key={k} className="rounded-[var(--radius-sm)] border border-border p-2">
-                  <p className="text-[11px] text-muted-foreground">{label}</p>
-                  <p className="text-sm font-semibold tabular-nums">{rp(g.kanal?.[k])}</p>
-                  <p className="text-[10px] text-muted-foreground">{g.kanal_persen?.[k] ?? 0}%</p>
-                </div>
-              ))}
+          <section className="space-y-2" data-testid="weekly-kanal">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-base font-semibold">Pecahan omzet per kanal (gabungan)</p>
+              <TombolUnduh namaBerkas={`omzet-per-kanal-${weekStart}`} namaLembar="Per kanal" baris={kanalRows} testId="weekly-kanal-unduh"
+                kolom={[{ label: 'Kanal', nilai: (r) => r.label }, { label: 'Omzet', nilai: (r) => Number(r.nilai) }, { label: 'Persen', nilai: (r) => Number(r.persen) }]} />
             </div>
-          </div>
+            <TabelData baris={kanalRows} kunci={(r) => r.k} testId="weekly-kanal-table"
+              kolom={[
+                { kunci: 'kanal', label: 'Kanal', hp: 'judul', isi: (r) => r.label },
+                { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.nilai)}</span> },
+                { kunci: 'persen', label: 'Bagian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{Number(r.persen).toLocaleString('id-ID')}%</span> },
+              ]} />
+          </section>
         </>
       )}
-    </div>
+
+      {detail && (
+        <DetailPopup open onClose={() => setDetail(null)} judul={detail.account_name} keterangan={`${detail.account_code} · ${data?.periode?.label || ''}`}
+          testId="weekly-detail">
+          <dl className="divide-y divide-[var(--glass-border)]">
+            <BarisDetail label="Omzet">{rp(detail.omzet)} <Delta d={detail.vs_minggu_lalu?.omzet} /></BarisDetail>
+            <BarisDetail label="Retur">{(detail.nilai_retur || 0) > 0 ? `${rp(detail.nilai_retur)} · ${num(detail.pesanan_mentah?.retur)} pesanan` : '—'}</BarisDetail>
+            <BarisDetail label="Setelah retur">{rp(detail.omzet_setelah_retur)}</BarisDetail>
+            <BarisDetail label="Pesanan / pcs">{num(detail.pesanan)} pesanan · {num(detail.pcs)} pcs · rata-rata {rp(detail.aov)}</BarisDetail>
+            <BarisDetail label="Target prorata">{detail.target?.lengkap ? `${rp(detail.target.revenue)} · capai ${pct(detail.pencapaian_target_persen)}` : 'Belum ada target'}</BarisDetail>
+            <BarisDetail label="Kanal">Live {rp(detail.kanal?.live)} · Video {rp(detail.kanal?.video)} · Kartu produk {rp(detail.kanal?.product_card)}</BarisDetail>
+            <BarisDetail label="Pemenuhan">{pct(detail.pemenuhan?.fulfillment_rate)} · batal {num(detail.pesanan_mentah?.batal)} · belum kirim {num(detail.pesanan_mentah?.belum_dikirim)}</BarisDetail>
+            <BarisDetail label="Iklan">{detail.iklan?.terisi ? `${rp(detail.iklan.spend)} · ROAS ${detail.iklan.roas ?? '—'}` : 'Belum diimpor'}</BarisDetail>
+            <BarisDetail label="Hari berdata">{detail.hari_berdata}/7</BarisDetail>
+            <BarisDetail label="Sumber angka">{(detail.sumber_angka || []).map(sumber).join(', ') || '—'}</BarisDetail>
+          </dl>
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }

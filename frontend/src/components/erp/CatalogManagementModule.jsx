@@ -1,26 +1,37 @@
 /**
- * CatalogManagementModule — Marketing Portal Phase 5
- * Manajemen katalog produk per akun platform + stock sync.
+ * CatalogManagementModule — Manajemen Katalog (Portal Marketing).
+ * Katalog per toko + isi item + stok jual.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, daftar katalog = tabel (dulu kartu berulang),
+ * semua form = FormPopup, tabel bisa diunduh Excel/CSV, warna token, bahasa Indonesia.
+ *
+ * Perbaikan angka (keluhan owner): kolom stok per katalog dulu memakai `low_stock_count/out_of_stock_count`
+ * TERSIMPAN (cache basi) → kartu "100% sehat" padahal 640 item stok habis. Kini angkanya dari
+ * `/stock-dashboard` → `catalog_breakdown` (dihitung langsung, stok jual LIVE, item aktif), sumber yang sama
+ * dengan kartu ringkasan di atas — tabel dan kartu tidak bisa lagi berbeda.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import {
-  Plus, RefreshCw, Search, Edit2, Trash2, AlertTriangle,
-  CheckCircle2, ChevronRight, ChevronLeft, TrendingDown,
-  ShoppingBag, Layers, BarChart3, Save, Loader2, X, History,
-  ArrowRightLeft, Download, Upload, Tag, Star, Eye, Coins, PackagePlus,
+  Plus, RefreshCw, Search, Pencil, Trash2, MoreHorizontal, Eye, Layers, Loader2, ArrowRightLeft, Coins, Link2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { formatDateTimeID } from '@/lib/format';
+import { parseServerTime } from '@/lib/waktu';
 import { toast } from 'sonner';
 import { FGProductPickerDialog } from './FGProductPickerDialog';
 // 2026-08-12 — "Isi dari Master Produk" (banyak toko sekaligus) hidup sebagai TAB di
@@ -28,21 +39,33 @@ import { FGProductPickerDialog } from './FGProductPickerDialog';
 // menemukan katalog kosong harus bisa mengisinya DI TEMPAT, bukan mencari menu lain.
 import CatalogFromMasterModule from './marketing/CatalogFromMasterModule';
 import CatalogItemsView from './marketing/CatalogItemsView';
-import { formatRupiah } from '@/lib/format';
-import { StatTile } from './moduleAtoms';
+import PageLayout, { Toolbar } from './layout/PageLayout';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
 const API = process.env.REACT_APP_BACKEND_URL;
-const fmtRp = formatRupiah;
 const cat = (path, opts = {}) => fetch(`${API}/api/marketing/catalogs${path}`, opts);
 
-const PLATFORMS = ['Shopee', 'TikTok Shop', 'Tokopedia', 'Lazada', 'Blibli', 'Instagram', 'Website', 'Lainnya'];
-
-const STOCK_STATUS_CFG = {
-  in_stock:     { label: 'Tersedia', color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/20', badge: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300' },
-  low_stock:    { label: 'Stok Rendah', color: 'text-amber-700 dark:text-amber-400', bg: 'bg-amber-100 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/20', badge: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300' },
-  out_of_stock: { label: 'Habis', color: 'text-red-700 dark:text-red-400', bg: 'bg-red-100 dark:bg-red-500/10 border-red-300 dark:border-red-500/20', badge: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300' },
+// Nama platform untuk layar (data menyimpan kode huruf kecil: shopee, tiktok, …)
+const PLATFORM_LABEL = {
+  shopee: 'Shopee', tiktok: 'TikTok', 'tiktok shop': 'TikTok Shop', tokopedia: 'Tokopedia', lazada: 'Lazada',
+  blibli: 'Blibli', instagram: 'Instagram', website: 'Website', other: 'Lainnya', lainnya: 'Lainnya',
 };
+export const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
+
+// Status stok jual (dihitung server dari stok live)
+export const STOK = {
+  in_stock: { label: 'Tersedia', tone: 'success' },
+  low_stock: { label: 'Stok menipis', tone: 'warning' },
+  out_of_stock: { label: 'Stok habis', tone: 'danger' },
+  unlinked: { label: 'Belum tertaut', tone: 'muted' },
+};
+
+const TAB_KEYS = ['catalogs', 'items', 'stock', 'history', 'from-master'];
+const TAB_LIST_CLASS = 'h-auto max-w-full justify-start gap-1 max-sm:flex-nowrap max-sm:overflow-x-auto sm:flex-wrap';
+const jam = (v) => formatDateTimeID(parseServerTime(v));
+const angka = (n) => Number(n || 0).toLocaleString('id-ID');
+const persen = (a, b) => (b ? `${(Math.round((a / b) * 1000) / 10).toLocaleString('id-ID')}%` : '—');
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -57,12 +80,11 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   // yang harus ditulis modul lain lebih dulu; urutan mount itu terbukti tidak bisa
   // diandalkan dan membuat deep-link mendarat di tab pertama.
   const [tab, setTab] = useState(() => {
-    const TABS = ['catalogs', 'items', 'stock', 'history', 'from-master'];
-    if (initialTab && TABS.includes(initialTab)) return initialTab;
+    if (initialTab && TAB_KEYS.includes(initialTab)) return initialTab;
     if (moduleId === 'marketing-catalog-from-master') return 'from-master';
     try {
       const saved = sessionStorage.getItem('hub_tab_marketing-catalog');
-      if (saved && TABS.includes(saved)) {
+      if (saved && TAB_KEYS.includes(saved)) {
         sessionStorage.removeItem('hub_tab_marketing-catalog');
         return saved;
       }
@@ -94,9 +116,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   const [productCategories, setProductCategories] = useState([]);
   const [filterCategoryId, setFilterCategoryId] = useState('');
   // F11 — "Perlu Perhatian": saring item bermasalah (belum tertaut master / stok
-  // basi). WAJIB dikerjakan server: item bermasalah bisa ada di halaman ke-2
-  // (paginasi 10/hal), jadi banner yang mengatakan "1 item belum tertaut" dulu
-  // memberi tahu ada masalah TANPA satu pun cara menemukannya.
+  // basi). WAJIB dikerjakan server: item bermasalah bisa ada di halaman ke-2.
   const [filterAttention, setFilterAttention] = useState('');
   const [stockSummary, setStockSummary] = useState({ stale: 0, unlinked: 0, attention: 0 });
   // F4 — saringan penayangan/status/foto/urutan. SEMUA dikerjakan SERVER: statusnya
@@ -155,7 +175,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       if (o.hasPhoto) params.set('has_photo', o.hasPhoto);
       if (o.sort) params.set('sort', o.sort);
       if (o.order) params.set('order', o.order);
-      // Ambil cukup banyak baris supaya paginasi 10/hal di layar tidak memotong
+      // Ambil cukup banyak baris supaya paginasi di layar tidak memotong
       // katalog besar (bawaan server 100 dulu menyembunyikan item ke-101 dst.)
       params.set('limit', '500');
       const r = await cat(`/${cid}/items?${params}`, { headers });
@@ -191,7 +211,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   }, [loadAccounts, loadDashboard, loadProductCategories]);
 
   useEffect(() => {
-    if (tab === 'catalogs' || tab === 'items') loadCatalogs();
+    if (tab === 'catalogs' || tab === 'items' || tab === 'history') loadCatalogs();
     if (tab === 'stock') loadDashboard();
   }, [tab, loadCatalogs, loadDashboard]);
 
@@ -203,6 +223,18 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   }, [selectedCatalog, searchQ, filterStatus, filterCategoryId, filterAttention, f4,
       tab, loadItems, loadHistory]);
 
+  // Tab Item/Riwayat dibuka tanpa katalog terpilih → pilih katalog pertama (dulu tab itu terkunci sampai
+  // satu kartu katalog diklik; kini pemilih katalog ada di baris tab).
+  useEffect(() => {
+    if ((tab === 'items' || tab === 'history') && !selectedCatalog && catalogs.length) setSelectedCatalog(catalogs[0]);
+  }, [tab, selectedCatalog, catalogs]);
+
+  const reloadItems = () => {
+    if (!selectedCatalog) return;
+    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
+  };
+  const reloadCatalogs = () => { loadCatalogs(); loadDashboard(); };
+
   // ── Handlers ─────────────────────────────────────────────────────
 
   const handleSaveCatalog = async (form) => {
@@ -212,20 +244,25 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       { method: isEdit ? 'PUT' : 'POST', headers, body: JSON.stringify(form) }
     );
     const d = await r.json();
-    if (!r.ok) { toast.error(d.detail || 'Gagal simpan'); return; }
-    toast.success(isEdit ? 'Katalog diupdate' : 'Katalog dibuat!');
+    if (!r.ok) { throw new Error(d.detail || 'Gagal menyimpan katalog'); }
+    toast.success(isEdit ? 'Katalog disimpan' : 'Katalog dibuat');
     setCatalogDialog(null);
-    loadCatalogs();
+    reloadCatalogs();
   };
 
   const handleDeleteCatalog = async (catalog) => {
-    if (!(await confirmDialog(`Hapus katalog "${catalog.name}" dan semua itemnya?`))) return;
+    const ok = await confirmDialog({
+      title: `Hapus katalog "${catalog.name}"?`,
+      body: 'Katalog dan semua itemnya dihapus.',
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     const r = await cat(`/${catalog.id}`, { method: 'DELETE', headers });
     const d = await r.json();
-    if (!r.ok) { toast.error(d.detail || 'Gagal hapus'); return; }
+    if (!r.ok) { toast.error(d.detail || 'Gagal menghapus katalog'); return; }
     toast.success(d.message || 'Katalog dihapus');
     if (selectedCatalog?.id === catalog.id) setSelectedCatalog(null);
-    loadCatalogs();
+    reloadCatalogs();
   };
 
   const handleSaveItem = async (form) => {
@@ -252,8 +289,8 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
         method: 'POST', headers, body: JSON.stringify(payload),
       });
       const d = await r.json();
-      if (!r.ok) { toast.error(d.detail || 'Gagal simpan item dari FG'); return; }
-      toast.success(d.message || 'Item berhasil ditambahkan dari FG');
+      if (!r.ok) { throw new Error(d.detail || 'Gagal menyimpan item dari FG'); }
+      toast.success(d.message || 'Item ditambahkan dari FG');
     } else {
       // Manual entry (edit existing or new manual)
       const payload = {
@@ -276,10 +313,8 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       delete payload._mode;
       delete payload.fg_preview;
       // ── F6/T3 — kategori TIDAK lagi dikirim sebagai teks bebas ──────────────
-      // Server memang sudah membuang `category`, jadi mengirimnya hanya membuat
-      // staf percaya isian itu tersimpan. Yang dikirim sekarang `category_id`
-      // (tervalidasi), dan HANYA untuk item yang belum tertaut master — item
-      // tertaut kategorinya milik Master Produk (server balas 400 kalau dipaksa).
+      // Yang dikirim `category_id` (tervalidasi), dan HANYA untuk item yang belum tertaut
+      // master — item tertaut kategorinya milik Master Produk (server balas 400 kalau dipaksa).
       const _linkedToMaster = !!(form.fg_material_id || form.material_id || form.variant_id);
       delete payload.category;
       delete payload.fg_material_id;
@@ -291,21 +326,25 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
         { method: isEdit ? 'PUT' : 'POST', headers, body: JSON.stringify(payload) }
       );
       const d = await r.json();
-      if (!r.ok) { toast.error(d.detail || 'Gagal simpan item'); return; }
-      toast.success(isEdit ? 'Item diupdate' : 'Item ditambahkan!');
+      if (!r.ok) { throw new Error(d.detail || 'Gagal menyimpan item'); }
+      toast.success(isEdit ? 'Item disimpan' : 'Item ditambahkan');
     }
     setItemDialog(null);
     loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
-    loadCatalogs();
+    reloadCatalogs();
   };
 
   const handleDeleteItem = async (item) => {
-    if (!(await confirmDialog(`Hapus item "${item.name}"?`))) return;
+    const ok = await confirmDialog({
+      title: `Hapus item "${item.name}"?`, body: 'Item dihapus dari katalog ini.',
+      confirmLabel: 'Hapus', danger: true,
+    });
+    if (!ok) return;
     const r = await cat(`/${selectedCatalog.id}/items/${item.id}`, { method: 'DELETE', headers });
-    if (!r.ok) { toast.error('Gagal hapus item'); return; }
+    if (!r.ok) { toast.error('Gagal menghapus item'); return; }
     toast.success('Item dihapus');
     loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
-    loadCatalogs();
+    reloadCatalogs();
   };
 
   const handleUpdateStock = async (form) => {
@@ -313,11 +352,11 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       method: 'PUT', headers, body: JSON.stringify({ stock_quantity: form.stock_quantity, notes: form.notes }),
     });
     const d = await r.json();
-    if (!r.ok) { toast.error(d.detail || 'Gagal update stok'); return; }
-    toast.success(`Stok diupdate: ${d.old_stock} → ${d.new_stock}`);
+    if (!r.ok) { throw new Error(d.detail || 'Gagal mengubah stok'); }
+    toast.success(`Stok diubah: ${d.old_stock} → ${d.new_stock}`);
     setStockDialog(null);
     loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
-    loadCatalogs();
+    reloadCatalogs();
     loadHistory(selectedCatalog.id);
   };
 
@@ -326,17 +365,17 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     const updates = Object.entries(bulkStockData)
       .filter(([, v]) => v.qty !== '' && v.qty !== undefined)
       .map(([item_id, v]) => ({ item_id, stock_quantity: parseFloat(v.qty) || 0, notes: v.notes || '' }));
-    if (!updates.length) { toast.error('Tidak ada data yang diinput'); return; }
+    if (!updates.length) { throw new Error('Belum ada stok baru yang diisi.'); }
     const r = await cat(`/${selectedCatalog.id}/bulk-stock-update`, {
       method: 'POST', headers, body: JSON.stringify({ updates }),
     });
     const d = await r.json();
-    if (!r.ok) { toast.error(d.detail || 'Gagal bulk update'); return; }
+    if (!r.ok) { throw new Error(d.detail || 'Gagal mengubah stok massal'); }
     toast.success(`${d.saved} item stok diperbarui`);
     setBulkStockDialog(false);
     setBulkStockData({});
     loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
-    loadCatalogs();
+    reloadCatalogs();
     loadHistory(selectedCatalog.id);
   };
 
@@ -346,37 +385,33 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     try {
       const r = await cat(`/${selectedCatalog.id}/sync-from-wms`, { method: 'POST', headers });
       const d = await r.json();
-      if (!r.ok) { toast.error(d.detail || 'Gagal sync'); return; }
+      if (!r.ok) { toast.error(d.detail || 'Gagal sinkron stok'); return; }
       toast.success(d.message);
       loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
-      loadCatalogs();
+      reloadCatalogs();
     } finally { setSyncing(false); }
   };
 
-  // Tarik-ulang HPP dari RnD (Model/FG) — SEMUA item katalog (bulk)
+  // Tarik-ulang HPP dari RnD (Model/FG) — SEMUA item katalog (massal)
   const handleRefreshHppBulk = async () => {
     if (!selectedCatalog) return;
     setRefreshingHpp(true);
     try {
       const r = await cat(`/${selectedCatalog.id}/refresh-hpp`, { method: 'POST', headers });
       const d = await r.json();
-      if (!r.ok) { toast.error(d.detail || 'Gagal refresh HPP'); return; }
+      if (!r.ok) { toast.error(d.detail || 'Gagal menarik ulang HPP'); return; }
       const skipped = d.skipped_no_source || 0;
       toast.success(
         `HPP diperbarui: ${d.updated} item${skipped ? ` · ${skipped} item tanpa sumber RnD dilewati` : ''}`
       );
       loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
     } catch (e) {
-      toast.error('Gagal refresh HPP');
+      toast.error('Gagal menarik ulang HPP');
     } finally { setRefreshingHpp(false); }
   };
 
-  // Tarik-ulang HPP dari RnD (Model/FG) — satu item
-
   // F8/M7 — Segarkan field TAMPILAN item katalog dari MASTER (nama, kategori,
-  // berat, info varian, HPP, harga resmi) + stoknya. Menutup "salinan tanpa
-  // penyegar": dulu field-field ini disalin SEKALI saat item dibuat dan tidak
-  // pernah diperbarui, jadi kategori/berat di katalog basi selamanya.
+  // berat, info varian, HPP, harga resmi) + stoknya.
   const handleRefreshFromMaster = async () => {
     if (!selectedCatalog) return;
     setRefreshingMaster(true);
@@ -386,514 +421,281 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       if (!r.ok) { toast.error(d.detail || 'Gagal menyegarkan dari master'); return; }
       toast.success(d.message || `${d.updated} item disegarkan dari master`);
       loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
-      loadCatalogs();
+      reloadCatalogs();
     } catch (e) {
       toast.error('Gagal menyegarkan dari master');
     } finally { setRefreshingMaster(false); }
   };
 
-  // Fase 3b — Sinkron stok item Toko dari FG (by SKU varian / material). Auto-override.
+  // ── Angka per katalog (LIVE, dari stock-dashboard → catalog_breakdown) ────────────────
+  // Cadangan bila server belum mengirim `catalog_breakdown` (server lama): hitung dari daftar item tiap
+  // katalog aktif — `stock_live_status` di sana memakai rumus yang SAMA (stok jual live, ambang kosong = 10).
+  const [hitungCadangan, setHitungCadangan] = useState(null);
+  useEffect(() => {
+    if (!dashboard || dashboard.catalog_breakdown || !catalogs.length) return undefined;
+    let batal = false;
+    (async () => {
+      const hasil = {};
+      await Promise.all(catalogs.filter((c) => c.is_active !== false).map(async (c) => {
+        try {
+          const r = await cat(`/${c.id}/items?limit=500`, { headers });
+          const d = await r.json();
+          if (!r.ok) return;
+          const h = { total: 0, in_stock: 0, low_stock: 0, out_of_stock: 0, unlinked: 0 };
+          (d.items || []).filter((i) => i.is_active !== false).forEach((i) => {
+            h.total += 1;
+            const st = i.stock_live_status || 'unlinked';
+            if (h[st] !== undefined) h[st] += 1;
+          });
+          hasil[c.id] = h;
+        } catch (e) { /* katalog ini tetap "—" */ }
+      }));
+      if (!batal) setHitungCadangan(hasil);
+    })();
+    return () => { batal = true; };
+  }, [dashboard, catalogs, headers]);
+  const perKatalog = dashboard?.catalog_breakdown || hitungCadangan || null;
+  const sm = dashboard?.summary || {};
+  const adaBelumTertaut = !!sm.unlinked;
+  const hitungKatalog = (c) => (perKatalog ? perKatalog[c.id] || null : null);
+  const alasanKosong = (c) => (c.is_active === false
+    ? 'Katalog nonaktif tidak dihitung dalam ringkasan stok'
+    : 'Jumlah stok per katalog belum tersedia — muat ulang halaman');
+  const pilihKatalog = (c) => { setSelectedCatalog(c); setTab('items'); };
+
+  const Sel = ({ c, k, tone }) => {
+    const h = hitungKatalog(c);
+    if (!h) return <span className="text-muted-foreground" title={alasanKosong(c)}>—</span>;
+    const v = h[k] || 0;
+    const cls = v > 0 && tone === 'danger' ? 'text-[hsl(var(--danger-text))] font-medium'
+      : v > 0 && tone === 'warning' ? 'text-[hsl(var(--warning-text))] font-medium' : '';
+    return <span className={`tabular-nums ${cls}`}>{angka(v)}</span>;
+  };
+
+  const kolomKatalog = [
+    { kunci: 'nama', label: 'Katalog', hp: 'judul', isi: (c) => (
+      <div className="min-w-0 md:max-w-[22rem]">
+        <p className="truncate font-medium text-foreground" title={c.name}>{c.name}</p>
+        {c.description && <p className="hidden truncate text-xs text-muted-foreground md:block" title={c.description}>{c.description}</p>}
+      </div>) },
+    { kunci: 'toko', label: 'Toko', hp: 'keterangan', isi: (c) => (
+      <span className="text-sm">{labelPlatform(c.platform)}{c.account_name ? ` · ${c.account_name}` : ''}</span>) },
+    { kunci: 'total', label: 'Item aktif', rata: 'kanan', isi: (c) => <Sel c={c} k="total" /> },
+    { kunci: 'tersedia', label: 'Tersedia', rata: 'kanan', isi: (c) => <Sel c={c} k="in_stock" /> },
+    { kunci: 'menipis', label: 'Stok menipis', rata: 'kanan', isi: (c) => <Sel c={c} k="low_stock" tone="warning" /> },
+    { kunci: 'habis', label: 'Stok habis', rata: 'kanan', isi: (c) => <Sel c={c} k="out_of_stock" tone="danger" /> },
+    ...(adaBelumTertaut ? [{ kunci: 'unlinked', label: 'Belum tertaut', rata: 'kanan', isi: (c) => <Sel c={c} k="unlinked" /> }] : []),
+    { kunci: 'status', label: 'Status', isi: (c) => (c.is_active === false
+      ? <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />
+      : <StatusBadge status="aktif" label="Aktif" tone="success" />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => pilihKatalog(c)} data-testid={`catalog-open-${c.id}`}>
+          <Eye />Lihat item
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" aria-label="Aksi lain" title="Aksi lain" data-testid={`catalog-more-${c.id}`}>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setCatalogDialog(c)}><Pencil className="mr-2 h-4 w-4" />Ubah katalog</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => handleDeleteCatalog(c)} className="text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" />Hapus katalog
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>) },
+  ];
+
+  const nilaiKatalog = (k) => (c) => { const h = hitungKatalog(c); return h ? (h[k] || 0) : ''; };
+  const unduhKatalog = [
+    { label: 'Katalog', nilai: (c) => c.name },
+    { label: 'Deskripsi', nilai: (c) => c.description || '' },
+    { label: 'Platform', nilai: (c) => labelPlatform(c.platform) },
+    { label: 'Toko', nilai: (c) => c.account_name || '' },
+    { label: 'Item aktif', nilai: nilaiKatalog('total') },
+    { label: 'Tersedia', nilai: nilaiKatalog('in_stock') },
+    { label: 'Stok menipis', nilai: nilaiKatalog('low_stock') },
+    { label: 'Stok habis', nilai: nilaiKatalog('out_of_stock') },
+    { label: 'Belum tertaut master', nilai: nilaiKatalog('unlinked') },
+    { label: 'Status', nilai: (c) => (c.is_active === false ? 'Nonaktif' : 'Aktif') },
+  ];
+
+  const tombolMuat = (fn, sedang = false, testId) => (
+    <Button variant="outline" size="icon" onClick={fn} disabled={sedang} title="Muat ulang" aria-label="Muat ulang" data-testid={testId}>
+      <RefreshCw className={sedang ? 'animate-spin' : ''} />
+    </Button>
+  );
+
+  const pemilihKatalog = (tab === 'items' || tab === 'history') && (
+    <SmartNativeSelect className="w-72" value={selectedCatalog?.id || ''} placeholder="Pilih katalog"
+      onChange={(e) => setSelectedCatalog(catalogs.find((c) => c.id === e.target.value) || null)}
+      data-testid="catalog-picker">
+      <option value="">Pilih katalog…</option>
+      {catalogs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </SmartNativeSelect>
+  );
+
+  // Alat satu katalog (jarang dipakai) dikumpulkan dalam satu menu supaya baris penyaring tetap satu baris.
+  const alatKatalog = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" data-testid="catalog-tools">
+          {(syncing || refreshingHpp || refreshingMaster) ? <Loader2 className="animate-spin" /> : <MoreHorizontal />}
+          Alat katalog
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuItem onSelect={() => setBulkStockDialog(true)} data-testid="catalog-bulk-stock">
+          <ArrowRightLeft className="mr-2 h-4 w-4" />Ubah stok massal
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleWmsSync} disabled={syncing} data-testid="catalog-sync-wms"
+          title="Sinkron stok semua item dari gudang barang jadi (lewat material & varian/SKU)">
+          <RefreshCw className="mr-2 h-4 w-4" />Sinkron stok FG
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleRefreshHppBulk} disabled={refreshingHpp} data-testid="catalog-refresh-hpp-bulk"
+          title="Tarik ulang HPP semua item dari master (R&D / HPP dasar manual)">
+          <Coins className="mr-2 h-4 w-4" />Tarik ulang HPP
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={handleRefreshFromMaster} disabled={refreshingMaster} data-testid="catalog-refresh-from-master"
+          title="Segarkan nama, kategori, berat, info varian, HPP & harga resmi dari Master Produk">
+          <Link2 className="mr-2 h-4 w-4" />Segarkan dari master
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const pageAction = tab === 'catalogs'
+    ? <Button onClick={() => setCatalogDialog({})} data-testid="catalog-create-btn"><Plus />Buat katalog</Button>
+    : tab === 'items' && selectedCatalog
+      ? <>{alatKatalog}<Button onClick={() => setItemDialog({})} data-testid="catalog-add-item-btn"><Plus />Tambah item</Button></>
+      : null;
 
   // ── Render ────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <Layers className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-            Manajemen Katalog Produk
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Katalog per toko dan stok jualnya
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setCatalogDialog({})}>
-            <Plus className="w-4 h-4 mr-1" /> Buat Katalog
-          </Button>
-        </div>
-      </div>
-
-      {/* Stats Bar — 2026-11-06 (Tahap 2): dihitung server dari ISI katalog yang boleh
-          Anda lihat, dengan stok jual LIVE; item yang belum tertaut master dihitung terpisah. */}
-      {dashboard && (
-        <div className={`grid grid-cols-2 ${dashboard.summary?.unlinked ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}
-          data-testid="catalog-stock-tiles">
-          <StatTile label="Total item" value={dashboard.summary?.total_items || 0}
-            sub={dashboard.summary?.catalogs ? `di ${dashboard.summary.catalogs} katalog aktif` : undefined} />
-          <StatTile label="Tersedia" value={dashboard.summary?.in_stock || 0} accent="success" />
-          <StatTile label="Stok rendah" value={dashboard.summary?.low_stock || 0} accent="warning" />
-          <StatTile label="Habis" value={dashboard.summary?.out_of_stock || 0} accent="danger" />
-          {dashboard.summary?.unlinked ? (
-            <StatTile label="Belum tertaut master" value={dashboard.summary.unlinked} accent="muted"
-              testId="catalog-stock-unlinked" sub="Stoknya belum bisa dihitung otomatis" />
-          ) : null}
-        </div>
-      )}
-
+    <PageLayout testId="catalog-management" title="Manajemen katalog"
+      subtitle="Katalog per toko, isi itemnya, dan stok jual yang dihitung langsung dari gudang barang jadi."
+      actions={pageAction}>
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-5 w-full">
-          <TabsTrigger value="catalogs" className="flex items-center gap-1.5 text-xs" data-testid="catalog-tab-catalogs">
-            <Layers className="w-3.5 h-3.5" /> Katalog
-          </TabsTrigger>
-          <TabsTrigger value="items" className="flex items-center gap-1.5 text-xs" disabled={!selectedCatalog} data-testid="catalog-tab-items">
-            <ShoppingBag className="w-3.5 h-3.5" /> Item {selectedCatalog && <Badge variant="secondary" className="ml-1 text-xs px-1">{selectedCatalog.item_count}</Badge>}
-          </TabsTrigger>
-          <TabsTrigger value="from-master" className="flex items-center gap-1.5 text-xs" data-testid="catalog-tab-from-master">
-            <PackagePlus className="w-3.5 h-3.5" /> Isi dari Master
-          </TabsTrigger>
-          <TabsTrigger value="stock" className="flex items-center gap-1.5 text-xs" data-testid="catalog-tab-stock">
-            <BarChart3 className="w-3.5 h-3.5" /> Stok Dashboard
-          </TabsTrigger>
-          <TabsTrigger value="history" className="flex items-center gap-1.5 text-xs" disabled={!selectedCatalog} data-testid="catalog-tab-history">
-            <History className="w-3.5 h-3.5" /> Riwayat
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex flex-wrap items-center gap-3">
+          <TabsList className={TAB_LIST_CLASS}>
+            <TabsTrigger value="catalogs" className="shrink-0" data-testid="catalog-tab-catalogs">Katalog</TabsTrigger>
+            <TabsTrigger value="items" className="shrink-0" data-testid="catalog-tab-items">Item</TabsTrigger>
+            <TabsTrigger value="from-master" className="shrink-0" data-testid="catalog-tab-from-master">Isi dari master</TabsTrigger>
+            <TabsTrigger value="stock" className="shrink-0" data-testid="catalog-tab-stock">Ringkasan stok</TabsTrigger>
+            <TabsTrigger value="history" className="shrink-0" data-testid="catalog-tab-history">Riwayat stok</TabsTrigger>
+          </TabsList>
+          {pemilihKatalog && <div className="sm:ml-auto">{pemilihKatalog}</div>}
+        </div>
 
-        {/* ── TAB 1: CATALOGS ── */}
-        <TabsContent value="catalogs" className="space-y-4 mt-4">
-          <div className="flex flex-wrap gap-2 items-center justify-between">
-            <SmartNativeSelect
-              className="text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-              value={filterAccount}
-              onChange={e => setFilterAccount(e.target.value)}
-            >
-              <option value="">Semua Akun</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.platform} — {a.account_name || a.name}</option>)}
-            </SmartNativeSelect>
-            <Button size="sm" variant="outline" onClick={loadCatalogs} disabled={loading}>
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
-
-          {loading && (
-            <div className="text-center py-12"><Loader2 className="w-8 h-8 animate-spin mx-auto text-indigo-600 dark:text-indigo-400" /></div>
-          )}
-
-          {!loading && catalogs.length === 0 && (
-            <div className="text-center py-16 text-muted-foreground">
-              <Layers className="w-12 h-12 mx-auto mb-3 opacity-20" />
-              <p className="text-sm">Belum ada katalog</p>
-              <p className="text-xs mt-1">Klik "Buat Katalog" untuk memulai</p>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {catalogs.map(catalog => (
-              <CatalogCard
-                key={catalog.id}
-                catalog={catalog}
-                isSelected={selectedCatalog?.id === catalog.id}
-                onSelect={() => { setSelectedCatalog(catalog); setTab('items'); }}
-                onEdit={() => setCatalogDialog(catalog)}
-                onDelete={() => handleDeleteCatalog(catalog)}
-              />
-            ))}
-          </div>
-        </TabsContent>
-
-        {/* ── TAB 2: ITEMS ── */}
-        <TabsContent value="items" className="space-y-4 mt-4">
-          {selectedCatalog && (
-            <>
-              {/* Catalog breadcrumb */}
-              <div className="flex items-center gap-2 flex-wrap justify-between">
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => setTab('catalogs')}>
-                    <ChevronLeft className="w-4 h-4 mr-1" /> Katalog
-                  </Button>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-medium text-sm">{selectedCatalog.name}</span>
-                  <PlatformBadge platform={selectedCatalog.platform} />
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setBulkStockDialog(true)}>
-                    <ArrowRightLeft className="w-4 h-4 mr-1" /> Bulk Stok
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={handleWmsSync} disabled={syncing}
-                    title="Sinkron stok semua item dari WMS/Finished Goods (via material & varian/SKU)"
-                    data-testid="catalog-sync-wms">
-                    {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
-                    Sinkron Stok FG
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={handleRefreshHppBulk} disabled={refreshingHpp}
-                    title="Tarik-ulang HPP semua item dari master (R&D / HPP dasar manual)" data-testid="catalog-refresh-hpp-bulk">
-                    {refreshingHpp ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Coins className="w-4 h-4 mr-1 text-amber-600 dark:text-amber-400" />}
-                    Refresh HPP
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={handleRefreshFromMaster} disabled={refreshingMaster}
-                    title="Segarkan nama, kategori, berat, info varian, HPP & harga resmi dari Master Produk"
-                    data-testid="catalog-refresh-from-master">
-                    {refreshingMaster ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1 text-indigo-600 dark:text-indigo-400" />}
-                    Segarkan dari Master
-                  </Button>
-                  <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setItemDialog({})}>
-                    <Plus className="w-4 h-4 mr-1" /> Tambah Item
-                  </Button>
-                </div>
-              </div>
-
-              {/* Filters */}
-              <div className="flex gap-2 flex-wrap">
-                <div className="relative flex-1 min-w-[180px]">
-                  <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    className="pl-8 h-8 text-xs"
-                    placeholder="Cari nama, SKU, tag..."
-                    value={searchQ}
-                    onChange={e => setSearchQ(e.target.value)}
-                  />
-                </div>
-                <SmartNativeSelect
-                  className="w-36 text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-                  value={filterStatus}
-                  onChange={e => setFilterStatus(e.target.value)}
-                >
-                  <option value="">Semua Status</option>
-                  <option value="in_stock">Tersedia</option>
-                  <option value="low_stock">Stok Rendah</option>
-                  <option value="out_of_stock">Habis</option>
-                </SmartNativeSelect>
-                <SmartNativeSelect
-                  className="w-48 text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-                  value={filterCategoryId}
-                  onChange={e => setFilterCategoryId(e.target.value)}
-                  title="Kategori dari Master Produk (bukan teks bebas)"
-                  data-testid="catalog-filter-category"
-                >
-                  <option value="">Semua Kategori</option>
-                  {productCategories.map(c => (
-                    <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>
-                  ))}
-                </SmartNativeSelect>
-              </div>
-
-              {/* F11 — chip "Perlu Perhatian". Ada di samping filter lain supaya
-                  item bermasalah bisa ditemukan TANPA menebak halaman. Chip hanya
-                  tampil kalau memang ada masalah — layar bersih tidak perlu
-                  dihiasi tombol yang selalu kosong. */}
-              {(stockSummary.attention > 0 || filterAttention) && (
-                <div className="flex flex-wrap items-center gap-2" data-testid="catalog-attention-chips">
-                  <span className="text-[11px] text-muted-foreground">Tampilkan:</span>
-                  {[
-                    { key: '', label: 'Semua Item', count: null, testid: 'chip-all' },
-                    { key: 'all', label: 'Perlu Perhatian', count: stockSummary.attention || 0, testid: 'chip-attention' },
-                    { key: 'unlinked', label: 'Belum tertaut master', count: stockSummary.unlinked || 0, testid: 'chip-unlinked' },
-                    { key: 'stale', label: 'Stok basi', count: stockSummary.stale || 0, testid: 'chip-stale' },
-                  ].filter(c => c.key === '' || c.key === 'all' || c.count > 0 || filterAttention === c.key)
-                    .map(c => {
-                      const active = filterAttention === c.key;
-                      return (
-                        <button
-                          key={c.key || 'all-items'}
-                          type="button"
-                          onClick={() => setFilterAttention(c.key)}
-                          data-testid={`catalog-attention-${c.testid}`}
-                          className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
-                            active
-                              ? 'bg-amber-500/20 border-amber-400/60 text-amber-800 dark:text-amber-200 font-semibold'
-                              : 'bg-foreground/5 border-foreground/10 text-muted-foreground hover:text-foreground hover:border-foreground/25'
-                          }`}
-                        >
-                          {c.label}
-                          {c.count !== null && <span className="ml-1 opacity-80">({c.count})</span>}
-                        </button>
-                      );
-                    })}
-                  {filterAttention && (
-                    <span className="text-[11px] text-amber-700 dark:text-amber-300"
-                      data-testid="catalog-attention-active-note">
-                      menampilkan {items.length} item bermasalah dari {stockSummary.scanned ?? '—'} item katalog
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* K-7a — peringatan cache stok basi / item belum tertaut master.
-                  F11: BISA DIKLIK. Sebelumnya banner ini memberi tahu ada masalah
-                  tanpa satu pun cara menemukannya (item bermasalah bisa di halaman
-                  ke-2), sehingga peringatannya praktis jadi hiasan. */}
-              {(stockSummary.stale > 0 || stockSummary.unlinked > 0) && (
-                <div className="flex items-start gap-2 text-[12px] rounded-lg p-3 border bg-amber-500/10 border-amber-400/40 text-amber-800 dark:text-amber-200"
-                  data-testid="catalog-stock-warning">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    {stockSummary.stale > 0 && (
-                      <div>
-                        <button type="button" onClick={() => setFilterAttention('stale')}
-                          className="underline decoration-dotted underline-offset-2 font-bold hover:opacity-80"
-                          data-testid="catalog-warning-stale-link"
-                          title="Klik untuk menyaring hanya item yang stoknya basi">
-                          {stockSummary.stale} item stoknya basi
-                        </button>
-                        {' '}— angka simpanan berbeda dari stok jual sebenarnya. Kolom “Stok”
-                        sudah menampilkan angka <b>LIVE</b>; klik <b>Sinkron Stok FG</b> untuk
-                        merapikan angka simpanannya.
-                      </div>
-                    )}
-                    {stockSummary.unlinked > 0 && (
-                      <div>
-                        <button type="button" onClick={() => setFilterAttention('unlinked')}
-                          className="underline decoration-dotted underline-offset-2 font-bold hover:opacity-80"
-                          data-testid="catalog-warning-unlinked-link"
-                          title="Klik untuk menyaring hanya item yang belum tertaut ke Master Produk">
-                          {stockSummary.unlinked} item belum tertaut ke master
-                        </button>
-                        {' '}— stoknya tidak bisa dihitung otomatis dan tidak bisa dijual lewat
-                        alur order. Tautkan varian/FG-nya.
-                      </div>
-                    )}
-                    {stockSummary.counts_truncated && (
-                      <div className="text-[11px] opacity-80">
-                        Catatan jujur: katalog ini lebih dari {stockSummary.scanned} item, jadi
-                        hitungan di atas hanya mencakup {stockSummary.scanned} item pertama.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* F4.4 — TABEL 20 KOLOM + KARTU, aksi penayangan, kelola foto.
-                  Tabel lama hanya 5 kolom (Produk/Harga/Stok/Status/Aksi) dan
-                  "Status" di situ artinya STOK — sehingga pertanyaan marketing
-                  ("mana yang belum tayang? ditolak kenapa? marjinnya berapa?")
-                  tidak bisa dijawab walau datanya SUDAH dikirim endpoint. */}
-              <CatalogItemsView
-                catalog={selectedCatalog}
-                token={token}
-                items={items}
-                stockSummary={stockSummary}
-                statusOptions={statusOptions}
-                filters={f4}
-                onFilterChange={(patch) => setF4((s) => ({ ...s, ...patch }))}
-                onEdit={(it) => setItemDialog(it)}
-                onDelete={(it) => handleDeleteItem(it)}
-                onReload={() => {
-                  loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId,
-                            filterAttention, f4);
-                  loadCatalogs();
-                }}
-              />
-            </>
-          )}
-        </TabsContent>
-
-        {/* ── TAB 3: STOCK DASHBOARD ── */}
-        <TabsContent value="stock" className="space-y-4 mt-4">
-          <div className="flex items-center justify-between">
-            <p className="font-medium text-sm">Dashboard Stok Multi-Katalog</p>
-            <Button size="sm" variant="outline" onClick={loadDashboard}>
-              <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-            </Button>
-          </div>
+        {/* ── TAB 1: KATALOG ── */}
+        <TabsContent value="catalogs" className="mt-4 space-y-4">
+          <Toolbar
+            filters={(
+              <SmartNativeSelect className="w-64" value={filterAccount}
+                onChange={e => setFilterAccount(e.target.value)} data-testid="catalog-filter-account">
+                <option value="">Semua toko</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{labelPlatform(a.platform)} — {a.account_name || a.name}</option>)}
+              </SmartNativeSelect>
+            )}
+            tools={<>
+              <TombolUnduh namaBerkas="katalog-toko" namaLembar="Katalog" baris={catalogs} kolom={unduhKatalog}
+                testId="catalog-unduh" />
+              {tombolMuat(reloadCatalogs, loading, 'catalog-refresh')}
+            </>} />
 
           {dashboard && (
-            <>
-              {/* Health bar */}
-              <div className="rounded-xl border border-foreground/10 bg-foreground/5 p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium">Kesehatan Stok Keseluruhan</span>
-                  <span className={`text-xl font-bold ${
-                    (dashboard.summary?.health_pct || 0) >= 80 ? 'text-emerald-600 dark:text-emerald-400' :
-                    (dashboard.summary?.health_pct || 0) >= 60 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'
-                  }`}>
-                    {dashboard.summary?.health_pct || 0}%
-                  </span>
-                </div>
-                <div className="w-full bg-foreground/10 rounded-full h-3 overflow-hidden">
-                  <div
-                    className={`h-3 rounded-full transition-all ${
-                      (dashboard.summary?.health_pct || 0) >= 80 ? 'bg-emerald-500' :
-                      (dashboard.summary?.health_pct || 0) >= 60 ? 'bg-amber-500' : 'bg-red-500'
-                    }`}
-                    style={{ width: `${dashboard.summary?.health_pct || 0}%` }}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  {dashboard.summary?.in_stock || 0} dari {dashboard.summary?.total_items || 0} item tersedia
-                  {dashboard.last_sync && <span> · Sync terakhir: {new Date(dashboard.last_sync.synced_at).toLocaleString('id-ID')}</span>}
-                </p>
-              </div>
-
-              {/* Per platform */}
-              {dashboard.platform_breakdown?.length > 0 && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2 font-medium">Breakdown per Platform</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {dashboard.platform_breakdown.map(p => (
-                      <div key={p.platform} className="rounded-lg border border-foreground/10 bg-foreground/5 p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-medium text-sm">{p.platform}</span>
-                          <span className="text-xs text-muted-foreground">{p.total} item</span>
-                        </div>
-                        <div className="flex gap-2 text-xs">
-                          <span className="text-emerald-600 dark:text-emerald-400">{p.in_stock || 0} ✓</span>
-                          <span className="text-amber-700 dark:text-amber-400">{p.low_stock || 0} ⚠</span>
-                          <span className="text-red-700 dark:text-red-400">{p.out_of_stock || 0} ✗</span>
-                          {p.unlinked ? (
-                            <span className="text-muted-foreground">{p.unlinked} belum tertaut</span>
-                          ) : null}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Low stock alert list */}
-              {dashboard.low_stock_items?.length > 0 && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2 font-medium flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400" />
-                    Item Perlu Restock ({dashboard.low_stock_items.length})
-                  </p>
-                  <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-                          <th className="text-left px-4 py-2">Produk</th>
-                          <th className="text-left px-4 py-2">Platform</th>
-                          <th className="text-center px-4 py-2">Stok</th>
-                          <th className="text-center px-4 py-2">Min</th>
-                          <th className="text-center px-4 py-2">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {dashboard.low_stock_items.map(item => {
-                          const cfg = STOCK_STATUS_CFG[item.stock_status] || STOCK_STATUS_CFG.low_stock;
-                          return (
-                            <tr key={item.id} className="hover:bg-foreground/5">
-                              <td className="px-4 py-2">
-                                <div className="font-medium text-xs">{item.name}</div>
-                                <div className="text-xs text-muted-foreground">{item.sku}</div>
-                              </td>
-                              <td className="px-4 py-2 text-xs">{item.platform}</td>
-                              <td className="px-4 py-2 text-center">
-                                <span className={`font-bold ${cfg.color}`}>{item.stock_quantity}</span>
-                              </td>
-                              <td className="px-4 py-2 text-center text-xs text-muted-foreground">
-                                {item.stock_alert_threshold}
-                              </td>
-                              <td className="px-4 py-2 text-center">
-                                <span className={`text-xs px-1.5 py-0.5 rounded-full border ${cfg.badge} ${cfg.bg}`}>
-                                  {cfg.label}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* 2026-11-06: SKU berstatus produk Stop tidak diusulkan restock — alasannya disebut */}
-              {dashboard.restock_excluded?.count > 0 && (
-                <p className="text-xs text-muted-foreground" data-testid="restock-excluded-stop">
-                  Tidak diusulkan restock: {dashboard.restock_excluded.count} item. {dashboard.restock_excluded.reason}.
-                  {(dashboard.restock_excluded.skus || []).length > 0 && ` SKU: ${dashboard.restock_excluded.skus.join(', ')}.`}
-                </p>
-              )}
-
-              {(!dashboard.low_stock_items || dashboard.low_stock_items.length === 0) && (
-                <div className="text-center py-10 text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle2 className="w-10 h-10 mx-auto mb-2 opacity-60" />
-                  <p className="text-sm">Semua item stok aman 🎉</p>
-                </div>
-              )}
-            </>
+            // Ringkasan stok satu kalimat — sumber sama dengan kartu di tab "Ringkasan stok" (stok jual LIVE,
+            // item aktif di katalog aktif yang boleh Anda lihat); item belum tertaut master = summary?.unlinked.
+            <p className="text-sm text-muted-foreground" data-testid="catalog-stock-sentence">
+              <b className="text-foreground">{angka(sm.total_items)}</b> item aktif di {angka(sm.catalogs)} katalog aktif ·{' '}
+              <b className="text-foreground">{angka(sm.in_stock)}</b> tersedia ·{' '}
+              <b className={sm.low_stock ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}>{angka(sm.low_stock)}</b> stok menipis ·{' '}
+              <b className={sm.out_of_stock ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}>{angka(sm.out_of_stock)}</b> stok habis
+              {dashboard.summary?.unlinked ? <> · {angka(dashboard.summary.unlinked)} belum tertaut master</> : null}
+              {' '}(stok jual dihitung langsung dari gudang barang jadi).
+            </p>
+          )}
+          {loading && catalogs.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Memuat katalog…</p>
+          ) : (
+            <TabelData kolom={kolomKatalog} baris={catalogs} onKlikBaris={pilihKatalog} testId="catalog-table"
+              kosong={<EmptyState icon={Layers} title={filterAccount ? 'Toko ini belum punya katalog' : 'Belum ada katalog'}
+                description='Klik "Buat katalog", atau isi katalog toko lewat tab "Isi dari master".'
+                action={<Button onClick={() => setCatalogDialog({})}><Plus />Buat katalog</Button>} />} />
+          )}
+          {perKatalog === null && dashboard && catalogs.length > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="catalog-count-missing">
+              Jumlah stok per katalog belum tersedia dari server — tampil "—". Angka di kartu atas tetap dihitung langsung.
+            </p>
           )}
         </TabsContent>
 
-        {/* ── TAB 4: HISTORY ── */}
-        <TabsContent value="history" className="space-y-4 mt-4">
-          {selectedCatalog && (
-            <>
-              <div className="flex items-center justify-between">
-                <p className="font-medium text-sm">Riwayat Stok — {selectedCatalog.name}</p>
-                <Button size="sm" variant="outline" onClick={() => loadHistory(selectedCatalog.id)}>
-                  <RefreshCw className="w-4 h-4 mr-1" /> Refresh
-                </Button>
-              </div>
-              {history.length === 0 && (
-                <div className="text-center py-12 text-muted-foreground">
-                  <History className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                  <p className="text-sm">Belum ada riwayat sinkronisasi</p>
-                </div>
-              )}
-              {history.length > 0 && (
-                <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-foreground/10 text-xs text-muted-foreground">
-                        <th className="text-left px-4 py-3">Produk</th>
-                        <th className="text-center px-4 py-3">Sebelum</th>
-                        <th className="text-center px-4 py-3">Delta</th>
-                        <th className="text-center px-4 py-3">Sesudah</th>
-                        <th className="text-left px-4 py-3">Tipe</th>
-                        <th className="text-left px-4 py-3">Waktu</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {history.map(log => (
-                        <tr key={log.id} className="hover:bg-foreground/5">
-                          <td className="px-4 py-2">
-                            <div className="font-medium text-xs">{log.name}</div>
-                            <div className="text-xs text-muted-foreground">{log.sku}</div>
-                          </td>
-                          <td className="px-4 py-2 text-center text-xs">{log.old_stock}</td>
-                          <td className="px-4 py-2 text-center">
-                            <span className={`text-xs font-bold ${log.delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : log.delta < 0 ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}`}>
-                              {log.delta > 0 ? '+' : ''}{log.delta}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-center text-xs font-medium">{log.new_stock}</td>
-                          <td className="px-4 py-2 text-xs">
-                            <span className="px-1.5 py-0.5 rounded bg-foreground/10 text-muted-foreground capitalize">
-                              {log.sync_type?.replace('_', ' ')}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-xs text-muted-foreground">
-                            {new Date(log.synced_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
+        {/* ── TAB 2: ITEM ── */}
+        <TabsContent value="items" className="mt-4 space-y-4">
+          {!selectedCatalog ? (
+            <EmptyState icon={Layers} title="Pilih katalog dulu"
+              description="Pilih katalog di kanan atas, atau klik satu baris di tab Katalog." />
+          ) : (
+            <CatalogItemsView
+              catalog={selectedCatalog}
+              token={token}
+              items={items}
+              stockSummary={stockSummary}
+              statusOptions={statusOptions}
+              filters={f4}
+              onFilterChange={(patch) => setF4((s) => ({ ...s, ...patch }))}
+              baseFilters={{ search: searchQ, stock: filterStatus, category: filterCategoryId, attention: filterAttention }}
+              onBaseFilter={{ search: setSearchQ, stock: setFilterStatus, category: setFilterCategoryId, attention: setFilterAttention }}
+              productCategories={productCategories}
+              onEdit={(it) => setItemDialog(it)}
+              onDelete={(it) => handleDeleteItem(it)}
+              onReload={() => { reloadItems(); reloadCatalogs(); }}
+            />
+          )}
+        </TabsContent>
+
+        {/* ── TAB 3: RINGKASAN STOK ── */}
+        <TabsContent value="stock" className="mt-4 space-y-4">
+          <StockSummaryTab dashboard={dashboard} onReload={loadDashboard} tombolMuat={tombolMuat} />
+        </TabsContent>
+
+        {/* ── TAB 4: RIWAYAT ── */}
+        <TabsContent value="history" className="mt-4 space-y-4">
+          {!selectedCatalog ? (
+            <EmptyState icon={Layers} title="Pilih katalog dulu" description="Riwayat stok ditampilkan per katalog." />
+          ) : (
+            <HistoryTab catalog={selectedCatalog} history={history}
+              onReload={() => loadHistory(selectedCatalog.id)} tombolMuat={tombolMuat} />
           )}
         </TabsContent>
 
         {/* ── TAB 5: ISI DARI MASTER PRODUK ──────────────────────────────────
             Jalur lama hanya bisa menambah SATU varian ke SATU katalog per aksi;
             untuk 9 toko × puluhan varian itu ratusan klik, dan yang benar-benar
-            terjadi bukan "staf sabar" melainkan katalog dibiarkan KOSONG —
-            sehingga item pesanan hasil impor tidak bisa ditautkan ke master dan
-            marjin per pesanan tidak bisa dihitung sama sekali. */}
+            terjadi bukan "staf sabar" melainkan katalog dibiarkan KOSONG. */}
         <TabsContent value="from-master" className="mt-4">
           {tab === 'from-master' && (
             <CatalogFromMasterModule
               token={token}
-              onAssigned={() => { loadCatalogs(); loadDashboard(); }}
+              onAssigned={reloadCatalogs}
             />
           )}
         </TabsContent>
       </Tabs>
 
-      {/* ── DIALOGS ── */}
-      {catalogDialog !== null && (
-        <CatalogDialog
-          initial={catalogDialog}
-          accounts={accounts}
-          onSave={handleSaveCatalog}
-          onClose={() => setCatalogDialog(null)}
-        />
-      )}
+      {/* ── POPUP ── */}
+      <CatalogDialog
+        open={catalogDialog !== null}
+        initial={catalogDialog || {}}
+        accounts={accounts}
+        onSave={handleSaveCatalog}
+        onClose={() => setCatalogDialog(null)}
+      />
 
       {itemDialog !== null && selectedCatalog && (
         <ItemDialog
@@ -923,109 +725,168 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
           onClose={() => { setBulkStockDialog(false); setBulkStockData({}); }}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }
 
-// ─── Catalog Card ─────────────────────────────────────────────────────────────
+// ─── Tab ringkasan stok ───────────────────────────────────────────────────────
 
-function CatalogCard({ catalog, isSelected, onSelect, onEdit, onDelete }) {
-  const totalItems = catalog.item_count || 0;
-  const lowStock = catalog.low_stock_count || 0;
-  const outStock = catalog.out_of_stock_count || 0;
-  const health = totalItems > 0
-    ? Math.round((totalItems - lowStock - outStock) / totalItems * 100)
-    : 100;
-
+function StockSummaryTab({ dashboard, onReload, tombolMuat }) {
+  if (!dashboard) return <p className="py-10 text-center text-sm text-muted-foreground">Memuat ringkasan stok…</p>;
+  const s = dashboard.summary || {};
+  const sm = s;
+  const plat = dashboard.platform_breakdown || [];
+  const rendah = dashboard.low_stock_items || [];
+  const totalMasalah = (s.low_stock || 0) + (s.out_of_stock || 0);
+  const kolomPlatform = [
+    { kunci: 'platform', label: 'Platform', hp: 'judul', isi: (p) => <span className="font-medium">{labelPlatform(p.platform)}</span> },
+    { kunci: 'total', label: 'Item aktif', rata: 'kanan', isi: (p) => <span className="tabular-nums">{angka(p.total)}</span> },
+    { kunci: 'in', label: 'Tersedia', rata: 'kanan', isi: (p) => <span className="tabular-nums">{angka(p.in_stock)}</span> },
+    { kunci: 'low', label: 'Stok menipis', rata: 'kanan', isi: (p) => <span className="tabular-nums">{angka(p.low_stock)}</span> },
+    { kunci: 'out', label: 'Stok habis', rata: 'kanan', isi: (p) => (
+      <span className={`tabular-nums ${p.out_of_stock ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>{angka(p.out_of_stock)}</span>) },
+    { kunci: 'unl', label: 'Belum tertaut', rata: 'kanan', isi: (p) => <span className="tabular-nums">{angka(p.unlinked)}</span> },
+    { kunci: 'pct', label: '% tersedia', rata: 'kanan', isi: (p) => <span className="tabular-nums">{persen(p.in_stock || 0, p.total || 0)}</span> },
+  ];
+  const kolomRendah = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (i) => (
+      <div className="min-w-0"><p className="truncate font-medium">{i.name}</p><p className="text-xs text-muted-foreground">{i.sku}</p></div>) },
+    { kunci: 'platform', label: 'Platform', isi: (i) => labelPlatform(i.platform) },
+    { kunci: 'stok', label: 'Stok jual', rata: 'kanan', isi: (i) => <span className="tabular-nums font-medium">{angka(i.stock_quantity)}</span> },
+    { kunci: 'min', label: 'Batas peringatan', rata: 'kanan', isi: (i) => <span className="tabular-nums">{i.stock_alert_threshold ?? 10}</span> },
+    { kunci: 'status', label: 'Status', isi: (i) => {
+      const c = STOK[i.stock_status] || STOK.low_stock;
+      return <StatusBadge status={i.stock_status} label={c.label} tone={c.tone} />;
+    } },
+  ];
   return (
-    <div className={`rounded-xl border p-4 space-y-3 cursor-pointer transition-all ${
-      isSelected
-        ? 'border-indigo-500/50 bg-indigo-100 dark:bg-indigo-500/10'
-        : 'border-foreground/10 bg-foreground/5 hover:border-foreground/20 hover:bg-foreground/[0.08]'
-    }`} onClick={onSelect}>
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <p className="font-semibold text-sm">{catalog.name}</p>
-            {!catalog.is_active && <Badge variant="outline" className="text-xs">Nonaktif</Badge>}
-          </div>
+    <>
+      {/* Stats — 2026-11-06 (Tahap 2): dihitung server dari ISI katalog yang boleh Anda lihat, dengan stok jual LIVE;
+          item yang belum tertaut master dihitung terpisah (summary?.unlinked). */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="catalog-stock-tiles">
+        <StatTile label="Item aktif" value={angka(sm.total_items)}
+          sub={[sm.catalogs ? `di ${sm.catalogs} katalog aktif` : null,
+            s.unlinked ? `${angka(s.unlinked)} belum tertaut master` : null]
+            .filter(Boolean).join(' · ') || 'Item aktif di katalog aktif'}
+          testId="catalog-stock-total" />
+        <StatTile label="Tersedia" value={angka(sm.in_stock)} accent="success"
+          sub={`${persen(sm.in_stock || 0, sm.total_items || 0)} dari item aktif`} />
+        <StatTile label="Stok menipis" value={angka(sm.low_stock)} accent="warning"
+          sub="Stok jual di bawah batas peringatan" />
+        <StatTile label="Stok habis" value={angka(sm.out_of_stock)} accent="danger"
+          sub="Stok jual di gudang 0" testId="catalog-stock-out" />
+      </div>
+
+      <section className="space-y-2" data-testid="catalog-stock-platform">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold">Per platform</p>
           <div className="flex items-center gap-2">
-            <PlatformBadge platform={catalog.platform} />
-            <span className="text-xs text-muted-foreground">{catalog.account_name}</span>
+          {dashboard.last_sync?.synced_at && <span className="text-xs text-muted-foreground">Sinkron terakhir {jam(dashboard.last_sync.synced_at)}</span>}
+          {tombolMuat(onReload, false, 'catalog-stock-refresh')}
+          <TombolUnduh namaBerkas="stok-katalog-per-platform" namaLembar="Per platform" baris={plat} testId="catalog-platform-unduh"
+            kolom={[
+              { label: 'Platform', nilai: (p) => labelPlatform(p.platform) },
+              { label: 'Item aktif', nilai: (p) => p.total || 0 },
+              { label: 'Tersedia', nilai: (p) => p.in_stock || 0 },
+              { label: 'Stok menipis', nilai: (p) => p.low_stock || 0 },
+              { label: 'Stok habis', nilai: (p) => p.out_of_stock || 0 },
+              { label: 'Belum tertaut master', nilai: (p) => p.unlinked || 0 },
+            ]} />
           </div>
-          {catalog.description && (
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{catalog.description}</p>
-          )}
         </div>
-        <div className="flex gap-1 ml-2">
-          <button className="p-1 hover:bg-foreground/10 rounded" onClick={e => { e.stopPropagation(); onEdit(); }}>
-            <Edit2 className="w-3.5 h-3.5 text-muted-foreground" />
-          </button>
-          <button className="p-1 hover:bg-foreground/10 rounded" onClick={e => { e.stopPropagation(); onDelete(); }}>
-            <Trash2 className="w-3.5 h-3.5 text-red-700 dark:text-red-400" />
-          </button>
-        </div>
-      </div>
+        <TabelData kolom={kolomPlatform} baris={plat} kunci={(p) => p.platform} testId="catalog-platform-table"
+          kosong={<EmptyState title="Belum ada item aktif" description="Isi katalog lewat tab Isi dari master." />} />
+      </section>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="rounded-lg bg-foreground/5 px-2 py-1.5">
-          <div className="font-bold text-sm">{totalItems}</div>
-          <div className="text-xs text-muted-foreground">Item</div>
+      <section className="space-y-2" data-testid="catalog-restock">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-base font-semibold">Perlu restock</p>
+            {rendah.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {rendah.length < totalMasalah
+                  ? `${rendah.length} item dengan stok terendah dari ${angka(totalMasalah)} item stok menipis/habis.`
+                  : `${rendah.length} item stok menipis/habis.`}
+              </p>
+            )}
+          </div>
+          <TombolUnduh namaBerkas="perlu-restock" namaLembar="Perlu restock" baris={rendah} testId="catalog-restock-unduh"
+            kolom={[
+              { label: 'Produk', nilai: (i) => i.name },
+              { label: 'SKU', nilai: (i) => i.sku },
+              { label: 'Platform', nilai: (i) => labelPlatform(i.platform) },
+              { label: 'Stok jual', nilai: (i) => Number(i.stock_quantity || 0) },
+              { label: 'Batas peringatan', nilai: (i) => i.stock_alert_threshold ?? 10 },
+              { label: 'Status', nilai: (i) => (STOK[i.stock_status] || STOK.low_stock).label },
+            ]} />
         </div>
-        <div className="rounded-lg bg-amber-100 dark:bg-amber-500/10 px-2 py-1.5">
-          <div className="font-bold text-sm text-amber-700 dark:text-amber-400">{lowStock}</div>
-          <div className="text-xs text-muted-foreground">Rendah</div>
-        </div>
-        <div className="rounded-lg bg-red-100 dark:bg-red-500/10 px-2 py-1.5">
-          <div className="font-bold text-sm text-red-700 dark:text-red-400">{outStock}</div>
-          <div className="text-xs text-muted-foreground">Habis</div>
-        </div>
-      </div>
-
-      {/* Health bar */}
-      <div>
-        <div className="flex justify-between text-xs mb-1">
-          <span className="text-muted-foreground">Kesehatan Stok</span>
-          <span className={health >= 80 ? 'text-emerald-600 dark:text-emerald-400' : health >= 60 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}>
-            {health}%
-          </span>
-        </div>
-        <div className="w-full bg-foreground/10 rounded-full h-1.5">
-          <div
-            className={`h-1.5 rounded-full ${health >= 80 ? 'bg-emerald-500' : health >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}
-            style={{ width: `${health}%` }}
-          />
-        </div>
-      </div>
-
-      <Button size="sm" variant="outline" className="w-full text-xs" onClick={onSelect}>
-        <Eye className="w-3.5 h-3.5 mr-1" /> Lihat Item
-      </Button>
-    </div>
+        <TabelData kolom={kolomRendah} baris={rendah} testId="catalog-restock-table"
+          kosong={<EmptyState title="Semua item stok aman" description="Tidak ada item aktif dengan stok menipis atau habis." />} />
+        {/* 2026-11-06: SKU berstatus produk Stop tidak diusulkan restock — alasannya disebut */}
+        {dashboard.restock_excluded?.count > 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="restock-excluded-stop">
+            Tidak diusulkan restock: {dashboard.restock_excluded.count} item. {dashboard.restock_excluded.reason}.
+            {(dashboard.restock_excluded.skus || []).length > 0 && ` SKU: ${dashboard.restock_excluded.skus.join(', ')}.`}
+          </p>
+        )}
+      </section>
+    </>
   );
 }
 
-// ─── Platform Badge ───────────────────────────────────────────────────────────
+// ─── Tab riwayat stok ─────────────────────────────────────────────────────────
 
-function PlatformBadge({ platform }) {
-  const cfg = {
-    'Shopee': 'bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-300 border-orange-400 dark:border-orange-500/30',
-    'TikTok Shop': 'bg-pink-100 dark:bg-pink-500/20 text-pink-600 dark:text-pink-300 border-pink-400 dark:border-pink-500/30',
-    'Tokopedia': 'bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-300 border-green-400 dark:border-green-500/30',
-    'Lazada': 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-500/30',
-    'Blibli': 'bg-blue-600/20 text-blue-200 border-blue-600/30',
-  }[platform] || 'bg-foreground/10 text-muted-foreground border-foreground/10';
+const JENIS_SINKRON = {
+  manual: 'Manual', manual_update: 'Ubah manual', bulk: 'Massal', bulk_update: 'Ubah massal',
+  wms_sync: 'Sinkron gudang', fg_sync: 'Sinkron FG', sync: 'Sinkron', import: 'Impor', order: 'Pesanan',
+};
+const labelJenis = (t) => JENIS_SINKRON[t] || (t ? String(t).replace(/_/g, ' ').replace(/^\w/, (x) => x.toUpperCase()) : '—');
+
+function HistoryTab({ catalog, history, onReload, tombolMuat }) {
+  const kolom = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (l) => (
+      <div className="min-w-0"><p className="truncate font-medium">{l.name}</p><p className="text-xs text-muted-foreground">{l.sku}</p></div>) },
+    { kunci: 'old', label: 'Sebelum', rata: 'kanan', isi: (l) => <span className="tabular-nums">{angka(l.old_stock)}</span> },
+    { kunci: 'delta', label: 'Selisih', rata: 'kanan', isi: (l) => (
+      <span className={`tabular-nums font-medium ${l.delta > 0 ? 'text-[hsl(var(--success-text))]' : l.delta < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`}>
+        {l.delta > 0 ? '+' : ''}{angka(l.delta)}
+      </span>) },
+    { kunci: 'new', label: 'Sesudah', rata: 'kanan', isi: (l) => <span className="tabular-nums font-medium">{angka(l.new_stock)}</span> },
+    { kunci: 'jenis', label: 'Jenis', isi: (l) => labelJenis(l.sync_type) },
+    { kunci: 'waktu', label: 'Waktu', isi: (l) => <span className="text-sm text-muted-foreground md:whitespace-nowrap">{jam(l.synced_at)}</span> },
+  ];
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded-full border ${cfg}`}>{platform}</span>
+    <>
+      <Toolbar
+        filters={<p className="text-sm text-muted-foreground">30 perubahan stok terakhir di {catalog.name}.</p>}
+        tools={<>
+          <TombolUnduh namaBerkas={`riwayat-stok-${catalog.name}`} namaLembar="Riwayat stok" baris={history} testId="catalog-history-unduh"
+            kolom={[
+              { label: 'Produk', nilai: (l) => l.name }, { label: 'SKU', nilai: (l) => l.sku },
+              { label: 'Sebelum', nilai: (l) => Number(l.old_stock || 0) }, { label: 'Selisih', nilai: (l) => Number(l.delta || 0) },
+              { label: 'Sesudah', nilai: (l) => Number(l.new_stock || 0) }, { label: 'Jenis', nilai: (l) => labelJenis(l.sync_type) },
+              { label: 'Waktu', nilai: (l) => jam(l.synced_at) },
+            ]} />
+          {tombolMuat(onReload, false, 'catalog-history-refresh')}
+        </>} />
+      <TabelData kolom={kolom} baris={history} testId="catalog-history-table"
+        kosong={<EmptyState title="Belum ada riwayat stok" description="Perubahan stok (manual, massal, atau sinkron gudang) tercatat di sini." />} />
+    </>
   );
 }
 
-// ─── Catalog Dialog ───────────────────────────────────────────────────────────
+// ─── Form katalog ─────────────────────────────────────────────────────────────
 
-function CatalogDialog({ initial, accounts, onSave, onClose }) {
-  const [form, setForm] = useState({ is_active: true, name: '', description: '', account_id: '', platform: '', ...initial });
+function CatalogDialog({ open, initial, accounts, onSave, onClose }) {
+  const [form, setForm] = useState({ is_active: true, name: '', description: '', account_id: '', platform: '' });
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setGalat('');
+    setForm({ is_active: true, name: '', description: '', account_id: '', platform: '', ...initial });
+  }, [open, initial]);
 
   // Auto-fill platform from account
   useEffect(() => {
@@ -1035,72 +896,51 @@ function CatalogDialog({ initial, accounts, onSave, onClose }) {
     }
   }, [form.account_id, accounts]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const simpan = async () => {
+    if (!form.account_id) { setGalat('Pilih toko dulu.'); return; }
+    if (!String(form.name || '').trim()) { setGalat('Nama katalog wajib diisi.'); return; }
     setSaving(true);
-    await onSave(form);
-    setSaving(false);
+    setGalat('');
+    try { await onSave(form); } catch (e) { setGalat(e.message); } finally { setSaving(false); }
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            {form.id ? 'Edit Katalog' : 'Buat Katalog Baru'}
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <Label className="text-xs">Akun Platform *</Label>
-            <SmartNativeSelect
-              className="w-full text-sm rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
-              value={form.account_id}
-              onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))}
-              required
-            >
-              <option value="">-- Pilih Akun --</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.platform} — {a.account_name || a.name}</option>)}
-            </SmartNativeSelect>
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Nama Katalog *</Label>
-            <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="mis. Katalog Produk Utama" required />
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Deskripsi</Label>
-            <Textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="is_active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
-            <Label htmlFor="is_active" className="text-xs cursor-pointer">Aktif</Label>
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving} className="bg-indigo-600 hover:bg-indigo-700">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" onSimpan={simpan} menyimpan={saving} galat={galat}
+      judul={form.id ? 'Ubah katalog' : 'Buat katalog'} keterangan="Satu katalog berisi produk yang dijual di satu toko."
+      testId="catalog-form">
+      <div className="grid gap-4 sm:grid-cols-2">
+      <Isian label="Toko" wajib htmlFor="cat-akun">
+        <SmartNativeSelect id="cat-akun" className="w-full" value={form.account_id}
+          onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))} data-testid="catalog-form-account">
+          <option value="">Pilih toko…</option>
+          {accounts.map(a => <option key={a.id} value={a.id}>{labelPlatform(a.platform)} — {a.account_name || a.name}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <Isian label="Nama katalog" wajib htmlFor="cat-nama">
+        <Input id="cat-nama" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+          placeholder="Contoh: Katalog produk utama" data-testid="catalog-form-name" />
+      </Isian>
+      </div>
+      <Isian label="Deskripsi" htmlFor="cat-desk">
+        <Textarea id="cat-desk" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} />
+      </Isian>
+      <label className="flex items-center gap-3 text-sm" htmlFor="cat-aktif">
+        <Switch id="cat-aktif" checked={!!form.is_active} onCheckedChange={(v) => setForm(f => ({ ...f, is_active: v }))} />
+        <span>Aktif</span>
+      </label>
+    </FormPopup>
   );
 }
 
-// ─── Item Dialog ──────────────────────────────────────────────────────────────
+// ─── Form item ────────────────────────────────────────────────────────────────
 
 function ItemDialog({ initial, catalog, token, productCategories = [], onSave, onClose }) {
   const isEdit = !!initial.id;
-  // Mode: 'from_fg' (default for new) | 'manual' (legacy / for editing existing)
-  const [mode, setMode] = useState(isEdit ? 'manual' : 'from_fg');
+  // Mode: 'from_fg' (bawaan item baru) | 'manual' (mengubah item yang sudah ada)
+  const [mode] = useState(isEdit ? 'manual' : 'from_fg');
   const [fgPickerOpen, setFgPickerOpen] = useState(false);
   const [fgPreview, setFgPreview] = useState(null);
+  const [galat, setGalat] = useState('');
 
   const [form, setForm] = useState({
     is_active: true, sku: '', name: '', description: '', price: 0,
@@ -1109,9 +949,6 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
     category: '', variant_info: '', variant_id: '',
     ...initial,
     // Kompat: item lama mungkin hanya punya price/original_price.
-    // CATATAN 2026-07-25: default `harga_jual/harga_coret/harga_original/hpp/tags: 0|''`
-    // yang dulu ditulis DI ATAS `...initial` dihapus karena SELALU ditimpa baris di
-    // bawah ini (duplikat kunci objek → lint error, dan menyesatkan pembaca).
     harga_jual: initial.harga_jual ?? initial.price ?? 0,
     harga_coret: initial.harga_coret ?? initial.original_price ?? 0,
     harga_original: initial.harga_original ?? 0,
@@ -1121,11 +958,7 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
   });
   const [saving, setSaving] = useState(false);
 
-  // F6 — kategori item katalog MILIK MASTER PRODUK.
-  // Item yang tertaut master (dibuat dari FG / punya varian) kategorinya turun
-  // otomatis dan TIDAK boleh diubah di sini; server pun menolaknya. Item manual
-  // lama boleh memilih kategori, tetapi HANYA dari master (bukan teks bebas):
-  // dulu teks bebas yang tidak cocok master diam-diam hilang saat disimpan.
+  // F6 — kategori item katalog MILIK MASTER PRODUK (lihat catatan di handleSaveItem).
   const linkedToMaster = !!(form.fg_material_id || form.material_id || form.variant_id)
     || mode === 'from_fg';
   // SKU/nama/varian milik master bila item tertaut; item lama tanpa tautan wajib ditautkan dulu.
@@ -1166,6 +999,7 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
 
   const handleFGSelect = (fg) => {
     setFgPreview(fg);
+    setGalat('');
     setForm(f => ({
       ...f,
       fg_material_id: fg.id,
@@ -1182,479 +1016,276 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
     }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (mode === 'from_fg' && !form.fg_material_id) {
-      toast.error('Pilih produk dari Master FG dulu');
-      return;
+  const simpan = async () => {
+    if (mode === 'from_fg' && !form.fg_material_id) { setGalat('Pilih produk dari Master FG dulu.'); return; }
+    if (mode === 'manual' && (!String(form.sku || '').trim() || !String(form.name || '').trim())) {
+      setGalat('SKU dan nama produk wajib diisi.'); return;
     }
     setSaving(true);
+    setGalat('');
     try {
       await onSave({ ...form, _mode: mode });
+    } catch (e) {
+      setGalat(e.message);
     } finally {
       setSaving(false);
     }
   };
 
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" data-testid="catalog-item-dialog">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ShoppingBag className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-            {isEdit ? 'Edit Item' : 'Tambah Item Baru'}
-            <span className="text-xs text-muted-foreground font-normal">— {catalog.name}</span>
-          </DialogTitle>
-        </DialogHeader>
-
-        {/* Mode switcher — hide on edit (mode locked to manual) */}
-        {!isEdit && (
-          <div className="flex gap-2 p-1 bg-muted/50 rounded-md">
-            <button
-              type="button"
-              onClick={() => setMode('from_fg')}
-              className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
-                mode === 'from_fg'
-                  ? 'bg-indigo-600 text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-              data-testid="mode-from-fg"
-            >
-              📦 Dari Master FG (Recommended)
-            </button>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {/* FG Mode: Show FG picker */}
-          {mode === 'from_fg' && (
-            <div className="space-y-2">
-              <Label className="text-xs">Produk Master FG *</Label>
-              {fgPreview ? (
-                <div className="p-3 rounded-md border-2 border-indigo-400 dark:border-indigo-500/30 bg-indigo-100 dark:bg-indigo-500/5 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm">{fgPreview.name}</div>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                        <code className="px-1.5 py-0.5 bg-muted rounded font-mono">{fgPreview.code}</code>
-                        {fgPreview.color && <span>{fgPreview.color}</span>}
-                        <span>Stok master: <b>{fgPreview.stock_qty || 0}</b></span>
-                      </div>
-                    </div>
-                    {!isEdit && (
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setFgPickerOpen(true)}>
-                        Ganti
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-start border-dashed h-auto py-3"
-                  onClick={() => setFgPickerOpen(true)}
-                  data-testid="open-fg-picker"
-                >
-                  <Search className="w-4 h-4 mr-2" />
-                  Pilih dari Master FG (Finished Goods)...
-                </Button>
-              )}
-              <p className="text-[11px] text-muted-foreground">
-                💡 Pilih produk dari Inventory FG agar SKU, nama, dan stock tersinkronisasi otomatis.
-              </p>
-            </div>
-          )}
-
-          {/* Manual fields — disabled when FG mode aktif dan belum pilih FG; editable saat manual mode */}
-          {(mode === 'manual' || fgPreview) && (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">SKU * {mode === 'from_fg' && <span className="text-muted-foreground">(auto dari FG)</span>}</Label>
-                  <Input
-                    value={form.sku}
-                    onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
-                    placeholder="SKU-001"
-                    required
-                    readOnly={lockMaster}
-                    className={lockMaster ? 'bg-muted/30' : ''}
-                    data-testid="catalog-item-sku"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Kategori</Label>
-                  {linkedToMaster ? (
-                    <>
-                      <div className="flex items-center gap-2 h-9 px-3 rounded-md border border-input bg-muted/30 text-sm text-foreground"
-                        data-testid="item-category-readonly">
-                        {(initial.category_code || form.category_code) && (
-                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300">
-                            {initial.category_code || form.category_code}
-                          </span>
-                        )}
-                        <span className={masterCategoryLabel || form.category ? '' : 'text-muted-foreground'}>
-                          {initial.category_name || form.category_name || form.category
-                            || 'otomatis dari Master Produk'}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">
-                        Mengikuti Master Produk — ubah kategorinya di Master Produk,
-                        lalu klik “Segarkan dari Master”.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <SmartNativeSelect
-                        className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground"
-                        value={form.category_id || ''}
-                        onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
-                        data-testid="item-category-select"
-                      >
-                        <option value="">— pilih kategori —</option>
-                        {productCategories.map(c => (
-                          <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>
-                        ))}
-                      </SmartNativeSelect>
-                      <p className="text-[10px] text-muted-foreground">
-                        Dari Master Kategori Produk (bukan teks bebas) supaya
-                        pengelompokan katalog bisa dipercaya.
-                      </p>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Nama Produk * {mode === 'from_fg' && <span className="text-muted-foreground">(auto dari FG)</span>}</Label>
-                <Input
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="Nama lengkap produk"
-                  required
-                  readOnly={lockMaster}
-                  className={lockMaster ? 'bg-muted/30' : ''}
-                  data-testid="catalog-item-name"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Varian {mode === 'from_fg' && <span className="text-muted-foreground">(auto dari FG)</span>}</Label>
-                <Input
-                  value={form.variant_info}
-                  onChange={e => setForm(f => ({ ...f, variant_info: e.target.value }))}
-                  placeholder="mis. Warna: Hitam, Putih | Size: S, M, L"
-                  readOnly={lockMaster}
-                  className={lockMaster ? 'bg-muted/30' : ''}
-                  data-testid="catalog-item-variant"
-                />
-              </div>
-
-              {/* 2026-11-07 (Tahap 5) — penautan varian HANYA untuk item lama yang belum tertaut
-                  Master FG. Dulu pilihan ini juga muncul saat mengubah item dari FG, sehingga
-                  variant_id/SKU bisa menunjuk varian lain dari FG-nya (stok & HPP jadi salah). */}
-              {mode === 'manual' && !(initial.fg_material_id || initial.material_id) && (
-                <div className="space-y-1">
-                  <Label className="text-xs">Tautkan Varian Produksi (opsional)</Label>
-                  <Select
-                    value={form.variant_id || 'none'}
-                    onValueChange={(val) => {
-                      if (val === 'none') { setForm(f => ({ ...f, variant_id: '' })); return; }
-                      const v = prodVariants.find(x => x.id === val);
-                      setForm(f => ({
-                        ...f,
-                        variant_id: val,
-                        sku: v?.sku || f.sku,
-                        variant_info: v ? `Warna: ${v.color_name}, Size: ${v.size_code}` : f.variant_info,
-                      }));
-                    }}
-                  >
-                    <SelectTrigger data-testid="catalog-variant-selector">
-                      <SelectValue placeholder="— Tidak ditautkan —" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">— Tidak ditautkan —</SelectItem>
-                      {prodVariants.map(v => (
-                        <SelectItem key={v.id} value={v.id}>
-                          {[v.sku, v.model_name, v.color_name, v.size_code].filter(Boolean).join(' · ')}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[10px] text-muted-foreground">Tautkan ke SKU varian produksi internal agar stok Toko ↔ FG selaras.</p>
-                </div>
-              )}
-
-              <div className="grid grid-cols-3 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Harga Jual (Rp) *</Label>
-                  <MoneyInput value={form.harga_jual}
-                    data-testid="catalog-input-harga-jual"
-                    onChange={e => setForm(f => ({ ...f, harga_jual: e.target.value, price: e.target.value }))} required />
-                  <p className="text-[10px] text-muted-foreground">Harga final ke customer</p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Harga Coret (Rp)</Label>
-                  <MoneyInput value={form.harga_coret}
-                    data-testid="catalog-input-harga-coret"
-                    onChange={e => setForm(f => ({ ...f, harga_coret: e.target.value, original_price: e.target.value }))} />
-                  <p className="text-[10px] text-muted-foreground">Dicoret utk promo (≥ jual)</p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Harga Original / List (Rp)</Label>
-                  <MoneyInput value={form.harga_original}
-                    data-testid="catalog-input-harga-original"
-                    onChange={e => setForm(f => ({ ...f, harga_original: e.target.value }))} />
-                  <p className="text-[10px] text-muted-foreground">Harga normal / list resmi</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Harga Platform (Rp)</Label>
-                  <MoneyInput value={form.platform_price} onChange={e => setForm(f => ({ ...f, platform_price: e.target.value }))} />
-                  <p className="text-[10px] text-muted-foreground">Harga tertera di marketplace</p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs flex items-center gap-1">HPP (Rp) <span className="text-muted-foreground">— dari RnD</span></Label>
-                  <MoneyInput value={form.hpp || 0} readOnly disabled
-                    data-testid="catalog-input-hpp"
-                    className="bg-muted/40 cursor-not-allowed" />
-                  <p className="text-[10px] text-muted-foreground">
-                    Biaya pokok (internal), otomatis dari RnD. Tidak tampil ke customer.
+    <>
+      <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={simpan} menyimpan={saving} galat={galat}
+        bisaSimpan={!(mode === 'from_fg' && !form.fg_material_id)}
+        judul={isEdit ? 'Ubah item katalog' : 'Tambah item katalog'} keterangan={catalog.name}
+        testId="catalog-item-dialog">
+        {/* Produk dari Master FG — item baru selalu diambil dari master supaya SKU, nama, dan stok ikut otomatis */}
+        {mode === 'from_fg' && (
+          <Isian label="Produk Master FG" wajib
+            petunjuk="SKU, nama, dan stok mengikuti Master FG secara otomatis.">
+            {fgPreview ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--primary)/0.4)] px-3 py-2"
+                data-testid="mode-from-fg">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{fgPreview.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {fgPreview.code}{fgPreview.color ? ` · ${fgPreview.color}` : ''} · Stok master {angka(fgPreview.stock_qty)}
                   </p>
                 </div>
+                {!isEdit && (
+                  <Button type="button" size="sm" variant="outline" onClick={() => setFgPickerOpen(true)}>Ganti</Button>
+                )}
               </div>
+            ) : (
+              <Button type="button" variant="outline" className="w-full justify-start" onClick={() => setFgPickerOpen(true)}
+                data-testid="open-fg-picker">
+                <Search />Pilih dari Master FG…
+              </Button>
+            )}
+          </Isian>
+        )}
 
-              {/* Stock fields — only show in manual mode (FG mode auto-syncs from master) */}
-              {mode === 'manual' && (
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Stok Awal</Label>
-                    <Input type="number" min={0} value={form.stock_quantity} onChange={e => setForm(f => ({ ...f, stock_quantity: e.target.value }))} />
+        {(mode === 'manual' || fgPreview) && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Isian label="SKU" wajib htmlFor="itm-sku" petunjuk={mode === 'from_fg' ? 'Otomatis dari FG' : undefined}>
+                <Input id="itm-sku" value={form.sku} onChange={set('sku')} placeholder="SKU-001"
+                  readOnly={lockMaster} className={lockMaster ? 'bg-muted/30' : ''} data-testid="catalog-item-sku" />
+              </Isian>
+              <Isian label="Kategori" petunjuk={linkedToMaster
+                ? 'Mengikuti Master Produk — ubah di Master Produk, lalu "Segarkan dari master".'
+                : 'Dari Master Kategori Produk (bukan teks bebas).'}>
+                {linkedToMaster ? (
+                  <div className="flex h-9 items-center gap-2 rounded-md border border-input bg-muted/30 px-3 text-sm text-foreground"
+                    data-testid="item-category-readonly">
+                    {(initial.category_code || form.category_code) && (
+                      <Badge variant="outline">{initial.category_code || form.category_code}</Badge>
+                    )}
+                    <span className={masterCategoryLabel || form.category ? '' : 'text-muted-foreground'}>
+                      {initial.category_name || form.category_name || form.category || 'Otomatis dari Master Produk'}
+                    </span>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Alert Min Stok</Label>
-                    <Input type="number" min={0} value={form.stock_alert_threshold} onChange={e => setForm(f => ({ ...f, stock_alert_threshold: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Berat (gram)</Label>
-                    <Input type="number" min={0} value={form.weight_gram} onChange={e => setForm(f => ({ ...f, weight_gram: e.target.value }))} />
-                  </div>
-                </div>
-              )}
-              {mode === 'from_fg' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Alert Min Stok</Label>
-                    <Input type="number" min={0} value={form.stock_alert_threshold} onChange={e => setForm(f => ({ ...f, stock_alert_threshold: e.target.value }))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Stok (auto)</Label>
-                    <Input type="number" value={form.stock_quantity} readOnly className="bg-muted/30" />
-                  </div>
-                </div>
-              )}
+                ) : (
+                  <SmartNativeSelect className="w-full" value={form.category_id || ''}
+                    onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
+                    data-testid="item-category-select">
+                    <option value="">Pilih kategori…</option>
+                    {productCategories.map(c => (
+                      <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>
+                    ))}
+                  </SmartNativeSelect>
+                )}
+              </Isian>
+            </div>
 
-              <div className="space-y-1">
-                <Label className="text-xs">URL Platform (opsional)</Label>
-                <Input value={form.platform_url} onChange={e => setForm(f => ({ ...f, platform_url: e.target.value }))} placeholder="https://shopee.co.id/..." />
+            <Isian label="Nama produk" wajib htmlFor="itm-nama" petunjuk={mode === 'from_fg' ? 'Otomatis dari FG' : undefined}>
+              <Input id="itm-nama" value={form.name} onChange={set('name')} placeholder="Nama lengkap produk"
+                readOnly={lockMaster} className={lockMaster ? 'bg-muted/30' : ''} data-testid="catalog-item-name" />
+            </Isian>
+
+            <Isian label="Varian" htmlFor="itm-varian" petunjuk={mode === 'from_fg' ? 'Otomatis dari FG' : undefined}>
+              <Input id="itm-varian" value={form.variant_info} onChange={set('variant_info')}
+                placeholder="Contoh: Warna: Hitam, Putih | Size: S, M, L"
+                readOnly={lockMaster} className={lockMaster ? 'bg-muted/30' : ''} data-testid="catalog-item-variant" />
+            </Isian>
+
+            {/* 2026-11-07 (Tahap 5) — penautan varian HANYA untuk item lama yang belum tertaut Master FG. */}
+            {mode === 'manual' && !(initial.fg_material_id || initial.material_id) && (
+              <Isian label="Tautkan varian produksi (opsional)"
+                petunjuk="Tautkan ke SKU varian produksi internal agar stok toko dan FG selaras.">
+                <Select
+                  value={form.variant_id || 'none'}
+                  onValueChange={(val) => {
+                    if (val === 'none') { setForm(f => ({ ...f, variant_id: '' })); return; }
+                    const v = prodVariants.find(x => x.id === val);
+                    setForm(f => ({
+                      ...f,
+                      variant_id: val,
+                      sku: v?.sku || f.sku,
+                      variant_info: v ? `Warna: ${v.color_name}, Size: ${v.size_code}` : f.variant_info,
+                    }));
+                  }}
+                >
+                  <SelectTrigger data-testid="catalog-variant-selector">
+                    <SelectValue placeholder="Tidak ditautkan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Tidak ditautkan</SelectItem>
+                    {prodVariants.map(v => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {[v.sku, v.model_name, v.color_name, v.size_code].filter(Boolean).join(' · ')}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Isian>
+            )}
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Isian label="Harga jual (Rp)" wajib petunjuk="Harga akhir ke pembeli">
+                <MoneyInput value={form.harga_jual} data-testid="catalog-input-harga-jual"
+                  onChange={e => setForm(f => ({ ...f, harga_jual: e.target.value, price: e.target.value }))} />
+              </Isian>
+              <Isian label="Harga coret (Rp)" petunjuk="Dicoret untuk promo (≥ harga jual)">
+                <MoneyInput value={form.harga_coret} data-testid="catalog-input-harga-coret"
+                  onChange={e => setForm(f => ({ ...f, harga_coret: e.target.value, original_price: e.target.value }))} />
+              </Isian>
+              <Isian label="Harga resmi (Rp)" petunjuk="Harga normal / daftar resmi">
+                <MoneyInput value={form.harga_original} data-testid="catalog-input-harga-original"
+                  onChange={e => setForm(f => ({ ...f, harga_original: e.target.value }))} />
+              </Isian>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Isian label="Harga di platform (Rp)" petunjuk="Harga yang tertera di marketplace">
+                <MoneyInput value={form.platform_price} onChange={e => setForm(f => ({ ...f, platform_price: e.target.value }))} />
+              </Isian>
+              <Isian label="HPP (Rp)" petunjuk="Biaya pokok dari R&D, otomatis. Tidak tampil ke pembeli.">
+                <MoneyInput value={form.hpp || 0} readOnly disabled data-testid="catalog-input-hpp" className="bg-muted/40" />
+              </Isian>
+            </div>
+
+            {/* Stok — mode manual bisa diisi; mode FG otomatis dari master */}
+            {mode === 'manual' ? (
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Isian label="Stok awal">
+                  <Input type="number" min={0} value={form.stock_quantity} onChange={set('stock_quantity')} />
+                </Isian>
+                <Isian label="Batas peringatan stok">
+                  <Input type="number" min={0} value={form.stock_alert_threshold} onChange={set('stock_alert_threshold')} />
+                </Isian>
+                <Isian label="Berat (gram)">
+                  <Input type="number" min={0} value={form.weight_gram} onChange={set('weight_gram')} />
+                </Isian>
               </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Tags (pisahkan dengan koma)</Label>
-                <Input value={form.tags} onChange={e => setForm(f => ({ ...f, tags: e.target.value }))} placeholder="fashion, wanita, summer, bestseller" />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Isian label="Batas peringatan stok">
+                  <Input type="number" min={0} value={form.stock_alert_threshold} onChange={set('stock_alert_threshold')} />
+                </Isian>
+                <Isian label="Stok (otomatis)">
+                  <Input type="number" value={form.stock_quantity} readOnly className="bg-muted/30" />
+                </Isian>
               </div>
+            )}
 
-              {mode === 'manual' && (
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="item_active" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
-                  <Label htmlFor="item_active" className="text-xs cursor-pointer">Item Aktif</Label>
-                </div>
-              )}
-            </>
-          )}
+            <Isian label="URL produk di platform (opsional)">
+              <Input value={form.platform_url} onChange={set('platform_url')} placeholder="https://shopee.co.id/..." />
+            </Isian>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button
-              type="submit"
-              disabled={saving || (mode === 'from_fg' && !form.fg_material_id)}
-              className="bg-indigo-600 hover:bg-indigo-700"
-              data-testid="save-item-btn"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Simpan
-            </Button>
-          </DialogFooter>
-        </form>
+            <Isian label="Tag" petunjuk="Pisahkan dengan koma">
+              <Input value={form.tags} onChange={set('tags')} placeholder="fashion, wanita, terlaris" />
+            </Isian>
 
-        {/* FG Picker Dialog */}
-        <FGProductPickerDialog
-          open={fgPickerOpen}
-          onOpenChange={setFgPickerOpen}
-          onSelect={handleFGSelect}
-          token={token}
-          title="Pilih Produk dari Master FG"
-          description={`Pilih produk Finished Goods untuk ditambahkan ke katalog "${catalog.name}".`}
-        />
-      </DialogContent>
-    </Dialog>
+            {mode === 'manual' && (
+              <label className="flex items-center gap-3 text-sm" htmlFor="item_active">
+                <Switch id="item_active" checked={!!form.is_active} onCheckedChange={(v) => setForm(f => ({ ...f, is_active: v }))} />
+                <span>Item aktif</span>
+              </label>
+            )}
+          </>
+        )}
+      </FormPopup>
+
+      {/* Pemilih produk Master FG */}
+      <FGProductPickerDialog
+        open={fgPickerOpen}
+        onOpenChange={setFgPickerOpen}
+        onSelect={handleFGSelect}
+        token={token}
+        title="Pilih produk dari Master FG"
+        description={`Pilih produk barang jadi untuk ditambahkan ke katalog "${catalog.name}".`}
+      />
+    </>
   );
 }
 
-// ─── Stock Update Dialog ──────────────────────────────────────────────────────
+// ─── Form ubah stok satu item ─────────────────────────────────────────────────
 
 function StockUpdateDialog({ item, onSave, onClose }) {
   const [qty, setQty] = useState(item.stock_quantity || 0);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
 
   const delta = qty - (item.stock_quantity || 0);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const simpan = async () => {
     setSaving(true);
-    await onSave({ ...item, stock_quantity: parseFloat(qty) || 0, notes });
-    setSaving(false);
+    setGalat('');
+    try { await onSave({ ...item, stock_quantity: parseFloat(qty) || 0, notes }); }
+    catch (e) { setGalat(e.message); }
+    finally { setSaving(false); }
   };
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-sm">
-            <ArrowRightLeft className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            Update Stok — {item.name}
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">SKU</span>
-              <span>{item.sku}</span>
-            </div>
-            <div className="flex justify-between mt-1">
-              <span className="text-muted-foreground">Stok Saat Ini</span>
-              <span className="font-bold">{item.stock_quantity}</span>
-            </div>
-            <div className="flex justify-between mt-1">
-              <span className="text-muted-foreground">Min Alert</span>
-              <span>{item.stock_alert_threshold}</span>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Stok Baru</Label>
-            <Input
-              type="number" min={0} step={1}
-              value={qty}
-              onChange={e => setQty(e.target.value)}
-              autoFocus
-              required
-            />
-            {delta !== 0 && (
-              <p className={`text-xs ${delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-                {delta > 0 ? `+${delta}` : delta} dari stok saat ini
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs">Catatan</Label>
-            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="mis. Restock dari gudang, Koreksi opname..." />
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>Batal</Button>
-            <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-              Update Stok
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" onSimpan={simpan} menyimpan={saving} galat={galat}
+      judul="Ubah stok" keterangan={`${item.name} · SKU ${item.sku} · stok saat ini ${angka(item.stock_quantity)} · batas ${item.stock_alert_threshold}`}
+      labelSimpan="Simpan stok" testId="catalog-stock-form">
+      <Isian label="Stok baru" wajib htmlFor="stk-baru"
+        petunjuk={delta !== 0 ? `${delta > 0 ? `+${delta}` : delta} dari stok saat ini` : undefined}>
+        <Input id="stk-baru" type="number" min={0} step={1} value={qty} onChange={e => setQty(e.target.value)} autoFocus />
+      </Isian>
+      <Isian label="Catatan" htmlFor="stk-cat">
+        <Input id="stk-cat" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Contoh: restock dari gudang, koreksi opname" />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ─── Bulk Stock Dialog ────────────────────────────────────────────────────────
+// ─── Form ubah stok massal ────────────────────────────────────────────────────
 
 function BulkStockDialog({ items, data, onChange, onSave, onClose }) {
   const editCount = Object.values(data).filter(v => v.qty !== '' && v.qty !== undefined).length;
+  const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
+  const simpan = async () => {
+    setSaving(true);
+    setGalat('');
+    try { await onSave(); } catch (e) { setGalat(e.message); } finally { setSaving(false); }
+  };
+  const ubah = (id, k) => (e) => onChange(prev => ({ ...prev, [id]: { ...prev[id], [k]: e.target.value } }));
+
+  const kolom = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (item) => (
+      <div className="min-w-0"><p className="truncate text-sm font-medium">{item.name}</p><p className="text-xs text-muted-foreground">{item.sku}</p></div>) },
+    { kunci: 'kini', label: 'Stok saat ini', rata: 'kanan', isi: (item) => <span className="tabular-nums font-medium">{angka(item.stock_quantity)}</span> },
+    { kunci: 'baru', label: 'Stok baru', isi: (item) => (
+      <Input type="number" min={0} step={1} placeholder="—" value={data[item.id]?.qty ?? ''} onChange={ubah(item.id, 'qty')}
+        className="w-24 text-right" aria-label={`Stok baru ${item.name}`} />) },
+    { kunci: 'catatan', label: 'Catatan', isi: (item) => (
+      <Input placeholder="Catatan" value={data[item.id]?.notes ?? ''} onChange={ubah(item.id, 'notes')}
+        aria-label={`Catatan ${item.name}`} />) },
+  ];
 
   return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <ArrowRightLeft className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            Bulk Update Stok ({editCount} item diubah)
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Isi stok baru untuk item yang ingin diupdate. Kosongkan jika tidak ingin mengubah.
-          </p>
-          <div className="rounded-xl border overflow-hidden border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-foreground/10 text-xs text-muted-foreground bg-foreground/5">
-                  <th className="text-left px-4 py-2">Produk / SKU</th>
-                  <th className="text-center px-4 py-2">Stok Saat Ini</th>
-                  <th className="text-center px-4 py-2 text-blue-600 dark:text-blue-300">Stok Baru</th>
-                  <th className="text-left px-4 py-2">Catatan</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {items.map(item => {
-                  const d = data[item.id] || {};
-                  const hasInput = d.qty !== '' && d.qty !== undefined;
-                  return (
-                    <tr key={item.id} className={hasInput ? 'bg-blue-100 dark:bg-blue-500/5' : 'hover:bg-foreground/5'}>
-                      <td className="px-4 py-2">
-                        <div className="text-xs font-medium">{item.name}</div>
-                        <div className="text-xs text-muted-foreground">{item.sku}</div>
-                      </td>
-                      <td className="px-4 py-2 text-center text-sm font-bold">{item.stock_quantity}</td>
-                      <td className="px-4 py-2 text-center">
-                        <input
-                          type="number" min={0} step={1}
-                          placeholder="—"
-                          value={d.qty ?? ''}
-                          onChange={e => onChange(prev => ({
-                            ...prev,
-                            [item.id]: { ...prev[item.id], qty: e.target.value }
-                          }))}
-                          className="w-20 text-center rounded border border-foreground/10 bg-foreground/5 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
-                        />
-                      </td>
-                      <td className="px-4 py-2">
-                        <input
-                          type="text"
-                          placeholder="Catatan..."
-                          value={d.notes ?? ''}
-                          onChange={e => onChange(prev => ({
-                            ...prev,
-                            [item.id]: { ...prev[item.id], notes: e.target.value }
-                          }))}
-                          className="w-full rounded border border-foreground/10 bg-foreground/5 px-2 py-1 text-xs focus:border-blue-500 focus:outline-none"
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button className="bg-blue-600 hover:bg-blue-700" onClick={onSave} disabled={!editCount}>
-            <Save className="w-4 h-4 mr-1" /> Simpan {editCount > 0 ? `(${editCount})` : ''}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="panjang" onSimpan={simpan} menyimpan={saving} galat={galat}
+      bisaSimpan={editCount > 0} labelSimpan={editCount > 0 ? `Simpan (${editCount})` : 'Simpan'}
+      judul="Ubah stok massal" keterangan="Isi stok baru untuk item yang ingin diubah. Kosongkan bila tidak diubah."
+      testId="catalog-bulk-stock-form">
+      <TabelData kolom={kolom} baris={items} testId="catalog-bulk-stock-table"
+        kosong={<EmptyState title="Tidak ada item" description="Katalog ini belum punya item." />} />
+    </FormPopup>
   );
 }

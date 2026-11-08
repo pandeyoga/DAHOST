@@ -1,55 +1,61 @@
+/**
+ * Kesehatan Akun (Portal Marketing) — skor kesehatan toko di marketplace (SES, telat kirim, batal, respons).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, kartu StatTile dengan keterangan
+ * sumber ("status terakhir tiap akun" + tanggal snapshot terbaru), tabel standar + unduh Excel/CSV, form impor
+ * tangkapan layar = FormPopup (dua langkah), tanpa emoji/warna mentah.
+ *
+ * Perbaikan angka: panah tren dulu membandingkan baris dengan BARIS BERIKUTNYA di tabel — sering akun lain
+ * (Shopee GHS dibandingkan dengan Shopee Outfit Boutique). Kini dibandingkan dengan snapshot SEBELUMNYA milik
+ * akun yang sama (data yang sudah dimuat).
+ */
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  TrendingUp, TrendingDown, Minus, AlertCircle, CheckCircle2,
-  Activity, RefreshCw, Loader2, Upload, Camera, X,
-  Save, Pencil, Info
+  TrendingUp, TrendingDown, Minus, Activity, RefreshCw, Upload, Camera, X, Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { useToast } from '@/hooks/use-toast';
-import { useMarketingAccounts, getPlatformIcon } from '@/hooks/useMarketingAccounts';
+import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
+import { formatDateID } from '@/lib/format';
+import { parseServerTime } from '@/lib/waktu';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { ActiveAccountBar } from './ActiveAccountBar';
 import axios from 'axios';
-// F10 (sesi #10) — timeline kesehatan akun dipakai rapat mingguan ⇒ wajib bisa diunduh.
-import ExportCsvButton from '@/components/ui/export-csv-button';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
+const STATUS = {
+  healthy: { label: 'Sehat', tone: 'success' },
+  warning: { label: 'Perlu perhatian', tone: 'warning' },
+  critical: { label: 'Kritis', tone: 'danger' },
+};
+const tgl = (v) => (v ? formatDateID(parseServerTime(v)) : '—');
+const persen = (v) => (v != null ? `${Number(v).toLocaleString('id-ID')}%` : '—');
 
-function StatusBadge({ status }) {
-  const configs = {
-    healthy:  { label: 'Sehat', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
-    warning:  { label: 'Perlu Perhatian', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertCircle },
-    critical: { label: 'Kritis', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300', icon: AlertCircle }
-  };
-  const cfg = configs[status] || configs.healthy;
-  const Icon = cfg.icon;
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${cfg.color}`}>
-      <Icon size={11} />{cfg.label}
-    </span>
-  );
+function StatusKesehatan({ status }) {
+  const c = STATUS[status] || STATUS.healthy;
+  return <StatusBadge status={status} label={c.label} tone={c.tone} />;
 }
 
 function TrendIndicator({ current, previous }) {
-  if (!previous) return <Minus size={14} className="text-muted-foreground" />;
+  if (previous == null || current == null) return <Minus size={14} className="text-muted-foreground" aria-label="Belum ada pembanding" />;
   const diff = current - previous;
-  if (Math.abs(diff) < 0.5) return <Minus size={14} className="text-muted-foreground" />;
-  return diff > 0 ? <TrendingUp size={14} className="text-emerald-600" /> : <TrendingDown size={14} className="text-red-600" />;
+  if (Math.abs(diff) < 0.5) return <Minus size={14} className="text-muted-foreground" aria-label="Stabil" />;
+  return diff > 0
+    ? <TrendingUp size={14} className="text-[hsl(var(--success-text))]" aria-label={`Naik dari ${previous}`} />
+    : <TrendingDown size={14} className="text-[hsl(var(--danger-text))]" aria-label={`Turun dari ${previous}`} />;
 }
 
-// ── OCR Screenshot Modal ──────────────────────────────────────────────
+// ── Impor tangkapan layar kesehatan akun (dua langkah: unggah → periksa) ─────────────
 function OCRModal({ open, onClose, onSaved, token }) {
   const { toast } = useToast();
   const fileRef = useRef();
@@ -60,6 +66,7 @@ function OCRModal({ open, onClose, onSaved, token }) {
   const [loading, setLoading] = useState(false);
   const [editData, setEditData] = useState({});
   const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [galat, setGalat] = useState('');
 
   const authH = useMemo(
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }),
@@ -74,7 +81,7 @@ function OCRModal({ open, onClose, onSaved, token }) {
   const reset = () => {
     setStep('upload'); setFile(null); setPreview(null);
     setExtracted(null); setEditData({}); setLoading(false);
-    setSelectedAccountId('');
+    setSelectedAccountId(''); setGalat('');
   };
 
   const handleClose = () => { reset(); onClose(); };
@@ -92,30 +99,28 @@ function OCRModal({ open, onClose, onSaved, token }) {
   };
 
   const runOCR = async () => {
-    if (!file) return;
-    if (!selectedAccountId) {
-      toast({ title: 'Pilih akun dulu', description: 'Wajib pilih akun dari master sebelum upload screenshot.', variant: 'destructive' });
-      return;
-    }
+    if (!file) { setGalat('Pilih tangkapan layar dulu.'); return; }
+    if (!selectedAccountId) { setGalat('Pilih akun dari master dulu.'); return; }
     setLoading(true);
+    setGalat('');
     try {
       const form = new FormData();
       form.append('file', file);
       form.append('platform', platform);
       form.append('account_name', accountName);
-      form.append('account_id', selectedAccountId);  // FK to master
+      form.append('account_id', selectedAccountId);  // FK ke master
       const res = await axios.post(`${API}/api/marketing/health/ocr-screenshot`, form, {
         headers: { ...authH, 'Content-Type': 'multipart/form-data' }
       });
       if (res.data.success) {
         setExtracted(res.data.data.extracted);
-        // Inject account_id into edit data so save preserves link to master
+        // account_id disisipkan supaya simpanan tetap tertaut ke master
         setEditData({ ...res.data.data.preview, account_id: selectedAccountId, account_name: accountName, platform });
         setStep('review');
-        toast({ title: 'OCR berhasil!', description: 'Periksa hasil ekstraksi sebelum menyimpan.' });
+        toast({ title: 'Tangkapan layar terbaca', description: 'Periksa hasilnya sebelum menyimpan.' });
       }
     } catch (e) {
-      toast({ title: 'OCR gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      setGalat(`Gagal membaca tangkapan layar: ${e.response?.data?.detail || e.message}`);
     } finally {
       setLoading(false);
     }
@@ -123,179 +128,113 @@ function OCRModal({ open, onClose, onSaved, token }) {
 
   const handleSave = async () => {
     setStep('saving');
+    setGalat('');
     try {
       await axios.post(`${API}/api/marketing/health/manual-snapshot`, editData, { headers: authH });
-      toast({ title: 'Snapshot disimpan!', description: `Akun ${editData.account_name} berhasil ditambahkan.` });
+      toast({ title: 'Snapshot disimpan', description: `Akun ${editData.account_name} ditambahkan.` });
       onSaved();
       handleClose();
     } catch (e) {
-      toast({ title: 'Gagal simpan', description: e.response?.data?.detail, variant: 'destructive' });
+      setGalat(e.response?.data?.detail || 'Gagal menyimpan snapshot');
       setStep('review');
     }
   };
 
   const numField = (key, label, unit = '') => (
-    <div key={key}>
-      <Label className="text-xs">{label}{unit && <span className="text-muted-foreground ml-1">({unit})</span>}</Label>
-      <Input
-        type="number" step="0.01" className="h-8 text-sm mt-0.5"
+    <Isian key={key} label={unit ? `${label} (${unit})` : label} htmlFor={`ocr-${key}`}>
+      <Input id={`ocr-${key}`} type="number" step="0.01"
         value={editData[key] ?? ''}
-        onChange={e => setEditData(d => ({ ...d, [key]: e.target.value === '' ? null : Number(e.target.value) }))}
-      />
-    </div>
+        onChange={e => setEditData(d => ({ ...d, [key]: e.target.value === '' ? null : Number(e.target.value) }))} />
+    </Isian>
   );
 
+  const review = step === 'review' || step === 'saving';
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Camera size={18} className="text-primary" />
-            Import Screenshot Kesehatan Akun
-          </DialogTitle>
-          <DialogDescription>Upload screenshot dari Shopee/TikTok Seller Center. AI akan mengekstrak semua metric otomatis.</DialogDescription>
-        </DialogHeader>
-
-        {step === 'upload' && (
-          <div className="space-y-4">
-            {/* Master Account Selector */}
-            <div>
-              <Label className="text-xs">Pilih Akun dari Master *</Label>
-              <Select value={selectedAccountId || ''} onValueChange={setSelectedAccountId}>
-                <SelectTrigger className="h-9 mt-0.5" data-testid="health-ocr-account-select">
-                  <SelectValue placeholder={masterAccounts.length === 0 ? 'Belum ada akun — buat di Manage Accounts' : 'Pilih akun...'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {masterAccounts.length === 0 && (
-                    <SelectItem value="empty" disabled>Belum ada akun aktif</SelectItem>
-                  )}
-                  {masterAccounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {getPlatformIcon(acc.platform)} {acc.account_name} <span className="text-xs text-muted-foreground ml-1">({acc.platform})</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedAccount && (
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Platform: <strong>{platform}</strong> • Snapshot akan link ke akun ini sehingga health score otomatis terupdate.
-                </p>
-              )}
-            </div>
-
-            {/* Drop Zone */}
+    <FormPopup open={open} onClose={handleClose} ukuran="panjang" testId="health-ocr-form"
+      judul="Impor tangkapan layar kesehatan akun"
+      keterangan="Unggah tangkapan layar dari Seller Center Shopee/TikTok; AI membaca angkanya, Anda memeriksa sebelum menyimpan."
+      onSimpan={review ? handleSave : runOCR} menyimpan={loading || step === 'saving'} galat={galat}
+      bisaSimpan={review ? !!editData.account_id : (!!file && !!selectedAccountId)}
+      labelSimpan={review ? 'Simpan snapshot' : 'Baca dengan AI'}
+      aksiKiri={review && (
+        <Button type="button" variant="outline" onClick={() => { setStep('upload'); setGalat(''); }}>
+          <Camera />Unggah ulang
+        </Button>
+      )}>
+      {!review && (
+        <>
+          <Isian label="Akun dari master" wajib
+            petunjuk={selectedAccount
+              ? `Platform ${labelPlatform(platform)}. Snapshot tertaut ke akun ini sehingga skor kesehatannya ikut diperbarui.`
+              : (masterAccounts.length === 0 ? 'Belum ada akun aktif — buat dulu di Kelola akun.' : undefined)}>
+            <SmartNativeSelect className="w-full sm:w-80" value={selectedAccountId} onChange={(e) => setSelectedAccountId(e.target.value)}
+              data-testid="health-ocr-account-select">
+              <option value="">Pilih akun…</option>
+              {masterAccounts.map(acc => (
+                <option key={acc.id} value={acc.id}>{acc.account_name} ({labelPlatform(acc.platform)})</option>
+              ))}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Tangkapan layar" wajib petunjuk="PNG, JPG, WEBP — maks 10 MB. Dari halaman Kesehatan Toko (Shopee) atau Kesehatan Akun (TikTok).">
             <div
-              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
-                file ? 'border-primary bg-primary/5' : 'border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/30'
-              }`}
+              role="button" tabIndex={0}
+              className={`cursor-pointer rounded-md border border-dashed p-6 text-center transition-colors ${
+                file ? 'border-[hsl(var(--primary))]' : 'border-[var(--glass-border)] hover:border-[hsl(var(--primary)/0.5)]'}`}
               onClick={() => fileRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') fileRef.current?.click(); }}
               onDrop={handleDrop}
               onDragOver={e => e.preventDefault()}
               data-testid="ocr-dropzone"
             >
               {preview ? (
                 <div className="relative inline-block">
-                  <img src={preview} alt="preview" className="max-h-48 rounded-lg object-contain mx-auto" />
-                  <button
-                    className="absolute -top-2 -right-2 w-6 h-6 bg-destructive rounded-full flex items-center justify-center"
-                    onClick={e => { e.stopPropagation(); setFile(null); setPreview(null); }}
-                  >
-                    <X size={12} className="text-foreground" />
-                  </button>
+                  <img src={preview} alt="Pratinjau tangkapan layar" className="mx-auto max-h-48 rounded-md object-contain" />
+                  <Button type="button" variant="outline" size="icon-sm" className="absolute -right-3 -top-3"
+                    aria-label="Hapus gambar" title="Hapus gambar"
+                    onClick={e => { e.stopPropagation(); setFile(null); setPreview(null); }}>
+                    <X />
+                  </Button>
                 </div>
               ) : (
                 <>
-                  <Upload size={32} className="text-muted-foreground mx-auto mb-3" />
-                  <p className="text-sm font-medium">Drag & drop screenshot atau klik untuk pilih</p>
-                  <p className="text-xs text-muted-foreground mt-1">PNG, JPG, WEBP — maks 10MB</p>
+                  <Upload className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
+                  <p className="text-sm">Tarik gambar ke sini atau klik untuk memilih</p>
                 </>
               )}
               <input ref={fileRef} type="file" accept="image/*" className="hidden"
                 onChange={e => handleFile(e.target.files[0])} />
             </div>
+          </Isian>
+        </>
+      )}
 
-            <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg">
-              <Info size={14} className="text-muted-foreground mt-0.5 shrink-0" />
-              <p className="text-xs text-muted-foreground">
-                Screenshot dapat dari halaman <strong>Dashboard Kesehatan Toko</strong> di Shopee Seller Center atau
-                halaman <strong>Kesehatan Akun</strong> di TikTok Seller Center.
-                AI (Claude) akan membaca semua angka yang terlihat.
-              </p>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={handleClose}>Batal</Button>
-              <Button onClick={runOCR} disabled={!file || !selectedAccountId || loading} data-testid="run-ocr-btn">
-                {loading ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Camera size={14} className="mr-2" />}
-                {loading ? 'Menganalisis...' : 'Analisis dengan AI'}
-              </Button>
-            </DialogFooter>
+      {review && (
+        <>
+          {extracted?.extraction_notes && (
+            <Notice tone="warning" icon={Info}>{extracted.extraction_notes}</Notice>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Platform">
+              <p className="text-sm" data-testid="snapshot-platform-readonly">{labelPlatform(editData.platform)}</p>
+            </Isian>
+            <Isian label="Nama akun">
+              <p className="text-sm" data-testid="snapshot-account-readonly">{editData.account_name || '—'}</p>
+            </Isian>
           </div>
-        )}
-
-        {step === 'review' && editData && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
-              <CheckCircle2 size={16} className="text-emerald-600" />
-              <p className="text-sm text-emerald-700 dark:text-emerald-300 font-medium">
-                OCR berhasil! Periksa dan edit jika ada yang tidak tepat.
-              </p>
-            </div>
-
-            {extracted?.extraction_notes && (
-              <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-                <Info size={14} className="text-amber-600 mt-0.5 shrink-0" />
-                <p className="text-xs text-amber-700 dark:text-amber-300">{extracted.extraction_notes}</p>
-              </div>
-            )}
-
-            {/* Editable Fields */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Platform</Label>
-                <div className="h-8 mt-0.5 text-sm flex items-center px-3 rounded-md border border-input bg-muted/30" data-testid="snapshot-platform-readonly">
-                  {editData.platform || '—'}
-                </div>
-              </div>
-              <div>
-                <Label className="text-xs">Nama Akun</Label>
-                <div className="h-8 mt-0.5 text-sm flex items-center px-3 rounded-md border border-input bg-muted/30" data-testid="snapshot-account-readonly">
-                  {editData.account_name || '—'}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {numField('ses_score', 'SES Score')}
-              {numField('rating_score', 'Rating Produk')}
-              {numField('response_rate', 'Response Rate', '%')}
-              {numField('response_time_hours', 'Response Time', 'jam')}
-              {numField('late_shipment_rate', 'Late Shipment', '%')}
-              {numField('cancellation_rate', 'Cancellation Rate', '%')}
-              {numField('order_defect_rate', 'Order Defect Rate', '%')}
-              {numField('return_rate', 'Return Rate', '%')}
-              {numField('total_reviews', 'Total Reviews')}
-            </div>
-
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setStep('upload')}>
-                <Camera size={14} className="mr-2" /> Upload Ulang
-              </Button>
-              <Button onClick={handleSave} disabled={!editData.account_id} data-testid="save-snapshot-btn">
-                <Save size={14} className="mr-2" /> Simpan Snapshot
-              </Button>
-            </DialogFooter>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            {numField('ses_score', 'Skor SES')}
+            {numField('rating_score', 'Rating produk')}
+            {numField('response_rate', 'Tingkat respons', '%')}
+            {numField('response_time_hours', 'Waktu respons', 'jam')}
+            {numField('late_shipment_rate', 'Telat kirim', '%')}
+            {numField('cancellation_rate', 'Tingkat batal', '%')}
+            {numField('order_defect_rate', 'Pesanan bermasalah', '%')}
+            {numField('return_rate', 'Tingkat retur', '%')}
+            {numField('total_reviews', 'Jumlah ulasan')}
           </div>
-        )}
-
-        {step === 'saving' && (
-          <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <Loader2 className="animate-spin text-primary" size={32} />
-            <p className="text-sm text-muted-foreground">Menyimpan snapshot...</p>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </>
+      )}
+    </FormPopup>
   );
 }
 
@@ -323,7 +262,7 @@ export default function AccountHealthDashboard({ token }) {
       const res = await axios.get(`${API}/api/marketing/health/summary`, { headers: authH });
       if (res.data.success) setSummary(res.data.data);
     } catch (e) {
-      toast({ title: 'Gagal load summary', variant: 'destructive' });
+      toast({ title: 'Gagal memuat ringkasan', variant: 'destructive' });
     } finally {
       setSummaryLoading(false);
     }
@@ -338,7 +277,7 @@ export default function AccountHealthDashboard({ token }) {
       const res = await axios.get(`${API}/api/marketing/health/timeline`, { params, headers: authH });
       if (res.data.success) setTimeline(res.data.data.snapshots || []);
     } catch (e) {
-      toast({ title: 'Gagal load timeline', variant: 'destructive' });
+      toast({ title: 'Gagal memuat riwayat kesehatan', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -348,7 +287,7 @@ export default function AccountHealthDashboard({ token }) {
     try {
       const res = await axios.get(`${API}/api/marketing/health/accounts`, { headers: authH });
       if (res.data.success) setAccounts(res.data.data.accounts || []);
-    } catch (e) {}
+    } catch (e) { /* daftar akun pilihan tetap kosong */ }
   }, [token]); // eslint-disable-line
 
   const onSaved = () => { fetchSummary(); fetchTimeline(); fetchAccounts(); };
@@ -356,32 +295,44 @@ export default function AccountHealthDashboard({ token }) {
   useEffect(() => { fetchSummary(); fetchAccounts(); }, [fetchSummary, fetchAccounts]);
   useEffect(() => { fetchTimeline(); }, [fetchTimeline]);
 
-  const kpis = [
-    { label: 'Total Akun',        value: summary?.total_accounts || 0, color: 'text-indigo-600',  bg: 'bg-indigo-50 dark:bg-indigo-900/20',   icon: Activity },
-    { label: 'Sehat',             value: summary?.healthy || 0,         color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', icon: CheckCircle2 },
-    { label: 'Perlu Perhatian',   value: summary?.warning || 0,         color: 'text-amber-600',   bg: 'bg-amber-50 dark:bg-amber-900/20',    icon: AlertCircle },
-    { label: 'Kritis',            value: summary?.critical || 0,        color: 'text-red-600',     bg: 'bg-red-50 dark:bg-red-900/20',        icon: AlertCircle },
+  // Pembanding tren = snapshot SEBELUMNYA milik akun yang sama (bukan baris berikutnya di tabel)
+  const sebelumnya = useMemo(() => {
+    const urut = [...timeline].sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
+    const terakhir = {};
+    const out = {};
+    urut.forEach((s) => {
+      const k = s.account_id || s.account_name;
+      out[s.id] = terakhir[k] || null;
+      terakhir[k] = s;
+    });
+    return out;
+  }, [timeline]);
+
+  const latest = summary?.latest_snapshots || [];
+  const tanggalTerbaru = latest.reduce((m, s) => (String(s.snapshot_date) > m ? String(s.snapshot_date) : m), '');
+  const nilai = (v) => (summaryLoading && !summary ? '…' : (v || 0));
+
+  const kolom = [
+    { kunci: 'tgl', label: 'Tanggal', isi: (s) => <span className="text-muted-foreground md:whitespace-nowrap">{tgl(s.snapshot_date)}</span> },
+    { kunci: 'akun', label: 'Akun', hp: 'judul', isi: (s) => (
+      <span className="font-medium">{s.account_name}{s.source === 'manual' && <span className="ml-1 text-xs font-normal text-muted-foreground">(manual)</span>}</span>) },
+    { kunci: 'platform', label: 'Platform', hp: 'keterangan', isi: (s) => labelPlatform(s.platform) },
+    { kunci: 'ses', label: 'Skor SES', rata: 'kanan', isi: (s) => (
+      <span className="inline-flex items-center gap-1">
+        <span className="font-semibold tabular-nums">{s.ses_score == null ? '—' : Number(s.ses_score).toLocaleString('id-ID')}</span>
+        <TrendIndicator current={s.ses_score} previous={sebelumnya[s.id]?.ses_score} />
+      </span>) },
+    { kunci: 'late', label: 'Telat kirim', rata: 'kanan', isi: (s) => <span className="tabular-nums">{persen(s.late_shipment_rate)}</span> },
+    { kunci: 'cancel', label: 'Batal', rata: 'kanan', isi: (s) => <span className="tabular-nums">{persen(s.cancellation_rate)}</span> },
+    { kunci: 'resp', label: 'Tingkat respons', rata: 'kanan', isi: (s) => <span className="tabular-nums">{persen(s.response_rate)}</span> },
+    { kunci: 'status', label: 'Status', isi: (s) => <StatusKesehatan status={s.status} /> },
   ];
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6" data-testid="health-dashboard">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Kesehatan Akun Marketplace</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Monitor SES score, late shipment, cancellation rate</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="default" size="sm" onClick={() => setShowOCR(true)} data-testid="import-screenshot-btn">
-            <Camera size={13} className="mr-1" /> Import Screenshot
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => { fetchSummary(); fetchTimeline(); }}>
-            <RefreshCw size={13} className="mr-1" /> Refresh
-          </Button>
-        </div>
-      </div>
-
-      {/* Active Account Bar */}
-      <div className="mb-4">
+    <PageLayout testId="health-dashboard" title="Kesehatan akun"
+      subtitle="Skor kesehatan toko di marketplace: skor SES, telat kirim, batal, dan tingkat respons."
+      actions={<Button onClick={() => setShowOCR(true)} data-testid="import-screenshot-btn"><Camera />Impor tangkapan layar</Button>}
+      filters={<>
         <ActiveAccountBar
           accounts={masterAccounts}
           activeAccount={activeAccount}
@@ -389,130 +340,61 @@ export default function AccountHealthDashboard({ token }) {
             setActiveAccount(acc);
             setAccountFilter(acc ? acc.account_name : '');
           }}
-          hint="Filter health data by akun:"
+          hint="Saring data kesehatan per akun"
         />
-      </div>
+        <SmartNativeSelect className="w-40" value={platformFilter} onChange={(e) => setPlatformFilter(e.target.value)}
+          data-testid="health-filter-platform">
+          <option value="">Semua platform</option>
+          <option value="shopee">Shopee</option>
+          <option value="tiktok">TikTok</option>
+          <option value="tokopedia">Tokopedia</option>
+        </SmartNativeSelect>
+        <SmartNativeSelect className="w-48" value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}
+          data-testid="health-filter-account">
+          <option value="">Semua akun</option>
+          {accounts.map(a => <option key={a} value={a}>{a}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect className="w-36" value={String(days)} onChange={(e) => setDays(Number(e.target.value))}
+          data-testid="health-filter-days">
+          <option value="30">30 hari</option>
+          <option value="60">60 hari</option>
+          <option value="90">90 hari</option>
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="kesehatan-akun-toko" namaLembar="Kesehatan akun" baris={timeline} testId="health-export-csv"
+          kolom={[
+            { label: 'Tanggal', nilai: (t) => tgl(t.snapshot_date) }, { label: 'Akun', nilai: (t) => t.account_name },
+            { label: 'Platform', nilai: (t) => labelPlatform(t.platform) }, { label: 'Skor SES', nilai: (t) => t.ses_score ?? '' },
+            { label: 'Telat kirim (%)', nilai: (t) => t.late_shipment_rate ?? '' }, { label: 'Batal (%)', nilai: (t) => t.cancellation_rate ?? '' },
+            { label: 'Tingkat respons (%)', nilai: (t) => t.response_rate ?? '' },
+            { label: 'Status', nilai: (t) => (STATUS[t.status] || STATUS.healthy).label },
+            { label: 'Sumber', nilai: (t) => (t.source === 'manual' ? 'Manual' : 'Otomatis') },
+          ]} />
+        <Button variant="outline" size="icon" onClick={() => { fetchSummary(); fetchTimeline(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang" data-testid="health-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={(
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="health-kpi">
+          <StatTile label="Akun dipantau" value={nilai(summary?.total_accounts)}
+            sub={tanggalTerbaru ? `Snapshot terbaru ${tgl(tanggalTerbaru)}` : 'Belum ada snapshot'} />
+          <StatTile label="Sehat" value={nilai(summary?.healthy)} accent="success" sub="Menurut snapshot terakhir tiap akun" />
+          <StatTile label="Perlu perhatian" value={nilai(summary?.warning)} accent="warning" sub="Menurut snapshot terakhir tiap akun" />
+          <StatTile label="Kritis" value={nilai(summary?.critical)} accent="danger" sub="Menurut snapshot terakhir tiap akun" />
+        </div>
+      )}>
+      {loading && timeline.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat riwayat kesehatan…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={timeline} testId="health-table"
+          kosong={<EmptyState icon={Activity} title="Belum ada data kesehatan pada saringan ini"
+            description="Ubah saringan, atau impor tangkapan layar Seller Center."
+            action={<Button variant="outline" onClick={() => setShowOCR(true)}><Camera />Impor tangkapan layar</Button>} />} />
+      )}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        {kpis.map(k => (
-          <div key={k.label} className={`rounded-xl border p-4 ${k.bg}`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-muted-foreground font-medium">{k.label}</span>
-              <k.icon size={15} className={k.color} />
-            </div>
-            <p className={`text-3xl font-bold tabular-nums ${k.color}`}>{summaryLoading ? '...' : k.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Timeline Table */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <CardTitle className="flex-1">Timeline Kesehatan</CardTitle>
-            <div className="flex items-center gap-2">
-              <Select value={platformFilter || 'all'} onValueChange={v => setPlatformFilter(v === 'all' ? '' : v)}>
-                <SelectTrigger className="w-[130px] h-9 text-xs"><SelectValue placeholder="Platform" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua Platform</SelectItem>
-                  <SelectItem value="shopee">🛒 Shopee</SelectItem>
-                  <SelectItem value="tiktok">🎵 TikTok</SelectItem>
-                  <SelectItem value="tokopedia">🟢 Tokopedia</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={accountFilter || 'all'} onValueChange={v => setAccountFilter(v === 'all' ? '' : v)}>
-                <SelectTrigger className="w-[160px] h-9 text-xs"><SelectValue placeholder="Akun" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Semua Akun</SelectItem>
-                  {accounts.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={String(days)} onValueChange={v => setDays(Number(v))}>
-                <SelectTrigger className="w-[100px] h-9 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="30">30 hari</SelectItem>
-                  <SelectItem value="60">60 hari</SelectItem>
-                  <SelectItem value="90">90 hari</SelectItem>
-                </SelectContent>
-              </Select>
-              <ExportCsvButton
-                filename="kesehatan-akun-toko"
-                testId="health-export-csv"
-                className="h-9"
-                head={['Tanggal', 'Akun', 'Platform', 'SES Score', 'Late Ship %',
-                  'Cancel %', 'Response Rate %', 'Status']}
-                rows={(timeline || []).map((t) => [
-                  String(t.snapshot_date || '').slice(0, 10), t.account_name, t.platform,
-                  t.ses_score, t.late_shipment_rate, t.cancellation_rate,
-                  t.response_rate, t.status])}
-              />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="flex items-center justify-center h-48"><Loader2 className="animate-spin text-muted-foreground" size={24} /></div>
-          ) : timeline.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-3">
-              <Activity size={32} className="opacity-30" />
-              <p className="text-sm">Tidak ada data kesehatan</p>
-              <Button size="sm" variant="outline" onClick={() => setShowOCR(true)}>
-                <Camera size={13} className="mr-1" /> Import Screenshot Pertama
-              </Button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    {['Tanggal', 'Akun', 'Platform', 'SES Score', 'Late Ship %', 'Cancel %', 'Response Rate', 'Status'].map(h => (
-                      <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {timeline.map((snap, i) => {
-                    const prev = timeline[i + 1];
-                    return (
-                      <tr key={snap.id} className="hover:bg-muted/30 transition-colors">
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {new Date(snap.snapshot_date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: '2-digit' })}
-                        </td>
-                        <td className="px-3 py-2 font-medium text-xs">
-                          {snap.account_name}
-                          {snap.source === 'manual' && <Badge variant="outline" className="ml-1 text-xs py-0">Manual</Badge>}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {PLATFORM_ICONS[snap.platform]} <span className="capitalize">{snap.platform}</span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            <span className="font-bold tabular-nums">{snap.ses_score ?? '—'}</span>
-                            <TrendIndicator current={snap.ses_score} previous={prev?.ses_score} />
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-xs">{snap.late_shipment_rate != null ? `${snap.late_shipment_rate}%` : '—'}</td>
-                        <td className="px-3 py-2 tabular-nums text-xs">{snap.cancellation_rate != null ? `${snap.cancellation_rate}%` : '—'}</td>
-                        <td className="px-3 py-2 tabular-nums text-xs">{snap.response_rate != null ? `${snap.response_rate}%` : '—'}</td>
-                        <td className="px-3 py-2"><StatusBadge status={snap.status} /></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* OCR Modal */}
-      <OCRModal
-        open={showOCR}
-        onClose={() => setShowOCR(false)}
-        onSaved={onSaved}
-        token={token}
-      />
-    </div>
+      <OCRModal open={showOCR} onClose={() => setShowOCR(false)} onSaved={onSaved} token={token} />
+    </PageLayout>
   );
 }
