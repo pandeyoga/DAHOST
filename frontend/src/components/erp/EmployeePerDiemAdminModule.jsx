@@ -171,7 +171,7 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
         </Button>
       </>}>
       {loading && rates.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat tarif…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat tarif…</p>
       ) : (
         <TabelData kolom={kolom} baris={rates} kunci={(r) => r.destination_type} onKlikBaris={setEditing}
           testId="per-diem-table"

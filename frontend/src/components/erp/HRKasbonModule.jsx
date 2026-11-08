@@ -252,7 +252,7 @@ export default function HRKasbonModule() {
         <p className="text-xs text-muted-foreground">{[r.employee_code, r.department].filter(Boolean).join(' · ') || '—'}</p>
       </div>) },
     { kunci: 'nomor', label: 'No. pengajuan', hp: 'keterangan', isi: (r) => (
-      <span className="whitespace-nowrap font-mono text-xs">{r.request_number}</span>) },
+      <span className="whitespace-nowrap text-xs tabular-nums">{r.request_number}</span>) },
     { kunci: 'jenis', label: 'Jenis', isi: (r) => r.type_label || r.type || '—' },
     { kunci: 'keperluan', label: 'Keperluan', hp: false, isi: (r) => (
       <span className="block max-w-[14rem] truncate" title={r.purpose}>{r.purpose || '—'}</span>) },
@@ -333,7 +333,7 @@ export default function HRKasbonModule() {
         </Notice>
       )}
       {loading && requests.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
       ) : view === 'grid' ? (
         rows.length === 0 ? kosong : (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3" data-testid="hrkasbon-grid">

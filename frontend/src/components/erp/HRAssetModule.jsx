@@ -227,7 +227,7 @@ export default function HRAssetModule({ token }) {
       <div className="min-w-0">
         <p className="font-medium text-foreground">{a.asset_name}</p>
         <p className="text-xs text-muted-foreground">
-          <span className="font-mono">{a.asset_code || '—'}</span>{a.serial_number ? ` · S/N ${a.serial_number}` : ''}
+          <span className="tabular-nums">{a.asset_code || '—'}</span>{a.serial_number ? ` · S/N ${a.serial_number}` : ''}
         </p>
       </div>) },
     { kunci: 'kategori', label: 'Kategori', isi: (a) => a.category || '—' },
@@ -272,7 +272,7 @@ export default function HRAssetModule({ token }) {
     { kunci: 'aset', label: 'Aset', hp: 'judul', isi: (a) => (
       <div className="min-w-0">
         <p className="font-medium text-foreground">{a.asset_name}</p>
-        <p className="font-mono text-xs text-muted-foreground">{a.asset_code || '—'}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{a.asset_code || '—'}</p>
       </div>) },
     { kunci: 'karyawan', label: 'Karyawan', isi: (a) => (
       <div className="min-w-0">
@@ -305,7 +305,7 @@ export default function HRAssetModule({ token }) {
     { kunci: 'aset', label: 'Aset', hp: 'judul', isi: (a) => (
       <div className="min-w-0">
         <p className="font-medium text-foreground">{a.asset_name}</p>
-        <p className="font-mono text-xs text-muted-foreground">{a.asset_code || '—'}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{a.asset_code || '—'}</p>
       </div>) },
     { kunci: 'status', label: 'Status', isi: (a) => (
       <StatusBadge status={a.status} label={a.status === 'active' ? 'Dipinjam' : 'Sudah kembali'} tone={a.status === 'active' ? 'info' : 'muted'} />) },
@@ -456,7 +456,7 @@ export default function HRAssetModule({ token }) {
               <Button size="sm" variant="destructive" onClick={() => handleDeleteAsset(detail)}><Trash2 />Hapus</Button>
             </>}>
             <dl className="divide-y divide-[var(--glass-border)]">
-              <BarisDetail label="Kode aset"><span className="font-mono">{detail.asset_code || '—'}</span></BarisDetail>
+              <BarisDetail label="Kode aset"><span className="tabular-nums">{detail.asset_code || '—'}</span></BarisDetail>
               <BarisDetail label="Kategori">{detail.category || '—'}</BarisDetail>
               <BarisDetail label="Nomor seri">{detail.serial_number || '—'}</BarisDetail>
               <BarisDetail label="Tanggal beli">{tgl(detail.purchase_date)}</BarisDetail>

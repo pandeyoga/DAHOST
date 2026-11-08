@@ -334,7 +334,7 @@ function TravelDetail({ req, role, onClose, aksi, onApprove, onPay }) {
         )}
       </>}>
       <dl className="divide-y divide-[var(--glass-border)]">
-        <BarisDetail label="Nomor"><span className="font-mono">{req.trip_number}</span></BarisDetail>
+        <BarisDetail label="Nomor"><span className="tabular-nums">{req.trip_number}</span></BarisDetail>
         <BarisDetail label="Karyawan">{req.employee_name}{req.employee_dept ? ` · ${req.employee_dept}` : ''}</BarisDetail>
         <BarisDetail label="Jenis perjalanan">{labelTujuan(req)}</BarisDetail>
         <BarisDetail label="Destinasi">{req.destination}</BarisDetail>
@@ -535,7 +535,7 @@ export default function EmployeeTravelModule({ token, user }) {
     { kunci: 'tujuan', label: 'Destinasi', hp: 'judul', isi: (r) => (
       <div className="min-w-0">
         <p className="font-medium text-foreground">{r.destination}</p>
-        <p className="text-xs text-muted-foreground"><span className="font-mono">{r.trip_number}</span> · {labelTujuan(r)}</p>
+        <p className="text-xs text-muted-foreground"><span className="tabular-nums">{r.trip_number}</span> · {labelTujuan(r)}</p>
       </div>) },
     { kunci: 'karyawan', label: 'Karyawan', isi: (r) => (
       <div className="min-w-0">
@@ -637,7 +637,7 @@ export default function EmployeeTravelModule({ token, user }) {
       )}
 
       {loading && reqs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat perjalanan dinas…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat perjalanan dinas…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={setSelected} testId="travel-table"
           kosong={<EmptyState

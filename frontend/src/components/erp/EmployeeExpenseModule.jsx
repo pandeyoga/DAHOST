@@ -324,13 +324,13 @@ function ClaimDetail({ claim, role, onClose, aksi, onApprove, onPay }) {
         )}
       </>}>
       <dl className="divide-y divide-[var(--glass-border)]">
-        <BarisDetail label="Nomor klaim"><span className="font-mono">{claim.claim_number}</span></BarisDetail>
+        <BarisDetail label="Nomor klaim"><span className="tabular-nums">{claim.claim_number}</span></BarisDetail>
         <BarisDetail label="Karyawan">{claim.employee_name}{claim.employee_dept ? ` · ${claim.employee_dept}` : ''}</BarisDetail>
         <BarisDetail label="Total"><span className="font-semibold tabular-nums">{fmt(claim.total_amount)}</span></BarisDetail>
         <BarisDetail label="Dibuat">{fmtDate(claim.created_at)}</BarisDetail>
         {claim.gl_je_number && (
           <BarisDetail label="Jurnal">
-            <span className="font-mono">{claim.gl_je_number}</span>
+            <span className="tabular-nums">{claim.gl_je_number}</span>
             <span className="text-muted-foreground"> · dibayar oleh {claim.paid_by_name || '—'} pada {fmtDate(claim.paid_at)}</span>
           </BarisDetail>
         )}
@@ -566,7 +566,7 @@ export default function EmployeeExpenseModule({ token, user }) {
     { kunci: 'judul', label: 'Klaim', hp: 'judul', isi: (c) => (
       <div className="min-w-0">
         <p className="font-medium text-foreground">{c.title}</p>
-        <p className="font-mono text-xs text-muted-foreground">{c.claim_number}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{c.claim_number}</p>
       </div>) },
     { kunci: 'karyawan', label: 'Karyawan', isi: (c) => (
       <div className="min-w-0">
@@ -658,7 +658,7 @@ export default function EmployeeExpenseModule({ token, user }) {
       )}
 
       {loading && claims.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat klaim…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat klaim…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={setSelected} testId="claim-table"
           kosong={<EmptyState
