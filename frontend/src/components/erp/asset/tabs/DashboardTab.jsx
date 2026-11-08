@@ -1,147 +1,159 @@
 /**
- * DashboardTab — Asset Management Dashboard view
- * Extracted from AssetManagementPortal.jsx during Phase 4 refactor.
+ * DashboardTab — ringkasan Manajemen Aset.
  *
- * Receives data via props from the orchestrator (no internal data fetching).
+ * Standar UI/UX v2 (8 Nov 2026):
+ *  • 4 kartu angka StatTile netral dengan keterangan cara menghitung (dulu kartu gradasi berwarna + ikon);
+ *    semua 0 → tampilan kosong (bukan deretan "Rp 0").
+ *  • Diagram lingkaran "Distribusi per kategori" → tabel kategori · jumlah · porsi (angka terbaca, bisa diunduh).
+ *  • Garansi/asuransi: satu Notice + satu tabel (dulu kotak kuning ber-emoji + 4 daftar terpotong 5 baris).
+ *  • "Aset terbaru": tabel, klik baris membuka detail popup.
+ * Data dari orkestrator (tanpa ambil data sendiri).
  */
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Package, Banknote, DollarSign, TrendingDown,
-} from 'lucide-react';
-import {
-  PieChart, Pie, Cell, ResponsiveContainer, Legend,
-  Tooltip as RechartTooltip,
-} from 'recharts';
-import { PIE_COLORS, STATUS_CONFIG } from '../constants';
-import { fmtCurrency, fmtDate } from '../utils';
-import { KPICard } from '../components/KPICard';
+import { RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState, Notice, StatusBadge as Lencana } from '../../moduleAtoms';
+import { STATUS_CONFIG } from '../constants';
+import { angka, fmtCurrency, fmtDate, fmtPersen } from '../utils';
+import { KPICard, BarisKartu, Bagian } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
+import { AksiAset } from './AssetsTab';
 
-export function DashboardTab({ dashData, expiringAlerts, onAssetClick }) {
-  const summary = dashData?.summary || {};
-  const byCat = (dashData?.by_category || []).map(c => ({ name: c.category || 'Lainnya', count: c.count }));
+const JENIS_HABIS = [
+  { key: 'warranty_expiring',  jenis: 'Garansi',  keadaan: 'Habis ≤ 30 hari', tone: 'warning', tgl: 'warranty_expiry_date' },
+  { key: 'warranty_expired',   jenis: 'Garansi',  keadaan: 'Sudah habis',     tone: 'danger',  tgl: 'warranty_expiry_date' },
+  { key: 'insurance_expiring', jenis: 'Asuransi', keadaan: 'Habis ≤ 30 hari', tone: 'warning', tgl: 'insurance_expiry_date' },
+  { key: 'insurance_expired',  jenis: 'Asuransi', keadaan: 'Sudah habis',     tone: 'danger',  tgl: 'insurance_expiry_date' },
+];
+
+export function DashboardTab({
+  dashData, expiringAlerts, memuat, onAssetClick, onMuatUlang,
+  onTambahAset, onScan, onImpor, onBuatPR, onDepresiasiMassal,
+}) {
+  const s = dashData?.summary || null;
+  const totalAset = s?.total_assets || 0;
+  const recent = dashData?.recent_assets || [];
+  const byCat = (dashData?.by_category || []).map((c) => ({ id: c.category || '—', nama: c.category || 'Tanpa kategori', jumlah: c.count || 0 }));
+  const totalKategori = byCat.reduce((n, c) => n + c.jumlah, 0);
+  const adaAngka = s && (totalAset > 0 || (s.total_purchase_cost || 0) > 0 || (s.depreciation_this_month || 0) > 0);
+
+  // Garansi & asuransi (≤ 30 hari & sudah habis) → satu tabel.
+  const habis = JENIS_HABIS.flatMap((j) => (expiringAlerts?.[j.key] || []).map((a) => ({
+    ...a, _kunci: `${j.key}-${a.id}`, _jenis: j.jenis, _keadaan: j.keadaan, _tone: j.tone, _tgl: a[j.tgl],
+  })));
+  const segeraGaransi = s?.warranty_expiring_soon || 0;
+  const segeraAsuransi = s?.insurance_expiring_soon || 0;
+
+  const muatUlang = (
+    <Button variant="outline" size="icon" onClick={onMuatUlang} disabled={memuat} title="Muat ulang" aria-label="Muat ulang">
+      <RefreshCw className={memuat ? 'animate-spin' : ''} />
+    </Button>
+  );
+  const aksi = (
+    <AksiAset onTambahAset={onTambahAset} onScan={onScan} onImpor={onImpor} onBuatPR={onBuatPR}
+      onDepresiasiMassal={onDepresiasiMassal} />
+  );
 
   return (
-    <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <KPICard label="Total Aset" value={summary.total_assets || 0} icon={Package} accent="blue" />
-        <KPICard label="Total Nilai Buku" value={fmtCurrency(summary.total_nbv)} icon={Banknote} accent="emerald" />
-        <KPICard label="Harga Perolehan" value={fmtCurrency(summary.total_purchase_cost)} icon={DollarSign} accent="violet" />
-        <KPICard label="Depresiasi Bulan Ini" value={fmtCurrency(summary.depreciation_this_month)} icon={TrendingDown} accent="amber"
-          sub={`${summary.in_maintenance || 0} dalam pemeliharaan`} />
-      </div>
+    <PageLayout testId="asset-dashboard" title="Dashboard" subtitle="Ringkasan nilai, kategori, dan garansi aset."
+      actions={aksi} tools={muatUlang}
+      summary={adaAngka ? (
+        <BarisKartu testId="asset-dashboard-kpi">
+          <KPICard label="Aset terdaftar" value={totalAset.toLocaleString('id-ID')} testId="asset-kpi-total"
+            sub={`${s.active || 0} aktif · ${s.in_maintenance || 0} pemeliharaan`}
+            hint="Semua aset kecuali yang sudah dilepas." />
+          <KPICard label="Harga perolehan" value={fmtCurrency(s.total_purchase_cost)} testId="asset-kpi-cost"
+            sub={`${s.linked_to_finance || 0} aset tertaut ke Keuangan`}
+            hint="Jumlah harga beli aset yang belum dilepas. Aset yang tertaut memakai angka registri Keuangan › Aset Tetap." />
+          <KPICard label="Nilai buku" value={fmtCurrency(s.total_nbv)} testId="asset-kpi-nbv"
+            sub="Harga perolehan − akumulasi penyusutan"
+            hint="Harga perolehan dikurangi akumulasi penyusutan, aset yang belum dilepas." />
+          <KPICard label="Penyusutan bulan ini" value={fmtCurrency(s.depreciation_this_month)} testId="asset-kpi-depr"
+            sub={s.not_linked_to_finance ? `${s.not_linked_to_finance} aset belum tertaut, tidak dihitung` : 'Yang sudah diposting di Keuangan'}
+            hint="Penyusutan bulan berjalan yang sudah diposting di Keuangan › Aset Tetap, hanya aset yang tertaut." />
+        </BarisKartu>
+      ) : null}>
+      {!dashData ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat ringkasan aset…</p>
+      ) : dashData.gagal ? (
+        <Notice tone="danger" title="Ringkasan aset gagal dimuat">Coba muat ulang beberapa saat lagi.</Notice>
+      ) : totalAset === 0 && recent.length === 0 ? (
+        <EmptyState title="Belum ada aset terdaftar" testId="asset-dashboard-empty"
+          description="Daftarkan aset pertama, atau impor daftar aset dari berkas CSV/Excel. Ringkasan nilai dan kategori tampil di sini." />
+      ) : (
+        <>
+          {(segeraGaransi > 0 || segeraAsuransi > 0) && (
+            <Notice tone="warning" title="Garansi atau asuransi segera habis" testId="expiring-alerts-banner">
+              {[segeraGaransi > 0 && `garansi ${segeraGaransi} aset`, segeraAsuransi > 0 && `asuransi ${segeraAsuransi} aset`]
+                .filter(Boolean).join(' dan ')} habis dalam 30 hari ke depan.
+            </Notice>
+          )}
 
-      {/* Warranty & Insurance Alert Banner */}
-      {((summary.warranty_expiring_soon > 0) || (summary.insurance_expiring_soon > 0)) && (
-        <div className="bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 rounded-lg p-3 mb-4 flex items-start gap-3" data-testid="expiring-alerts-banner">
-          <span className="text-2xl">⚠️</span>
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-amber-700">Perhatian — Garansi / Asuransi Akan Habis (≤30 hari)</p>
-            <div className="flex gap-4 mt-1 text-xs text-amber-700">
-              {summary.warranty_expiring_soon > 0 && (
-                <span>🛡️ Garansi: <strong>{summary.warranty_expiring_soon}</strong> aset</span>
-              )}
-              {summary.insurance_expiring_soon > 0 && (
-                <span>🔒 Asuransi: <strong>{summary.insurance_expiring_soon}</strong> aset</span>
-              )}
-            </div>
+          {habis.length > 0 && (
+            <Bagian judul={`Garansi & asuransi perlu perhatian (${habis.length})`} testId="expiring-alerts-card"
+              keterangan="Yang habis dalam 30 hari dan yang sudah habis. Klik baris untuk membuka asetnya."
+              alat={<TombolUnduh namaBerkas="aset-garansi-asuransi" namaLembar="Garansi asuransi" baris={habis}
+                testId="asset-expiring-unduh" kolom={[
+                  { label: 'Aset', nilai: (a) => a.name },
+                  { label: 'No. aset', nilai: (a) => a.asset_number },
+                  { label: 'Jenis', nilai: (a) => a._jenis },
+                  { label: 'Keadaan', nilai: (a) => a._keadaan },
+                  { label: 'Berakhir', nilai: (a) => fmtDate(a._tgl) },
+                ]} />}>
+              <TabelData baris={habis} kunci={(a) => a._kunci} onKlikBaris={onAssetClick} testId="asset-expiring-table"
+                kolom={[
+                  { kunci: 'nama', label: 'Aset', hp: 'judul', isi: (a) => <span className="font-medium">{a.name}</span> },
+                  { kunci: 'no', label: 'No. aset', hp: 'keterangan', isi: (a) => <span className="tabular-nums">{a.asset_number}</span> },
+                  { kunci: 'jenis', label: 'Jenis', isi: (a) => a._jenis },
+                  { kunci: 'keadaan', label: 'Keadaan', isi: (a) => <Lencana status={a._tone} label={a._keadaan} tone={a._tone} /> },
+                  { kunci: 'tgl', label: 'Berakhir', isi: (a) => fmtDate(a._tgl) },
+                ]} />
+            </Bagian>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Bagian judul="Aset per kategori" testId="asset-by-category"
+              keterangan="Aset yang belum dilepas, dikelompokkan menurut kategori."
+              alat={<TombolUnduh namaBerkas="aset-per-kategori" namaLembar="Per kategori" baris={byCat} testId="asset-by-category-unduh"
+                kolom={[
+                  { label: 'Kategori', nilai: (c) => c.nama },
+                  { label: 'Jumlah aset', nilai: (c) => c.jumlah },
+                  { label: 'Porsi (%)', nilai: (c) => (totalKategori ? Math.round((c.jumlah / totalKategori) * 1000) / 10 : 0) },
+                ]} />}>
+              <TabelData baris={byCat} kunci={(c) => c.id} testId="asset-by-category-table"
+                kosong={<p className="py-6 text-center text-sm text-muted-foreground">Belum ada aset aktif.</p>}
+                kolom={[
+                  { kunci: 'nama', label: 'Kategori', hp: 'judul' },
+                  { kunci: 'jumlah', label: 'Jumlah aset', rata: 'kanan', isi: (c) => <span className="tabular-nums">{c.jumlah.toLocaleString('id-ID')}</span> },
+                  { kunci: 'porsi', label: 'Porsi', rata: 'kanan', isi: (c) => <span className="tabular-nums">{totalKategori ? fmtPersen((c.jumlah / totalKategori) * 100) : '—'}</span> },
+                ]} />
+            </Bagian>
+
+            <Bagian judul="Aset terbaru" testId="asset-recent"
+              keterangan="Lima aset yang terakhir didaftarkan. Klik baris untuk detail."
+              alat={<TombolUnduh namaBerkas="aset-terbaru" namaLembar="Aset terbaru" baris={recent} testId="asset-recent-unduh"
+                kolom={[
+                  { label: 'No. aset', nilai: (a) => a.asset_number },
+                  { label: 'Nama', nilai: (a) => a.name },
+                  { label: 'Kategori', nilai: (a) => a.category_name || '' },
+                  { label: 'Harga beli', nilai: (a) => angka(a.purchase_cost) },
+                  { label: 'Status', nilai: (a) => STATUS_CONFIG[a.status]?.label || a.status },
+                ]} />}>
+              <TabelData baris={recent} onKlikBaris={onAssetClick} testId="asset-recent-table"
+                kosong={<p className="py-6 text-center text-sm text-muted-foreground">Belum ada aset terdaftar.</p>}
+                kolom={[
+                  { kunci: 'nama', label: 'Aset', hp: 'judul', isi: (a) => <span className="font-medium">{a.name}</span> },
+                  { kunci: 'ket', label: 'Kategori · no. aset', hp: 'keterangan', isi: (a) => (
+                    <span className="text-muted-foreground">{[a.category_name, a.asset_number].filter(Boolean).join(' · ') || '—'}</span>) },
+                  { kunci: 'harga', label: 'Harga beli', rata: 'kanan', isi: (a) => <span className="tabular-nums">{fmtCurrency(a.purchase_cost)}</span> },
+                  { kunci: 'status', label: 'Status', isi: (a) => <StatusBadge status={a.status} configMap={STATUS_CONFIG} /> },
+                ]} />
+            </Bagian>
           </div>
-        </div>
+        </>
       )}
-
-      {/* Expiring Assets Detail Table */}
-      {expiringAlerts && (
-        Object.values(expiringAlerts).some(arr => arr.length > 0)
-      ) && (
-        <Card className="mb-4" data-testid="expiring-alerts-card">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <span className="text-amber-500">⏰</span> Garansi &amp; Asuransi Akan / Sudah Expired
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {[
-              { key: 'warranty_expiring', label: '🛡️ Garansi — Akan Habis ≤30 hari', color: 'amber' },
-              { key: 'warranty_expired',  label: '🛡️ Garansi — Sudah Expired', color: 'red' },
-              { key: 'insurance_expiring', label: '🔒 Asuransi — Akan Habis ≤30 hari', color: 'amber' },
-              { key: 'insurance_expired',  label: '🔒 Asuransi — Sudah Expired', color: 'red' },
-            ].map(({ key, label, color }) => {
-              const items = expiringAlerts[key] || [];
-              if (!items.length) return null;
-              return (
-                <div key={key}>
-                  <p className={`text-xs font-semibold mb-1.5 ${color === 'red' ? 'text-destructive' : 'text-amber-600 dark:text-amber-400'}`}>{label} ({items.length})</p>
-                  <div className="space-y-1">
-                    {items.slice(0, 5).map(a => (
-                      <div key={a.id} className="flex items-center justify-between text-xs bg-muted/40 rounded px-3 py-1.5 cursor-pointer hover:bg-muted/70"
-                        onClick={() => onAssetClick?.(a)}>
-                        <span className="font-medium">{a.name}</span>
-                        <span className="text-muted-foreground">{a.asset_number}</span>
-                        <span className={color === 'red' ? 'text-destructive font-semibold' : 'text-amber-600'}>
-                          {key.includes('warranty') ? fmtDate(a.warranty_expiry_date) : fmtDate(a.insurance_expiry_date)}
-                        </span>
-                      </div>
-                    ))}
-                    {items.length > 5 && <p className="text-xs text-muted-foreground pl-3">+{items.length - 5} lainnya</p>}
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* By Category Chart */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Distribusi Aset per Kategori</CardTitle>
-          </CardHeader>
-          <CardContent className="h-52">
-            {byCat.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={byCat} dataKey="count" nameKey="name" cx="50%" cy="50%" outerRadius={80}>
-                    {byCat.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                  </Pie>
-                  <RechartTooltip />
-                  <Legend wrapperStyle={{ fontSize: '11px' }} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-                Belum ada data aset
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Assets */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Aset Terbaru</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {(dashData?.recent_assets || []).map(a => (
-                <div key={a.id} className="flex items-center justify-between py-2 px-3 bg-muted/40 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium">{a.name}</p>
-                    <p className="text-xs text-muted-foreground">{a.category_name} · {a.asset_number}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold">{fmtCurrency(a.purchase_cost)}</p>
-                    <StatusBadge status={a.status} configMap={STATUS_CONFIG} />
-                  </div>
-                </div>
-              ))}
-              {(!dashData?.recent_assets || dashData.recent_assets.length === 0) && (
-                <p className="text-sm text-muted-foreground text-center py-4">Belum ada aset terdaftar</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </>
+    </PageLayout>
   );
 }

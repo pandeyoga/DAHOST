@@ -4,21 +4,29 @@
  * Menggantikan menu "Peminjaman" yang dulu salah domain di Portal Aksesoris
  * (lihat memory/PRODUKSI_E9_AKSESORIS.md §ACC-3 & PRODUKSI_E7_ASET.md §AST-3).
  * Di sini yang dipinjam = UNIT ASET ber-nomor, bukan qty barang habis pakai.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): kepala kedua (judul + ikon + paragraf) dihapus — judul hub sudah cukup;
+ * tombol "Pinjamkan aset" di baris tab; 4 StatTile netral; penyaring satu baris; tabel TabelData (kartu
+ * ringkas di HP); unduh Excel/CSV; pesan galat = Notice.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, RefreshCw, Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { toast } from 'sonner';
-import {
-  RotateCcw, Plus, RefreshCw, Search, AlertTriangle, CheckCircle2, PackageCheck, Clock,
-} from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { apicall, fmtDate } from '../utils';
-import { KPICard } from '../components/KPICard';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import PageLayout from '../../layout/PageLayout';
+import { EmptyState, Notice } from '../../moduleAtoms';
+import { apicall, fmtDate, useHP } from '../utils';
+import { KPICard, BarisKartu } from '../components/KPICard';
 import { StatusBadge } from '../components/StatusBadge';
 import { LOAN_STATUS_CONFIG, RETURN_CONDITION_LABEL } from '../constants';
 import { CreateLoanDialog } from '../dialogs/CreateLoanDialog';
 import { ReturnLoanDialog } from '../dialogs/ReturnLoanDialog';
+
+const rowStatus = (l) => (l.is_overdue ? 'overdue' : l.status);
 
 export function LoansTab({ token }) {
   const [loans, setLoans] = useState([]);
@@ -29,6 +37,7 @@ export function LoansTab({ token }) {
   const [err, setErr] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [returnLoan, setReturnLoan] = useState(null);
+  const hp = useHP();
 
   const load = useCallback(async () => {
     setLoading(true); setErr('');
@@ -53,152 +62,120 @@ export function LoansTab({ token }) {
       .toLowerCase().includes(q));
   }, [loans, search]);
 
-  const rowStatus = (l) => (l.is_overdue ? 'overdue' : l.status);
+  const adaAngka = summary && [summary.active_loans, summary.overdue_loans, summary.returned_this_month, summary.available_assets]
+    .some((n) => Number(n) > 0);
+
+  // Alat dibungkus satu kelompok supaya Unduh & muat ulang tidak terpisah baris di HP.
+  const alat = (
+    <div className="flex items-center gap-2">
+      <TombolUnduh namaBerkas="peminjaman-aset" namaLembar="Peminjaman" baris={filtered} testId="asset-loan-unduh"
+        kolom={[
+          { label: 'No. pinjam', nilai: (l) => l.loan_number },
+          { label: 'No. aset', nilai: (l) => l.asset_number },
+          { label: 'Aset', nilai: (l) => l.asset_name },
+          { label: 'Peminjam', nilai: (l) => l.borrower_name },
+          { label: 'Divisi', nilai: (l) => l.borrower_divisi || '' },
+          { label: 'Tujuan', nilai: (l) => l.purpose || '' },
+          { label: 'Tanggal pinjam', nilai: (l) => fmtDate(l.loan_date) },
+          { label: 'Target kembali', nilai: (l) => (l.expected_return_date ? fmtDate(l.expected_return_date) : 'Tidak ditentukan') },
+          { label: 'Tanggal kembali', nilai: (l) => (l.return_date ? fmtDate(l.return_date) : '') },
+          { label: 'Kondisi kembali', nilai: (l) => (l.condition_in ? RETURN_CONDITION_LABEL[l.condition_in] || l.condition_in : '') },
+          { label: 'Status', nilai: (l) => LOAN_STATUS_CONFIG[rowStatus(l)]?.label || l.status },
+          { label: 'Hari terlambat', nilai: (l) => (l.is_overdue ? l.days_overdue : 0) },
+        ]} />
+      <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        data-testid="asset-loan-refresh">
+        <RefreshCw className={loading ? 'animate-spin' : ''} />
+      </Button>
+    </div>
+  );
 
   return (
-    <div className="space-y-4" data-testid="asset-loans-tab">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            <RotateCcw size={18} className="text-primary" /> Peminjaman Alat &amp; Aset
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Alat/aset yang dibawa keluar dan harus dikembalikan. Satu pinjaman = satu unit aset ber-nomor —
-            bukan stok habis pakai (aksesoris pakai jalur Request &amp; Issue).
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => setShowCreate(true)} data-testid="asset-loan-new-btn">
-            <Plus size={14} className="mr-1" /> Pinjamkan Aset
-          </Button>
-          <Button size="sm" variant="outline" onClick={load} data-testid="asset-loan-refresh">
-            <RefreshCw size={14} />
-          </Button>
-        </div>
-      </div>
-
-      {/* KPI */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPICard label="Sedang Dipinjam" value={summary?.active_loans ?? '—'} icon={RotateCcw} accent="violet"
-          testId="asset-loan-kpi-active"
-          sub={summary?.longest_out_days ? `terlama ${summary.longest_out_days} hari` : 'belum ada'} />
-        <KPICard label="Terlambat" value={summary?.overdue_loans ?? '—'} icon={AlertTriangle} accent="amber"
-          testId="asset-loan-kpi-overdue"
-          sub="melewati target kembali" />
-        <KPICard label="Kembali Bulan Ini" value={summary?.returned_this_month ?? '—'} icon={CheckCircle2} accent="emerald"
-          testId="asset-loan-kpi-returned"
-          sub="sudah dikembalikan" />
-        <KPICard label="Aset Siap Dipinjam" value={summary?.available_assets ?? '—'} icon={PackageCheck} accent="blue"
-          testId="asset-loan-kpi-available"
-          sub="berstatus aktif" />
-      </div>
-
-      {summary?.by_divisi?.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-muted-foreground">Dipinjam per divisi:</span>
-          {summary.by_divisi.map(d => (
-            <span key={d.divisi} className="px-2 py-0.5 rounded-full border border-border bg-muted/40">
-              {d.divisi} · {d.count}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Filter */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[220px] max-w-sm">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-8" placeholder="Cari no. pinjam / aset / peminjam..." value={search}
+    <PageLayout testId="asset-loans-tab" title="Peminjaman"
+      subtitle="Alat/aset ber-nomor yang dibawa keluar dan harus dikembalikan."
+      actions={<Button onClick={() => setShowCreate(true)} data-testid="asset-loan-new-btn"><Plus />Pinjamkan aset</Button>}
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-8" placeholder="Cari no. pinjam, aset, peminjam" value={search}
             onChange={e => setSearch(e.target.value)} data-testid="asset-loan-search" />
         </div>
         <SmartNativeSelect value={status} onChange={e => setStatus(e.target.value)}
-          className="w-44" searchable={false} data-testid="asset-loan-status-filter">
-          <option value="active">Sedang Dipinjam</option>
-          <option value="returned">Sudah Kembali</option>
+          className="w-44" searchable={false} aria-label="Status peminjaman" data-testid="asset-loan-status-filter">
+          <option value="active">Sedang dipinjam</option>
+          <option value="returned">Sudah kembali</option>
           <option value="all">Semua</option>
         </SmartNativeSelect>
-      </div>
-
-      {err && (
-        <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-3 py-2">
-          {err}
+        {hp && alat}
+      </>}
+      tools={hp ? null : alat}
+      summary={adaAngka ? (
+        <div className="space-y-2">
+          <BarisKartu testId="asset-loan-kpi">
+            <KPICard label="Sedang dipinjam" value={summary.active_loans ?? '—'} testId="asset-loan-kpi-active"
+              sub={summary.active_loans ? `Terlama ${summary.longest_out_days || 0} hari` : 'Tidak ada pinjaman aktif'}
+              hint="Peminjaman yang belum dikembalikan." />
+            <KPICard label="Terlambat" value={summary.overdue_loans ?? '—'} testId="asset-loan-kpi-overdue"
+              accent={summary.overdue_loans ? 'danger' : 'default'}
+              sub="Melewati target kembali" hint="Peminjaman aktif yang target kembalinya sudah lewat hari ini." />
+            <KPICard label="Kembali bulan ini" value={summary.returned_this_month ?? '—'} testId="asset-loan-kpi-returned"
+              sub="Sudah dikembalikan" hint="Peminjaman yang tanggal kembalinya di bulan berjalan." />
+            <KPICard label="Aset siap dipinjam" value={summary.available_assets ?? '—'} testId="asset-loan-kpi-available"
+              sub="Berstatus aktif" hint="Aset berstatus Aktif (tidak dipinjam, tidak dalam pemeliharaan, tidak dilepas)." />
+          </BarisKartu>
+          {summary.by_divisi?.length > 0 && (
+            <p className="text-sm text-muted-foreground" data-testid="asset-loan-per-divisi">
+              Dipinjam per divisi: {summary.by_divisi.map((d) => `${d.divisi} ${d.count}`).join(' · ')}
+            </p>
+          )}
         </div>
-      )}
-
-      {/* Tabel */}
-      <div className="rounded-xl border overflow-hidden">
-        <table className="w-full" data-testid="asset-loans-table">
-          <thead className="bg-muted/40">
-            <tr>
-              {['No. Pinjam', 'Aset', 'Peminjam', 'Tujuan', 'Tgl Pinjam', 'Target Kembali', 'Status', ''].map(h => (
-                <th key={h} className="text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide px-3 py-2.5">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {loading ? (
-              <tr><td colSpan={8} className="text-center py-10 text-sm text-muted-foreground">Memuat...</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr><td colSpan={8} className="py-12">
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <RotateCcw size={28} className="text-muted-foreground/50" />
-                  <p className="font-semibold text-sm">Belum ada peminjaman</p>
-                  <p className="text-xs text-muted-foreground max-w-sm">
-                    Catat alat/aset yang dibawa keluar lewat tombol "Pinjamkan Aset" agar keberadaannya
-                    terlacak dan bisa ditagih saat jatuh tempo.
-                  </p>
-                </div>
-              </td></tr>
-            ) : filtered.map(l => (
-              <tr key={l.id} className="hover:bg-muted/30 transition-colors" data-testid={`asset-loan-row-${l.id}`}>
-                <td className="px-3 py-2.5 text-sm font-mono">{l.loan_number}</td>
-                <td className="px-3 py-2.5 text-sm">
-                  <div className="font-medium">{l.asset_name}</div>
-                  <div className="text-xs text-muted-foreground font-mono">{l.asset_number}</div>
-                </td>
-                <td className="px-3 py-2.5 text-sm">
-                  <div>{l.borrower_name}</div>
-                  {l.borrower_divisi && <div className="text-xs text-muted-foreground">{l.borrower_divisi}</div>}
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground max-w-[220px]">{l.purpose || '-'}</td>
-                <td className="px-3 py-2.5 text-xs">{fmtDate(l.loan_date)}</td>
-                <td className="px-3 py-2.5 text-xs">
-                  {l.expected_return_date ? fmtDate(l.expected_return_date) : <span className="text-muted-foreground">tidak ditentukan</span>}
-                  {l.status === 'returned' && l.return_date && (
-                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400">
-                      kembali {fmtDate(l.return_date)}
-                      {l.condition_in ? ` · ${RETURN_CONDITION_LABEL[l.condition_in] || l.condition_in}` : ''}
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2.5">
-                  <StatusBadge status={rowStatus(l)} configMap={LOAN_STATUS_CONFIG} />
-                  {l.is_overdue && (
-                    <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5 flex items-center gap-1">
-                      <Clock size={10} /> {l.days_overdue} hari
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 text-right">
-                  {l.status === 'active' ? (
-                    <Button size="sm" variant="outline" onClick={() => setReturnLoan(l)}
-                      data-testid={`asset-loan-return-${l.id}`}>
-                      Kembalikan
-                    </Button>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">
-                      {l.returned_by_name ? `oleh ${l.returned_by_name}` : '—'}
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!loading && filtered.length > 0 && (
+      ) : null}
+      footer={!loading && filtered.length > 0 ? (
         <p className="text-xs text-muted-foreground">Menampilkan {filtered.length} peminjaman</p>
+      ) : null}>
+      {err && <Notice tone="danger" title="Data peminjaman gagal dimuat">{err}</Notice>}
+
+      {loading && loans.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Memuat peminjaman…</p>
+      ) : (
+        <TabelData baris={filtered} testId="asset-loans-table"
+          kosong={<EmptyState title={loans.length ? 'Tidak ada peminjaman yang cocok' : 'Belum ada peminjaman'}
+            description={loans.length ? 'Ubah kata pencarian atau status.'
+              : 'Catat alat/aset yang dibawa keluar lewat tombol "Pinjamkan aset" agar keberadaannya terlacak dan bisa ditagih saat jatuh tempo. Satu pinjaman = satu unit aset ber-nomor; aksesoris memakai jalur permintaan & pengeluaran barang.'} />}
+          kolom={[
+            { kunci: 'no', label: 'No. pinjam', hp: 'keterangan', isi: (l) => <span className="tabular-nums text-muted-foreground">{l.loan_number}</span> },
+            { kunci: 'aset', label: 'Aset', hp: 'judul', isi: (l) => (
+              <div className="min-w-0">
+                <p className="font-medium">{l.asset_name}</p>
+                <p className="text-xs tabular-nums text-muted-foreground">{l.asset_number}</p>
+              </div>) },
+            { kunci: 'peminjam', label: 'Peminjam', isi: (l) => (
+              <span>{l.borrower_name}{l.borrower_divisi && <span className="block text-xs text-muted-foreground">{l.borrower_divisi}</span>}</span>) },
+            { kunci: 'tujuan', label: 'Tujuan', isi: (l) => <span className="line-clamp-2 md:max-w-[14rem]">{l.purpose || '—'}</span> },
+            { kunci: 'tgl', label: 'Tanggal pinjam', isi: (l) => fmtDate(l.loan_date) },
+            { kunci: 'target', label: 'Target kembali', isi: (l) => (
+              <span>
+                {l.expected_return_date ? fmtDate(l.expected_return_date) : <span className="text-muted-foreground">Tidak ditentukan</span>}
+                {l.status === 'returned' && l.return_date && (
+                  <span className="block text-xs text-muted-foreground">
+                    Kembali {fmtDate(l.return_date)}
+                    {l.condition_in ? ` · ${RETURN_CONDITION_LABEL[l.condition_in] || l.condition_in}` : ''}
+                  </span>
+                )}
+              </span>) },
+            { kunci: 'status', label: 'Status', isi: (l) => (
+              <span className="inline-flex flex-col items-start gap-0.5">
+                <StatusBadge status={rowStatus(l)} configMap={LOAN_STATUS_CONFIG} />
+                {l.is_overdue && <span className="text-xs text-[hsl(var(--danger-text))]">{l.days_overdue} hari</span>}
+              </span>) },
+            { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (l) => (l.status === 'active' ? (
+              <Button size="sm" variant="outline" onClick={() => setReturnLoan(l)} data-testid={`asset-loan-return-${l.id}`}>
+                Kembalikan
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">{l.returned_by_name ? `Diterima ${l.returned_by_name}` : '—'}</span>
+            )) },
+          ]} />
       )}
 
       <CreateLoanDialog open={showCreate} onClose={() => setShowCreate(false)} token={token}
@@ -211,6 +188,6 @@ export function LoansTab({ token }) {
             toast.info('Catatan pemeliharaan otomatis dibuat karena aset kembali dalam kondisi rusak.');
           }
         }} />
-    </div>
+    </PageLayout>
   );
 }

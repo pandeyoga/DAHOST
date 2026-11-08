@@ -1,14 +1,17 @@
 /**
- * DisposalRequestDialog — Request disposal for high-value assets (requires approval).
- * Extracted from AssetManagementPortal.jsx (Phase 2 refactor)
+ * DisposalRequestDialog — ajukan pelepasan aset bernilai buku tinggi (perlu persetujuan).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): popup form standar pendek, DatePicker, kotak kuning ber-emoji → Notice,
+ * tombol kirim hijau (dulu kuning buatan sendiri). Isian & data yang dikirim sama.
  */
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { apicall, fmtCurrency } from '../utils';
+import { Textarea } from '@/components/ui/textarea';
 import { MoneyInput } from '@/components/ui/money-input';
+import DatePicker from '@/components/ui/date-picker';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { Notice } from '../../moduleAtoms';
+import { apicall, fmtCurrency } from '../utils';
 import { todayWIB } from '@/lib/waktu';
 
 export function DisposalRequestDialog({ open, onClose, token, asset, onRequested }) {
@@ -18,66 +21,48 @@ export function DisposalRequestDialog({ open, onClose, token, asset, onRequested
     reason: '',
   });
   const [loading, setLoading] = useState(false);
+  const [galat, setGalat] = useState('');
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const nbv = asset ? (parseFloat(asset.purchase_cost || 0) - parseFloat(asset.accumulated_depreciation || 0)) : 0;
 
   const submit = async () => {
-    if (!form.reason.trim()) { toast.error('Alasan disposal wajib diisi'); return; }
+    if (!form.reason.trim()) { setGalat('Alasan pelepasan wajib diisi.'); return; }
+    setGalat('');
     setLoading(true);
     try {
       const data = await apicall('POST', `/api/assets/${asset.id}/request-disposal`, token, form);
       if (data?.id) {
-        toast.success('Permintaan disposal dikirim untuk approval');
+        toast.success('Pengajuan pelepasan dikirim untuk persetujuan');
         onRequested?.();
         onClose();
       } else {
-        toast.error(data?.detail || 'Gagal kirim permintaan');
+        setGalat(data?.detail || 'Gagal mengirim pengajuan.');
       }
-    } catch { toast.error('Gagal kirim permintaan'); }
+    } catch (e) { setGalat(e.message || 'Gagal mengirim pengajuan.'); }
     finally { setLoading(false); }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <span className="text-amber-500">⚠️</span> Request Disposal Aset
-          </DialogTitle>
-        </DialogHeader>
-        {asset && (
-          <div className="bg-amber-100 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/20 rounded-lg p-3 text-sm space-y-1">
-            <p className="font-medium">{asset.name}</p>
-            <p className="text-muted-foreground text-xs">{asset.asset_number} · NBV: <strong className="text-amber-700">{fmtCurrency(nbv)}</strong></p>
-            <p className="text-xs text-amber-700">⚠️ Aset bernilai tinggi — memerlukan approval Finance/Admin sebelum dilepas.</p>
-          </div>
-        )}
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Tanggal Pelepasan</label>
-            <Input type="date" value={form.disposal_date} onChange={e => set('disposal_date', e.target.value)} className="mt-1" />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Nilai Penjualan (Rp, isi 0 jika dibuang)</label>
-            <MoneyInput placeholder="0" value={form.disposal_value} onChange={e => set('disposal_value', e.target.value)} className="mt-1" />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Alasan Disposal *</label>
-            <textarea
-              className="w-full border rounded-md px-3 py-2 text-sm mt-1 min-h-[80px] bg-background resize-none"
-              placeholder="Rusak total, tidak ekonomis diperbaiki..."
-              value={form.reason}
-              onChange={e => set('reason', e.target.value)}
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={loading} className="bg-amber-600 hover:bg-amber-700 text-foreground">
-            {loading ? 'Mengirim...' : 'Kirim Request'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="disposal-request-form"
+      judul="Ajukan pelepasan aset"
+      keterangan={asset ? `${asset.name} · ${asset.asset_number}` : undefined}
+      onSimpan={submit} labelSimpan="Kirim pengajuan" menyimpan={loading} galat={galat}>
+      {asset && (
+        <Notice tone="warning" title={`Nilai buku ${fmtCurrency(nbv)}`}>
+          Aset bernilai tinggi — perlu persetujuan Keuangan/Admin sebelum dilepas.
+        </Notice>
+      )}
+      <Isian label="Tanggal pelepasan">
+        <DatePicker value={form.disposal_date} onChange={v => set('disposal_date', v)} bolehKosong={false}
+          testId="disposal-date" />
+      </Isian>
+      <Isian label="Nilai jual (Rp)" petunjuk="Isi 0 bila aset dibuang." htmlFor="disposal-value">
+        <MoneyInput id="disposal-value" placeholder="0" value={form.disposal_value} onChange={e => set('disposal_value', e.target.value)} />
+      </Isian>
+      <Isian label="Alasan pelepasan" wajib htmlFor="disposal-reason">
+        <Textarea id="disposal-reason" rows={3} placeholder="Rusak total, tidak ekonomis diperbaiki…"
+          value={form.reason} onChange={e => set('reason', e.target.value)} />
+      </Isian>
+    </FormPopup>
   );
 }

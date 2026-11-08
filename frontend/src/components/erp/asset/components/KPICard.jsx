@@ -1,32 +1,40 @@
 /**
- * KPICard — Compact gradient card with icon, value, label & optional sub-text.
- * Extracted from AssetManagementPortal.jsx (Phase 1 refactor)
+ * Kartu angka Manajemen Aset — Standar UI/UX v2: SATU gaya kartu angka (`StatTile` bersama), paling banyak
+ * 4 sebaris. Dulu kartu gradasi berwarna dengan ikon (KPICard buatan sendiri).
+ *
+ * `sub` = kalimat pendek di bawah angka (selalu tampil); `hint` = penjelasan cara menghitung (muncul saat
+ * kursor diarahkan ke kartu).
  */
-import { Card, CardContent } from '@/components/ui/card';
+import { StatTile } from '../../moduleAtoms';
 
-export function KPICard({ label, value, sub, icon: Icon, accent, testId }) {
-  const accents = {
-    blue: 'from-blue-500/10 to-blue-600/5 border-blue-300 dark:border-blue-500/20',
-    emerald: 'from-emerald-500/10 to-emerald-600/5 border-emerald-300 dark:border-emerald-500/20',
-    amber: 'from-amber-500/10 to-amber-600/5 border-amber-300 dark:border-amber-500/20',
-    violet: 'from-violet-500/10 to-violet-600/5 border-violet-300 dark:border-violet-500/20',
-  };
-  const iconColors = {
-    blue: 'text-blue-500',
-    emerald: 'text-emerald-500',
-    amber: 'text-amber-500',
-    violet: 'text-violet-500',
-  };
+export function KPICard({ label, value, sub, hint, accent, testId }) {
   return (
-    <Card className={`bg-gradient-to-br ${accents[accent] || accents.blue} border`} data-testid={testId}>
-      <CardContent className="pt-4 pb-3 px-4">
-        <div className="flex items-start justify-between mb-1">
-          <Icon size={18} className={iconColors[accent] || 'text-blue-500'} />
+    <div className="min-w-0" title={hint}>
+      <StatTile label={label} value={value} sub={sub} hint={hint} accent={accent} testId={testId} />
+    </div>
+  );
+}
+
+/** Baris kartu angka: 2 kolom di HP, 4 di layar lebar. */
+export function BarisKartu({ children, testId }) {
+  return <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid={testId}>{children}</div>;
+}
+
+/**
+ * Bagian — satu kelompok isi (judul kecil + alat di kanan + tabel). Polos, bukan kartu: tabel di dalamnya
+ * menjadi kartu ringkas di HP, jadi bagian ini tidak boleh berkartu (kartu di dalam kartu).
+ */
+export function Bagian({ judul, keterangan, alat, children, testId, className }) {
+  return (
+    <section className={className ? `min-w-0 space-y-2 ${className}` : 'min-w-0 space-y-2'} data-testid={testId}>
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-base font-semibold text-foreground">{judul}</h3>
+          {keterangan && <p className="text-sm text-muted-foreground">{keterangan}</p>}
         </div>
-        <div className="text-xl font-bold" data-testid={testId ? `${testId}-value` : undefined}>{value}</div>
-        <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
-        {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
-      </CardContent>
-    </Card>
+        {alat && <div className="flex items-center gap-2">{alat}</div>}
+      </div>
+      {children}
+    </section>
   );
 }
