@@ -429,7 +429,7 @@ function ContentCalendarBase({ token }) {
                 })}
               </div>
               {calendarData.length === 0 && (
-                <p className="mt-2 text-center text-sm text-muted-foreground">Belum ada konten di bulan ini. Klik tanggal untuk menambah.</p>
+                <EmptyState title="Belum ada konten di bulan ini" description="Klik tanggal untuk menambah." />
               )}
             </>
           )}

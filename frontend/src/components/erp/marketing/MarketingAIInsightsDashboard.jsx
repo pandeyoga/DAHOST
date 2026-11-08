@@ -135,7 +135,7 @@ export default function MarketingAIInsightsDashboard({ token }) {
     sentiment: <Button onClick={runSentiment} disabled={loading.sentiment} data-testid="ai-run-sentiment"><Sparkles />{sentiment ? 'Analisis ulang' : 'Analisis sekarang'}</Button>,
     recommendations: <Button onClick={runRecommendations} disabled={loading.recommendations} data-testid="ai-run-reco"><Sparkles />{recommendations ? 'Susun ulang' : 'Susun daftar tindakan'}</Button>,
   }[activeTab];
-  const sedangAI = (teks) => <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin text-primary" />{teks}</p>;
+  const sedangAI = (teks) => <p className="py-6 text-center text-sm text-muted-foreground"><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin text-primary" />{teks}</p>;
   const belum = (Icon, judul, ket) => <EmptyState icon={Icon} title={judul} description={ket} action={tombolJalankan} />;
 
   const unduh = activeTab === 'overview'

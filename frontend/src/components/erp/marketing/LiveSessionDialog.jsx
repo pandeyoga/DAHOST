@@ -37,6 +37,13 @@ const STATUS_LABEL = {
 };
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
+// money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan.
+const ISIAN_ANGKA = [
+  ['duration_minutes', 'Durasi (menit)'], ['peak_viewers', 'Penonton puncak'], ['total_viewers', 'Total penonton'],
+  ['likes', 'Suka'], ['comments', 'Komentar'], ['shares', 'Dibagikan'], ['orders', 'Jumlah pesanan'],
+  ['revenue', 'Omzet (Rp)', true], ['units_sold', 'Item terjual'], ['products_featured', 'Produk dibawakan'],
+];
+
 const EMPTY = {
   account_id: '', host_id: '', session_date: '', title: '', start_time: '',
   duration_minutes: '', peak_viewers: '', total_viewers: '', likes: '',
@@ -159,13 +166,7 @@ export default function LiveSessionDialog({ open, onClose, onSaved, token, sessi
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
-        {[['duration_minutes', 'Durasi (menit)'], ['peak_viewers', 'Penonton puncak'],
-          ['total_viewers', 'Total penonton'], ['likes', 'Suka'],
-          ['comments', 'Komentar'], ['shares', 'Dibagikan'],
-          ['orders', 'Jumlah pesanan'], ['revenue', 'Omzet (Rp)', true],
-          ['units_sold', 'Item terjual'], ['products_featured', 'Produk dibawakan']]
-          .map(([k, l, money]) => (
+        {ISIAN_ANGKA.map(([k, l, money]) => (
             <Isian key={k} label={l} htmlFor={`live-${k}`}>
               {money ? (
                 <MoneyInput id={`live-${k}`} value={form[k]} onChange={set(k)}

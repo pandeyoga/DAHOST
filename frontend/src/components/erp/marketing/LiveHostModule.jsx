@@ -30,6 +30,7 @@
 import { useState, useMemo } from 'react';
 import { Users, Clock, Calendar, Video, TrendingUp, BarChart3, DollarSign } from 'lucide-react';
 import FilterChips from '@/components/ui/filter-chips';
+import PageLayout from '../layout/PageLayout';
 import AnalyticsTab from './AnalyticsTab';
 import PaymentTab from './PaymentTab';
 import LiveHostsTab from './live-host/LiveHostsTab';
@@ -56,8 +57,8 @@ export default function LiveHostModule({ token }) {
   );
 
   return (
-    <div className="space-y-4" data-testid="livehost-module">
-      <FilterChips options={TAMPILAN} value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="livehost-view" ariaLabel="Tampilan" />
+    <PageLayout testId="livehost-module" title="Host live"
+      filters={<FilterChips options={TAMPILAN} value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="livehost-view" ariaLabel="Tampilan" />}>
       {activeTab === 'hosts' && <LiveHostsTab authH={authH} />}
       {activeTab === 'shifts' && <ShiftsTab authH={authH} />}
       {activeTab === 'calendar' && <CalendarTab authH={authH} />}
@@ -65,6 +66,6 @@ export default function LiveHostModule({ token }) {
       {activeTab === 'training' && <TrainingTab authH={authH} />}
       {activeTab === 'analytics' && <AnalyticsTab authH={authH} />}
       {activeTab === 'payment' && <PaymentTab authH={authH} />}
-    </div>
+    </PageLayout>
   );
 }

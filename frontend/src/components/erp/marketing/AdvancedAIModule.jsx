@@ -678,7 +678,7 @@ function ABTestingTab({ authH }) {
           <div key={v.id} className="space-y-2 border-b border-[var(--glass-border)] pb-3">
             <p className="text-sm font-medium">{v.label}{v.content ? <span className="block text-xs font-normal italic text-muted-foreground">{v.content}</span> : null}</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {[['views', 'Tayangan'], ['clicks', 'Klik'], ['orders', 'Pesanan'], ['revenue_rp', 'Omzet (Rp)'], ['engagement', 'Interaksi']].map(([key, lbl]) => (
+              {ISIAN_HASIL_AB.map(([key, lbl]) => (
                 <Isian key={key} label={lbl} htmlFor={`rec-${v.id}-${key}`}>
                   <Input id={`rec-${v.id}-${key}`} type="number" min={0} value={recordData[v.id]?.[key] ?? ''}
                     onChange={e => setRecordData(d => ({ ...d, [v.id]: { ...d[v.id], [key]: Number(e.target.value) } }))} />
@@ -695,6 +695,8 @@ function ABTestingTab({ authH }) {
 // ─────────────────────────────────────────────────────────────────
 // MAIN MODULE
 // ─────────────────────────────────────────────────────────────────
+const ISIAN_HASIL_AB = [['views', 'Tayangan'], ['clicks', 'Klik'], ['orders', 'Pesanan'], ['revenue_rp', 'Omzet (Rp)'], ['engagement', 'Interaksi']];
+
 export default function AdvancedAIModule({ token }) {
   const [activeTab, setActiveTab] = useState('pricing');
   const authH = useMemo(() => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
