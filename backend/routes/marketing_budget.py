@@ -92,7 +92,7 @@ class BudgetUpsert(BaseModel):
     budget_by_category: dict = Field(default_factory=dict)
     notes: Optional[str] = ''
     # F6.5 (sesi #9) — ALASAN perubahan rencana anggaran (opsional, dicatat di
-    # `marketing_change_log` dan ditampilkan di layar Jejak Perubahan).
+    # `marketing_change_log` dan ditampilkan di layar Jejak Marketing).
     reason: Optional[str] = ''
 
 
@@ -446,7 +446,7 @@ async def list_spend(request: Request, account_id: str = Query(...), period: str
     return {'ok': True, 'entries': [serialize_doc(r) for r in rows], 'total': len(rows)}
 
 
-@router.delete('/spend/{sid}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/spend/{sid}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_spend(sid: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -675,7 +675,7 @@ async def set_period_lock(data: PeriodLockIn, request: Request):
     if not _cycle.can_manage_period(user):
         raise HTTPException(
             403, 'Hanya SPV/Manager Marketing (atau owner) yang boleh menutup & membuka '
-                 'periode. Minta SPV Marketing melakukannya dari layar Siklus Marketing.')
+                 'periode. Minta SPV Marketing melakukannya dari layar Target & Anggaran.')
     db = get_db()
     acc = await db.marketing_platform_accounts.find_one({'id': data.account_id}, {'_id': 0})
     if not acc:

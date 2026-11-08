@@ -348,7 +348,7 @@ async def update_discount(disc_id: str, body: DiscountUpdate, request: Request):
     return {"success": True, "data": serialize(updated)}
 
 
-@router.delete("/{disc_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/{disc_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_discount(disc_id: str, request: Request):
     await require_auth(request)
     db = get_db()

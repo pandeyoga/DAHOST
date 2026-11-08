@@ -1,5 +1,5 @@
 /**
- * Papan kelengkapan data produk (Ringkasan RnD — Portal Manajemen & Portal RnD).
+ * Papan kelengkapan data produk (Dashboard RnD — Portal Manajemen & Portal RnD).
  * Standar UI/UX v2 (8 Nov 2026): satu kartu, pil penyaring per kriteria (dengan jumlah model kurang; dulu 7 kartu
  * kecil HURUF BESAR), tabel standar + unduh Excel/CSV (semua model hasil saringan), ikon centang/silang warna token,
  * tombol standar (dulu <button> polos). Fitur tetap: saring per kriteria, lompat ke layar pengisian, tampilkan semua.

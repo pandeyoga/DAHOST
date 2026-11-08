@@ -1,4 +1,4 @@
-"""module_catalog.py — izin GRANULAR per modul (Lihat/Tambah/Ubah/Hapus/Approve/Export).
+"""module_catalog.py — izin GRANULAR per modul (Lihat/Tambah/Ubah/Hapus/Setujui/Unduh).
 
 SSOT lapisan izin per-modul untuk semua portal internal KECUALI Maklon, Administrasi
 Sistem & Kolaborasi (yang tetap memakai katalog lama di `permission_catalog.py`).
@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import re
 
+# 8 Nov 2026 (owner: satu layar = satu nama di menu, judul, Kontrol Akses, panduan & Asisten AI): label aksi =
+# kata tombol di layar (Setujui, Unduh) dan label modul = nama menunya. Kunci izin `mod.<id>.<aksi>` TIDAK berubah.
 ACTIONS = ("view", "create", "edit", "delete", "approve", "export")
 ACTION_LABELS = {
     "view": "Lihat", "create": "Tambah", "edit": "Ubah",
-    "delete": "Hapus", "approve": "Approve", "export": "Export",
+    "delete": "Hapus", "approve": "Setujui", "export": "Unduh",
 }
 _VE = ("view", "export")
 _VAE = ("view", "approve", "export")
@@ -64,7 +66,7 @@ MODULES: list[dict] = [
        {"view": ["management.view"], "manage": ["management.manage"], "approve": ["hr.approve"]}),
     _m("management", "mgmt_okr", "OKR Tracker", ["mgmt-okr"], ["/api/management/okr"], _CRUD,
        {"manage": ["management.manage"]}),
-    _m("management", "mgmt_marketing_cycle", "Siklus Marketing", ["mgmt-marketing-cycle"],
+    _m("management", "mgmt_marketing_cycle", "Target & Anggaran", ["mgmt-marketing-cycle"],
        ["/api/marketing/cycle"], ("view", "edit", "export")),
     _m("management", "mgmt_digest", "Digest Mingguan & Audit Manajemen", ["mgmt-tools"],
        ["/api/management/weekly-digest", "/api/management/audit"], _VE),
@@ -97,30 +99,30 @@ MODULES: list[dict] = [
        extras=[("prod.process.input", "input", "Catat output per proses"),
                ("operator.view", "view", "Buka Layar Operator"),
                ("operator.input", "input", "Input output line (operator)")], lookup=True),
-    _m("production", "prod_vendor_cmt", "Vendor CMT & Input Vendor", ["vendor-admin", "cmt-override-portal"],
+    _m("production", "prod_vendor_cmt", "Vendor CMT & Input atas nama CMT", ["vendor-admin", "cmt-override-portal"],
        ["/api/vendor-portal/accounts", "/api/vendor-portal/partners", "/api/cmt-override"], _CRUD,
        {"view": ["cmt.view"], "manage": ["production.manage"]}),
-    _m("production", "prod_po", "PO Produksi Internal", ["prod-pos-internal", "po-closure"],
+    _m("production", "prod_po", "PO Internal & Tutup PO", ["prod-pos-internal", "po-closure"],
        ["/api/production-pos", "/api/po-items", "/api/po-accessories", "/api/po-items-produced",
         "/api/rahaza/orders", "/api/rahaza/orders-statuses"], _ALL,
        {"view": ["orders.view"], "manage": ["orders.manage"], "approve": ["production.approve"]}),
-    _m("production", "prod_vendor_shipment", "Kirim Material CMT", ["prod-shipments-vendor"],
+    _m("production", "prod_vendor_shipment", "Kirim ke CMT", ["prod-shipments-vendor"],
        ["/api/vendor-shipments", "/api/vendor-material-inspections", "/api/material-requests",
         "/api/material-defect-reports"], _ALL,
        {"view": ["shipment.view"], "create": ["vendor_shipment.create", "shipment.create"],
         "edit": ["vendor_shipment.update", "shipment.update"],
         "delete": ["vendor_shipment.delete", "shipment.delete"], "approve": ["shipment.dispatch"]}),
-    _m("production", "prod_cmt_receive", "Terima FG dari CMT", ["da-cmt-receive"],
+    _m("production", "prod_cmt_receive", "Terima & QC", ["da-cmt-receive"],
        ["/api/prod/cmt-receipts", "/api/prod/cmt-reject-queue", "/api/prod/short-shipments",
         "/api/dewi/cmt-intake", "/api/dewi/cmt/lifecycle"], _ALL,
        {"view": ["cmt.view"], "manage": ["cmt.intake.manage"], "approve": ["cmt.approve"]}),
-    _m("production", "prod_cmt_permak", "Permak / Perbaikan CMT", ["cmt-permak"], ["/api/dewi/cmt-permak"], _ALL,
+    _m("production", "prod_cmt_permak", "Perbaikan", ["cmt-permak"], ["/api/dewi/cmt-permak"], _ALL,
        {"view": ["cmt.view"], "manage": ["cmt.permak.manage"], "approve": ["cmt.approve"]}),
     _m("production", "prod_cmt_monitor", "Monitoring CMT & Komponen Kurang",
        ["cmt-monitor", "cmt-component-requests"],
        ["/api/dewi/cmt-component-requests", "/api/dewi/cmt-kejar", "/api/dewi/cmt-recon"], _ALL,
        {"view": ["cmt.view"], "manage": ["cmt.kejar.manage"], "approve": ["cmt.approve"]}),
-    _m("production", "prod_buyer_shipment", "Serah Terima FG / Dispatch", ["prod-shipments-buyer"],
+    _m("production", "prod_buyer_shipment", "Kirim hasil", ["prod-shipments-buyer"],
        ["/api/buyer-shipments", "/api/buyer-shipment-items", "/api/buyer-shipment-dispatches",
         "/api/buyer-dispatch-capacity", "/api/buyer-dispatch-outstanding", "/api/buyer-receipt-variance",
         "/api/buyer-shorts", "/api/rahaza/shipments"], _ALL,
@@ -132,15 +134,15 @@ MODULES: list[dict] = [
         "/api/capacity", "/api/rahaza/supervisor", "/api/prod/display-rak", "/api/prod/material-summary-by-location"],
        _VE, {"view": ["prod.dashboard.view", "prod.wip.view", "prod.line.view"]}),
     # Tahap 9 (pantau): Pantau Produksi (`pantau-produksi`, /api/pantau) menggantikan Production Jobs & Tracking
-    _m("production", "prod_jobs", "Production Jobs & Tracking", ["prod-work-orders", "prod-monitoring", "pantau-produksi"],
+    _m("production", "prod_jobs", "Pantau Produksi", ["prod-work-orders", "prod-monitoring", "pantau-produksi"],
        ["/api/production-jobs", "/api/production-job-items", "/api/production-progress", "/api/production-tracking",
         "/api/work-orders", "/api/recalculate-jobs", "/api/production-returns", "/api/pantau"], _ALL,
        {"view": ["wo.view", "orders.view"], "manage": ["wo.manage"], "approve": ["production.approve"]}),
     # Tahap 9 (pantau): Laporan Selisih (`laporan-selisih`, /api/pantau/selisih) menggantikan dua laporan variance
-    _m("production", "prod_variance", "Laporan Variance", ["prod-variance", "prod-variance-report", "laporan-selisih"],
+    _m("production", "prod_variance", "Laporan Selisih", ["prod-variance", "prod-variance-report", "laporan-selisih"],
        ["/api/production-variances", "/api/pantau/selisih"], ("view", "edit", "approve", "export"),
        {"view": ["orders.view"], "approve": ["production.approve"]}),
-    _m("production", "prod_cmt_billing", "Invoice CMT & Belanja CMT", ["prod-cmt-billing"],
+    _m("production", "prod_cmt_billing", "Tagihan CMT", ["prod-cmt-billing"],
        ["/api/production/cmt-billing", "/api/dewi/cmt-belanja"], _ALL,
        {"view": ["cmt.view", "fin.ap.view"], "manage": ["cmt.belanja.manage"], "approve": ["cmt.approve"]}),
     _m("production", "prod_sewing_cost", "Biaya Jahit", ["prod-sewing-cost"], ["/api/production/sewing-cost"], _CRUD,
@@ -148,7 +150,7 @@ MODULES: list[dict] = [
     # 2026-11-02 (K10): + menu "Retur Material" (`prod-material-returns`, dipasang lagi).
     # 2026-11-07 (Tahap 9): menu baru "Bahan" (`bahan-produksi`, tab Kebutuhan · Retur) menggantikan
     # dua menu lama; id lama tetap di sini selama masih bisa dibuka dari tautan lama / Portal Gudang.
-    _m("production", "prod_material_req", "Kebutuhan & Retur Material",
+    _m("production", "prod_material_req", "Bahan & Retur Material",
        ["bahan-produksi", "prod-material-requirements", "prod-material-returns"],
        ["/api/rahaza/material-requirements", "/api/production/material-returns"], _ALL,
        {"view": ["bom.view"], "approve": ["inventory.approve"]}),
@@ -183,10 +185,10 @@ MODULES: list[dict] = [
        {"view": ["proc.po.view", "po.view"], "create": ["proc.po.manage", "po.create"],
         "edit": ["proc.po.manage", "po.edit", "purchasing.manage"], "delete": ["proc.po.manage", "po.delete"],
         "approve": ["proc.po.approve", "purchasing.approve"]}),
-    _m("procurement", "proc_accessory_pr", "Request Aksesoris (Pembelian)", ["proc-accessory-pr"],
+    _m("procurement", "proc_accessory_pr", "Request Aksesoris", ["proc-accessory-pr"],
        ["/api/acc/purchase-requests"], _ALL,
        {"view": ["accessories.view"], "manage": ["wh.accessory.manage"], "approve": ["accessories.approve"]}),
-    _m("procurement", "proc_match", "Rekonsiliasi 3-Arah & Faktur Supplier", ["proc-3way-match", "proc-ap-invoices"],
+    _m("procurement", "proc_match", "Rekonsiliasi PO & Faktur Supplier", ["proc-3way-match", "proc-ap-invoices"],
        ["/api/rahaza/3way-match", "/api/rahaza/ap-invoices"], _ALL,
        {"view": ["proc.match.view", "fin.ap.view"], "manage": ["proc.match.manage", "fin.ap.manage"],
         "approve": ["proc.match.approve"]}),
@@ -220,7 +222,7 @@ MODULES: list[dict] = [
        {"view": ["wh.receiving.view"], "manage": ["wh.receiving.manage"], "approve": ["warehouse.approve"]}),
     _m("warehouse", "wh_fabric_rolls", "Roll Kain", ["wms-fabric-rolls"], ["/api/wms/fabric-rolls"], _CRUD,
        {"view": ["inv.stock.view"], "manage": ["inv.stock.manage"]}),
-    _m("warehouse", "wh_putaway", "Penyimpanan (Put-away)", ["wh-putaway"], ["/api/wms/putaway", "/api/wms/positions"],
+    _m("warehouse", "wh_putaway", "Penyimpanan", ["wh-putaway"], ["/api/wms/putaway", "/api/wms/positions"],
        _CRUD, {"view": ["inv.stock.view"], "manage": ["wh.putaway.manage"]}),
     _m("warehouse", "wh_quarantine", "Karantina QC", ["wh-quarantine"], ["/api/wms/quarantine"], _ALL,
        {"view": ["wh.receiving.view"], "manage": ["wh.receiving.manage"], "approve": ["warehouse.approve"]}),
@@ -228,7 +230,7 @@ MODULES: list[dict] = [
        ["/api/rahaza/material-issues", "/api/rahaza/fg-issue", "/api/rahaza/fg-issues"], _ALL,
        {"view": ["inv.stock.view"], "manage": ["inv.material_issue.manage", "inventory.manage"],
         "approve": ["inventory.approve"]}),
-    _m("warehouse", "wh_fulfillment", "Fulfillment & Pick List", ["fulfillment", "wh-picklist"],
+    _m("warehouse", "wh_fulfillment", "Pemenuhan Pesanan & Daftar Ambil", ["fulfillment", "wh-picklist"],
        ["/api/fulfillment", "/api/wms/picklist"], _ALL,
        {"view": ["warehouse.view"], "manage": ["warehouse.manage"], "approve": ["warehouse.approve"]}),
     _m("warehouse", "wh_delivery_notes", "Surat Jalan", ["wms-delivery-notes"],
@@ -245,7 +247,7 @@ MODULES: list[dict] = [
         "/api/wms/structure", "/api/wms/map", "/api/wms/units", "/api/wms/unit-conversions",
         "/api/warehouse/locations", "/api/rahaza/locations", "/api/rahaza/storage-locations"], _CRUD,
        {"manage": ["wh.bin.manage"]}, lookup=True),
-    _m("warehouse", "wh_audit", "Audit Trail Gudang", ["wh-audit"], ["/api/wms/audit"], _VE),
+    _m("warehouse", "wh_audit", "Audit Trail", ["wh-audit"], ["/api/wms/audit"], _VE),
 
     # ── AKSESORIS ───────────────────────────────────────────────────────────
     _m("accessories", "acc_dashboard", "Dashboard, Valuasi & Laporan Aksesoris",
@@ -287,16 +289,16 @@ MODULES: list[dict] = [
        ["/api/rahaza/ap-aging"], _VE,
        {"view": ["fin.ap.view"]}),
     # 2026-11-02 (K11): Nota Debit pemasok (atas Retur Pembelian) diterbitkan Keuangan.
-    _m("finance", "fin_debit_notes", "Nota Debit Pemasok", ["fin-debit-notes"], ["/api/rahaza/debit-notes"],
+    _m("finance", "fin_debit_notes", "Nota Debit (Retur)", ["fin-debit-notes"], ["/api/rahaza/debit-notes"],
        ("view", "create", "export"), {"view": ["fin.ap.view"], "create": ["fin.ap.manage"]}),
-    _m("finance", "fin_cash", "Kas & Bank, Prediksi Kas", ["fin-cash", "fin-ai-cashflow"],
+    _m("finance", "fin_cash", "Rekening & Mutasi, Prediksi Kas", ["fin-cash", "fin-ai-cashflow"],
        ["/api/rahaza/cash-accounts", "/api/rahaza/cash-movements", "/api/finance/ai-cashflow"], _ALL,
        {"view": ["fin.cash.view", "fin.payment.view"], "manage": ["fin.cash.manage", "fin.payment.manage"],
         "approve": ["finance.approve"]}, lookup=True),
     # 2026-11-04 (owner): Kas Kecil = rekening biasa di Rekening & Mutasi; modul ini hanya untuk data dana lama
     _m("finance", "fin_petty_cash", "Kas Kecil (dana lama)", ["fin-petty-cash"], ["/api/finance/petty-cash"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
-    _m("finance", "fin_bank_transfer", "Transfer Bank", ["fin-bank-transfer"], ["/api/finance/bank-transfers"], _ALL,
+    _m("finance", "fin_bank_transfer", "Transfer Antar Rekening", ["fin-bank-transfer"], ["/api/finance/bank-transfers"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
     # Tahap 8 fase 2: transaksi antar CV (talangan, pinjaman, uang nyasar, pelunasan) + Laporan Saldo antar CV
     _m("finance", "fin_intercompany", "Transaksi & Saldo antar CV", ["fin-antar-cv", "fin-saldo-antar-cv"],
@@ -306,16 +308,16 @@ MODULES: list[dict] = [
     _m("finance", "fin_bank_recon", "Rekonsiliasi Bank", ["fin-bank-recon"],
        ["/api/finance/bank-recon", "/api/rahaza/finance/bank-recon-adjustments"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
-    _m("finance", "fin_expenses", "Pengeluaran & Biaya", ["fin-expenses"], ["/api/rahaza/expenses"], _ALL,
+    _m("finance", "fin_expenses", "Pengeluaran & Klaim", ["fin-expenses"], ["/api/rahaza/expenses"], _ALL,
        {"view": ["fin.expense.view"], "manage": ["fin.expense.manage"], "approve": ["finance.approve"]}),
     # 2026-11-04 (owner): uang muka karyawan (dulu di Kas Kecil) satu menu dengan kasbon
     _m("finance", "fin_kasbon", "Kasbon & Uang Muka Karyawan", ["fin-kasbon"],
        ["/api/dewi/kasbon", "/api/rahaza/hr/employee-loans", "/api/finance/petty-cash/advances"], _ALL,
        {"view": ["fin.expense.view"], "manage": ["fin.expense.manage"], "approve": ["finance.approve", "hr.approve"]}),
-    _m("finance", "fin_journal", "Jurnal, Periode & Penyesuaian", ["fin-journal-hub", "fin-acctg-adjust-hub"],
+    _m("finance", "fin_journal", "Jurnal, Akrual & Tutup Buku", ["fin-journal-hub", "fin-acctg-adjust-hub"],
        ["/api/rahaza/journals", "/api/rahaza/periods", "/api/rahaza/year-end", "/api/rahaza/finance"], _ALL,
        {"view": ["finance.view", "fin.recap.view"], "manage": ["finance.manage"], "approve": ["finance.approve"]}),
-    _m("finance", "fin_invoice_approval", "Persetujuan Perubahan Invoice", ["fin-approval"],
+    _m("finance", "fin_invoice_approval", "Persetujuan Perubahan Faktur", ["fin-approval"],
        ["/api/invoice-edit-requests"], ("view", "create", "approve", "export"),
        {"view": ["fin.invoice.view"], "approve": ["fin.approval.manage", "finance.approve"]}),
     _m("finance", "fin_master", "Pengaturan Keuangan (COA, saldo awal, pemetaan akun)",
@@ -401,7 +403,7 @@ MODULES: list[dict] = [
     _m("toko", "mkt_dashboard", "Dashboard & Laporan Marketing", ["toko-dashboard", "marketing-reports"],
        ["/api/marketing/dashboard", "/api/marketing/reports", "/api/dewi/toko", "/api/marketing/performance",
         "/api/marketing/platform-kpi"], _VE, _TOKO),
-    _m("toko", "mkt_accounts", "Akun Toko, Koreksi & Kesehatan Akun",
+    _m("toko", "mkt_accounts", "Kelola Akun, Koreksi Data Toko & Kesehatan Akun",
        ["marketing-accounts", "marketing-account-review", "marketing-health"],
        ["/api/marketing/accounts", "/api/marketing/account-assign", "/api/marketing/health", "/api/marketing/alerts"],
        _ALL, _TOKO),
@@ -412,7 +414,7 @@ MODULES: list[dict] = [
        ["/api/marketing/orders"], _ALL, _TOKO),
     _m("toko", "mkt_catalog", "Manajemen Katalog", ["marketing-catalog"],
        ["/api/marketing/catalogs", "/api/marketing/catalog-items"], _ALL, _TOKO),
-    _m("toko", "mkt_targets", "Target & Budget Marketing", ["marketing-targets"],
+    _m("toko", "mkt_targets", "Target & Anggaran", ["marketing-targets"],
        ["/api/marketing/targets", "/api/marketing/budget"], _ALL, _TOKO),
     _m("toko", "mkt_content", "Kalender Konten, Diskon, Iklan & Peluncuran",
        ["marketing-content-calendar", "marketing-discounts", "marketing-product-launches"],
@@ -425,21 +427,24 @@ MODULES: list[dict] = [
     _m("toko", "mkt_ai", "AI Marketing & Penjadwal Otomasi", ["marketing-ai-hub", "marketing-scheduler"],
        ["/api/marketing/advanced-ai", "/api/marketing/ai-content", "/api/marketing/ai-insights",
         "/api/dewi/scheduler", "/api/marketing/auto-create-tasks"], ("view", "create", "edit", "export"), _TOKO),
-    _m("toko", "mkt_changelog", "Jejak Perubahan Marketing", ["marketing-change-log", "mgmt-marketing-change-log"],
+    _m("toko", "mkt_changelog", "Jejak Marketing", ["marketing-change-log", "mgmt-marketing-change-log"],
        ["/api/marketing/change-log"], _VE, _TOKO),
-    _m("toko", "mkt_aftersales", "Komplain, Retur & Ulasan", ["marketing-after-sales", "marketing-reviews"],
+    _m("toko", "mkt_aftersales", "Komplain & Retur, Rating & Ulasan", ["marketing-after-sales", "marketing-reviews"],
        ["/api/marketing/complaints", "/api/marketing/returns", "/api/marketing/reviews"], _ALL, _TOKO),
     _m("toko", "mkt_samples", "Kirim Sample", ["marketing-samples"], ["/api/marketing/samples"], _ALL, _TOKO),
     _m("toko", "mkt_tasks", "Manajemen Tugas Marketing", ["marketing-task-hub"],
        ["/api/marketing/tasks", "/api/marketing/task-templates", "/api/marketing/tasks-stats"], _ALL, _TOKO),
-    _m("toko", "mkt_integrations", "Integrasi API & Webhook", ["marketing-integration-settings", "marketing-webhooks"],
+    # 8 Nov 2026: + menu "Notifikasi" (`maklon-notifications`, outbox WhatsApp/email & penyedia) — satu-satunya menu
+    #   yang belum dimiliki modul mana pun. Hanya pintu menu; API-nya (/api/dewi/notifications) tetap dijaga handler.
+    _m("toko", "mkt_integrations", "Integrasi API, Monitor Webhook & Notifikasi",
+       ["marketing-integration-settings", "marketing-webhooks", "maklon-notifications"],
        ["/api/marketing/integration-settings", "/api/marketing/webhooks"], _CRUD, _TOKO),
 
     # ── RnD ─────────────────────────────────────────────────────────────────
     _m("rnd", "rnd_dashboard", "Dashboard & Analitik RnD", ["rnd-dashboard", "rnd-analytics"],
        ["/api/dewi/rnd/dashboard", "/api/dewi/rnd/analytics", "/api/dewi/rnd/reports", "/api/dewi/rnd/completeness",
         "/api/dewi/rnd/lifecycle"], _VE, {"view": ["rnd.view"]}),
-    _m("rnd", "rnd_design", "Style, Pola & Tech Pack", ["rnd-design-hub"],
+    _m("rnd", "rnd_design", "Style & Desain", ["rnd-design-hub"],
        ["/api/dewi/rnd/styles", "/api/dewi/rnd/patterns", "/api/dewi/rnd/tech-packs", "/api/dewi/rnd/techpack",
         "/api/dewi/rnd/revisions", "/api/rahaza/styles"], _ALL,
        {"view": ["rnd.view"], "manage": ["rnd.manage"], "approve": ["rnd.approve"]}),
@@ -452,7 +457,7 @@ MODULES: list[dict] = [
        lookup=True),
     _m("rnd", "rnd_product_viewer", "Produk Final", ["rnd-product-viewer"], ["/api/rnd/product-viewer"], _VE,
        {"view": ["rnd.view"]}),
-    _m("rnd", "rnd_samples", "Sample Request & Approval Sample", ["rnd-samples"],
+    _m("rnd", "rnd_samples", "Sample Request & Persetujuan Sample", ["rnd-samples"],
        ["/api/dewi/rnd/sample-requests", "/api/dewi/rnd/approvals"], _ALL,
        {"view": ["rnd.view"], "manage": ["rnd.manage"], "approve": ["rnd.approve"]}),
     _m("rnd", "rnd_materials", "Riset Material", ["rnd-materials"],
@@ -484,7 +489,7 @@ MODULES: list[dict] = [
        ["maklon-dashboard", "maklon-alur-produksi", "maklon-tracking"],
        ["/api/dewi/maklon/summary", "/api/maklon/sla", "/api/maklon-client"], _VE,
        {"view": ["maklon.view"], "export": ["maklon.view"]}),
-    _m("maklon", "mak_billing", "Invoice & Pembayaran Maklon", ["maklon-billing"],
+    _m("maklon", "mak_billing", "Piutang Klien", ["maklon-billing"],
        ["/api/dewi/maklon/invoices", "/api/dewi/maklon/payments", "/api/dewi/maklon/reports",
         "/api/dewi/maklon/finance"], _ALL, _MAKLON),
     _m("maklon", "mak_hpp", "HPP Jahit", ["maklon-hpp"], ["/api/dewi/maklon/hpp"], _CRUD, _MAKLON),

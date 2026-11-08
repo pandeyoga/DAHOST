@@ -190,7 +190,7 @@ async def get_request(request_id: str, user: dict = Depends(require_auth)):
 
 
 # ─── CREATE ──────────────────────────────────────────────────────────────────
-@router.post('', dependencies=only(*_WRITE_ROLES))  # PROD-02
+@router.post('', dependencies=only(*_WRITE_ROLES, perm="cmt.kejar.manage"))  # PROD-02
 async def create_request(body: dict, user: dict = Depends(require_auth)):
     db = get_db()
 
@@ -280,7 +280,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
 
 
 # ─── UPDATE ──────────────────────────────────────────────────────────────────
-@router.put('/{request_id}', dependencies=only(*_WRITE_ROLES))  # PROD-02
+@router.put('/{request_id}', dependencies=only(*_WRITE_ROLES, perm="cmt.kejar.manage"))  # PROD-02
 async def update_request(request_id: str, body: dict, user: dict = Depends(require_auth)):
     db = get_db()
     doc = await db.dewi_cmt_component_requests.find_one({'id': request_id})
@@ -313,7 +313,7 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
 
 
 # ─── SET STATUS (generic transition) ─────────────────────────────────────────
-@router.post('/{request_id}/set-status', dependencies=only(*_WRITE_ROLES))  # PROD-02
+@router.post('/{request_id}/set-status', dependencies=only(*_WRITE_ROLES, perm="cmt.kejar.manage"))  # PROD-02
 async def set_status(request_id: str, body: dict, user: dict = Depends(require_auth)):
     db = get_db()
     new_status = (body or {}).get('status', '')
@@ -368,7 +368,7 @@ async def set_status(request_id: str, body: dict, user: dict = Depends(require_a
 
 
 # ─── DELETE ──────────────────────────────────────────────────────────────────
-@router.delete('/{request_id}', dependencies=only(*PRODUCTION_ROLES))  # T-01 2.3
+@router.delete('/{request_id}', dependencies=only(*PRODUCTION_ROLES, perm="cmt.kejar.manage"))  # T-01 2.3
 async def delete_request(request_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     doc = await db.dewi_cmt_component_requests.find_one({'id': request_id})

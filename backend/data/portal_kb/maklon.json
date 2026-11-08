@@ -13,13 +13,13 @@
       "kata_kunci": ["alur maklon", "pesanan klien", "po maklon", "cara maklon"],
       "modul": ["maklon-clients", "maklon-pos-engine", "prod-shipments-vendor", "da-cmt-receive", "prod-shipments-buyer", "maklon-billing"],
       "langkah": [
-        "Daftarkan klien di 'Data Klien' dan produknya di 'Katalog Buyer'.",
+        "Daftarkan klien di 'Klien & Katalog Buyer' › Klien dan produknya di tab Katalog.",
         "Buat sampel dulu bila diminta lewat 'Kelola Sampel'.",
         "Buat 'PO Maklon' → Confirm. Draft invoice AR terbentuk otomatis.",
-        "Kirim material/panel ke vendor jahit lewat 'Kirim Material CMT'.",
-        "Terima barang jadi di 'Terima FG dari CMT'; barang cacat ke 'Permak / Perbaikan'.",
-        "'Dispatch ke Buyer' untuk mengirim ke klien (boleh bertahap).",
-        "Terbitkan tagihan di 'Invoice' → dibayar → dijurnal di Keuangan.",
+        "Kirim material/panel ke vendor jahit lewat 'Kirim ke CMT'.",
+        "Terima barang jadi di 'Terima & QC'; barang cacat ke 'Perbaikan'.",
+        "'Kirim hasil' untuk mengirim ke klien (boleh bertahap).",
+        "Terbitkan tagihan di 'Piutang Klien' → dibayar → dijurnal di Keuangan.",
         "'Tutup PO' setelah semua terkirim dan selisih beres."
       ]
     },
@@ -40,31 +40,31 @@
       "langkah": [
         "Invoice dibuat dari qty yang benar-benar dikirim ke buyer.",
         "Invoice diposting → jurnal piutang otomatis terbentuk.",
-        "Pembayaran dicatat di Portal Keuangan (Kas & Bank) dan mengurangi saldo piutang."
+        "Pembayaran dicatat di Portal Keuangan (Rekening & Mutasi) dan mengurangi saldo piutang."
       ]
     }
   ],
   "fitur": [
-    {"modul": "maklon-clients", "nama": "Data Klien", "deskripsi": "Master klien maklon beserta kontak dan syarat kerja samanya."},
-    {"modul": "maklon-buyer-catalog", "nama": "Katalog Buyer", "deskripsi": "Produk yang bisa dipesan tiap klien."},
+    {"modul": "maklon-clients", "nama": "Klien & Katalog Buyer › Klien", "deskripsi": "Master klien maklon beserta kontak dan syarat kerja samanya."},
+    {"modul": "maklon-buyer-catalog", "nama": "Klien & Katalog Buyer › Katalog", "deskripsi": "Produk yang bisa dipesan tiap klien."},
     {"modul": "vendor-admin", "nama": "Vendor CMT", "deskripsi": "Data vendor jahit."},
     {"modul": "maklon-pos-engine", "nama": "PO Maklon", "deskripsi": "Pesanan produksi dari klien."},
     {"modul": "maklon-po-360", "nama": "Detail PO", "deskripsi": "Tampilan menyeluruh satu PO: item, kiriman, tagihan, dan progresnya."},
     {"modul": "maklon-samples", "nama": "Kelola Sampel", "deskripsi": "Permintaan dan persetujuan sampel sebelum produksi massal."},
-    {"modul": "prod-shipments-vendor", "nama": "Kirim Material CMT", "deskripsi": "Pengiriman material ke vendor jahit."},
-    {"modul": "da-cmt-receive", "nama": "Terima FG dari CMT", "deskripsi": "Penerimaan barang jadi dari vendor."},
-    {"modul": "cmt-permak", "nama": "Permak / Perbaikan", "deskripsi": "Perbaikan barang cacat."},
-    {"modul": "prod-shipments-buyer", "nama": "Dispatch ke Buyer", "deskripsi": "Pengiriman barang jadi ke klien, boleh bertahap."},
+    {"modul": "prod-shipments-vendor", "nama": "Kirim ke CMT", "deskripsi": "Pengiriman material ke vendor jahit."},
+    {"modul": "da-cmt-receive", "nama": "Terima & QC", "deskripsi": "Penerimaan barang jadi dari vendor."},
+    {"modul": "cmt-permak", "nama": "Perbaikan", "deskripsi": "Perbaikan barang cacat."},
+    {"modul": "prod-shipments-buyer", "nama": "Kirim hasil", "deskripsi": "Pengiriman barang jadi ke klien, boleh bertahap."},
     {"modul": "po-closure", "nama": "Tutup PO", "deskripsi": "Penutupan PO maklon."},
     {"modul": "maklon-dashboard", "nama": "Dashboard Maklon", "deskripsi": "Ringkasan PO, pengiriman, dan tagihan."},
-    {"modul": "cmt-monitor", "nama": "Monitoring CMT", "deskripsi": "Beban dan performa tiap vendor jahit."},
-    {"modul": "maklon-tracking", "nama": "Tracking Produksi", "deskripsi": "Posisi tiap PO maklon."},
-    {"modul": "prod-work-orders", "nama": "Production Jobs", "deskripsi": "Rincian pekerjaan per item PO."},
+    {"modul": "cmt-monitor", "nama": "Pantau Produksi › Kejar CMT", "deskripsi": "Beban dan performa tiap vendor jahit."},
+    {"modul": "maklon-tracking", "nama": "Pantau Produksi › Per PO", "deskripsi": "Posisi tiap PO maklon."},
+    {"modul": "prod-work-orders", "nama": "Pantau Produksi › Per PO", "deskripsi": "Rincian pekerjaan per item PO."},
     {"modul": "cmt-component-requests", "nama": "Komponen Kurang", "deskripsi": "Permintaan kekurangan komponen dari vendor."},
-    {"modul": "prod-variance-report", "nama": "Laporan Variance", "deskripsi": "Selisih qty produksi maklon."},
-    {"modul": "maklon-billing", "nama": "Invoice", "deskripsi": "Penagihan ke klien maklon."},
+    {"modul": "prod-variance-report", "nama": "Laporan Selisih › Terima klien", "deskripsi": "Selisih qty produksi maklon."},
+    {"modul": "maklon-billing", "nama": "Piutang Klien", "deskripsi": "Penagihan ke klien maklon."},
     {"modul": "maklon-hpp", "nama": "HPP Jahit", "deskripsi": "Perhitungan biaya jahit per pesanan."},
-    {"modul": "maklon-ai-quote", "nama": "Estimasi AI", "deskripsi": "Usulan harga penawaran berbasis AI."}
+    {"modul": "maklon-ai-quote", "nama": "Klien & Katalog Buyer › Estimasi harga", "deskripsi": "Usulan harga penawaran berbasis AI."}
   ],
   "faq": [
     {
@@ -80,7 +80,7 @@
     {
       "q": "Boleh mengirim barang ke buyer sebagian dulu?",
       "kata_kunci": ["kirim sebagian", "dispatch bertahap", "parsial"],
-      "a": "Boleh. 'Dispatch ke Buyer' mendukung pengiriman bertahap; setiap pengiriman punya nomor urut sendiri dan menghasilkan jurnal HPP terpisah yang tidak dobel."
+      "a": "Boleh. 'Kirim hasil' mendukung pengiriman bertahap; setiap pengiriman punya nomor urut sendiri dan menghasilkan jurnal HPP terpisah yang tidak dobel."
     }
   ],
   "saran": [

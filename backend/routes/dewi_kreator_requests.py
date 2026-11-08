@@ -339,7 +339,7 @@ async def mark_delivered(request_id: str, body: dict = None, user: dict = Depend
 
 
 # ─── DELETE ──────────────────────────────────────────────────────────────────
-@router.delete('/{request_id}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/{request_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_request(request_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     doc = await db.dewi_kreator_requests.find_one({'id': request_id})

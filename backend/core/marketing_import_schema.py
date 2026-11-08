@@ -1488,8 +1488,8 @@ SHOPEE_ADS_CPC = SourceType(
     collection="marketing_ads_data",
     describe="Laporan iklan CPC Shopee per kampanye untuk satu periode: biaya, "
              "tayangan, klik, konversi, omzet iklan, ROAS, dan ACOS. Biaya iklan "
-             "otomatis ikut realisasi anggaran kategori 'ads' pada Siklus Marketing.",
-    module_hint="marketing-ads (tab Iklan) & Siklus Marketing (realisasi anggaran)",
+             "otomatis ikut realisasi anggaran kategori 'ads' pada Target & Anggaran.",
+    module_hint="marketing-ads (tab Iklan) & Target & Anggaran (realisasi anggaran)",
     export_hint="Seller Center → Iklan Saya → Laporan Iklan → Semua Laporan Iklan CPC (.csv)",
     account_scope="required",
     dedupe=("account_id", "campaign_name", "period_start", "period_end"),

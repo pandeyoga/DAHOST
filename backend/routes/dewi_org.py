@@ -106,7 +106,7 @@ async def update_unit(
     doc = await db.dewi_org_units.find_one({"unit_id": unit_id})
     return {"ok": True, "unit": serialize(doc)}
 
-@router.delete("/units/{unit_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/units/{unit_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_unit(
     unit_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -182,7 +182,7 @@ async def update_position(
     doc = await db.dewi_org_positions.find_one({"position_id": position_id})
     return {"ok": True, "position": serialize(doc)}
 
-@router.delete("/positions/{position_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/positions/{position_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_position(
     position_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),

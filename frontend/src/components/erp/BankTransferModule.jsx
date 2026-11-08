@@ -18,7 +18,8 @@ import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import PageLayout, { RowDetail } from './layout/PageLayout';
 import JournalLinesInline from './finance/JournalLinesInline';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { FINANCE_ROLES } from '../../lib/financeRoles'; // FIN-02
+import { FINANCE_CASH_PERMS, FINANCE_ROLES } from '../../lib/financeRoles'; // FIN-02
+import { checkPerm } from '../../lib/rbac';
 import {
   ArrowRightLeft, Plus, RefreshCw, Loader2, RotateCcw, AlertCircle, ArrowRight,
 } from 'lucide-react';
@@ -57,8 +58,8 @@ const UNDUH_KOLOM = [
 ];
 
 function token() { return localStorage.getItem('erp_token'); }
-function userRole() {
-  try { return JSON.parse(localStorage.getItem('erp_user') || '{}').role; } catch { return null; }
+function storedUser() {
+  try { return JSON.parse(localStorage.getItem('erp_user') || '{}'); } catch { return {}; }
 }
 
 
@@ -186,8 +187,9 @@ export default function BankTransferModule() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [openJe, setOpenJe] = useState(null);
 
-  const role = userRole();
-  const canManage = FINANCE_ROLES.includes(role);
+  // 2026-11-08: kode peran Keuangan ATAU izin kas & bank — sama dengan server `_is_cash_officer`
+  // (routes/rahaza_bank_transfers.py), supaya peran buatan owner melihat tombol transfer.
+  const canManage = checkPerm({ user: storedUser(), roles: FINANCE_ROLES, keys: FINANCE_CASH_PERMS });
 
   const fetchTransfers = useCallback(async () => {
     setLoading(true);

@@ -13,7 +13,7 @@
       "kata_kunci": ["terima barang", "penerimaan", "grn", "inbound", "barang datang", "supplier kirim", "po datang"],
       "modul": ["wh-purchase-orders", "wh-receiving", "wh-quarantine", "wh-putaway"],
       "langkah": [
-        "Purchase Order dibuat/di-approve di 'Purchase Order'.",
+        "Purchase Order dibuat dan disetujui di Portal Pengadaan › 'Purchase Order'.",
         "Barang datang → buka 'Penerimaan Barang', pilih PO-nya, isi qty yang benar-benar diterima beserta satuannya.",
         "Barang masuk 'Karantina QC' dulu bila jenisnya wajib diperiksa. Lolos → stok jadi tersedia; gagal → retur.",
         "Simpan ke rak lewat 'Penyimpanan' (put-away): pilih bin, isi qty. Total stok tidak berubah, hanya letak fisiknya."
@@ -36,8 +36,8 @@
       "langkah": [
         "Buat sesi opname dengan cakupan (semua lokasi / gedung / zona / rak).",
         "Scan barang satu per satu. Bila menghitung per kemasan, pilih satuannya — sistem mengonversi ke satuan dasar otomatis.",
-        "Selesai menghitung → Submit. Stok BELUM berubah.",
-        "Supervisor menekan Approve → selisih diterapkan ke stok + jurnal penyesuaian dibuat."
+        "Selesai menghitung → Selesai & ajukan. Stok BELUM berubah.",
+        "Supervisor menekan Setujui → selisih diterapkan ke stok + jurnal penyesuaian dibuat."
       ]
     },
     {
@@ -58,14 +58,14 @@
         "Setiap barang punya SATU satuan dasar (mis. pcs atau meter) — semua stok & HPP disimpan dalam satuan itu.",
         "Kemasan (pak/karton/rol) didaftarkan sebagai satuan tambahan beserta isinya, mis. 1 pak = 12 pcs.",
         "Saat menerima/menghitung, pilih satuan yang dipakai — sistem mengonversi sendiri.",
-        "Mengganti satuan DASAR item yang masih berstok hanya boleh lewat tombol 'Ubah Satuan Dasar' supaya angka stok & HPP ikut dikonversi."
+        "Mengganti satuan DASAR item yang masih berstok hanya boleh lewat tombol 'Ubah satuan dasar' supaya angka stok & HPP ikut dikonversi."
       ]
     }
   ],
   "fitur": [
     {"modul": "warehouse-dashboard", "nama": "Dashboard Gudang", "deskripsi": "Ringkasan nilai persediaan, mutasi terbaru, dan barang bermasalah."},
     {"modul": "wh-master", "nama": "Master Item", "deskripsi": "Daftar induk kain, aksesoris, dan barang jadi beserta satuan, HPP, dan stok minimum."},
-    {"modul": "wms-stock-hub", "nama": "Stok & Akurasi", "deskripsi": "Stok per lokasi, buku besar mutasi, stok opname, dan kesehatan skema stok."},
+    {"modul": "wms-stock-hub", "nama": "Stok & Akurasi", "deskripsi": "Stok per lokasi, buku besar mutasi, stok opname, dan kesehatan data stok."},
     {"modul": "warehouse-smart", "nama": "Alert & Reorder", "deskripsi": "Peringatan stok menipis dan usulan pemesanan ulang."},
     {"modul": "wh-purchase-orders", "nama": "Purchase Order", "deskripsi": "Pemesanan barang ke supplier."},
     {"modul": "wh-receiving", "nama": "Penerimaan Barang", "deskripsi": "Mencatat barang datang (GRN) beserta inspeksinya."},
@@ -83,14 +83,14 @@
     {"modul": "wh-units", "nama": "Satuan & Konversi", "deskripsi": "Daftar satuan dan faktor konversi kemasan."},
     {"modul": "wh-audit", "nama": "Audit Trail", "deskripsi": "Jejak siapa mengubah apa dan kapan."},
     {"modul": "wms-fabric-rolls", "nama": "Roll Kain", "deskripsi": "Pelacakan kain per roll beserta sisa panjangnya."},
-    {"modul": "wh-accessory-ops", "nama": "Operasi Aksesoris", "deskripsi": "Operasi harian stok aksesoris dari sisi gudang."},
+    {"modul": "wh-accessory-ops", "nama": "Master Aksesoris", "deskripsi": "Operasi harian stok aksesoris dari sisi gudang."},
     {"modul": "warehouse-accessory-requests", "nama": "Inbox Aksesoris", "deskripsi": "Permintaan aksesoris dari bagian lain yang perlu dilayani."}
   ],
   "faq": [
     {
       "q": "Kenapa stok saya tidak muncul padahal barangnya ada?",
       "kata_kunci": ["stok tidak muncul", "stok hilang", "stok kosong", "tidak ada stok"],
-      "a": "Stok dicatat per LOKASI. Bila layar yang dibuka memfilter satu gudang, stok yang duduk di gudang lain tidak ikut tampil. Cek 'Stok & Akurasi' → lihat rincian per lokasi. Bila baris stoknya berformat lama, jalankan tab 'Kesehatan Skema' untuk merekonsiliasinya (total on-hand tidak berubah)."
+      "a": "Stok dicatat per LOKASI. Bila layar yang dibuka memfilter satu gudang, stok yang duduk di gudang lain tidak ikut tampil. Cek 'Stok & Akurasi' → lihat rincian per lokasi. Bila baris stoknya berformat lama, jalankan tab 'Kesehatan data stok' untuk merekonsiliasinya (total on-hand tidak berubah)."
     },
     {
       "q": "Bagaimana cara mencatat barang yang dibeli per pak tapi dipakai per pcs?",
@@ -100,7 +100,7 @@
     {
       "q": "Stok opname sudah di-submit tapi stok belum berubah.",
       "kata_kunci": ["opname submit", "stok belum berubah", "approve opname"],
-      "a": "Memang begitu rancangannya. Submit hanya mengunci hasil hitungan. Stok baru berubah setelah supervisor/admin gudang menekan Approve, sekaligus membentuk jurnal penyesuaian persediaan."
+      "a": "Memang begitu rancangannya. Selesai & ajukan hanya mengunci hasil hitungan. Stok baru berubah setelah supervisor/admin gudang menekan Setujui, sekaligus membentuk jurnal penyesuaian persediaan."
     },
     {
       "q": "Apa bedanya Penyimpanan (put-away) dengan Penerimaan?",

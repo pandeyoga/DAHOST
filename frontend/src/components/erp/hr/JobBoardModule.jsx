@@ -23,6 +23,7 @@ import PageLayout from '../layout/PageLayout';
 import HubTabs from '../hubs/HubTabs';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { DepartmentSelect } from './hrPickers';
+import { checkPerm } from '@/lib/rbac';
 
 // Nilai dari server → label layar (nilai yang dikirim tetap sama).
 const REKOMENDASI = {
@@ -69,8 +70,10 @@ function DaftarKeahlian({ judul, isi }) {
   );
 }
 
-// Peran yang boleh memasang lowongan — sama dengan pemeriksaan server `POST /api/hr/job-board/jobs`.
+// Peran yang boleh memasang lowongan — sama dengan pemeriksaan server `POST /api/hr/job-board/jobs`
+// (`JOB_BOARD_ROLES` ATAU izin `hr.manage`, lihat routes/dewi_job_board.py).
 const PERAN_PASANG_LOWONGAN = ['superadmin', 'hr', 'manager'];
+const IZIN_JOB_BOARD = 'hr.manage';
 
 export default function JobBoardModule({ token, user }) {
   const [activeTab, setActiveTab] = useState('browse'); // browse, my-applications, career-paths
@@ -78,9 +81,8 @@ export default function JobBoardModule({ token, user }) {
   const [myApplications, setMyApplications] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [loading, setLoading] = useState(false);
-  // 2026-11-08 (keputusan pemilik): peran dibaca dari akun yang masuk (dulu selalu 'user' sehingga tombol
-  // "Pasang lowongan" tidak pernah tampil).
-  const userRole = (user?.role || '').toLowerCase();
+  // 2026-11-08 (keputusan pemilik): peran & izin dibaca dari akun yang masuk (`user`, dulu selalu 'user' sehingga
+  // tombol "Pasang lowongan" tidak pernah tampil) — lihat `bolehPasang` di bawah.
 
   // Post job dialog
   const [showPostDialog, setShowPostDialog] = useState(false);
@@ -197,8 +199,9 @@ export default function JobBoardModule({ token, user }) {
       <RefreshCw className={loading ? 'animate-spin' : ''} />
     </Button>
   );
-  // Tombol pasang lowongan hanya untuk peran yang diizinkan server (SDM, manajer, superadmin).
-  const aksiPasang = PERAN_PASANG_LOWONGAN.includes(userRole) ? (
+  // Tombol pasang lowongan hanya untuk akun yang diizinkan server (SDM, manajer, superadmin, atau izin hr.manage).
+  const bolehPasang = checkPerm({ user, roles: PERAN_PASANG_LOWONGAN, perm: IZIN_JOB_BOARD });
+  const aksiPasang = bolehPasang ? (
     <Button onClick={() => setShowPostDialog(true)}><Plus />Pasang lowongan</Button>
   ) : null;
 

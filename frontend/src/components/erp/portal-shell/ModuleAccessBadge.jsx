@@ -3,7 +3,7 @@
 import { ShieldCheck } from 'lucide-react';
 import { moduleActions } from '../portalAccess';
 
-const LABELS = { view: 'Lihat', create: 'Tambah', edit: 'Ubah', delete: 'Hapus', approve: 'Approve', export: 'Export' };
+const LABELS = { view: 'Lihat', create: 'Tambah', edit: 'Ubah', delete: 'Hapus', approve: 'Setujui', export: 'Unduh' };
 const WRITE = ['create', 'edit', 'delete', 'approve'];
 
 export default function ModuleAccessBadge({ moduleId }) {

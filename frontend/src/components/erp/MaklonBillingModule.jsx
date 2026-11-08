@@ -99,8 +99,8 @@ export default function MaklonBillingModule({ token }) {
   return (
     <PageLayout
       testId="maklon-billing"
-      title="Piutang klien maklon"
-      subtitle="Per PO: terjadwal saat dikonfirmasi, tertagih saat barang dikirim, lalu dibayar klien."
+      title="Piutang klien"
+      subtitle="Piutang klien maklon per PO: terjadwal saat dikonfirmasi, tertagih saat barang dikirim, lalu dibayar klien."
       filters={(data.items || []).length > 0 && <>
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

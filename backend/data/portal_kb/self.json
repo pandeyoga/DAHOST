@@ -16,7 +16,7 @@
         "Tekan tombol 'Absen Sekarang' di kartu profil atau buka menu 'Absen Saya'.",
         "Izinkan kamera dan lokasi — absen memerlukan swafoto dan titik lokasi.",
         "Sistem memeriksa jarak Anda ke lokasi kerja terdaftar sebelum menerima absen.",
-        "Riwayat kehadiran Anda bisa dilihat di menu 'Kehadiran'."
+        "Riwayat kehadiran Anda bisa dilihat di menu 'Absen Saya'."
       ]
     },
     {
@@ -44,7 +44,6 @@
     {"modul": "portal-dashboard", "nama": "Dashboard", "deskripsi": "Ringkasan pribadi hari ini."},
     {"modul": "portal-profile", "nama": "Profil", "deskripsi": "Data diri dan kontak."},
     {"modul": "portal-absen", "nama": "Absen Saya", "deskripsi": "Absen masuk/pulang dengan swafoto dan lokasi."},
-    {"modul": "self-dashboard", "nama": "Kehadiran", "deskripsi": "Riwayat kehadiran pribadi."},
     {"modul": "portal-cuti", "nama": "Cuti & Lembur", "deskripsi": "Pengajuan dan sisa kuota."},
     {"modul": "portal-notifikasi", "nama": "Notifikasi", "deskripsi": "Pemberitahuan yang ditujukan kepada Anda."},
     {"modul": "portal-payslip", "nama": "Slip Gaji", "deskripsi": "Rincian gaji per periode."},

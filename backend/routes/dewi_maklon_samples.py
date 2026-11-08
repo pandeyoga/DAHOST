@@ -234,7 +234,7 @@ async def update_sample(sample_id: str, payload: SampleIn, user: dict = Depends(
     await db.dewi_maklon_samples.update_one({'id': sample_id}, {'$set': update_data})
     return {'message': 'Sample diperbarui'}
 
-@router.delete('/{sample_id}', dependencies=only(*MAKLON_ROLES))  # T-01 2.3
+@router.delete('/{sample_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
 async def delete_sample(sample_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     existing = await db.dewi_maklon_samples.find_one({'id': sample_id})

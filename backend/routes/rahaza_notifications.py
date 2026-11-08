@@ -354,7 +354,7 @@ async def mark_all_read(request: Request):
 
 
 # ─── TRIGGER SCANS (manual / cron) ───────────────────────────────────────────
-@router.post("/trigger/wo-due-scan", dependencies=only(*PRODUCTION_ROLES))  # T-01 2.5
+@router.post("/trigger/wo-due-scan", dependencies=only(*PRODUCTION_ROLES, perm="production.manage"))  # T-01 2.5
 async def scan_wo_due(request: Request):
     """
     Cron/manual scan: cari WO status in_progress dengan due_date dalam 2 hari,

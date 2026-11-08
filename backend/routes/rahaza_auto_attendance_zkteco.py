@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from dotenv import load_dotenv
 from utils.waktu import today_wib
 
@@ -65,8 +65,7 @@ async def list_zkteco_devices(request: Request):
 async def add_zkteco_device(request: Request):
     """Tambah konfigurasi device ZKTeco/Fingerspot."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya admin/HR.")
+    _require_fp(user)
     db = get_db()
     body = await request.json()
     name = body.get("name", "").strip()
@@ -98,8 +97,7 @@ async def add_zkteco_device(request: Request):
 async def update_zkteco_device(device_id: str, request: Request):
     """Update konfigurasi device ZKTeco."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya admin/HR.")
+    _require_fp(user)
     db = get_db()
     body = await request.json()
     updates = {k: v for k, v in {
@@ -118,8 +116,7 @@ async def update_zkteco_device(device_id: str, request: Request):
 async def delete_zkteco_device(device_id: str, request: Request):
     """Hapus device ZKTeco."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya admin/HR.")
+    _require_fp(user)
     db = get_db()
     result = await db.rahaza_zkteco_devices.delete_one({"id": device_id})
     if result.deleted_count == 0:
@@ -134,8 +131,7 @@ async def sync_zkteco_device(device_id: str, request: Request):
     Butuh hardware nyata; simulator mode tersedia untuk testing.
     """
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr"):
-        raise HTTPException(403, "Hanya admin/HR.")
+    _require_fp(user)
     db = get_db()
     device = await db.rahaza_zkteco_devices.find_one({"id": device_id}, {"_id": 0})
     if not device:
@@ -262,6 +258,8 @@ async def get_zkteco_last_sync(device_id: str, request: Request):
 # pratinjau, lalu mengimpor. Pemetaan bisa disimpan sebagai profil untuk dipakai lagi.
 MAX_EXPORT_BYTES = 10 * 1024 * 1024
 FP_ROLES = ("superadmin", "admin", "owner", "hr")
+# 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` (modul Absensi: perangkat & impor sidik jari).
+FP_PERM = "hr.attendance.manage"
 _AUTO = {
     "code": ("pin", "ac-no", "ac no", "acno", "no. id", "user id", "userid", "id karyawan", "nik", "kode",
              "enroll", "badgenumber", "no id", "id"),
@@ -273,7 +271,7 @@ _AUTO = {
 
 
 def _require_fp(user: dict) -> None:
-    if user.get("role") not in FP_ROLES:
+    if not check_role(user, FP_ROLES, FP_PERM):
         raise HTTPException(403, "Hanya admin/HR.")
 
 

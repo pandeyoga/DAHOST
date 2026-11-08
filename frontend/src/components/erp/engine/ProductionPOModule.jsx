@@ -757,7 +757,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
 
   return (
     <PageLayoutSatuBaris
-      title={isInternal ? 'PO Produksi Internal' : 'PO Maklon'}
+      title={isInternal ? 'PO internal' : 'PO maklon'}
       subtitle={isInternal
         ? 'Pesanan produksi untuk stok sendiri: model, varian, qty, dan upah jahit per baris.'
         : 'Pesanan jasa maklon per klien: artikel katalog, varian, qty, harga jasa, dan upah jahit.'}
@@ -806,7 +806,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           ]} />
         {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
             cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
-        {/* 8 Nov 2026: saringan yang SAMA dengan daftar PO (status, kata cari, jenis); kolom harga hanya untuk Keuangan (server) */}
+        {/* 8 Nov 2026: saringan yang SAMA dengan daftar PO (status, kata cari, jenis); harga jasa & upah CMT ikut untuk semua staf DA (keputusan owner 8 Nov, sama dengan layar) */}
         <ImportExportPanel importType={null} exportType="production-pos"
           exportFilters={{ status: filterStatus, search: cari.trim(), business_type: businessType }}
           exportLabel="Unduh per baris produk" exportTitle="Excel dari server: satu baris per produk PO" />

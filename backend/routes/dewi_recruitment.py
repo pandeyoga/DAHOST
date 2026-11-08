@@ -133,7 +133,7 @@ async def update_job(
     doc = await db.dewi_recruitment_jobs.find_one({"job_id": job_id})
     return {"ok": True, "job": serialize(doc)}
 
-@router.delete("/jobs/{job_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/jobs/{job_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_job(
     job_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -519,7 +519,7 @@ async def update_interview(
     )
     return {"ok": True}
 
-@router.delete("/candidates/{candidate_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/candidates/{candidate_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_candidate(
     candidate_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),

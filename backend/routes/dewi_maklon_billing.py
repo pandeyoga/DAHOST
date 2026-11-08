@@ -20,7 +20,7 @@ from routes._maklon_adapter import find_maklon_record, po_to_legacy_order
 from utils.data_quality import SkipTracker
 import uuid
 from core.authz import only  # T-01 2.3
-from core.roles import FINANCE_ROLES  # T-01 2.3
+from core.roles import FINANCE_ROLES, FINANCE_BOOK_PERMS  # T-01 2.3
 from utils.waktu import today_wib, wib_date_str, wib_year
 
 logger = logging.getLogger(__name__)
@@ -563,7 +563,7 @@ async def list_payments(
     items = await db.dewi_maklon_payments.find(query).sort('payment_date', -1).to_list(length=500)
     return [_clean(p) for p in items]
 
-@router.delete('/payments/{payment_id}', dependencies=only(*FINANCE_ROLES))  # T-01 2.3
+@router.delete('/payments/{payment_id}', dependencies=only(*FINANCE_ROLES, perm=FINANCE_BOOK_PERMS))  # T-01 2.3
 async def delete_payment(payment_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     pay = await db.dewi_maklon_payments.find_one({'id': payment_id})
@@ -977,7 +977,7 @@ async def pay_receivable(ar_id: str, payload: ReceivablePaymentIn, user: dict = 
                                    payload.notes or '', payload.reference_no or '', user)
 
 
-@router.post('/receivables/{ar_id}/payments/{payment_id}/void', dependencies=only(*FINANCE_ROLES))
+@router.post('/receivables/{ar_id}/payments/{payment_id}/void', dependencies=only(*FINANCE_ROLES, perm=FINANCE_BOOK_PERMS))
 async def void_receivable_payment(ar_id: str, payment_id: str, user: dict = Depends(require_auth)):
     db = get_db()
     from core import maklon_ledger

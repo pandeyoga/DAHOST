@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from utils.waktu import now_wib
 
 router = APIRouter(prefix="/api/rahaza/360-feedback", tags=["rahaza-360-feedback"])
@@ -154,7 +154,8 @@ async def submit_feedback(cycle_id: str, request: Request):
 async def close_cycle(cycle_id: str, request: Request):
     """HR closes cycle, compute aggregate scores."""
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr", "manager"):
+    # 2026-11-08: kode peran lama ATAU izin `hr.manage` (modul Manajemen Kinerja).
+    if not check_role(user, ("superadmin", "admin", "owner", "hr", "manager"), "hr.manage"):
         raise HTTPException(403, "Hanya HR yang dapat tutup cycle.")
     db = get_db()
 

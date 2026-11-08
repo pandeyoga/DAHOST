@@ -216,7 +216,7 @@ async def add_entry(creator_id: str, body: EntryIn, request: Request):
             **await _summary(db, creator)}
 
 
-@router.delete("/creators/{creator_id}/incentive/entries/{entry_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/creators/{creator_id}/incentive/entries/{entry_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def del_entry(creator_id: str, entry_id: str, request: Request):
     await require_auth(request)
     db = get_db()

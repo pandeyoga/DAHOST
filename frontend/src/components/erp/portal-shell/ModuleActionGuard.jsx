@@ -1,4 +1,4 @@
-// Sembunyikan tombol Tambah/Ubah/Hapus/Approve/Export di layar modul bila izin granular
+// Sembunyikan tombol Tambah/Ubah/Hapus/Setujui/Unduh di layar modul bila izin granular
 // peran tidak memuat aksinya (tampilan saja — penjaga sungguhan tetap di backend).
 import { useEffect, useRef } from 'react';
 import { moduleActions } from '../portalAccess';

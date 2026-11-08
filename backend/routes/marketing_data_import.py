@@ -915,7 +915,7 @@ async def list_formats(request: Request, source_type: Optional[str] = Query(None
                      "tidak ada tebakan diam-diam.")}
 
 
-@router.delete("/formats/{fingerprint}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/formats/{fingerprint}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def forget_format(fingerprint: str, request: Request,
                         source_type: str = Query(...)):
     """LUPAKAN satu susunan kolom yang diingat.
@@ -2267,8 +2267,8 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
             out.append({"http": 423, "code": "periode_terkunci", "message": (
                 "Commit dibatalkan: berkas ini menyentuh periode yang sudah DITUTUP "
                 f"untuk toko {account.get('account_name', '')} — {', '.join(locked_hits)}. "
-                "Minta SPV Marketing membuka periode itu (Siklus Marketing → Buka "
-                "Periode), atau buang baris bulan tersebut dari berkas.")})
+                "Minta SPV Marketing membuka periode itu (Target & Anggaran › Siklus → Buka "
+                "periode), atau buang baris bulan tersebut dari berkas.")})
 
     # ── F12 — BERKAS MILIK TOKO LAIN (bukti, bukan dugaan) ────────────────────
     # Diletakkan PALING AKHIR supaya pesan pertama yang dilihat staf untuk keadaan
@@ -3876,7 +3876,7 @@ async def undo_report(session_id: str, request: Request):
             "trail": _ser(sample)}
 
 
-@router.delete("/sessions/{session_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/sessions/{session_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_session(session_id: str, request: Request):
     await require_auth(request)
     db = get_db()

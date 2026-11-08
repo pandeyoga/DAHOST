@@ -13,7 +13,7 @@
       "kata_kunci": ["produk baru", "alur rnd", "desain", "tech pack", "sampel"],
       "modul": ["rnd-design-hub", "rnd-samples", "rnd-costing-hub"],
       "langkah": [
-        "Susun 'Tech Pack': spesifikasi bahan, ukuran, aksesoris, dan cara jahit.",
+        "Susun tech pack di 'Style & Desain' › Tech pack: spesifikasi bahan, ukuran, aksesoris, dan cara jahit.",
         "Ajukan 'Sample Request' → sampel dibuat dan dinilai.",
         "Hitung 'Costing & HPP' berdasarkan pemakaian bahan nyata pada sampel.",
         "Setelah disetujui, model didaftarkan ke Master Produk agar bisa dipesan lewat PO."
@@ -32,7 +32,7 @@
   ],
   "fitur": [
     {"modul": "rnd-dashboard", "nama": "Dashboard RnD", "deskripsi": "Progres pengembangan produk berjalan."},
-    {"modul": "rnd-design-hub", "nama": "Tech Pack", "deskripsi": "Spesifikasi lengkap produk."},
+    {"modul": "rnd-design-hub", "nama": "Style & Desain", "deskripsi": "Spesifikasi lengkap produk."},
     {"modul": "rnd-samples", "nama": "Sample Request", "deskripsi": "Permintaan dan status pembuatan sampel."},
     {"modul": "rnd-accessory-requests", "nama": "Request Aksesoris", "deskripsi": "Permintaan aksesoris untuk keperluan RnD."},
     {"modul": "rnd-materials", "nama": "Riset Material", "deskripsi": "Kandidat bahan dan hasil ujinya."},

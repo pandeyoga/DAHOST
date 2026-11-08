@@ -16,10 +16,10 @@
         "Buat 'PO Internal': pilih model, ukuran, warna, dan jumlah.",
         "PO di-Confirm → kebutuhan material & aksesoris terhitung otomatis dari BOM.",
         "Kain dipotong di Portal Cutting → hasilnya panel siap jahit.",
-        "'Kirim Material CMT': panel + aksesoris dikirim ke vendor jahit. Stok gudang berkurang.",
-        "Vendor melapor progres lewat Portal Vendor; hasil jadi diterima di 'Terima FG dari CMT'.",
-        "Barang cacat masuk 'Permak / Perbaikan'.",
-        "'Serah Terima FG' memindahkan barang jadi ke inventori DA → jurnal HPP terbentuk.",
+        "'Kirim ke CMT': panel + aksesoris dikirim ke vendor jahit. Stok gudang berkurang.",
+        "Vendor melapor progres lewat Portal Vendor; hasil jadi diterima di 'Terima & QC'.",
+        "Barang cacat masuk 'Perbaikan'.",
+        "'Kirim hasil' memindahkan barang jadi ke inventori DA → jurnal HPP terbentuk.",
         "'Tutup PO' setelah semua selesai dan variance beres."
       ]
     },
@@ -38,7 +38,7 @@
       "modul": ["prod-variance", "prod-work-orders"],
       "langkah": [
         "Selisih antara qty PO dan qty jadi tercatat sebagai variance (OVER atau UNDER).",
-        "Buka 'Laporan Variance' → Acknowledge → Resolve.",
+        "Buka 'Laporan Selisih' → Acknowledge → Resolve.",
         "Variance yang di-resolve otomatis dijurnal ke akun selisih produksi."
       ]
     },
@@ -58,20 +58,20 @@
     {"modul": "prod-master-process-hub", "nama": "Master Proses", "deskripsi": "Daftar proses kerja dan tarif borongan per pcs."},
     {"modul": "vendor-admin", "nama": "Vendor CMT", "deskripsi": "Data vendor jahit beserta kapasitas dan tarifnya."},
     {"modul": "prod-pos-internal", "nama": "PO Internal", "deskripsi": "Perintah produksi barang milik sendiri."},
-    {"modul": "prod-shipments-vendor", "nama": "Kirim Material CMT", "deskripsi": "Pengiriman panel & aksesoris ke vendor jahit."},
-    {"modul": "da-cmt-receive", "nama": "Terima FG dari CMT", "deskripsi": "Penerimaan barang jadi dari vendor beserta inspeksi mutu."},
-    {"modul": "cmt-permak", "nama": "Permak / Perbaikan", "deskripsi": "Penanganan barang cacat yang bisa diperbaiki."},
-    {"modul": "prod-shipments-buyer", "nama": "Serah Terima FG", "deskripsi": "Memasukkan barang jadi ke inventori DA."},
+    {"modul": "prod-shipments-vendor", "nama": "Kirim ke CMT", "deskripsi": "Pengiriman panel & aksesoris ke vendor jahit."},
+    {"modul": "da-cmt-receive", "nama": "Terima & QC", "deskripsi": "Penerimaan barang jadi dari vendor beserta inspeksi mutu."},
+    {"modul": "cmt-permak", "nama": "Perbaikan", "deskripsi": "Penanganan barang cacat yang bisa diperbaiki."},
+    {"modul": "prod-shipments-buyer", "nama": "Kirim hasil", "deskripsi": "Memasukkan barang jadi ke inventori DA."},
     {"modul": "po-closure", "nama": "Tutup PO", "deskripsi": "Penutupan PO setelah seluruh proses selesai."},
     {"modul": "production-dashboard", "nama": "Dashboard Produksi", "deskripsi": "Ringkasan PO berjalan, barang di vendor, dan hasil masuk."},
-    {"modul": "prod-control-tower", "nama": "Pusat Kendali", "deskripsi": "Pantauan menyeluruh seluruh PO dan hambatannya."},
-    {"modul": "prod-monitoring", "nama": "Tracking Produksi", "deskripsi": "Posisi tiap PO/job saat ini."},
-    {"modul": "prod-work-orders", "nama": "Production Jobs", "deskripsi": "Rincian pekerjaan per item PO."},
-    {"modul": "prod-variance", "nama": "Laporan Variance", "deskripsi": "Selisih qty produksi dan penyelesaiannya."},
-    {"modul": "prod-cmt-billing", "nama": "Invoice", "deskripsi": "Tagihan ongkos jahit dari vendor CMT."},
-    {"modul": "fin-hpp", "nama": "HPP Produksi", "deskripsi": "Perhitungan harga pokok per job."},
-    {"modul": "prod-material-requirements", "nama": "Kebutuhan Material", "deskripsi": "Rekap material yang dibutuhkan seluruh PO aktif."},
-    {"modul": "prod-analytics-hub", "nama": "Analitik Produksi", "deskripsi": "Tren output, ketepatan waktu, dan mutu."},
+    {"modul": "prod-control-tower", "nama": "Pantau Produksi › Ringkasan", "deskripsi": "Pantauan menyeluruh seluruh PO dan hambatannya."},
+    {"modul": "prod-monitoring", "nama": "Pantau Produksi › Per vendor CMT", "deskripsi": "Posisi tiap PO/job saat ini."},
+    {"modul": "prod-work-orders", "nama": "Pantau Produksi › Per PO", "deskripsi": "Rincian pekerjaan per item PO."},
+    {"modul": "prod-variance", "nama": "Laporan Selisih › Laporan vendor", "deskripsi": "Selisih qty produksi dan penyelesaiannya."},
+    {"modul": "prod-cmt-billing", "nama": "Tagihan CMT", "deskripsi": "Tagihan ongkos jahit dari vendor CMT."},
+    {"modul": "fin-hpp", "nama": "HPP", "deskripsi": "Perhitungan harga pokok per job."},
+    {"modul": "prod-material-requirements", "nama": "Bahan › Kebutuhan", "deskripsi": "Rekap material yang dibutuhkan seluruh PO aktif."},
+    {"modul": "prod-analytics-hub", "nama": "Pantau Produksi › Kapasitas CMT", "deskripsi": "Tren output, ketepatan waktu, dan mutu."},
     {"modul": "prod-ai-insights", "nama": "Estimasi AI", "deskripsi": "Perkiraan waktu & biaya berbasis AI."},
     {"modul": "prod-predictive-maintenance", "nama": "Perawatan Mesin", "deskripsi": "Jadwal dan prediksi perawatan mesin."}
   ],
@@ -84,7 +84,7 @@
     {
       "q": "Apa bedanya Portal Produksi dan Portal Maklon?",
       "kata_kunci": ["beda produksi maklon", "internal vs maklon"],
-      "a": "Mesinnya sama. Portal Produksi = barang milik sendiri, langkah terakhir 'Serah Terima FG' ke inventori DA. Portal Maklon = pesanan klien luar, langkah terakhir 'Dispatch ke Buyer' plus penagihan ke klien."
+      "a": "Mesinnya sama. Portal Produksi = barang milik sendiri, langkah terakhir 'Kirim hasil' ke inventori DA. Portal Maklon = pesanan klien luar, langkah terakhir 'Kirim hasil' plus penagihan ke klien."
     },
     {
       "q": "Di mana input jahit per operator?",

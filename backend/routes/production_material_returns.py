@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, log_activity
+from auth import require_auth, log_activity, check_role
 from utils.counters import next_counter, gen_prefixed_number
 from core import stock_service
 from core import accessory_valuation, quarantine  # 2026-11-06 (Tahap 1): HPP rata-rata saat retur
@@ -30,6 +30,11 @@ from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/production/material-returns", tags=["production-material-returns"])
+
+# 2026-11-08: pemutus retur material = kode peran lama ATAU izin approve — `inventory.approve` (modul Kebutuhan &
+# Retur Material, aksi Approve) atau `production.approve` ("Setujui dokumen produksi"). Peran buatan owner dulu 403.
+RETURN_DECIDER_ROLES = ("superadmin", "admin", "owner", "manager")
+RETURN_DECIDER_PERMS = ("inventory.approve", "production.approve")
 
 # 2026-11-06 (Tahap 1): status sementara selama gudang menerima retur (klaim atomik approved → receiving)
 RECEIVE_CLAIM_STATUS = "receiving"
@@ -501,8 +506,7 @@ async def submit_return(request: Request, return_id: str):
 async def approve_return(request: Request, return_id: str, body: ActionModel):
     """Supervisor produksi menyetujui return."""
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role not in ("superadmin", "admin", "owner", "manager"):
+    if not check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS):
         raise HTTPException(403, "Hanya supervisor/manager yang dapat menyetujui.")
     db = get_db()
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)})
@@ -535,8 +539,7 @@ async def approve_return(request: Request, return_id: str, body: ActionModel):
 @router.post("/{return_id}/reject")
 async def reject_return(request: Request, return_id: str, body: ActionModel):
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role not in ("superadmin", "admin", "owner", "manager"):
+    if not check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS):
         raise HTTPException(403, "Hanya supervisor/manager yang dapat menolak.")
     db = get_db()
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)})
@@ -771,7 +774,7 @@ async def _issue_costs(db, doc: dict, mi: Optional[dict]) -> dict:
     return out
 
 
-@router.delete("/{return_id}", dependencies=only(*PRODUCTION_ROLES))  # T-01 2.3
+@router.delete("/{return_id}", dependencies=only(*PRODUCTION_ROLES, perm="mod.prod_material_req.delete"))  # T-01 2.3
 async def delete_return(request: Request, return_id: str):
     await require_auth(request)
     db = get_db()

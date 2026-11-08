@@ -236,7 +236,7 @@ async def update_unit(unit_id: str, data: UnitIn, request: Request):
     return serialize_doc({"message": "Unit diupdate"})
 
 
-@router.delete("/units/{unit_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/units/{unit_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
 async def delete_unit(unit_id: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -296,7 +296,7 @@ async def update_conversion(conv_id: str, data: ConversionIn, request: Request):
     return {"message": "Konversi diupdate"}
 
 
-@router.delete("/unit-conversions/{conv_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/unit-conversions/{conv_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
 async def delete_conversion(conv_id: str, request: Request):
     await require_auth(request)
     db = get_db()

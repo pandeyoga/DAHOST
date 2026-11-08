@@ -550,7 +550,7 @@ async def update_live_session(session_id: str, body: LiveSessionUpdate,
                                  "products_reconciliation": _LP.reconcile(merged_doc, lines)})
 
 
-@router.delete("/sessions/{session_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/sessions/{session_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_live_session(session_id: str, request: Request):
     await require_auth(request)
     db = get_db()
@@ -639,7 +639,7 @@ async def update_session_product(session_id: str, line_id: str,
                                   "reconciliation": _LP.reconcile(session, lines)})
 
 
-@router.delete("/sessions/{session_id}/products/{line_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/sessions/{session_id}/products/{line_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_session_product(session_id: str, line_id: str, request: Request):
     await require_auth(request)
     db = get_db()

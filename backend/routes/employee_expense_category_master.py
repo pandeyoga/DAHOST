@@ -25,14 +25,20 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 import logging
 import uuid
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/hr/expenses', tags=['EEM-Category-Master'])
 
-from core.roles import FINANCE_ROLES as ADMIN_ROLES  # T-08
+from core.roles import FINANCE_ROLES as ADMIN_ROLES, FINANCE_BOOK_PERMS  # T-08
+
+
+def _is_category_admin(user: dict) -> bool:
+    """2026-11-08: master kategori klaim (beserta akun GL-nya) → kode peran Keuangan ATAU izin `finance.manage`.
+    Cermin layar: EmployeeExpenseCategoryMasterModule.jsx (canEdit)."""
+    return check_role(user, ADMIN_ROLES, FINANCE_BOOK_PERMS)
 
 # Default categories yang di-seed saat collection kosong
 DEFAULT_CATEGORIES = [
@@ -102,7 +108,7 @@ async def create_master_category(
     user: dict = Depends(require_auth),
 ):
     """Buat kategori expense baru. Hanya admin/finance."""
-    if user.get('role') not in ADMIN_ROLES:
+    if not _is_category_admin(user):
         raise HTTPException(403, 'Hanya admin/finance yang dapat membuat kategori.')
     db = get_db()
 
@@ -140,7 +146,7 @@ async def update_master_category(
     user: dict = Depends(require_auth),
 ):
     """Update kategori expense. Hanya admin/finance."""
-    if user.get('role') not in ADMIN_ROLES:
+    if not _is_category_admin(user):
         raise HTTPException(403, 'Hanya admin/finance yang dapat mengubah kategori.')
     db = get_db()
 
@@ -177,7 +183,7 @@ async def delete_master_category(
     user: dict = Depends(require_auth),
 ):
     """Soft-delete kategori (set is_active=false). Hanya admin/finance."""
-    if user.get('role') not in ADMIN_ROLES:
+    if not _is_category_admin(user):
         raise HTTPException(403, 'Hanya admin/finance yang dapat menonaktifkan kategori.')
     db = get_db()
 
@@ -203,7 +209,7 @@ async def seed_default_categories(
     Seed kategori default jika collection masih kosong atau belum memiliki semua default.
     Idempotent — aman dipanggil berkali-kali.
     """
-    if user.get('role') not in ADMIN_ROLES:
+    if not _is_category_admin(user):
         raise HTTPException(403, 'Hanya admin yang dapat menjalankan seed.')
     db = get_db()
 

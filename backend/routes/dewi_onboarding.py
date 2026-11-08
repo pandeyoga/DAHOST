@@ -121,7 +121,7 @@ async def add_template_task(
     return {"ok": True, "template": serialize(doc)}
 
 
-@router.delete("/templates/{template_id}/tasks/{task_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/templates/{template_id}/tasks/{task_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_template_task(
     template_id: str, task_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -137,7 +137,7 @@ async def delete_template_task(
     )
     return {"ok": True}
 
-@router.delete("/templates/{template_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/templates/{template_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_template(
     template_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -338,7 +338,7 @@ async def add_custom_task(
     return {"ok": True, "checklist": serialize(doc)}
 
 
-@router.delete("/checklists/{checklist_id}/tasks/{task_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/checklists/{checklist_id}/tasks/{task_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_custom_task(
     checklist_id: str, task_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -375,7 +375,7 @@ async def update_checklist(
     doc = await db.dewi_onboarding_checklists.find_one({"checklist_id": checklist_id})
     return {"ok": True, "checklist": serialize(doc)}
 
-@router.delete("/checklists/{checklist_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/checklists/{checklist_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_checklist(
     checklist_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),

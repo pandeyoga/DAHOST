@@ -554,7 +554,7 @@ async def update_return(return_id: str, body: ReturnUpdate, request: Request):
     await _refresh_rekap(db, existing, updated, actor=_get_user(request).get("email", "system"))
     return {"success": True, "data": serialize(updated)}
 
-@router.delete("/{return_id}", dependencies=only(*MARKETING_CS_ROLES))  # T-01 2.3
+@router.delete("/{return_id}", dependencies=only(*MARKETING_CS_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_return(return_id: str, request: Request):
     await require_auth(request)
     db = get_db()

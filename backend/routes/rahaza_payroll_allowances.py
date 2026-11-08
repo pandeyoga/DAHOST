@@ -108,7 +108,7 @@ async def update_allowance(allowance_id: str, request: Request):
     return {"ok": True, "allowance": serialize_doc(doc)}
 
 
-@router.delete("/payroll-allowances/{allowance_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/payroll-allowances/{allowance_id}", dependencies=only(*HR_ROLES, perm="payroll.manage"))  # T-01 2.3
 async def delete_allowance(allowance_id: str, request: Request):
     await _require_hr(request)  # Tahap 1: gerbang yang sama dengan tambah/ubah
     db = get_db()

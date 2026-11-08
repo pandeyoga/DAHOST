@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/resignation", tags=["rahaza-resignation"])
@@ -46,9 +46,19 @@ def _s(d):
     return d
 
 
+# 2026-11-08: kode peran lama ATAU izin data karyawan — `hr.employee.manage` (modul Data Karyawan & Resign)
+# atau `hr.manage`. Peran buatan owner ("HR Generalist") dulu 403.
+RESIGN_HR_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+RESIGN_HR_PERMS = ("hr.employee.manage", "hr.manage")
+
+
+def is_resign_hr(user: dict) -> bool:
+    return check_role(user, RESIGN_HR_ROLES, RESIGN_HR_PERMS)
+
+
 async def _require_hr(request: Request):
     user = await require_auth(request)
-    if user.get("role") not in ("superadmin", "admin", "owner", "hr", "manager"):
+    if not is_resign_hr(user):
         raise HTTPException(403, "Hanya HR yang dapat proses resignasi.")
     return user
 
@@ -65,7 +75,7 @@ async def submit_resignation(employee_id: str, request: Request):
         raise HTTPException(404, "Karyawan tidak ditemukan.")
 
     # Permission: self or HR
-    is_hr = user.get("role") in ("superadmin", "admin", "owner", "hr", "manager")
+    is_hr = is_resign_hr(user)
     is_self = user.get("employee_id") == employee_id
     if not (is_hr or is_self):
         raise HTTPException(403, "Tidak boleh submit untuk karyawan lain.")

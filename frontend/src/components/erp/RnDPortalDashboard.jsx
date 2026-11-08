@@ -181,7 +181,7 @@ export default function RnDPortalDashboard({ token, onNavigate }) {
     <PageLayout
       testId="rnd-approval-cockpit"
       headerTestId="rnd-cockpit-header"
-      title="Ringkasan RnD"
+      title="Dashboard RnD"
       subtitle="Yang menunggu keputusan manajemen, sudah berapa lama, dan langkah berikutnya."
       actions={onNavigate ? (
         <Button variant="outline" onClick={() => onNavigate('rnd-styles')} data-testid="rnd-open-styles">Buka style RnD<ArrowRight /></Button>

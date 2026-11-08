@@ -189,7 +189,7 @@ async def update_location(location_id: str, request: Request):
     raise HTTPException(410, _LOC_DEPRECATED)
 
 
-@router.delete("/locations/{location_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/locations/{location_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
 async def delete_location(location_id: str, request: Request):
     """DEPRECATED (FASE F+) — 410. SSOT lokasi = Struktur Gudang / rahaza_locations."""
     await require_auth(request)
@@ -876,7 +876,7 @@ async def update_receiving(receipt_id: str, request: Request):
     return serialize_doc(updated)
 
 
-@router.delete("/receiving/{receipt_id}", dependencies=only(*WAREHOUSE_ROLES))  # T-01 2.3
+@router.delete("/receiving/{receipt_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.receiving.manage"))  # T-01 2.3
 async def delete_receiving(receipt_id: str, request: Request):
     await require_auth(request)
     db = get_db()

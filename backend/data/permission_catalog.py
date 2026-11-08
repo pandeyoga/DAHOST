@@ -522,7 +522,7 @@ def grouped_permissions() -> list[dict]:
     """Katalog bersarang (portal -> modul -> izin).
 
     Portal granular (lihat `module_catalog.GRANULAR_PORTALS`): `modules` = modul per-menu
-    (Lihat/Tambah/Ubah/Hapus/Approve/Export) + modul "Akses Portal"; izin lama lain
+    (Lihat/Tambah/Ubah/Hapus/Setujui/Unduh) + modul "Akses Portal"; izin lama lain
     dipindah ke `legacy_modules` (tetap sah, ditampilkan terlipat di UI).
     """
     from data.module_catalog import GRANULAR_PORTALS, PORTAL_LABELS, grouped_modules

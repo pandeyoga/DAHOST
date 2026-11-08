@@ -293,7 +293,7 @@ async def update_shift(shift_id: str, data: ShiftUpdate, request: Request):
     return serialize_doc({'message': 'Shift berhasil diupdate'})
 
 
-@router.delete('/shifts/{shift_id}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/shifts/{shift_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_shift(shift_id: str, request: Request):
     """Admin deletes shift"""
     await require_auth(request)

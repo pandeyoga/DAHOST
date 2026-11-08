@@ -151,7 +151,7 @@ async def toggle_flashsale(flashsale_id: str, user=Depends(require_auth)):
     return {'message': f'Status flashsale: {new_status}', 'status': new_status}
 
 
-@router.delete('/flashsales/{flashsale_id}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/flashsales/{flashsale_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_flashsale(flashsale_id: str, user=Depends(require_auth)):
     db = get_db()
     doc = await db.dewi_toko_flashsales.find_one({'id': flashsale_id})

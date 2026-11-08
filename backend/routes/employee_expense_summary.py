@@ -12,8 +12,8 @@ Endpoints:
 from fastapi import APIRouter, Depends, Query
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth
-from core.roles import APPROVER_ROLES  # T-08
+from auth import require_auth, check_role
+from core.roles import APPROVER_ROLES, EXPENSE_APPROVE_PERMS, EXPENSE_VIEW_ALL_PERMS  # T-08
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,8 +28,8 @@ def _now():
 async def expense_summary(user: dict = Depends(require_auth)):
     """Aggregate summary stats — klaim dan travel requests."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    is_approver = role in APPROVER_ROLES
+    # 2026-11-08: kode peran lama ATAU izin penyetuju/pembayar (peran buatan owner).
+    is_approver = check_role(user, APPROVER_ROLES, EXPENSE_VIEW_ALL_PERMS)
 
     # Filters: manager/HR sees all, employee sees own
     base_q = {} if is_approver else {'employee_id': user.get('id')}
@@ -96,8 +96,8 @@ async def pending_approval_list(
 ):
     """Aggregated pending items for current approver — claims + travel."""
     db = get_db()
-    role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:
+    # 2026-11-08: kode peran lama ATAU izin `hr.approve` (sama dengan tombol setujui klaim/dinas).
+    if not check_role(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS):
         return {'total': 0, 'items': []}
 
     # Pending expense claims

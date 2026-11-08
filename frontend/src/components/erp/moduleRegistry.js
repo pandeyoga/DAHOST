@@ -1014,7 +1014,7 @@ export const MODULE_REGISTRY = {
   'proc-accessory-pr':     withProps(AccessoryModule, {
     defaultTab: 'pr',
     allowedTabs: ['pr'],
-    headerTitle: 'Request Pembelian Aksesoris',
+    headerTitle: 'Request aksesoris',
     headerSubtitle: 'Ajukan & pantau pembelian aksesoris (kancing, label, hangtag, kemasan) ke supplier.',
   }),
   'proc-3way-match':       ThreeWayMatchModule,

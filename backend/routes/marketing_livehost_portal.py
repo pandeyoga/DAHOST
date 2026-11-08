@@ -623,7 +623,7 @@ async def update_livehost(request: Request, data: LiveHostUpdate, host_id: str =
     return serialize_doc({'message': 'LiveHost berhasil diupdate', 'host': updated_host})
 
 
-@router.delete('/{host_id}', dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete('/{host_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_livehost(request: Request, host_id: str = Path(..., regex=UUID_PATH_REGEX)):
     """Admin deletes LiveHost (soft delete - set status inactive)"""
     await require_auth(request)

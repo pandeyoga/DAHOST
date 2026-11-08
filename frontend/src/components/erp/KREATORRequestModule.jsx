@@ -24,6 +24,7 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { MarketingAccountSelect, MarketingCreatorSelect, MasterChipsSelect, useMasterList } from './marketing/pickers/MarketingPickers';
+import { checkPerm } from '../../lib/rbac';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -67,8 +68,11 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
   const scope = moduleId === 'rnd-kreator-requests' ? 'rnd' : 'marketing';
   const isRndScope = scope === 'rnd';
   const actor = currentUser || user;
+  // 2026-11-08: + izin rnd.approve / rnd.manage (sama dengan server `assert_can_act` di dewi_kreator_requests.py),
+  // supaya peran buatan owner yang diberi izin RnD juga melihat tombol setujui/tolak.
   const roleIsRnd = (actor?.role || '').toLowerCase().includes('rnd')
-    || ['superadmin', 'admin', 'manager', 'owner'].includes((actor?.role || '').toLowerCase());
+    || ['superadmin', 'admin', 'manager', 'owner'].includes((actor?.role || '').toLowerCase())
+    || checkPerm({ user: actor, roles: [], keys: ['rnd.approve', 'rnd.manage'] });
   // Aksi approve/tolak RnD tampil pada scope RnD (portal sudah role-guarded) atau untuk role RnD-capable.
   const isRnd = isRndScope || roleIsRnd;
 

@@ -321,7 +321,7 @@ async def reject_task(task_id: str, reason: str, request: Request):
     return serialize_doc({"message": "Task rejected", "reason": reason})
 
 
-@router.delete("/tasks/{task_id}", dependencies=only(*MARKETING_CS_ROLES))  # T-01 2.3
+@router.delete("/tasks/{task_id}", dependencies=only(*MARKETING_CS_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_task(task_id: str, request: Request):
     """
     Delete task (soft delete - set status to cancelled).

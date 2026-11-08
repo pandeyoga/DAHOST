@@ -37,7 +37,7 @@
       "langkah": [
         "Buka sesi opname → hitung fisik per item.",
         "Bila menghitung per kemasan (mis. 3 pak), pilih satuannya — sistem mengonversi ke satuan dasar.",
-        "Submit → Approve. Baris yang gagal diterapkan ditampilkan merah beserta alasannya, tidak dilewati diam-diam."
+        "Selesai & ajukan → Setujui. Baris yang gagal diterapkan ditampilkan merah beserta alasannya, tidak dilewati diam-diam."
       ]
     },
     {
@@ -52,7 +52,7 @@
     }
   ],
   "fitur": [
-    {"modul": "accessories-dashboard", "nama": "Dashboard", "deskripsi": "Nilai persediaan aksesoris, item belum dinilai, dan permintaan siap diserahkan."},
+    {"modul": "accessories-dashboard", "nama": "Dashboard Aksesoris", "deskripsi": "Nilai persediaan aksesoris, item belum dinilai, dan permintaan siap diserahkan."},
     {"modul": "accessories-master-stock", "nama": "Master Aksesoris", "deskripsi": "Daftar aksesoris, stok, HPP, valuasi, dan riwayat mutasi bernilai."},
     {"modul": "accessories-opname", "nama": "Stok Opname", "deskripsi": "Perhitungan fisik dan penyesuaian stok aksesoris."},
     {"modul": "accessories-internal-request", "nama": "Request Internal", "deskripsi": "Permintaan aksesoris dari bagian lain."},

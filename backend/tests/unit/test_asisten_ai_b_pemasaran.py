@@ -526,7 +526,7 @@ def test_pasang_target_siapkan_hanya_membaca_dan_rencana_sesuai_kontrak(env):
     assert r["catatan"][0] == "Periode Desember 2026 masih terbuka untuk semua toko ini."
     assert r["ubah"][0] == {"kunci": "toko.0.target_omzet", "label": "Target omzet Shopee Uji Satu",
                             "jenis": "rupiah", "nilai": 37_500_000.0}
-    assert r["tautan"] == {"label": "Buka layar Target", "menu": "marketing-targets"}
+    assert r["tautan"] == {"label": "Buka layar Target & Anggaran", "menu": "marketing-targets"}
     assert len(json.dumps(r, ensure_ascii=False)) <= 8000
 
 

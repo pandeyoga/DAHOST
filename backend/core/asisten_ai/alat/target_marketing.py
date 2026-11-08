@@ -15,7 +15,7 @@ BULAN = {"type": "string", "pattern": r"^\d{4}-\d{2}$"}
     kind="read",
     label="Membaca target toko",
     description=(
-        "Target bulanan toko online vs aktual, per toko per bulan. Target dari layar Target & Budget "
+        "Target bulanan toko online vs aktual, per toko per bulan. Target dari layar Target & Anggaran "
         "Marketing (target omzet Rp dan target pesanan); aktual memakai definisi omzet baku (penjualan produk "
         "setelah diskon penjual, sebelum potongan platform; batal & belum dibayar tidak dihitung; retur tidak "
         "dikurangkan).\n"

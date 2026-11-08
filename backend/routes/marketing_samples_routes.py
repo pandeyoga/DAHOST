@@ -389,7 +389,7 @@ async def update_sample(sample_id: str, body: SampleUpdate, request: Request):
     updated = {**existing, **upd}
     return {"success": True, "data": serialize(updated)}
 
-@router.delete("/{sample_id}", dependencies=only(*MARKETING_ROLES))  # T-01 2.3
+@router.delete("/{sample_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
 async def delete_sample(sample_id: str, request: Request):
     await require_auth(request)
     db = get_db()

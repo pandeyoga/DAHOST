@@ -699,7 +699,7 @@ async def assert_period_open(db, account_id: str, period_or_date: str, *,
             f"Periode {period} untuk toko ini sudah DITUTUP oleh {who}"
             + (f" — alasan: {st.get('reason')}" if st.get('reason') else '')
             + f". {action.capitalize()} tidak bisa dilakukan sampai periode dibuka kembali "
-              "(Siklus Marketing → tombol Buka Periode).",
+              "(Target & Anggaran › Siklus → Buka periode).",
         )
 
 

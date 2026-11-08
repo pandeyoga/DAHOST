@@ -15,12 +15,23 @@ from typing import Optional, List
 from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth
+from auth import require_auth, check_role
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/job-board", tags=["job-board"])
+
+# 2026-11-08: pemasang lowongan & pengelola lamaran = kode peran lama ATAU izin `hr.manage` (modul
+# Rekrutmen & Job Board di Peran & Hak Akses) — peran buatan owner seperti "HR Generalist" dulu 403.
+# Cermin layar: `frontend/src/components/erp/hr/JobBoardModule.jsx` (PERAN_PASANG_LOWONGAN + IZIN_JOB_BOARD).
+JOB_BOARD_ROLES = ["superadmin", "hr", "manager"]
+JOB_BOARD_PERM = "hr.manage"
+
+
+def _require_job_board_hr(user: dict, message: str) -> None:
+    if not check_role(user, JOB_BOARD_ROLES, JOB_BOARD_PERM):
+        raise HTTPException(403, message)
 
 # ============================================================================
 # MODELS
@@ -57,11 +68,8 @@ async def create_job_posting(request: Request, job: JobPosting):
     db = get_db()
     
     user = request.state.user
-    user_role = user.get("role", "")
-    
-    # Authorization: HR or managers can post
-    if user_role not in ["superadmin", "hr", "manager"]:
-        raise HTTPException(403, "Only HR and managers can post jobs")
+    # Authorization: HR or managers can post (atau izin hr.manage)
+    _require_job_board_hr(user, "Only HR and managers can post jobs")
     
     job_data = job.dict()
     job_data["id"] = str(uuid.uuid4())
@@ -176,7 +184,7 @@ async def close_job_posting(request: Request, job_id: str):
         "message": "Job closed"
     }
 
-@router.delete("/jobs/{job_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
+@router.delete("/jobs/{job_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_job_posting(request: Request, job_id: str):
     """Delete a job posting."""
     await require_auth(request)
@@ -281,8 +289,7 @@ async def list_applications(
     db = get_db()
     
     user = request.state.user
-    if user.get("role") not in ["superadmin", "hr", "manager"]:
-        raise HTTPException(403, "Unauthorized")
+    _require_job_board_hr(user, "Unauthorized")
     
     query = {}
     if job_id:
@@ -307,8 +314,7 @@ async def update_application_status(request: Request, app_id: str, status: str =
     db = get_db()
     
     user = request.state.user
-    if user.get("role") not in ["superadmin", "hr", "manager"]:
-        raise HTTPException(403, "Unauthorized")
+    _require_job_board_hr(user, "Unauthorized")
     
     valid_statuses = ["pending", "reviewing", "shortlisted", "rejected", "accepted"]
     if status not in valid_statuses:

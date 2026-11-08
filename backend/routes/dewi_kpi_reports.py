@@ -7,12 +7,12 @@ Refactored: Session #11.19 Final - CAREFUL APPROACH
 """
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
 from routes.dewi_kpi_shared import (
     _uid, _now, _s, _grade,
     _require_hr, _get_linked_employee,
     _calc_section_score, _calc_attitude_score, _calc_absensi_score,
-    DEFAULT_QUESTIONS,
+    DEFAULT_QUESTIONS, KPI_HR_PERM,
 )
 import logging
 from datetime import datetime, timezone
@@ -269,8 +269,8 @@ async def list_goals(request: Request, period_id: str = None, employee_id: str =
     if employee_id:
         q["employee_id"] = employee_id
     # Non-HR only sees their own goals
-    role = (user.get("role") or "").lower()
-    if role not in ("superadmin", "admin", "owner", "hr", "manager"):
+    # 2026-11-08: kode peran lama ATAU izin `hr.manage` (peran buatan owner).
+    if not check_role(user, ("superadmin", "admin", "owner", "hr", "manager"), KPI_HR_PERM):
         emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
         if emp:
             q["employee_id"] = emp["id"]

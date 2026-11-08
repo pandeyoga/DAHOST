@@ -3,8 +3,9 @@
 `/api/export-excel?type=production-pos` dulu mengabaikan saringan layar daftar PO (status, kata cari, jenis) dan
 memuat harga jasa + upah CMT untuk SIAPA SAJA yang login. Sekarang:
 * saringan = aturan yang SAMA dengan `GET /production-pos` (`routes.production_pos.po_list_query`);
-* kolom harga hanya untuk Keuangan (`core.purchase_returns.is_finance`, gerbang harga PO yang sudah ada);
 * klien maklon / vendor CMT ditolak (403).
+Keputusan owner 8 Nov 2026 (lanjutan: "tidak perlu dibatasi, orang gudang memang perlu tau"): kolom harga jasa &
+upah CMT ikut untuk SEMUA staf DA — sama dengan kolom layar PO (dulu hanya Keuangan).
 Hermetik: Mongo palsu, tanpa jaringan.
 """
 from __future__ import annotations
@@ -91,17 +92,10 @@ def test_unduhan_mengikuti_saringan_layar(monkeypatch):
     assert len(rows) == 4                          # tanpa saringan = semua (maks. 500)
 
 
-def test_harga_disembunyikan_untuk_non_keuangan(monkeypatch):
-    for role in ("admin_produksi", "supervisor_produksi", "admin_maklon", "ppic", "manager"):
-        rows = _export(monkeypatch, _db(), role, {"type": "production-pos"})
-        header = rows[0]
-        assert "Harga jasa" not in header and "Upah CMT" not in header, role
-        assert 50000 not in rows[1] and 12000 not in rows[1], role
-        assert header[1] == "No. PO" and header[-1] == "Qty"
-
-
-def test_harga_tampil_untuk_keuangan(monkeypatch):
-    for role in ("accounting", "staff_keuangan", "owner"):
+def test_harga_tampil_untuk_semua_staf_da(monkeypatch):
+    """Gudang, produksi, maklon, dan Keuangan menerima kolom yang sama (tidak ada lagi saringan harga per peran)."""
+    for role in ("admin_produksi", "supervisor_produksi", "admin_maklon", "ppic", "manager", "admin_gudang",
+                 "accounting", "staff_keuangan", "owner"):
         rows = _export(monkeypatch, _db(), role, {"type": "production-pos", "status": "Confirmed",
                                                    "business_type": "internal"})
         assert rows[0][-2:] == ["Harga jasa", "Upah CMT"], role
@@ -109,13 +103,19 @@ def test_harga_tampil_untuk_keuangan(monkeypatch):
         assert rows[1][6] == "Dikonfirmasi"      # status berbahasa Indonesia
 
 
-def test_laporan_produksi_juga_tanpa_harga(monkeypatch):
-    db = _db()
-    rows = _export(monkeypatch, db, "admin_produksi", {"type": "production-report"})
-    assert "Selling Price" not in rows[0] and "Total CMT" not in rows[0]
-    assert len(rows[0]) == len(rows[1]) == 15
-    rows = _export(monkeypatch, _db(), "accounting", {"type": "production-report"})
-    assert "Selling Price" in rows[0] and "Total CMT" in rows[0] and len(rows[1]) == 19
+def test_kolom_unduhan_tidak_bergantung_peran(monkeypatch):
+    hdr = {role: _export(monkeypatch, _db(), role, {"type": "production-pos"})[0]
+           for role in ("admin_gudang", "admin_produksi", "accounting")}
+    assert hdr["admin_gudang"] == hdr["admin_produksi"] == hdr["accounting"] == ox.PRODUCTION_POS_HEADERS
+    assert hdr["accounting"][1] == "No. PO" and hdr["accounting"][-2:] == ["Harga jasa", "Upah CMT"]
+
+
+def test_laporan_produksi_memuat_harga_untuk_semua_staf_da(monkeypatch):
+    for role in ("admin_produksi", "admin_gudang", "accounting"):
+        rows = _export(monkeypatch, _db(), role, {"type": "production-report"})
+        assert "Selling Price" in rows[0] and "Total CMT" in rows[0], role
+        assert len(rows[0]) == len(rows[1]) == 19, role
+        assert rows[1][10:14] == [50000, 12000, 50000 * rows[1][9], 12000 * rows[1][9]], role
 
 
 def test_klien_dan_vendor_ditolak(monkeypatch):

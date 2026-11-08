@@ -171,7 +171,7 @@ async def update_downtime(dt_id: str, request: Request):
     return serialize_doc(await db.rahaza_machine_downtime.find_one({"id": dt_id}, {"_id": 0}))
 
 
-@router.delete("/downtime/{dt_id}", dependencies=only(*PRODUCTION_ROLES))  # T-01 2.3
+@router.delete("/downtime/{dt_id}", dependencies=only(*PRODUCTION_ROLES, perm="prod.master.manage"))  # T-01 2.3
 async def delete_downtime(dt_id: str, request: Request):
     await require_auth(request)
     db = get_db()
