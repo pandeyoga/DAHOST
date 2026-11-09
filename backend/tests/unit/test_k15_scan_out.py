@@ -339,8 +339,12 @@ def _orders():
     return [
         {"id": "o1", "status": "shipped", "shipped_at": datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc),
          "items": [{"quantity": 4, "fg_material_id": "FG1"}]},
-        {"id": "o2", "status": "paid", "order_date": "2026-11-02 08:00",
+        # 2026-11-09 (audit gudang G12): "Perlu Dikirim" dihitung per "Waktu Pengiriman Diatur" (rts_at)…
+        {"id": "o2", "status": "paid", "order_date": "2026-11-01 23:00", "rts_at": "2026-11-02 08:00",
          "items": [{"quantity": 2, "fg_material_id": None}]},
+        # …dan yang BELUM diatur kirim (tanpa tanggal kirim / siap kirim) tidak dihitung
+        {"id": "o5", "status": "paid", "order_date": "2026-11-02 21:00",
+         "items": [{"quantity": 7, "fg_material_id": "FG1"}]},
         {"id": "o3", "status": "cancelled", "order_date": "2026-11-02 09:00", "items": [{"quantity": 3}]},
         {"id": "o4", "status": "shipped", "shipped_at": "2026-11-01 15:00",
          "items": [{"quantity": 1, "fg_material_id": "FG1"}]},
@@ -361,7 +365,7 @@ def test_control_import_6_vs_scan_5_gap_1_and_nota_not_double_counted(env, monke
                                                                          "name": "Kaos CRL", "qty": 4}]})
     ctl = run(so.control(db, end_day=DAY))
     today = ctl["rows"][-1]
-    assert (today["import_pcs"], today["import_pcs_ship"], today["import_pcs_order"]) == (6, 4, 2)
+    assert (today["import_pcs"], today["import_pcs_ship"], today["import_pcs_rts"], today["import_pcs_order"]) ==         (6, 4, 2, 0)
     assert (today["scan_pcs"], today["gap"], today["unlinked_pcs"]) == (5, 1, 2)
     assert ctl["cumulative"] == {"import_pcs": 7, "scan_pcs": 5, "gap": 2, "flag": False}
     assert next(r for r in ctl["per_sku"] if r["material_id"] == "FG1") == {

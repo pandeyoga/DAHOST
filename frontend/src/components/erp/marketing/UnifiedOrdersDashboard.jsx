@@ -172,7 +172,8 @@ function PickingListPopup({ open, onClose, token, accountFilter = '' }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { statuses: 'new,packed' };
+      // 2026-11-09 (audit gudang G10): pesanan "Perlu Dikirim" (paid) + "Dikemas"; barang per baris pesanan (items[])
+      const params = { statuses: 'paid,packed' };
       if (accountFilter) params.account_id = accountFilter;
       if (platform) params.platform = platform;
       const res = await axios.get(`${API}/api/marketing/orders/picking-list`, {
@@ -193,7 +194,7 @@ function PickingListPopup({ open, onClose, token, accountFilter = '' }) {
 
   return (
     <DetailPopup open={open} onClose={onClose} judul="Daftar ambil barang" testId="picking-list"
-      keterangan="SKU dari pesanan berstatus Baru dan Dikemas — untuk disiapkan gudang."
+      keterangan="SKU per baris barang dari pesanan Perlu Dikirim dan Dikemas — untuk disiapkan gudang. Barang yang belum tertaut master ditandai."
       aksi={<>
         <SmartNativeSelect className="w-40" value={platform} onChange={(e) => setPlatform(e.target.value)}
           data-testid="picking-platform">
@@ -205,6 +206,7 @@ function PickingListPopup({ open, onClose, token, accountFilter = '' }) {
         <TombolUnduh namaBerkas="daftar-ambil-barang" namaLembar="Ambil barang" baris={daftar} testId="picking-unduh"
           kolom={[
             { label: 'SKU', nilai: (i) => i.sku_id }, { label: 'Variasi', nilai: (i) => i.variation || '' },
+            { label: 'Tertaut master', nilai: (i) => (i.linked ? 'Ya' : 'Belum') },
             { label: 'Produk', nilai: (i) => i.product_name || '' }, { label: 'Jumlah (pcs)', nilai: (i) => Number(i.total_qty || 0) },
             { label: 'Pesanan', nilai: (i) => Number(i.order_count || 0) },
           ]} />
@@ -216,11 +218,12 @@ function PickingListPopup({ open, onClose, token, accountFilter = '' }) {
       {loading && !data ? (
         <p className="py-8 text-center text-sm text-muted-foreground">Memuat daftar…</p>
       ) : (
-        <TabelData baris={daftar} kunci={(i) => `${i.sku_id}-${i.variation}`} testId="picking-table"
+        <TabelData baris={daftar} kunci={(i) => `${i.fg_material_id || i.sku_id}-${i.variation}-${i.product_name}`} testId="picking-table"
           kosong={<EmptyState icon={ClipboardList} title="Tidak ada pesanan untuk dikemas"
-            description="Pesanan berstatus Baru atau Dikemas akan muncul di sini." />}
+            description="Pesanan berstatus Perlu Dikirim atau Dikemas akan muncul di sini." />}
           kolom={[
-            { kunci: 'sku', label: 'SKU', hp: 'judul', isi: (i) => <span className="font-medium">{i.sku_id}</span> },
+            { kunci: 'sku', label: 'SKU', hp: 'judul', isi: (i) => (
+              <span className="font-medium">{i.sku_id || '—'}{!i.linked && <span className="ml-1 text-xs font-normal text-[hsl(var(--warning-text))]">belum tertaut</span>}</span>) },
             { kunci: 'var', label: 'Variasi', isi: (i) => i.variation || '—' },
             { kunci: 'produk', label: 'Produk', isi: (i) => <span className="block max-w-[16rem] truncate" title={i.product_name}>{i.product_name}</span> },
             { kunci: 'qty', label: 'Jumlah', rata: 'kanan', isi: (i) => <span className="tabular-nums font-semibold">{fmt(i.total_qty)} pcs</span> },

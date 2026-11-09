@@ -76,6 +76,16 @@ def is_imported_order(order: dict) -> bool:
     return bool((order or {}).get("_import_session_id"))
 
 
+# 2026-11-09 (audit gudang G11, keputusan ★ = K15): SEMUA pesanan (impor maupun input manual) keluar lewat
+# Gudang → Scan Keluar Penjualan. Alokasi & dispatch Fulfillment memotong stok + HPP sendiri, jadi bila
+# pesanan yang sama juga di-scan keluar, stok dan HPP terpotong DUA KALI. Jalur lama ditolak dengan pesan ini.
+K15_FULFILLMENT_MSG = ("Fulfillment tidak dipakai lagi (keputusan K15): barang pesanan keluar lewat Gudang → "
+                       "Scan Keluar Penjualan — stok & HPP dipotong saat paket di-scan keluar. Memakai Fulfillment "
+                       "juga akan memotong stok dan HPP dua kali.")
+# Sakelar tunggal jalur lama (allocate/dispatch). Hanya boleh True bila owner mencabut K15 untuk pesanan manual.
+FULFILLMENT_STOCK_ENABLED = False
+
+
 def queue_query(status: Optional[str] = None) -> dict:
     """Penyaring antrean gudang = kosakata kanonik ∩ BUKAN pesanan impor (K6)."""
     base = fstat.queue_filter(status) if status else fstat.queue_filter()
@@ -242,10 +252,13 @@ async def get_available_inventory(
     Filter: ownership=cv_da, inventory_category=fg_internal, available_quantity > 0
     """
     db = get_db()
-    
+    # 2026-11-09 (audit gudang G8): satu aturan stok jual FG (`scan_out.sellable_row_match`) — dulu hanya
+    # baris `cv_da/fg_internal`, sehingga stok hasil pindah lokasi tanpa kategori tidak bisa dialokasikan.
+    from core import scan_out as _so
+    from core.catalog_stock import blocked_location_ids
     query = {
-        "ownership": "cv_da",
-        "inventory_category": "fg_internal",
+        **_so.sellable_row_match(await blocked_location_ids(db)),
+        "material_id": {"$in": await _so.fg_material_ids(db)},
         "available_quantity": {"$gt": 0}
     }
     
@@ -371,6 +384,9 @@ async def allocate_inventory(
     if is_imported_order(order):
         raise HTTPException(400, "Pesanan hasil impor Seller Center dikirim lewat Seller "
                                  "Center — tidak dialokasikan/dipotong stok lewat Fulfillment.")
+    # 2026-11-09 (G11): pesanan manual juga — keluar lewat Scan Keluar Penjualan (K15).
+    if not FULFILLMENT_STOCK_ENABLED:
+        raise HTTPException(400, K15_FULFILLMENT_MSG)
     # Check status: harus pending_fulfillment
     await _check_fulfillment_status(order, ["pending_fulfillment"])
 
@@ -535,6 +551,9 @@ async def dispatch_order(
     """
     db = get_db()
     order = await _get_order(db, order_id)
+    # 2026-11-09 (G11): dispatch membuat pengeluaran stok + HPP kedua di samping Scan Keluar (K15) — ditolak.
+    if not FULFILLMENT_STOCK_ENABLED:
+        raise HTTPException(400, K15_FULFILLMENT_MSG)
 
     await _check_fulfillment_status(order, ["packed_ready"])
 

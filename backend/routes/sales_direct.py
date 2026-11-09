@@ -134,9 +134,13 @@ async def deactivate_customer(cid: str, request: Request):
 
 # ── STOK FG YANG BISA DIJUAL ──────────────────────────────────────────────────
 async def _fg_available_map(db, material_ids: Optional[list] = None) -> dict:
-    match = {"inventory_category": "fg_internal"}
-    if material_ids is not None:
-        match["material_id"] = {"$in": material_ids}
+    # 2026-11-09 (audit gudang G8): SATU aturan stok jual FG (`scan_out.sellable_row_match`, sama dengan
+    # Scan Keluar & pengeluaran nota) — dulu hanya `fg_internal`, jadi stok hasil pindah lokasi/Excel tanpa
+    # kategori tidak tampil, sedangkan baris karantina ber-`fg_internal` ikut terhitung.
+    from core import scan_out as _so
+    from core.catalog_stock import blocked_location_ids
+    match = {**_so.sellable_row_match(await blocked_location_ids(db)),
+             "material_id": {"$in": await _so.fg_material_ids(db, material_ids)}}
     rows = await db.rahaza_material_stock.aggregate([
         {"$match": match},
         {"$group": {"_id": "$material_id", "qty": {"$sum": {"$ifNull": ["$qty", 0]}}}},

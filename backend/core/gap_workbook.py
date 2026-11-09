@@ -42,8 +42,12 @@ PETUNJUK = [
     "  HARGA_JUAL_SKU    — SKU barang jadi yang belum berharga; harga_saran = harga SKU saudara di model yang sama (salin ke harga_jual bila setuju).",
     "                      Kolom status_produk (opsional, juga di VARIAN_BARU): Baru · Best Seller · Slow · Dead · Stop (label atau kode).",
     "                      SKU lain boleh ditambahkan sebagai baris baru hanya untuk mengubah statusnya. Kosong = status tidak diubah.",
-    "  STOK_AWAL_FG      — stok fisik barang jadi per SKU per tanggal go-live (qty). Nilai rupiahnya diambil dari SALDO_AWAL (akun Persediaan), bukan dari sini.",
-    "  STOK_AWAL_MATERIAL— stok fisik kain & aksesoris per tanggal go-live (qty dalam satuan dasar).",
+    "  STOK_AWAL_FG      — stok fisik barang jadi per SKU per tanggal go-live (qty). Jurnal nilainya dari SALDO_AWAL (akun Persediaan).",
+    "                      hpp_satuan_sistem = WAC awal per pcs (bawaan HPP standar); WAJIB > 0 — stok tanpa nilai membuat HPP penjualan Rp 0.",
+    "  STOK_AWAL_MATERIAL— stok fisik kain & aksesoris per tanggal go-live (qty dalam satuan dasar). harga_satuan_sistem dipakai bila master belum berharga.",
+    "                      Kode lama/alias & barcode dikenali; kode NONAKTIF ditolak. Stok awal sekali per barang×lokasi.",
+    "                      Pilih SATU jalur nilai: (a) sheet ini + SALDO_AWAL akun persediaan, ATAU (b) Gudang → Sesi Opname 'Opname stok awal' tanpa",
+    "                      mengisi akun persediaan di SALDO_AWAL. Jangan keduanya (persediaan dobel).",
     "  REKENING / TOKO   — no. rekening & atas nama; rekening pencairan tiap toko (sekarang default 1-1201 Bank BCA).",
     "  GAJI              — gaji pokok per periode & tarif lembur per karyawan (skema monthly/daily/piece).",
     "",
@@ -312,7 +316,7 @@ def sku_status_row(row: int, sku: str, raw, variants: dict, errors: list, new_va
     return {"row": row, "sku": sku, "variant_id": v["id"], "product_status": code, "label": _ps.label(code)}
 
 
-async def parse_extra_sheets(db, wb, errors: list) -> dict:
+async def parse_extra_sheets(db, wb, errors: list, pending_costs: dict | None = None) -> dict:
     out = {"sku_prices": [], "sku_deactivate": [], "sku_status": [], "stock_fg": [], "stock_mat": [], "salaries": [], "new_variants": [],
            "warnings": []}
     locs = {l["code"]: l for l in await db.rahaza_locations.find({}, {"_id": 0, "id": 1, "code": 1}).to_list(2000)}
@@ -391,31 +395,7 @@ async def parse_extra_sheets(db, wb, errors: list) -> dict:
                 continue
             if abs(float(fg[sku].get("retail_price_master") or 0) - harga) > 1e-9:
                 out["sku_prices"].append({"sku": sku, "id": fg[sku]["id"], "harga": harga})
-    for sheet, key, coll_q, cols in (("STOK_AWAL_FG", "stock_fg", {"type": "fg"}, STOK_FG_COLS),
-                                     ("STOK_AWAL_MATERIAL", "stock_mat", {"type": {"$ne": "fg"}}, STOK_MAT_COLS)):
-        if sheet not in wb.sheetnames:
-            continue
-        items = {m["code"]: m for m in await db.rahaza_materials.find(coll_q, {"_id": 0, "id": 1, "code": 1, "unit": 1}).to_list(30000)}
-        li, qi = cols.index("lokasi_kode"), cols.index("qty_awal")
-        for i, r in enumerate(wb[sheet].iter_rows(values_only=True, min_row=2), start=2):
-            if not r or not r[0]:
-                continue
-            code = str(r[0]).strip()
-            try:
-                qty = _num(r[qi]) if len(r) > qi else 0
-            except ValueError:
-                errors.append(f"{sheet} baris {i}: qty_awal bukan angka")
-                continue
-            if qty <= 0:
-                continue
-            loc = str(r[li]).strip() if len(r) > li and r[li] else ""
-            if code not in items:
-                errors.append(f"{sheet} baris {i}: kode {code} tidak ada di master")
-                continue
-            if loc not in locs:
-                errors.append(f"{sheet} baris {i}: lokasi_kode '{loc}' tidak ada (lihat REF_LOKASI)")
-                continue
-            out[key].append({"code": code, "material_id": items[code]["id"], "location_id": locs[loc]["id"], "location_code": loc, "qty": qty, "unit": items[code].get("unit")})
+    await parse_opening_stock(db, wb, errors, out, locs, pending_costs=pending_costs)
     if "GAJI" in wb.sheetnames:
         emps = {e["employee_code"]: e for e in await db.rahaza_employees.find({}, {"_id": 0, "id": 1, "employee_code": 1}).to_list(5000)}
         profiles = {p["employee_id"]: p for p in await db.rahaza_payroll_profiles.find({}, {"_id": 0, "employee_id": 1, "base_rate": 1, "overtime_rate": 1, "pay_scheme": 1}).to_list(5000)}
@@ -466,7 +446,6 @@ async def apply_new_variants(db, new_variants: list[dict], user: dict | None) ->
 
 
 async def apply_extra(db, parsed: dict, user: dict | None) -> dict:
-    from core import stock_service
     now = datetime.now(timezone.utc)
     actor = {"id": str((user or {}).get("id") or "system"), "email": (user or {}).get("email", "")}
     for p in parsed.get("sku_prices") or []:
@@ -488,18 +467,8 @@ async def apply_extra(db, parsed: dict, user: dict | None) -> dict:
         if d.get("fg_id"):
             await db.rahaza_materials.update_one({"id": d["fg_id"]}, {"$set": {"active": False, "updated_at": now}})
         n_deact += 1
-    n_stock = 0
-    for key in ("stock_fg", "stock_mat"):
-        for s in parsed.get(key) or []:
-            already = await db.rahaza_material_movements.find_one({"type": "opening", "material_id": s["material_id"], "to_location_id": s["location_id"]}, {"_id": 0, "id": 1})
-            if already:
-                continue  # stok awal per item+lokasi hanya sekali — koreksi lewat Penyesuaian Stok
-            await stock_service.add(s["material_id"], s["location_id"], s["qty"], ref={"source": "opening_stock", "reason": "Stok awal go-live (Excel)"}, actor=actor, db=db)
-            await db.rahaza_material_movements.insert_one({"id": str(uuid.uuid4()), "created_at": now, "timestamp": now, "created_by": actor["id"],
-                                                           "type": "opening", "material_id": s["material_id"], "qty": s["qty"], "from_location_id": None,
-                                                           "to_location_id": s["location_id"], "ref_type": "opening_stock", "ref_id": None,
-                                                           "notes": "Stok awal go-live dari Excel (nilai GL dari SALDO_AWAL)"})
-            n_stock += 1
+    stock_res = await apply_opening_stock(db, parsed, user, actor)
+    n_stock = stock_res["rows"]
     for g in parsed.get("salaries") or []:
         upd = {"updated_at": now}
         if g["base"] > 0:
@@ -510,5 +479,205 @@ async def apply_extra(db, parsed: dict, user: dict | None) -> dict:
             upd["pay_scheme"] = g["scheme"]
         await db.rahaza_payroll_profiles.update_one({"employee_id": g["employee_id"]}, {"$set": upd})
     return {"sku_prices_updated": len(parsed.get("sku_prices") or []), "sku_deactivated": n_deact, "opening_stock_rows": n_stock,
+            "opening_stock_value": stock_res["value"], "opening_stock_skipped": stock_res["skipped"],
+            "opening_stock_recon": stock_res["recon"],
             "sku_status_updated": len(parsed.get("sku_status") or []),
             "salaries_updated": len(parsed.get("salaries") or [])}
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════════
+# STOK AWAL (STOK_AWAL_FG / STOK_AWAL_MATERIAL) — 2026-11-09, audit gudang G7★a + klarifikasi owner C3
+# ══════════════════════════════════════════════════════════════════════════════════════════════════════
+# Dulu baris stok awal dibuat TANPA kategori/kepemilikan (FG tak terlihat di Portal Penjualan & Fulfillment),
+# kode dicari di master termasuk yang NONAKTIF tanpa menerjemahkan kode lama/alias, dan FG masuk TANPA WAC
+# (kolom hpp_satuan_sistem diabaikan) ⇒ penjualan stok awal dibukukan Rp 0 dan, saat barang bernilai pertama
+# datang, nilai stok lama diakui lagi lewat jurnal koreksi (dobel dengan SALDO_AWAL). Sekarang:
+#   * kode diterjemahkan lewat resolver scan (kode, SKU, barcode varian, SKU katalog, kode lama `code_aliases`);
+#     kode nonaktif DITOLAK; barang jadi klien maklon ditolak (titipan, bukan persediaan DA);
+#   * baris stok diberi identitas resmi (FG → fg_internal/cv_da, bahan → raw_material/cv_da);
+#   * FG: WAC awal = kolom hpp_satuan_sistem (bawaan HPP standar) lewat `fg_cost_layers.push_layer`; bahan: harga
+#     master (atau kolom harga bila master masih 0 dan stok 0). Baris tanpa harga DITOLAK;
+#   * nilai Σ qty × harga per akun persediaan DICOCOKKAN dengan Saldo Awal (selisih → laporan, BUKAN jurnal).
+STOCK_SHEETS = (("STOK_AWAL_FG", "stock_fg", STOK_FG_COLS, "hpp_satuan_sistem"),
+                ("STOK_AWAL_MATERIAL", "stock_mat", STOK_MAT_COLS, "harga_satuan_sistem"))
+
+
+async def resolve_opening_code(db, code: str, fg: bool) -> dict | None:
+    """Master untuk satu kode stok awal (kode lama/alias ikut dikenali) → hasil resolver scan."""
+    from core import scan_resolver as sr
+    c = sr.normalize_code(code)
+    if not c:
+        return None
+    res = await (sr.resolve_fg(db, c) if fg else sr.resolve_material(db, c))
+    if res is None and fg:   # kode lama FG (bila owner pernah mengganti kode)
+        rows = await sr._find_by_code(db.rahaza_materials, "code_aliases", c, {"type": "fg"})
+        m = sr._prefer_active(rows)
+        if m:
+            res = sr._material_result(m, "kode_lama")
+    return res
+
+
+async def _location_ok(db, code: str, locs: dict, blocked: set) -> tuple:
+    loc = locs.get(code)
+    if not loc:
+        return None, f"lokasi_kode '{code}' tidak ada (lihat REF_LOKASI)"
+    if loc.get("active") is False:
+        return None, f"lokasi {code} nonaktif"
+    if loc["id"] in blocked:
+        return None, f"lokasi {code} adalah lokasi karantina/terblokir — stok awal masuk lokasi simpan biasa"
+    return loc, ""
+
+
+async def parse_opening_stock(db, wb, errors: list, out: dict, locs: dict, pending_costs: dict | None = None) -> None:
+    from core import fg_cost_layers as fcl
+    from core.catalog_stock import blocked_location_ids
+    from core.opname_engine import hpp_components, kind_of
+    if not any(sh in wb.sheetnames for sh, *_ in STOCK_SHEETS):
+        return
+    blocked = await blocked_location_ids(db)
+    full_locs = {l["code"]: l for l in await db.rahaza_locations.find({}, {"_id": 0, "id": 1, "code": 1, "active": 1}).to_list(2000)}
+    pending_costs = pending_costs or {}
+    seen = set()
+    for sheet, key, cols, cost_col in STOCK_SHEETS:
+        if sheet not in wb.sheetnames:
+            continue
+        fg = key == "stock_fg"
+        li, qi, ci = cols.index("lokasi_kode"), cols.index("qty_awal"), cols.index(cost_col)
+        for i, r in enumerate(wb[sheet].iter_rows(values_only=True, min_row=2), start=2):
+            if not r or not r[0]:
+                continue
+            code = str(r[0]).strip()
+            try:
+                qty = _num(r[qi]) if len(r) > qi else 0
+                cost_in = _num(r[ci]) if len(r) > ci and r[ci] not in (None, "") else 0.0
+            except ValueError:
+                errors.append(f"{sheet} baris {i}: qty_awal / {cost_col} bukan angka")
+                continue
+            if qty <= 0:
+                continue
+            res = await resolve_opening_code(db, code, fg)
+            if not res:
+                errors.append(f"{sheet} baris {i}: kode {code} tidak ada di master {'barang jadi' if fg else 'bahan/aksesoris'}")
+                continue
+            mat = res["_doc"]
+            if not res.get("aktif", True):
+                errors.append(f"{sheet} baris {i}: {res['kode']} NONAKTIF di master — aktifkan dulu atau pakai kode penggantinya")
+                continue
+            if res["kode"].upper() != code.upper():
+                out["warnings"].append(f"{sheet} baris {i}: kode {code} dibaca sebagai {res['kode']} ({res.get('via')})")
+            if fg and mat.get("owner_type") == "client":
+                errors.append(f"{sheet} baris {i}: {res['kode']} barang jadi milik klien maklon — catat lewat Titipan Klien")
+                continue
+            loc_code = str(r[li]).strip() if len(r) > li and r[li] else ""
+            loc, why = await _location_ok(db, loc_code, full_locs, blocked)
+            if not loc:
+                errors.append(f"{sheet} baris {i}: {why}")
+                continue
+            pair = (mat["id"], loc["id"])
+            if pair in seen:
+                errors.append(f"{sheet} baris {i}: {res['kode']} @ {loc_code} tertulis lebih dari sekali — jumlahkan di satu baris")
+                continue
+            seen.add(pair)
+            row = {"code": res["kode"], "material_id": mat["id"], "location_id": loc["id"], "location_code": loc_code,
+                   "qty": qty, "unit": mat.get("unit"), "kind": kind_of(mat), "row": i, "sheet": sheet}
+            if fg:
+                wac = float((await fcl.wac_state(db, mat["id"], init=False))["unit_cost"] or 0)
+                if cost_in > 0:
+                    row.update(unit_cost=round(cost_in, 4), cost_source="excel",
+                               components=hpp_components(mat) if abs(cost_in - float(mat.get("hpp") or 0)) < 0.01 else None)
+                elif wac > 0:
+                    row.update(unit_cost=round(wac, 4), cost_source="wac", components=None)
+                elif float(mat.get("hpp") or 0) > 0:
+                    row.update(unit_cost=round(float(mat["hpp"]), 4), cost_source="hpp_standar", components=hpp_components(mat))
+                else:
+                    errors.append(f"{sheet} baris {i}: {res['kode']} belum punya HPP — isi hpp_satuan_sistem (WAC awal per pcs). "
+                                  "Stok tanpa nilai membuat HPP penjualan Rp 0 dan nilainya terhitung dua kali saat barang bernilai pertama masuk.")
+                    continue
+            else:
+                master_cost = float(mat.get("unit_cost") or 0) or float(pending_costs.get(res["kode"]) or 0)
+                if master_cost > 0:
+                    row.update(unit_cost=round(master_cost, 4), cost_source="harga_master")
+                    if cost_in > 0 and abs(cost_in - master_cost) > 0.01:
+                        out["warnings"].append(f"{sheet} baris {i}: {res['kode']} harga di sheet {cost_in:,.2f} ≠ harga master "
+                                               f"{master_cost:,.2f} — dipakai harga master (ubah lewat sheet MATERIAL)")
+                elif cost_in > 0:
+                    row.update(unit_cost=round(cost_in, 4), cost_source="excel", set_unit_cost=True)
+                else:
+                    errors.append(f"{sheet} baris {i}: {res['kode']} belum berharga — isi harga (sheet MATERIAL atau kolom {cost_col})")
+                    continue
+            if await db.rahaza_material_movements.find_one({"type": "opening", "material_id": mat["id"],
+                                                             "to_location_id": loc["id"]}, {"_id": 0, "id": 1}):
+                out["warnings"].append(f"{sheet} baris {i}: {res['kode']} @ {loc_code} sudah punya stok awal — dilewati "
+                                       "(koreksi lewat Sesi Opname)")
+                continue
+            out[key].append(row)
+    out["opening_stock_recon"] = await opening_stock_recon(db, out["stock_fg"] + out["stock_mat"])
+    for rc in out["opening_stock_recon"]:
+        if abs(rc["selisih"]) >= 1:
+            out["warnings"].append(f"Nilai stok awal {rc['akun']} Rp {rc['nilai_stok_awal']:,.0f} ≠ Saldo Awal Rp "
+                                   f"{rc['saldo_awal']:,.0f} (selisih Rp {rc['selisih']:,.0f}) — dilaporkan, tidak dijurnal")
+
+
+async def opening_stock_recon(db, rows: list) -> list:
+    """Σ qty × harga stok awal per akun persediaan vs saldo akun itu di jurnal Saldo Awal (tanpa jurnal baru)."""
+    from core.opname_engine import inventory_codes, saldo_awal_inventory_lines
+    codes, _err = await inventory_codes(db, {r["kind"] for r in rows})
+    if not codes:
+        return []
+    val: dict = {}
+    for r in rows:
+        c = codes.get(r["kind"])
+        if c:
+            val[c] = round(val.get(c, 0.0) + float(r["qty"]) * float(r.get("unit_cost") or 0), 2)
+    sa = {x["account_code"]: x["amount"] for x in await saldo_awal_inventory_lines(db, val.keys())}
+    return [{"akun": c, "nilai_stok_awal": v, "saldo_awal": sa.get(c, 0.0), "selisih": round(v - sa.get(c, 0.0), 2)}
+            for c, v in sorted(val.items())]
+
+
+async def apply_opening_stock(db, parsed: dict, user: dict | None, actor: dict) -> dict:
+    from core import fg_cost_layers as fcl
+    from core import stock_service
+    from core.accessory_valuation import _record_history
+    from core.opening_balance import existing_opening
+    now = datetime.now(timezone.utc)
+    ob = await existing_opening(db, "DA")
+    n, value, skipped = 0, 0.0, []
+    rows = list(parsed.get("stock_fg") or []) + list(parsed.get("stock_mat") or [])
+    for s in rows:
+        already = await db.rahaza_material_movements.find_one({"type": "opening", "material_id": s["material_id"], "to_location_id": s["location_id"]}, {"_id": 0, "id": 1})
+        if already:
+            skipped.append(s["code"])
+            continue  # stok awal per item+lokasi hanya sekali — koreksi lewat Penyesuaian Stok / Opname
+        mat = await db.rahaza_materials.find_one({"id": s["material_id"]}, {"_id": 0}) or {}
+        if s.get("set_unit_cost") and float(mat.get("unit_cost") or 0) <= 0 \
+                and abs(float(await stock_service.get_onhand(s["material_id"], db=db) or 0)) <= 1e-9:
+            await db.rahaza_materials.update_one({"id": s["material_id"]}, {"$set": {
+                "unit_cost": s["unit_cost"], "cost_method": "moving_average", "cost_source": "stok_awal_excel",
+                "price_updated_at": now}})
+            await _record_history(db, material_id=s["material_id"], old_cost=0.0, new_cost=s["unit_cost"], qty_before=0,
+                                  qty_in=0, cost_in=s["unit_cost"], source="opening", actor=user,
+                                  notes="Harga awal dari sheet STOK_AWAL_MATERIAL (stok masih kosong)")
+        meta = {**stock_service.derive_identity(mat, None), "location_code": s["location_code"]}
+        ref = {"source": "opening_stock", "type": "opening_stock", "reason": "Stok awal go-live (Excel)"}
+        await stock_service.add(s["material_id"], s["location_id"], s["qty"], meta=meta, ref=ref, actor=actor, db=db)
+        layer_id = None
+        if s.get("kind") == "fg" and float(s.get("unit_cost") or 0) > 0:
+            layer = await fcl.push_layer(db, material_id=s["material_id"], qty=int(round(s["qty"])), actor=actor,
+                                         unit_cost=float(s["unit_cost"]), components=s.get("components"),
+                                         ref={"type": "opening_stock", "receipt_code": "STOK_AWAL_FG"})
+            layer_id = (layer or {}).get("id")
+            if layer_id:
+                # nilainya di buku besar lewat jurnal Saldo Awal (bukan jurnal sendiri)
+                await db[fcl.LAYERS].update_one({"id": layer_id}, {"$set": {
+                    "gl_je_id": (ob or {}).get("id"), "gl_basis": "saldo_awal"}})
+        v = round(float(s["qty"]) * float(s.get("unit_cost") or 0), 2)
+        value += v
+        await db.rahaza_material_movements.insert_one({"id": str(uuid.uuid4()), "created_at": now, "timestamp": now, "created_by": actor["id"],
+                                                       "type": "opening", "material_id": s["material_id"], "qty": s["qty"], "from_location_id": None,
+                                                       "to_location_id": s["location_id"], "ref_type": "opening_stock", "ref_id": None,
+                                                       "unit_cost": s.get("unit_cost"), "value": v, "cost_source": s.get("cost_source"),
+                                                       "fg_layer_id": layer_id,
+                                                       "notes": "Stok awal go-live dari Excel (nilai GL dari SALDO_AWAL)"})
+        n += 1
+    return {"rows": n, "value": round(value, 2), "skipped": skipped[:50],
+            "recon": await opening_stock_recon(db, [r for r in rows if r["code"] not in skipped])}

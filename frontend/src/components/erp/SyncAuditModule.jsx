@@ -252,8 +252,9 @@ export default function SyncAuditModule({ onNavigate }) {
                 <Button variant="outline" size="sm" onClick={() => onNavigate('sku-bridge')} data-testid="audit-goto-bridge">
                   <Link2 />Jembatan SKU<ArrowRight />
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => onNavigate('fulfillment')} data-testid="audit-goto-fulfillment">
-                  <Boxes />Antrean gudang<ArrowRight />
+                {/* 2026-11-09 (audit gudang G11): Fulfillment dilepas (K6/K15) — barang keluar lewat Scan Keluar Penjualan */}
+                <Button variant="outline" size="sm" onClick={() => onNavigate('wh-scan-out')} data-testid="audit-goto-scan-out">
+                  <Boxes />Scan Keluar Penjualan<ArrowRight />
                 </Button>
               </div>
             )}

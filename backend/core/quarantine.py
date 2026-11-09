@@ -162,8 +162,9 @@ async def quarantine_in(db, *, material_id: str, qty: float, unit: str = "pcs",
     }
 
     if from_location_id:
+        # 2026-11-09 (G8): baris karantina sengaja TANPA kategori stok jual (identitas asal tidak dibawa).
         await stock_service.move(material_id, from_location_id, qloc, qty,
-                                 meta=meta, ref=ref, actor=actor, db=db)
+                                 meta=meta, ref=ref, actor=actor, db=db, carry_identity=False)
     else:
         await stock_service.add(material_id, qloc, qty, meta=meta, ref=ref, actor=actor, db=db)
 
@@ -321,6 +322,8 @@ async def quarantine_out(db, *, item: dict, action: str, qty: float,
             raise ValueError("to_location_id wajib untuk release")
         if to_location_id == qloc:
             raise ValueError("lokasi tujuan release tidak boleh lokasi karantina")
+        # 2026-11-09 (G8): baris tujuan lepas karantina mendapat identitas dari master (FG DA → fg_internal/cv_da)
+        # lewat `stock_service.move` — dulu tanpa kategori sehingga hilang dari Portal Penjualan.
         await stock_service.move(material_id, qloc, to_location_id, qty,
                                  meta={"quarantine": False}, ref=ref, actor=actor, db=db)
         # baris tujuan bukan karantina

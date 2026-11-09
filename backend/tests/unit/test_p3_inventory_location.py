@@ -102,7 +102,7 @@ def test_restock_layer_linked_to_its_journal(monkeypatch):
         await db.fg_cost_layers.insert_one({"id": "ly-r", "gl_je_id": None})
         return {"id": "ly-r"}
 
-    async def je(db, wh, qty, uc, actor):
+    async def je(db, wh, qty, uc, actor, **kw):
         return {"ok": True, "je_id": "je-r", "je_number": "JE-R"}
     monkeypatch.setattr(fcl, "wac_state", unit_cost)
     monkeypatch.setattr(fcl, "push_layer", push)

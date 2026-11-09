@@ -130,7 +130,7 @@ function fmtDateShort(iso) {
 const fmtCurrency = formatRupiah;
 
 async function api(method, path, token, body) {
-  const opts = { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } };
+  const opts = { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) } };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(`${API}${path}`, opts);
   const data = await r.json().catch(() => ({}));
@@ -248,6 +248,14 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [info, setInfo] = useState('');
+  // 2026-11-09 (G16): lokasi stok jual pilihan untuk barang retur kondisi baik (bawaan = lokasi barang jadi).
+  const [lokasi, setLokasi] = useState([]);
+  useEffect(() => {
+    let batal = false;
+    api('GET', '/api/wh/scan-out/locations', token).then((rows) => { if (!batal) setLokasi(Array.isArray(rows) ? rows : []); })
+      .catch(() => {});
+    return () => { batal = true; };
+  }, [token]);
 
   // Aksi cepat dari tabel membuka form "Terima & putuskan" LANGSUNG.
   useEffect(() => {
@@ -281,7 +289,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
     if (!form.action_taken) { setErr('Aksi wajib dipilih'); return; }
     setSaving(true); setErr('');
     try {
-      const d = await api('POST', `/api/wh/returns/${data.id}/resolve`, token, form);
+      const d = await api('POST', `/api/wh/returns/${data.id}/resolve`, token,
+        { ...form, location_id: form.location_id || undefined });
       setData(d); setStep(null); onRefresh();
     } catch (e) { setErr(e.message); }
     finally { setSaving(false); }
@@ -327,11 +336,27 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
         condition: form.condition || 'Baik',
         qty: form.restock_qty ?? data.received_qty ?? data.qty,
         note: form.action_notes || '',
+        location_id: form.location_id || undefined,
       });
       setData(res.data || data);
       setStep(null);
       setInfo(res.message || 'Stok diperbarui');
       toast.success(res.message || 'Stok diperbarui');
+      onRefresh();
+    } catch (e) { setErr(e.message); }
+    finally { setSaving(false); }
+  };
+
+  // 2026-11-09 (G5) — "Pilih barang": retur/RTS tak tertaut ditautkan gudang ke SATU master barang jadi.
+  const doSetMaterial = async () => {
+    if (!form.material_id) { setErr('Pilih barang jadi dari master dulu.'); return; }
+    setSaving(true); setErr('');
+    try {
+      const res = await api('POST', `/api/wh/returns/${data.id}/set-material`, token,
+        { material_id: form.material_id, note: form.note || '' });
+      setData(res.data || data); setStep(null);
+      setInfo(res.message || 'Barang retur ditautkan.');
+      toast.success('Barang retur ditautkan ke master');
       onRefresh();
     } catch (e) { setErr(e.message); }
     finally { setSaving(false); }
@@ -350,6 +375,16 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
   };
 
   const linked = !!(data.material_id || data.fg_material_id);
+  const isianLokasi = (petunjuk) => (
+    <Isian label="Lokasi simpan (barang kondisi baik)" htmlFor="ret-lokasi"
+      petunjuk={petunjuk || 'Kosong = lokasi barang jadi bawaan. Barang rusak selalu masuk lokasi karantina.'}>
+      <SmartNativeSelect id="ret-lokasi" value={form.location_id ?? data.receive_location_id ?? ''}
+        onChange={(e) => setForm({ ...form, location_id: e.target.value })} data-testid="ret-location">
+        <option value="">Lokasi barang jadi bawaan</option>
+        {lokasi.map((l) => <option key={l.id} value={l.id}>{l.code}{l.name ? ` — ${l.name}` : ''}</option>)}
+      </SmartNativeSelect>
+    </Isian>
+  );
   const isEditable = !['Resolved', 'Cancelled', 'Reversed'].includes(data.status);
   const aksiResolve = form.action_taken || data.recommended_action || '';
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -372,6 +407,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               onChange={e => setForm({ ...form, restock_qty: +e.target.value })} data-testid="quick-qty" />
           </Isian>
         </div>
+        {SELLABLE_CONDITIONS.includes(form.condition || 'Baik') && isianLokasi()}
         <Isian label="Catatan" htmlFor="q-catatan">
           <Input id="q-catatan" value={form.action_notes || ''} onChange={set('action_notes')} placeholder="Opsional" data-testid="quick-note" />
         </Isian>
@@ -388,6 +424,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
           <Input id="rcv-qty" type="number" min="0" value={form.received_qty ?? data.qty}
             onChange={e => setForm({ ...form, received_qty: Math.max(0, parseInt(e.target.value || '0', 10)) })} data-testid="receive-qty" />
         </Isian>
+        {isianLokasi('Dipakai saat keputusan "Masuk stok gudang". Kosong = lokasi barang jadi bawaan.')}
         <Isian label="Kondisi kemasan luar" htmlFor="rcv-kemasan">
           <Input id="rcv-kemasan" value={form.package_condition || ''} onChange={set('package_condition')} placeholder="Segel utuh / basah / sobek / dll." />
         </Isian>
@@ -456,6 +493,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
             </SmartNativeSelect>
           </Isian>
         )}
+        {aksiResolve === 'Restock ke Gudang' && isianLokasi()}
         {QTY_ACTIONS.includes(aksiResolve) && (
           <Isian label={`Qty masuk stok / karantina (maks. diterima ${data.received_qty ?? data.qty})`} htmlFor="res-qty">
             <Input id="res-qty" type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty}
@@ -465,6 +503,27 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
         <Isian label="Catatan resolusi" htmlFor="res-catatan">
           <Textarea id="res-catatan" rows={2} value={form.action_notes || ''} onChange={set('action_notes')}
             placeholder="Catatan tambahan tindakan yang diambil…" />
+        </Isian>
+      </FormPopup>
+    );
+  }
+  if (step === 'material') {
+    return (
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="set-material-form"
+        judul={`Pilih barang · ${data.return_code}`}
+        keterangan="Pilih SKU barang jadi yang benar-benar ada di paket retur. Stok baru bergerak saat keputusan gudang."
+        onSimpan={doSetMaterial} menyimpan={saving} galat={err} labelSimpan="Tautkan barang">
+        <Isian label="Barang jadi" wajib>
+          <FGMaterialSelect value={form.material_id || ''} onChange={(v) => setForm({ ...form, material_id: v })}
+            label={null} testId="ret-set-material-select" />
+        </Isian>
+        {(data.link_candidates || []).length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Kandidat di pesanan ini: {data.link_candidates.map((c) => `${c.product_name}${c.variation ? ` · ${c.variation}` : ''}`).join('; ')}
+          </p>
+        )}
+        <Isian label="Catatan" htmlFor="ret-set-note">
+          <Input id="ret-set-note" value={form.note || ''} onChange={set('note')} placeholder="Opsional, mis. dicek dari label paket" />
         </Isian>
       </FormPopup>
     );
@@ -534,6 +593,9 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
             <BarisDetail label="Nama">{data.product_name || '—'}</BarisDetail>
             <BarisDetail label="Kategori">{data.material_category || '—'}</BarisDetail>
             <BarisDetail label="Warna / opsi">{[data.material_color, data.material_option].filter(Boolean).join(' · ') || '—'}</BarisDetail>
+            {data.receive_location_code && !data.restocked && (
+              <BarisDetail label="Lokasi simpan dipilih">{data.receive_location_name || data.receive_location_code}</BarisDetail>
+            )}
             {data.restocked && (
               <>
                 <BarisDetail label="Masuk lokasi">
@@ -547,10 +609,17 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
           </dl>
         ) : (
           <Notice tone="warning" title={<span data-testid="ret-link-reason">{data.link_reason || 'Barang retur ini belum tertaut ke master produk jadi, jadi stok tidak bisa ditambah.'}</span>}
-            action={data.source_marketing_return_id && (
-              <Button size="sm" variant="outline" onClick={doRelink} disabled={saving} data-testid="btn-relink">
-                <RefreshCw />Coba tautkan ulang
-              </Button>
+            action={isEditable && (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => openStep('material')} disabled={saving} data-testid="btn-set-material">
+                  <Link2 />Pilih barang
+                </Button>
+                {data.source_marketing_return_id && (
+                  <Button size="sm" variant="outline" onClick={doRelink} disabled={saving} data-testid="btn-relink">
+                    <RefreshCw />Coba tautkan ulang
+                  </Button>
+                )}
+              </div>
             )}>
             {(data.link_candidates || []).length > 0 && (
               <>
@@ -563,6 +632,11 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               </>
             )}
           </Notice>
+        )}
+        {linked && isEditable && !data.restocked && (
+          <Button size="sm" variant="link" className="h-auto p-0" onClick={() => openStep('material')} data-testid="btn-change-material">
+            Ganti barang
+          </Button>
         )}
         {data.restock_error && <p className="text-xs text-[hsl(var(--danger-text))]">Gagal masuk stok: {data.restock_error}</p>}
       </section>

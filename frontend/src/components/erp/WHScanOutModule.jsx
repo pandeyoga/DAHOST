@@ -40,7 +40,10 @@ import DatePicker from '@/components/ui/date-picker';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiFetch } from '@/lib/api';
 
+// 2026-11-09 (audit gudang G17): alamat lewat lib/api (REACT_APP_BACKEND_URL) seperti modul lain —
+// dulu URL relatif yang hanya benar bila frontend & backend satu domain.
 const API = '/api/wh/scan-out';
 const LS_LOC = 'whScanOut.location';
 const LS_STORE = 'whScanOut.store';
@@ -55,6 +58,7 @@ const FLAG_LABEL = {
   stok_kurang: 'Stok sistem kurang',
   tanpa_wac: 'WAC 0 — tanpa nilai',
   batal_tanpa_scan: 'Batal kirim tanpa scan keluar 7 hari',
+  stok_di_lokasi_lain: 'Stok ada di lokasi lain',
 };
 
 // Scan yang gagal terkirim dikirim ulang dengan id scan yang SAMA (server tidak menghitung dua kali).
@@ -110,7 +114,7 @@ function ScanTab({ token }) {
   const loadToday = useCallback(async () => {
     if (!loc) { setData(null); return; }
     try {
-      const r = await fetch(`${API}/today?location_id=${encodeURIComponent(loc)}`, { headers: authH });
+      const r = await apiFetch(`${API}/today?location_id=${encodeURIComponent(loc)}`, { headers: authH });
       if (r.ok) setData(await r.json());
     } catch (e) { console.error(e); }
   }, [loc, authH]);
@@ -119,7 +123,7 @@ function ScanTab({ token }) {
     (async () => {
       try {
         const [a, b] = await Promise.all([
-          fetch(`${API}/locations`, { headers: authH }), fetch(`${API}/stores`, { headers: authH })]);
+          apiFetch(`${API}/locations`, { headers: authH }), apiFetch(`${API}/stores`, { headers: authH })]);
         if (a.ok) setLocations(await a.json());
         if (b.ok) setStores(await b.json());
       } catch (e) { console.error(e); }
@@ -140,7 +144,7 @@ function ScanTab({ token }) {
       let r;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
-          r = await fetch(`${API}/scan`, { method: 'POST', headers: jsonH, body: JSON.stringify(payload) });
+          r = await apiFetch(`${API}/scan`, { method: 'POST', headers: jsonH, body: JSON.stringify(payload) });
           break;
         } catch (netErr) {
           if (attempt === 1) throw netErr;
@@ -170,7 +174,8 @@ function ScanTab({ token }) {
         setLast({
           tone: red ? 'red' : 'green',
           text: `${verb} ${ln.sku} ×${ln.qty}${d.duplicate ? ' (sudah tercatat)' : ''}`,
-          detail: red ? `${(ln.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')} — tetap tercatat.` : undefined,
+          // 2026-11-09 (G9): bila stok ada di lokasi lain, kalimat server menyebut lokasinya (scan tetap dicatat).
+          detail: red ? (ln.warning || `${(ln.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')} — tetap tercatat.`) : undefined,
         });
       }
       scheduleRefresh();
@@ -194,7 +199,7 @@ function ScanTab({ token }) {
   const retryServer = async (ln) => {
     setBusy(true);
     try {
-      const r = await fetch(`${API}/lines/${ln.id}/retry`, { method: 'POST', headers: jsonH });
+      const r = await apiFetch(`${API}/lines/${ln.id}/retry`, { method: 'POST', headers: jsonH });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { scanFeedback('error'); setLast({ tone: 'red', text: d.detail || 'Kirim ulang gagal', detail: RESEND_HINT }); }
       else { scanFeedback('ok'); setLast({ tone: 'green', text: `${ln.sku} ×${ln.qty} berhasil diproses ulang.` }); }
@@ -204,7 +209,7 @@ function ScanTab({ token }) {
   const discardServer = async (ln) => {
     setBusy(true);
     try {
-      const r = await fetch(`${API}/lines/${ln.id}/discard`, { method: 'POST', headers: jsonH,
+      const r = await apiFetch(`${API}/lines/${ln.id}/discard`, { method: 'POST', headers: jsonH,
         body: JSON.stringify({ reason: 'scan gagal dibatalkan' }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { scanFeedback('error'); setLast({ tone: 'red', text: d.detail || 'Gagal membatalkan' }); }
@@ -221,7 +226,7 @@ function ScanTab({ token }) {
     if (reason === false || reason === null) return;
     setBusy(true);
     try {
-      const r = await fetch(`${API}/lines/${ln.id}/void`, { method: 'POST', headers: jsonH, body: JSON.stringify({ reason }) });
+      const r = await apiFetch(`${API}/lines/${ln.id}/void`, { method: 'POST', headers: jsonH, body: JSON.stringify({ reason }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { scanFeedback('error'); setLast({ tone: 'red', text: d.detail || 'Gagal membatalkan' }); }
       else { setLast({ tone: 'amber', text: `Baris ${ln.sku} ×${ln.qty} dibatalkan — stok kembali.` }); }
@@ -240,7 +245,7 @@ function ScanTab({ token }) {
     if (!ok) return;
     setBusy(true);
     try {
-      const r = await fetch(`${API}/sheets/${sheet.id}/close`, { method: 'POST', headers: authH });
+      const r = await apiFetch(`${API}/sheets/${sheet.id}/close`, { method: 'POST', headers: authH });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) setLast({ tone: 'red', text: d.detail || 'Tutup Hari gagal' });
       else setLast({ tone: 'green', text: `${d.sheet?.number} ditutup${d.je?.je_number ? ` — jurnal ${d.je.je_number}` : ' (nilai 0, tanpa jurnal)'}.` });
@@ -546,13 +551,13 @@ function ReportTab({ token }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/locations`, { headers: authH }).then((r) => (r.ok ? r.json() : [])).then(setLocations).catch(() => {});
+    apiFetch(`${API}/locations`, { headers: authH }).then((r) => (r.ok ? r.json() : [])).then(setLocations).catch(() => {});
   }, [authH]);
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const qs = new URLSearchParams({ date: day, ...(loc ? { location_id: loc } : {}) });
-      const r = await fetch(`${API}/report?${qs}`, { headers: authH });
+      const r = await apiFetch(`${API}/report?${qs}`, { headers: authH });
       setRep(r.ok ? await r.json() : null);
     } finally { setLoading(false); }
   }, [day, loc, authH]);
@@ -661,7 +666,7 @@ function ControlTab({ token, canSupervise }) {
   const [msg, setMsg] = useState('');
 
   const load = useCallback(async () => {
-    const r = await fetch(`${API}/control?date=${day}`, { headers: authH });
+    const r = await apiFetch(`${API}/control?date=${day}`, { headers: authH });
     if (r.ok) { const d = await r.json(); setCtl(d); setCfg(d.settings); }
   }, [day, authH]);
   useEffect(() => { load(); }, [load]);
@@ -672,12 +677,12 @@ function ControlTab({ token, canSupervise }) {
       input: { label: 'Catatan', value: 'Sudah diperiksa' },
     });
     if (note === false || note === null) return;
-    const r = await fetch(`${API}/control/${d}/review`, { method: 'POST', headers: jsonH, body: JSON.stringify({ note }) });
+    const r = await apiFetch(`${API}/control/${d}/review`, { method: 'POST', headers: jsonH, body: JSON.stringify({ note }) });
     setMsg(r.ok ? `Selisih ${d} ditandai sudah diperiksa.` : 'Gagal menandai.');
     load();
   };
   const saveCfg = async () => {
-    const r = await fetch(`${API}/settings`, { method: 'PUT', headers: jsonH, body: JSON.stringify(cfg) });
+    const r = await apiFetch(`${API}/settings`, { method: 'PUT', headers: jsonH, body: JSON.stringify(cfg) });
     const d = await r.json().catch(() => ({}));
     setMsg(r.ok ? 'Ambang disimpan.' : (d.detail || 'Gagal menyimpan ambang.'));
     load();
@@ -687,7 +692,7 @@ function ControlTab({ token, canSupervise }) {
   const akhir = (ctl?.rows || []).slice(-1)[0];
   return (
     <PageLayout testId="scan-out-tab-control" title="Kontrol scan vs impor"
-      subtitle="Pcs pesanan impor (tanggal kirim) dibanding pcs scan, per hari dan kumulatif."
+      subtitle="Pcs pesanan (tanggal kirim, lalu siap kirim) dibanding pcs scan, per hari dan kumulatif."
       filters={<div className="w-full sm:w-44"><DatePicker value={day} onChange={(v) => setDay(v || daysAgoWIB(1))}
         bolehKosong={false} testId="scan-out-control-date" /></div>}
       tools={
@@ -699,7 +704,7 @@ function ControlTab({ token, canSupervise }) {
         {msg && <Banner tone="green">{msg}</Banner>}
         {ctl && (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label={`Impor ${ctl.days} hari (pcs)`} value={num(cum.import_pcs)} />
+            <Stat label={`Pesanan ${ctl.days} hari (pcs)`} value={num(cum.import_pcs)} />
             <Stat label={`Scan ${ctl.days} hari (pcs)`} value={num(cum.scan_pcs)} />
             <Stat label="Selisih kumulatif" value={num(cum.gap)} accent={cum.flag ? 'danger' : undefined} />
           </div>
@@ -712,8 +717,10 @@ function ControlTab({ token, canSupervise }) {
           <TabelLaporan judul="Per hari" testId="scan-out-control-rows" namaBerkas={`kontrol-scan-keluar-${day}`}
             baris={berkunci(ctl.rows)} merah={(r) => r.flag} kolom={[
               { label: 'Tanggal', nilai: (r) => r.date },
-              { label: 'Impor', nilai: (r) => r.import_pcs, rata: 'kanan' },
-              { label: 'Basis pesanan', nilai: (r) => r.import_pcs_order || '', rata: 'kanan', hp: false },
+              { label: 'Pesanan', nilai: (r) => r.import_pcs, rata: 'kanan' },
+              { label: 'Basis siap kirim', nilai: (r) => r.import_pcs_rts || '', rata: 'kanan', hp: false },
+              { label: 'Basis tanggal pesanan', nilai: (r) => r.import_pcs_order || '', rata: 'kanan', hp: false },
+              { label: 'Manual', nilai: (r) => r.manual_pcs || '', rata: 'kanan', hp: false },
               { label: 'Scan', nilai: (r) => r.scan_pcs, rata: 'kanan' },
               { label: 'Selisih', nilai: (r) => r.gap, rata: 'kanan' },
               { label: 'Kumulatif', nilai: (r) => r.cum_gap, rata: 'kanan' },
@@ -723,11 +730,11 @@ function ControlTab({ token, canSupervise }) {
                   : (r.flag && canSupervise
                     ? <Button size="sm" variant="link" className="h-auto p-0" onClick={() => review(r.date)}>Tandai diperiksa</Button> : '')) },
             ]} />
-          <TabelLaporan judul={`Per SKU ${ctl.sku_day || ''} (item impor tertaut master produk jadi)`}
+          <TabelLaporan judul={`Per SKU ${ctl.sku_day || ''} (item pesanan tertaut master produk jadi)`}
             namaBerkas={`kontrol-scan-keluar-per-sku-${day}`} kosong="Tidak ada." baris={berkunci(ctl.per_sku)}
             merah={(r) => r.gap !== 0} kolom={[
               { label: 'SKU', nilai: (r) => r.sku },
-              { label: 'Impor', nilai: (r) => r.import_pcs, rata: 'kanan' },
+              { label: 'Pesanan', nilai: (r) => r.import_pcs, rata: 'kanan' },
               { label: 'Scan', nilai: (r) => r.scan_pcs, rata: 'kanan' },
               { label: 'Selisih', nilai: (r) => r.gap, rata: 'kanan' },
             ]} />

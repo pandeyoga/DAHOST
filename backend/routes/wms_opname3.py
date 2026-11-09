@@ -28,8 +28,17 @@ CNT = eng.CNT
 APPROVE_ROLES = eng.APPROVE_ROLES
 
 
-def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname"):
-    """Gerbang supervisor bersama (gudang & aksesoris): izin `wh.opname.approve` (fallback role lama)."""
+def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname", sess: Optional[dict] = None):
+    """Gerbang supervisor bersama (gudang & aksesoris): izin `wh.opname.approve` (fallback role lama).
+
+    2026-11-09: sesi OPNAME STOK AWAL (nilainya masuk ekuitas saldo awal) hanya Keuangan/owner."""
+    if eng.is_opening(sess):
+        from auth import check_role
+        from core.roles import FINANCE_ROLES
+        if not check_role(user, list(FINANCE_ROLES), eng.OPENING_APPROVE_PERMS):
+            raise HTTPException(403, f"Opname stok awal: hanya Keuangan/owner yang boleh {what} (nilai stok "
+                                     "awal dibukukan ke ekuitas saldo awal).")
+        return
     from routes.shared import can_act
     if not can_act(user, "wh.opname.approve", "wh.opname.manage", "warehouse.approve",
                    legacy_roles=APPROVE_ROLES):
@@ -61,6 +70,8 @@ class SessionCreateIn(BaseModel):
     material_codes: List[str] = Field(default_factory=list, description="cycle count: kode/SKU barang")
     notes: str = ""
     source: str = "gudang"
+    # 2026-11-09: True = opname STOK AWAL (lawan jurnal ekuitas saldo awal, disetujui Keuangan/owner)
+    opening: bool = False
 
 
 class ScanIn(BaseModel):
@@ -120,10 +131,11 @@ async def create_session(data: SessionCreateIn, request: Request):
     db = get_db()
     doc = await eng.create_session(db, user, location_id=data.location_id, sub_type=data.sub_scope_type,
                                    sub_id=data.sub_scope_id, kinds=data.kinds, material_ids=data.material_ids,
-                                   material_codes=data.material_codes, notes=data.notes, source=data.source)
+                                   material_codes=data.material_codes, notes=data.notes, source=data.source,
+                                   opening=data.opening)
     await log_activity(user.get("id", ""), user.get("name", ""), "opname_create", SESS,
                        f"Opname {doc['session_no']} {doc['scope_label']} ({len(doc['lines'])} baris, {doc['level']})")
-    return {"id": doc["id"], "session_no": doc["session_no"], "level": doc["level"],
+    return {"id": doc["id"], "session_no": doc["session_no"], "level": doc["level"], "mode": doc["mode"],
             "scope_label": doc["scope_label"], "lines": len(doc["lines"]), "status": doc["status"]}
 
 
@@ -225,9 +237,9 @@ async def submit_session(data: SessionRefIn, request: Request):
 async def approve_session(data: SessionRefIn, request: Request):
     """GERBANG SUPERVISOR: set saldo = hitung, penempatan bin, satu jurnal per sesi."""
     user = await require_auth(request)
-    assert_can_approve(user, "approve opname")
     db = get_db()
     sess = await eng.get_session(db, data.session_id, for_write=True)
+    assert_can_approve(user, "approve opname", sess)
     sess = await eng.approve(db, user, sess)
     await log_activity(user.get("id", ""), user.get("name", ""), "opname_approve", SESS,
                        f"Opname {sess.get('session_no')} disetujui — {sess.get('summary')}")
@@ -237,9 +249,9 @@ async def approve_session(data: SessionRefIn, request: Request):
 @router.post("/reject")
 async def reject_session(data: SessionRefIn, request: Request):
     user = await require_auth(request)
-    assert_can_approve(user, "menolak opname")
     db = get_db()
     sess = await eng.get_session(db, data.session_id, for_write=True)
+    assert_can_approve(user, "menolak opname", sess)
     return await eng.reject(db, user, sess, data.notes)
 
 

@@ -483,11 +483,11 @@ def test_retur_fisik_dinilai_hpp_saat_scan_keluar(monkeypatch):
         calls.push.append(kw)
         return {"id": "ly1"}
 
-    async def je(db_, ret, qty, uc, user):
+    async def je(db_, ret, qty, uc, user, **kw):
         calls.je.append(uc)
         return {"ok": True, "je_id": "j1", "je_number": "JE-1"}
 
-    async def loss(db_, ret, qty, uc, user, disposed=False):
+    async def loss(db_, ret, qty, uc, user, disposed=False, **kw):
         calls.loss.append(uc)
         return {"ok": True, "je_id": "j2", "je_number": "JE-2"}
     monkeypatch.setattr(fcl, "wac_state", wac)

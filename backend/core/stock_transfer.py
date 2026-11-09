@@ -155,9 +155,11 @@ async def send_leg(db, *, sj: dict, line: dict, transit_id: str, actor: dict) ->
     ref = {"source": "delivery_note", "type": "sj_internal_out", "key": key, "sj_id": sj["id"],
            "sj_number": sj.get("sj_number", ""), "line_no": line["line_no"]}
     mid, qty = line["material_id"], _r(line["qty_base"])
+    # 2026-11-09 (audit gudang G8): identitas baris asal (kategori/kepemilikan) ikut ke baris tujuan.
+    ident = await stock_service.identity_meta(mid, sj["from_location_id"], db=db)
     await _step_issue(db, mid, sj["from_location_id"], qty, {**ref, "move_to": transit_id}, actor)
     await _step_add(db, mid, transit_id, qty, {**ref, "move_from": sj["from_location_id"]}, actor,
-                    meta={"material_code": line.get("material_code"), "unit": line.get("unit_base")})
+                    meta={**ident, "material_code": line.get("material_code"), "unit": line.get("unit_base")})
     await _step_reserve(db, mid, transit_id, qty, ref, actor)
     await _movement(db, key=key, material_id=mid, qty=qty, from_loc=sj["from_location_id"], to_loc=transit_id,
                     ref_no=sj.get("sj_number", ""), ref_id=sj["id"],
@@ -170,10 +172,11 @@ async def _out_of_transit(db, *, sj: dict, line: dict, transit_id: str, to_loc: 
     ref = {"source": "delivery_note", "type": f"sj_internal_{leg}", "key": key, "sj_id": sj["id"],
            "sj_number": sj.get("sj_number", ""), "line_no": line["line_no"]}
     mid, qty = line["material_id"], _r(line["qty_base"])
+    ident = await stock_service.identity_meta(mid, transit_id, db=db)   # 2026-11-09 (G8)
     await _step_release(db, mid, transit_id, qty, ref, actor)
     await _step_issue(db, mid, transit_id, qty, {**ref, "move_to": to_loc}, actor)
     await _step_add(db, mid, to_loc, qty, {**ref, "move_from": transit_id}, actor,
-                    meta={"material_code": line.get("material_code"), "unit": line.get("unit_base")})
+                    meta={**ident, "material_code": line.get("material_code"), "unit": line.get("unit_base")})
     await _movement(db, key=key, material_id=mid, qty=qty, from_loc=transit_id, to_loc=to_loc,
                     ref_no=sj.get("sj_number", ""), ref_id=sj["id"], notes=notes, actor=actor)
 
