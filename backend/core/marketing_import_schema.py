@@ -1855,6 +1855,11 @@ SOURCE_TYPES: Dict[str, SourceType] = {
     )
 }
 
+# 2026-11-09 (kebutuhan lintas-agen AI-impor) — jenis yang berkas ekspornya TIDAK memuat
+# tanggal: periode laporan diisi staf saat unggah (isian ``period_start``/``period_end`` di
+# ``POST /upload``, atau penanda ``periode_YYYY-MM-DD_YYYY-MM-DD__`` di nama berkas).
+PERIOD_INPUT_TYPES = ("tiktok_gmv_max",)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # F12 (2026-08-14, sesi #11) — JENIS YANG SENGAJA TIDAK PUNYA `identity`
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2120,6 +2125,8 @@ def source_type_catalog() -> List[dict]:
             # BUKAN header) dan dari mana berkasnya diunduh di Seller Center.
             "prenorm": t.prenorm,
             "export_hint": t.export_hint,
+            # 2026-11-09 — layar menampilkan isian periode laporan (wajib) untuk jenis ini
+            "period_input": t.key in PERIOD_INPUT_TYPES,
             # F3 — layar WAJIB memberi tahu dua hal ini sebelum staf menyimpan:
             # (1) jenis ini hanya memperbarui pesanan yang sudah ada;
             # (2) pemetaan kolomnya belum diverifikasi dengan berkas asli.

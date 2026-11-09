@@ -782,8 +782,8 @@ def prenorm_tiktok_gmv_max(raw: bytes, filename: str, deteksi: bool = False, len
             raise PrenormBlocked(
                 "Periode laporan GMV Max wajib diisi. Berkas ekspor GMV Max tidak memuat tanggal "
                 "belanja — angkanya total untuk rentang yang Anda pilih saat mengekspor. Isi "
-                "periodenya di layar unggah (Impor banyak berkas), atau tulis di nama berkas, "
-                "mis. 'gmvmax_2026-08-01_2026-08-31.xlsx'.")
+                "periodenya di layar unggah (Impor Data atau Impor banyak berkas), atau tulis di "
+                "nama berkas, mis. 'gmvmax_2026-08-01_2026-08-31.xlsx'.")
         p_from = p_to = ""
     elif p_from[:7] != p_to[:7] and not deteksi:
         raise PrenormBlocked(

@@ -810,6 +810,9 @@ async def create_wh_return_from_marketing(return_id: str, request: Request):
             auto_restock=False)
     except _rb.ReturnBridgeError as e:
         raise HTTPException(400, str(e))
+    if res.get("skipped"):
+        # 2026-11-09 — "Refund only": alasannya sudah tercatat di retur (`wh_skip_reason`)
+        raise HTTPException(400, f"Pekerjaan gudang tidak dibuat: {res.get('reason')}")
 
     wh = res.get("wh_return") or {}
     return {

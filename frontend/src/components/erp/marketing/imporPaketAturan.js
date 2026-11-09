@@ -68,3 +68,16 @@ export function kalimatHasil(h) {
   if (h.rejected) bagian.push(`${h.rejected} ditolak`);
   return bagian.length ? bagian.join(' · ') : 'Tidak ada baris yang berubah';
 }
+
+/**
+ * Periode laporan yang diisi staf untuk jenis tanpa tanggal di berkas (GMV Max).
+ * → '' bila sah, atau kalimat galat (aturan sama dengan `/upload`: wajib, mulai ≤ selesai, satu bulan).
+ */
+export function cekPeriodeLaporan(mulai, selesai) {
+  if (!mulai || !selesai) return 'Isi Periode mulai dan Periode selesai sesuai rentang saat mengekspor laporan.';
+  if (mulai > selesai) return 'Tanggal mulai periode tidak boleh sesudah tanggal selesai.';
+  if (mulai.slice(0, 7) !== selesai.slice(0, 7)) {
+    return 'Periode tidak boleh menyeberang bulan — ekspor ulang laporannya per bulan, lalu unggah masing-masing.';
+  }
+  return '';
+}

@@ -50,8 +50,9 @@ from auth import require_auth, log_activity
 from core import marketing_account_scope as scope
 from core.marketing_import_schema import (
     get_source_type, source_type_catalog, source_group_catalog, SourceType,
-    is_retired_mapping,
+    is_retired_mapping, PERIOD_INPUT_TYPES,
 )
+from core.marketing_import_prenorm import PrenormBlocked
 from core import marketing_import_engine as eng
 from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
@@ -412,6 +413,59 @@ async def detect_file(
     }
 
 
+def _tanggal_isian(v: Any) -> str:
+    """Isian tanggal form → teks rapi; nilai bukan teks (mis. bawaan `Form(None)` saat handler
+    dipanggil langsung oleh impor paket / uji) dianggap kosong."""
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _periode_unggah(st: SourceType, fname: str, period_start: Any, period_end: Any
+                    ) -> tuple:
+    """Periode laporan untuk jenis yang berkasnya tanpa tanggal (``PERIOD_INPUT_TYPES``).
+
+    2026-11-09 (kebutuhan lintas-agen AI-impor) — isian staf DITERUSKAN ke penormal dengan cara
+    yang sama seperti layar "Impor banyak berkas": nama berkas sesi diberi penanda
+    ``periode_YYYY-MM-DD_YYYY-MM-DD__…`` (dibaca ulang saat pratinjau & commit lewat
+    ``_reparse``), jadi staf tidak perlu mengganti nama berkasnya sendiri. Tanpa isian, periode
+    yang tertulis di nama berkas tetap diterima.
+
+    → ``(nama_berkas_sesi, {"period_start", "period_end", "period_source"} | None)``;
+    galat isian → HTTP 400 berbahasa Indonesia.
+    """
+    from core.marketing_import_prenorm import penanda_periode, periode_dari_nama
+    if st.key not in PERIOD_INPUT_TYPES:
+        return fname, None
+    mulai, selesai = _tanggal_isian(period_start), _tanggal_isian(period_end)
+    sumber = "isian"
+    if mulai or selesai:
+        if not (mulai and selesai):
+            raise HTTPException(400, "Isi kedua tanggal periode laporan: Periode mulai dan Periode selesai.")
+        for v in (mulai, selesai):
+            try:
+                ok = datetime.strptime(v, "%Y-%m-%d").strftime("%Y-%m-%d") == v
+            except ValueError:
+                ok = False
+            if not ok:
+                raise HTTPException(400, f"Tanggal periode '{v}' tidak sah. Gunakan format TTTT-BB-HH, "
+                                         "mis. 2026-08-01.")
+    else:
+        mulai, selesai = periode_dari_nama(fname)
+        sumber = "nama_berkas"
+        if not (mulai and selesai):
+            raise HTTPException(400, (
+                f"Periode laporan wajib diisi untuk “{st.label}”. Berkas ekspornya tidak memuat "
+                "tanggal belanja — angkanya total untuk rentang yang Anda pilih saat mengekspor. "
+                "Isi Periode mulai dan Periode selesai di langkah Konteks data."))
+    if mulai > selesai:
+        raise HTTPException(400, "Tanggal mulai periode tidak boleh sesudah tanggal selesai.")
+    if mulai[:7] != selesai[:7]:
+        raise HTTPException(400, (
+            f"Periode {mulai} s/d {selesai} menyeberang bulan. Biaya iklan dipakai untuk realisasi "
+            "anggaran BULANAN — ekspor ulang laporannya per bulan, lalu unggah masing-masing."))
+    nama = penanda_periode(mulai, selesai, fname) if sumber == "isian" else fname
+    return nama, {"period_start": mulai, "period_end": selesai, "period_source": sumber}
+
+
 @router.post("/upload")
 async def upload(
     request: Request,
@@ -422,6 +476,9 @@ async def upload(
     creator_id: Optional[str] = Form(None),
     catalog_id: Optional[str] = Form(None),
     live_session_id: Optional[str] = Form(None),
+    # 2026-11-09 — periode laporan untuk jenis tanpa tanggal di berkas (GMV Max)
+    period_start: Optional[str] = Form(None),
+    period_end: Optional[str] = Form(None),
 ):
     await require_auth(request)
     user = _user(request)
@@ -444,6 +501,8 @@ async def upload(
     fname = file.filename or "data.csv"
     if not fname.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm", ".tsv", ".txt")):
         raise HTTPException(400, "Format berkas harus CSV atau Excel (.xlsx)")
+    original_fname = fname
+    fname, periode = _periode_unggah(st, fname, period_start, period_end)
 
     # 2026-11-06 (Tahap 2) — penolakan PENORMAL (ekspor KPI yang bentuknya belum
     # dikenal) tidak lagi menghentikan unggahan: berkas dibaca apa adanya dan
@@ -453,6 +512,9 @@ async def upload(
     except eng.TooManyRows as e:
         # 2026-11-07 (audit §3.C #10) — dulu baris ke-20.001 dst. DIBUANG diam-diam dan
         # impor tampak "berhasil". Sekarang berkas ditolak dengan jalan keluarnya.
+        raise HTTPException(400, str(e)) from None
+    except PrenormBlocked as e:
+        # berkas DIKENALI tetapi isian wajib kurang — pesannya sudah kalimat untuk staf
         raise HTTPException(400, str(e)) from None
     except Exception as e:
         raise HTTPException(400, f"Berkas tidak bisa dibaca: {e}") from None
@@ -650,7 +712,11 @@ async def upload(
         "source_type": st.key,
         "source_label": st.label,
         "target_collection": st.collection,
+        # `filename` = nama yang dibaca penormal (bisa membawa penanda periode isian staf);
+        # `original_filename` = nama berkas yang diunggah, untuk ditampilkan.
         "filename": fname,
+        "original_filename": original_fname,
+        **(periode or {}),
         "file_path": path,
         "file_size_kb": round(len(raw) / 1024, 1),
         # F12 — sidik ISI berkas. Satu berkas ekspor tidak mungkin milik dua toko,
@@ -2069,7 +2135,13 @@ class CommitIn(BaseModel):
 # 'skip' dipertahankan, koreksi angka platform (yang lazim: GMV H+1 berubah karena
 # pesanan batal) tidak akan pernah masuk dan staf akan menganggap impornya gagal.
 REFRESH_ON_DUPLICATE = ("shopee_shop_kpi", "shopee_content_kpi",
-                        "shopee_ads_cpc", "content_performance")
+                        "shopee_ads_cpc", "content_performance",
+                        # 2026-11-09 — GMV Max: periode yang sama diunggah ulang = angka terbaru
+                        "tiktok_gmv_max")
+
+# Laporan iklan BERPERIODE: satu toko tidak boleh punya dua rentang yang beririsan
+# (lihat pagar di `_commit_blockers`). Baris disaring per `source_report` = kunci jenis.
+PERIODIC_ADS_TYPES = ("shopee_ads_cpc", "tiktok_gmv_max")
 
 # Field yang TIDAK boleh ditimpa impor KPI konten: konten sudah direncanakan staf
 # (judul, tanggal rencana, jenis, pemilik). Impor hanya menempelkan ANGKA.
@@ -2306,14 +2378,15 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
     # kali (Rp 374.074 muncul di dua dokumen berbeda) tanpa satu pun galat.
     # Rentang yang SAMA boleh diunggah ulang (itu koreksi, dan dedupe akan
     # memperbaruinya); rentang yang beririsan tapi berbeda ditolak dengan jalan keluar.
-    if st.key == "shopee_ads_cpc" and s.get("account_id"):
+    # 2026-11-09 — berlaku juga untuk laporan GMV Max TikTok (`PERIODIC_ADS_TYPES`).
+    if st.key in PERIODIC_ADS_TYPES and s.get("account_id"):
         new_ranges = {(str((r.get("data") or {}).get("period_start"))[:10],
                        str((r.get("data") or {}).get("period_end"))[:10])
                       for r in built if r["status"] != "error"}
         new_ranges = {(a, b) for a, b in new_ranges if a and b and a != "None"}
         existing_ranges = set()
         async for row in db[st.collection].find(
-                {"account_id": s["account_id"], "source_report": "shopee_ads_cpc"},
+                {"account_id": s["account_id"], "source_report": st.key},
                 {"_id": 0, "period_start": 1, "period_end": 1}):
             ps, pe = str(row.get("period_start"))[:10], str(row.get("period_end"))[:10]
             if ps and pe:
@@ -2475,6 +2548,9 @@ _FULFILLMENT_PATCH = (
     "substatus_raw", "return_type_raw", "cancel_by", "cancel_reason",
     "order_refund_amount", "tracking_number", "courier", "courier_raw",
     "status_raw", "shipped_at", "delivered_at", "cancelled_at",
+    # 2026-11-09 (riset G14) — "Waktu Pesanan Selesai" kini dipetakan ke `completed_at`
+    # (bukan lagi `delivered_at`); tanpa ini kolomnya terbaca lalu dibuang diam-diam.
+    "completed_at",
 )
 # Tanggal dari berkas → stempel status di dokumen (dibaca "umur pesanan").
 _FULFILLMENT_STAMPS = {"shipped_at": "shipped_date", "delivered_at": "delivered_date",
@@ -4011,12 +4087,16 @@ async def _after_returns_import(db, session_id: str, user: dict) -> dict:
     from core import returns_bridge as _rb
     rows = await db.marketing_returns.find({"_import_session_id": session_id},
                                            {"_id": 0}).to_list(20000)
-    out = {"scanned": len(rows), "wh_created": 0, "wh_existing": 0, "failed": 0}
+    # `wh_refund_only` (2026-11-09) = retur "Refund only": barang tidak kembali, tanpa Retur Fisik
+    out = {"scanned": len(rows), "wh_created": 0, "wh_existing": 0, "wh_refund_only": 0, "failed": 0}
     for r in rows:
         if str(r.get("status") or "").lower() in _rb.SKIP_STATUSES:
             continue
         try:
             res = await _rb.ensure_wh_return(db, r, actor=user, auto_restock=False)
+            if res.get("skipped"):
+                out["wh_refund_only"] += 1
+                continue
             out["wh_created" if res.get("created") else "wh_existing"] += 1
         except Exception as e:  # noqa: BLE001
             out["failed"] += 1

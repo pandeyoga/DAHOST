@@ -468,6 +468,33 @@ async def find_linked_wh(db, ret: dict) -> dict | None:
     return rows[0] if rows else None
 
 
+def alasan_tanpa_retur_fisik(ret: dict) -> str:
+    """Alasan retur ini TIDAK butuh pekerjaan Retur Fisik di gudang, atau ``""``.
+
+    2026-11-09 (keputusan owner, kebutuhan lintas-agen AI-impor) — impor "Retur & Refund"
+    menurunkan ``goods_returned=False`` untuk jenis "Refund only" (dana kembali TANPA barang
+    kembali). Membuat pekerjaan Pending untuknya membuat gudang menunggu paket yang tidak
+    pernah datang. Hanya ``False`` yang eksplisit yang dilewati — ``None`` (kolom jenis
+    pengembalian tidak ada / retur dari form) tetap dijembatani seperti biasa.
+    """
+    if (ret or {}).get("goods_returned") is not False:
+        return ""
+    jenis = str(ret.get("refund_type_raw") or "").strip() or "Refund only"
+    return (f"jenis pengembalian “{jenis}” — dana dikembalikan tanpa barang dikirim balik, "
+            "jadi tidak ada paket yang perlu diterima gudang dan stok tidak bertambah.")
+
+
+async def _stamp_skip(db, marketing_return_id: str, alasan: str) -> None:
+    """Catat di retur Marketing KENAPA tidak ada Retur Fisik (layar Toko & audit membacanya)."""
+    try:
+        await db[MKT].update_one({"id": marketing_return_id}, {"$set": {
+            "wh_skip_reason": alasan, "wh_sync_ok": True, "wh_sync_error": "",
+            "wh_sync_at": _now(), "updated_at": _now()}})
+    except Exception as e:  # noqa: BLE001
+        logger.error("[retur-jembatan] gagal mencatat alasan tanpa Retur Fisik %s: %s",
+                     marketing_return_id, e)
+
+
 async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
                            auto_restock: bool = False) -> dict:
     """Pastikan retur Marketing punya SATU pekerjaan Retur Fisik di Gudang.
@@ -477,7 +504,10 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
     ``auto_restock=True`` dibiarkan untuk pemanggil lama yang sadar, tetapi tidak
     lagi dipakai jalur Marketing mana pun.
 
-    Return: {created, restocked, wh_return, identity, message}
+    2026-11-09 — retur ``goods_returned=False`` ("Refund only") TIDAK dibuatkan pekerjaan baru
+    (:func:`alasan_tanpa_retur_fisik`); pekerjaan yang SUDAH ada tidak disentuh.
+
+    Return: {created, restocked, wh_return, identity, message} (+ ``skipped``, ``reason``)
     """
     actor = actor or {}
     cond = normalize_condition(condition if condition is not None
@@ -496,6 +526,15 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
             res["message"] = done.get("message") or res["message"]
         await _stamp_marketing(db, ret["id"], res["wh_return"])
         return res
+
+    # ── 2026-11-09 — "Refund only": barang TIDAK kembali, jadi tidak ada paket yang ditunggu ──
+    alasan = alasan_tanpa_retur_fisik(ret)
+    if alasan:
+        await _stamp_skip(db, ret["id"], alasan)
+        logger.info("[retur-jembatan] retur %s tidak dibuatkan Retur Fisik: %s", ret.get("id"), alasan)
+        return {"created": False, "restocked": False, "skipped": True, "wh_return": None,
+                "identity": None, "reason": alasan,
+                "message": f"Retur fisik tidak dibuat: {alasan}"}
 
     ident = await resolve_identity(db, ret)
     code = await _next_code(db)
@@ -1045,6 +1084,15 @@ async def sync_all(db, *, actor=None, dry_run: bool = False,
                                            "restocked": 1})
         if wh_exists and not dry_run:
             out["already"] += 1
+            continue
+        tanpa_fisik = "" if wh_exists else alasan_tanpa_retur_fisik(r)
+        if tanpa_fisik:
+            # 2026-11-09 — "Refund only": dilaporkan, tidak dijembatani (dry-run maupun nyata)
+            out["skipped"] += 1
+            out["details"].append({"marketing_return_id": r["id"], "order_id": r.get("order_id"),
+                                   "skipped": True, "reason": tanpa_fisik})
+            if not dry_run:
+                await _stamp_skip(db, r["id"], tanpa_fisik)
             continue
         if dry_run:
             ident = await resolve_identity(db, r)

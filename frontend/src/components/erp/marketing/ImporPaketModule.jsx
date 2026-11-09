@@ -23,6 +23,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDateTimeID, formatNumber, formatRupiah } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
+import PopupAIPemeta from './PopupAIPemeta';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { STATUS_PAKET, hitungStatus, kalimatHasil, labelPeriode, statusBerkas, tahapBerikut } from './imporPaketAturan';
 
@@ -101,60 +102,6 @@ function FormBerkas({ berkas, pilihan, onClose, onSimpan }) {
         <Checkbox id="pk-ikut" checked={f.ikut} onCheckedChange={(v) => setF({ ...f, ikut: !!v })} data-testid="pk-ikut" />
         Ikut diimpor
       </label>
-    </FormPopup>
-  );
-}
-
-// ─── Popup AI pemeta (kolom sisa) ──────────────────────────────────────────────
-function PopupAIPemeta({ berkas, onClose, onSelesai }) {
-  const [data, setData] = useState(null);
-  const [galat, setGalat] = useState('');
-  const [pilih, setPilih] = useState({});
-  const [menyimpan, setMenyimpan] = useState(false);
-  useEffect(() => {
-    panggil(`/sesi/${berkas.sesi_id}/ai-pemeta`, { method: 'POST' })
-      .then((d) => { setData(d); setPilih(Object.fromEntries((d.usulan || []).filter((u) => u.diterima).map((u) => [u.kolom, u.field]))); })
-      .catch((e) => setGalat(e.message));
-  }, [berkas.sesi_id]);
-  const terapkan = async () => {
-    setMenyimpan(true); setGalat('');
-    try {
-      await panggil(`/sesi/${berkas.sesi_id}/terapkan-pemetaan`, { method: 'POST', body: { pilihan: pilih, simpan_untuk_toko: true } });
-      toast.success('Pemetaan diterapkan dan diingat untuk toko ini.');
-      onSelesai();
-    } catch (e) { setGalat(e.message); } finally { setMenyimpan(false); }
-  };
-  return (
-    <FormPopup open onClose={onClose} ukuran="panjang" judul="Bantu petakan kolom dengan AI"
-      keterangan="Hanya nama kolom dan bentuk isinya yang dikirim ke AI — bukan data pembeli. Kolom uang wajib lolos uji rumus."
-      onSimpan={terapkan} labelSimpan="Terapkan yang dipilih" menyimpan={menyimpan} galat={galat}
-      bisaSimpan={Object.keys(pilih).length > 0} testId="popup-ai-pemeta">
-      {!data && !galat && <p className="text-sm text-muted-foreground">AI sedang membaca kolom yang belum terpetakan…</p>}
-      {data && (
-        <>
-          <p className="text-sm text-muted-foreground">{data.pesan}</p>
-          <Table>
-            <TableHeader><TableRow><TableHead className="w-10" /><TableHead>Kolom berkas</TableHead>
-              <TableHead>Usulan</TableHead><TableHead>Keterangan</TableHead></TableRow></TableHeader>
-            <TableBody>
-              {(data.usulan || []).length === 0 && (
-                <TableRow><TableCell colSpan={4} className="p-0"><EmptyState title="Tidak ada kolom yang perlu dipetakan" /></TableCell></TableRow>
-              )}
-              {(data.usulan || []).map((u) => (
-                <TableRow key={u.kolom} data-testid="ai-usulan-baris">
-                  <TableCell>
-                    <Checkbox checked={!!pilih[u.kolom]} disabled={!u.diterima} aria-label={`Pakai usulan untuk ${u.kolom}`}
-                      onCheckedChange={(v) => setPilih((p) => { const n = { ...p }; if (v) n[u.kolom] = u.field; else delete n[u.kolom]; return n; })} />
-                  </TableCell>
-                  <TableCell className="font-medium">{u.kolom}</TableCell>
-                  <TableCell>{u.field_label || '—'}{u.field && <span className="text-muted-foreground"> · yakin {Math.round((u.keyakinan || 0) * 100)}%</span>}</TableCell>
-                  <TableCell className={u.diterima ? 'text-muted-foreground' : 'text-[hsl(var(--warning-text))]'}>{u.catatan || u.alasan}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </>
-      )}
     </FormPopup>
   );
 }
@@ -385,7 +332,7 @@ export default function ImporPaketModule() {
       {detail && <DetailBerkas berkas={detail} onClose={() => setDetail(null)}
         onUbah={() => { setUbah(detail); setDetail(null); }} onAI={() => { setAi(detail); setDetail(null); }} />}
       {ubah && <FormBerkas berkas={ubah} pilihan={pilihan} onClose={() => setUbah(null)} onSimpan={(f) => simpanBerkas(ubah, f)} />}
-      {ai && <PopupAIPemeta berkas={ai} onClose={() => setAi(null)} onSelesai={() => { setAi(null); periksa(); }} />}
+      {ai && <PopupAIPemeta sesiId={ai.sesi_id} onClose={() => setAi(null)} onSelesai={() => { setAi(null); periksa(); }} />}
     </PageLayout>
   );
 }

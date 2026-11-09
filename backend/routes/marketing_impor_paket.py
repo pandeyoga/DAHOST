@@ -331,10 +331,13 @@ async def _periksa_satu(db, request: Request, user: dict, b: dict) -> None:
         s = g["session"]
         summary, dup, value_report = g.get("summary") or {}, {}, g.get("value_report") or []
     else:
-        uf = _UploadFile(file=io.BytesIO(raw), filename=fname)
+        # Periode isian staf lewat isian `period_*` milik `/upload` (satu jalur dengan wizard satu
+        # berkas); handler itu sendiri yang menulis penanda periode di nama berkas sesi.
+        uf = _UploadFile(file=io.BytesIO(raw), filename=b["nama"])
         try:
             res = await md.upload(request, file=uf, source_type=st.key, account_id=b["account_id"],
-                                  host_id=None, creator_id=None, catalog_id=None, live_session_id=None)
+                                  host_id=None, creator_id=None, catalog_id=None, live_session_id=None,
+                                  period_start=b.get("periode_mulai"), period_end=b.get("periode_selesai"))
         except HTTPException as e:
             b.update({"status": "ditolak", "galat": _detail(e), "sesi_id": None, "periksa": None})
             return
