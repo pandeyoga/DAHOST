@@ -52,7 +52,9 @@ def test_q5_rekap_manual_ditolak_untuk_toko_impor_override_spv_tetap_boleh(db, m
     assert any(d["account_id"] == "WA-01" for d in db.marketing_sales_data.docs)
 
 
-def test_q5_penjadwal_tidak_membuat_tugas_input_untuk_toko_impor(db, monkeypatch):
+def test_q5_k9_penjadwal_tidak_lagi_membuat_tugas_input_sales(db, monkeypatch):
+    """K9 (keputusan owner 10 Nov 2026): tugas "Input Sales Harian" & pengingat impor tidak dibuat lagi — diganti
+    kewajiban harian Monitoring Staf (`core.pantau_staf.katalog._e4_penjualan_toko`, uji di test_pantau_staf)."""
     from utils import scheduler as sch
     import routes.rahaza_notifications as rn
     sent = []
@@ -64,9 +66,8 @@ def test_q5_penjadwal_tidak_membuat_tugas_input_untuk_toko_impor(db, monkeypatch
     for a in db.marketing_platform_accounts.docs:
         a["pic_user_id"] = "u-pic"
     run(sch.job_auto_create_marketing_tasks())
-    tasks = {t["account_id"] for t in db.marketing_tasks.docs if t.get("related_entity") == "sales_data"}
-    assert "TTK-01" not in tasks and {"WA-01", "TTK-02"} <= tasks
-    assert any(n.get("type_") == "marketing_import_reminder" for n in sent)
+    assert not [t for t in db.marketing_tasks.docs if t.get("related_entity") == "sales_data"]
+    assert not any(n.get("type_") in ("marketing_import_reminder", "marketing_task_created") for n in sent)
 
 
 # ── Q-4 ───────────────────────────────────────────────────────────────────────────────────────

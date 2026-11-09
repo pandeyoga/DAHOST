@@ -575,3 +575,26 @@ mengunggah ulang Ekspor A — dan justru itu yang membekukan status pesanan lama
 * Penulis tunggal `core/fabric_roll_import.py`. Roll yang dibuat (`wh_fabric_rolls`) berstatus `pending_opening`
   (tidak bisa dipotong/dikeluarkan) dengan `opening_import_id`, `opening_session_id`, `is_average`; stok & nilai
   HANYA lahir lewat persetujuan sesi Opname stok awal (`wh_opname3_sessions.mode='opening'`, `roll_import_id`).
+
+## §MONITORING STAF — `pantau_aktivitas_harian`, `kewajiban_aturan`, `kewajiban_kejadian` (10 Nov 2026)
+
+Keputusan owner 10 Nov 2026 (Portal Manajemen › Monitoring Staf & Aturan Kewajiban). Mesin: `core/pantau_staf/`.
+
+* `pantau_aktivitas_harian` (log): satu dokumen per akun per tanggal WIB — `{id: "<user_id>:<YYYY-MM-DD>", user_id,
+  tanggal, pertama, terakhir, jumlah, modul: {<id modul module_catalog | "_lain">: {view, create, edit, delete,
+  approve, export}}}`. Penulis tunggal `core/pantau_staf/meter.py`, dipanggil `middleware/module_permission_gate.py`
+  SESUDAH respons < 400 (akun internal saja; "Lihat" maks. 1×/menit/modul; baca di luar katalog & modul `lookup`
+  tidak dicatat). Tidak menyimpan isi data/path.
+* `kewajiban_aturan` (konfigurasi): satu dokumen per titik aksi katalog (`core/pantau_staf/katalog.py`), `id = titik` —
+  `{titik, aktif, pemegang: {jenis: akun|peran|data, akun_ids[], peran[]}, cadangan_ids[], dikecualikan_ids[],
+  tenggat: {jenis: hari_kerja|jam|jam_tetap|dokumen, nilai?, hari?, jam?}, bobot 1–5, saringan {business_type?,
+  vendor_id[]?, location_id[]?, account_id[]?}, berlaku_sejak, diubah_*}`. Dipasang dari bawaan saat pertama dibaca
+  (K2: pemegang akun/peran kosong & nonaktif; pemegang dari data aktif). Penulis `core/pantau_staf/aturan.py`.
+* `kewajiban_kejadian` (transaksi turunan): `id = "<aturan_id>:<objek_id>"` — `{aturan_id, titik, nama, alur,
+  objek_id, nomor, po_id?, periode?, pemegang_ids[], mulai, tenggat, status: menunggu|terlambat|selesai|terlewat|
+  batal|dimaafkan, tepat, selesai_at, pelaku_id, pelaku_nama, pelaku_vendor, oleh_orang_lain, bobot, tanpa_waktu,
+  pertama_terlihat, dimaafkan{oleh_id, oleh_nama, alasan, at}?, pengingat_terakhir?}`. Penulis `core/pantau_staf/
+  pemindai.py` (job `pantau_staf_pindai` tiap 15 menit; status final tidak diubah lagi) + maafkan/ingatkan di
+  `routes/pantau_staf.py`. Skor: `core/pantau_staf/ringkasan.skor_dari` (pita `routes/dewi_kpi_shared._grade`).
+* `production_pos.status_history[] = {status, at, by_id, by_name}` (sejak 10 Nov 2026) — ditulis setiap perubahan
+  status PO (`routes/production_pos.riwayat_status`); dipakai titik "Tutup PO" untuk "menunggu sejak kapan".

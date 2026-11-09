@@ -67,22 +67,27 @@ async def _open_keys(db, rule_key: str, *, extra: dict | None = None, limit: int
     return [(coll, r["id"]) for r in rows if r.get("id")]
 
 
-def _group(key, label, module_id, icon, keys, exclude, *, tab=None) -> dict:
+def _group(key, label, module_id, icon, keys, exclude, *, tab=None, with_keys=False) -> dict:
     left = [k for k in keys if k not in exclude]
     out = {"key": key, "label": label, "count": len(left), "raw_count": len(keys),
            "module_id": module_id, "icon": icon}
     if tab:
         out["tab"] = tab
+    if with_keys:   # Monitoring Staf (10 Nov 2026): dokumen per butir, untuk kewajiban "menunggu siapa"
+        out["keys"] = [list(k) for k in keys]
     return out
 
 
-async def approval_groups(db, user: dict, *, exclude=frozenset()) -> list:
+async def approval_groups(db, user: dict, *, exclude=frozenset(), with_keys: bool = False) -> list:
     """Butir "Perlu Tindakan" yang dihitung LANGSUNG dari dokumen sumber.
 
     `exclude` = {(koleksi, id)} yang sudah diwakili notifikasi action terbuka
     milik user ini — tidak dihitung lagi di sini (tanpa hitung dobel).
     Grup tetap dikembalikan walau 0 bila peran itu memang pemegang antreannya
-    (kompatibel dengan kategori lencana lama)."""
+    (kompatibel dengan kategori lencana lama).
+
+    `with_keys=True` (Monitoring Staf, 10 Nov 2026) menambah `keys` = [[koleksi, id], ...] per grup — SATU sumber
+    "menunggu siapa" untuk kewajiban persetujuan (`core.pantau_staf.katalog`), tidak dihitung ulang di sana."""
     role = (user.get("role") or "").lower()
     uid = user.get("id")
     groups = []
@@ -106,11 +111,11 @@ async def approval_groups(db, user: dict, *, exclude=frozenset()) -> list:
         logger.debug("[approval-badge] pending_for_user gagal", exc_info=True)
     if pr_keys or role in _PROCUREMENT_ROLES:
         groups.append(_group("pr", "Pembelian menunggu persetujuan Anda", "proc-requests",
-                             "shopping-cart", pr_keys, exclude))
+                             "shopping-cart", pr_keys, exclude, with_keys=with_keys))
 
     if role in _FINANCE_ROLES:
         groups.append(_group("ap", "AP Invoice belum dibayar", "fin-ap-aging", "hourglass",
-                             await _open_keys(db, "ap_invoice"), exclude))
+                             await _open_keys(db, "ap_invoice"), exclude, with_keys=with_keys))
 
     # 2026-11-08: kode peran lama ATAU izin yang sama dengan gerbang HR Inbox (`hr.approve` / `hr.manage`),
     # supaya peran buatan owner yang bisa menyetujui juga melihat hitungannya.
@@ -119,11 +124,11 @@ async def approval_groups(db, user: dict, *, exclude=frozenset()) -> list:
         for key in ("leave_manager", "leave_hr", "overtime", "salary_manager", "salary_hr"):
             hr_keys += await _open_keys(db, key, extra=not_mine_uid if key == "overtime" else None)
         groups.append(_group("hr", "SDM perlu persetujuan (cuti, lembur, gaji)", "hr-inbox", "users",
-                             hr_keys, exclude))
+                             hr_keys, exclude, with_keys=with_keys))
         kas = await _open_keys(db, "kasbon_review", extra=not_mine_email)
         if kas:
             groups.append(_group("kasbon_review", "Kasbon menunggu keputusan SDM", "hr-kasbon",
-                                 "wallet", kas, exclude))
+                                 "wallet", kas, exclude, with_keys=with_keys))
 
     # 2026-11-08: ATAU izin bayar yang sama dengan gerbang pencairan klaim/kasbon (`core.roles.FINANCE_PAY_PERMS`).
     from core.roles import FINANCE_PAY_PERMS
@@ -132,28 +137,28 @@ async def approval_groups(db, user: dict, *, exclude=frozenset()) -> list:
         exp = await _open_keys(db, "expense_disburse")
         if exp:
             groups.append(_group("expense_disburse", "Klaim karyawan disetujui — menunggu pencairan",
-                                 "fin-expenses", "wallet", exp, exclude, tab="settlement"))
+                                 "fin-expenses", "wallet", exp, exclude, tab="settlement", with_keys=with_keys))
         dis = await _open_keys(db, "kasbon_disburse", extra=not_mine_email)
         if dis:
             groups.append(_group("kasbon_disburse", "Kasbon disetujui — menunggu pencairan",
-                                 "fin-kasbon", "wallet", dis, exclude))
+                                 "fin-kasbon", "wallet", dis, exclude, with_keys=with_keys))
         # K34 — pembatalan run gaji FINAL menunggu Keuangan (pengaju tidak boleh menyetujui sendiri).
         pc = await _open_keys(db, "payroll_cancel", extra={"cancel_request.requested_by": {"$ne": uid}})
         if pc:
             groups.append(_group("payroll_cancel", "Pembatalan run gaji menunggu persetujuan",
-                                 "hr-payroll-run", "banknote", pc, exclude))
+                                 "hr-payroll-run", "banknote", pc, exclude, with_keys=with_keys))
         # K17 — tagihan CMT bertanda selisih menunggu pemeriksaan Keuangan.
         var = await _open_keys(db, "cmt_variance")
         if var:
             groups.append(_group("cmt_variance", "Tagihan CMT bertanda selisih", "prod-cmt-billing",
-                                 "alert-triangle", var, exclude))
+                                 "alert-triangle", var, exclude, with_keys=with_keys))
 
     # K1 — retur menunggu keputusan gudang.
     if role in _warehouse_roles():
         rt = await _open_keys(db, "wh_return")
         if rt:
             groups.append(_group("wh_return", "Retur menunggu keputusan gudang", "wh-returns",
-                                 "rotate-ccw", rt, exclude))
+                                 "rotate-ccw", rt, exclude, with_keys=with_keys))
     return groups
 
 

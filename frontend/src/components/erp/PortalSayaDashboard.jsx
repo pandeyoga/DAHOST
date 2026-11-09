@@ -14,6 +14,7 @@ import TabelData from '@/components/ui/tabel-data';
 import { formatDateTimeID, formatRupiah } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile } from './moduleAtoms';
+import KewajibanSayaCard from './pantau-staf/KewajibanSayaCard';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -93,6 +94,9 @@ export default function PortalSayaDashboard({ user, headers, onNavigate }) {
           <StatTile label="Pengingat mendatang" value={reminders.length} sub={reminders[0]?.title || ''} testId="stat-pengingat" />
         )}
       </div>
+
+      {/* Monitoring Staf (10 Nov 2026): kewajiban milik sendiri, tanpa skor (keputusan owner K4) */}
+      <KewajibanSayaCard onNavigate={onNavigate} />
 
       {data.leave_balance?.length > 1 && (
         <GlassCard className="space-y-3 p-4">
