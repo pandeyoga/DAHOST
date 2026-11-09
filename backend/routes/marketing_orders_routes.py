@@ -519,58 +519,95 @@ async def fulfillment_monitor(
     })
 
 
+PICKING_DEFAULT_STATUSES = "paid,packed"
+PICKING_MAX_ORDERS = 5000
+
+
+def picking_lines(order: dict) -> list:
+    """Baris barang satu pesanan untuk daftar ambil (fungsi murni). Pesanan impor membawa barangnya di
+    `items[]` (satu pesanan bisa banyak SKU); pesanan lama tanpa `items` memakai field tingkat pesanan."""
+    items = [i for i in (order.get("items") or []) if isinstance(i, dict)]
+    if not items:
+        return [{"fg_material_id": order.get("fg_material_id"), "sku": order.get("sku_id") or "",
+                 "variation": order.get("variation") or "", "product_name": order.get("product_name") or "",
+                 "qty": int(float(order.get("quantity") or 1))}]
+    out = []
+    for i in items:
+        sku = (i.get("seller_sku") or i.get("variant_sku") or i.get("sku_code") or i.get("sku")
+               or i.get("platform_sku_id") or "")
+        out.append({"fg_material_id": i.get("fg_material_id"), "sku": str(sku).strip(),
+                    "variation": str(i.get("variation_raw") or i.get("variation") or "").strip(),
+                    "product_name": str(i.get("product_name_raw") or i.get("product_name") or "").strip(),
+                    "qty": int(float(i.get("quantity") if i.get("quantity") is not None else (i.get("qty") or 1)))})
+    return out
+
+
+def group_picking(orders: list, master_codes: dict) -> list:
+    """Kelompokkan per SKU master (tertaut) atau per (SKU/nama + variasi) bila belum tertaut (fungsi murni)."""
+    picking: dict = {}
+    for o in orders:
+        for ln in picking_lines(o):
+            mid = ln.get("fg_material_id")
+            if mid:
+                key = f"m:{mid}"
+            else:
+                key = f"u:{(ln['sku'] or ln['product_name']).lower()}|{ln['variation'].lower()}"
+            g = picking.setdefault(key, {
+                "fg_material_id": mid, "sku_id": master_codes.get(mid) or ln["sku"],
+                "variation": ln["variation"], "product_name": ln["product_name"], "linked": bool(mid),
+                "total_qty": 0, "order_ids": [], "platforms": set()})
+            g["total_qty"] += max(0, ln["qty"])
+            if o.get("order_id") not in g["order_ids"]:
+                g["order_ids"].append(o.get("order_id", ""))
+            g["platforms"].add(o.get("platform", ""))
+    rows = []
+    for g in sorted(picking.values(), key=lambda x: (not x["linked"], -x["total_qty"], x["sku_id"] or "")):
+        rows.append({"fg_material_id": g["fg_material_id"], "sku_id": g["sku_id"], "variation": g["variation"],
+                     "product_name": g["product_name"], "linked": g["linked"], "total_qty": g["total_qty"],
+                     "order_count": len(g["order_ids"]), "platforms": sorted(p for p in g["platforms"] if p),
+                     "order_ids": g["order_ids"][:10]})
+    return rows
+
+
 @router.get("/picking-list")
 async def generate_picking_list(
     request: Request,
-    statuses: Optional[str] = Query("new,packed"),
-    platform: Optional[str] = Query(None)
+    statuses: Optional[str] = Query(PICKING_DEFAULT_STATUSES),
+    platform: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
 ):
-    """Generate a picking list grouped by SKU."""
+    """Daftar ambil barang per SKU dari pesanan yang perlu dikirim.
+
+    2026-11-09 (audit gudang G10): dikelompokkan per baris `items[]` (pesanan impor menyimpan barangnya di
+    sana; dulu dibaca `sku_id` tingkat pesanan sehingga daftar kosong / semua pesanan satu baris tanpa SKU),
+    bawaan status "Perlu Dikirim" + "Dikemas" (`paid,packed`), dan menghormati toko yang dipilih layar.
+    Barang tertaut memakai kode SKU master; yang belum tertaut dikelompokkan per SKU/nama + variasi."""
     user = await require_auth(request)
     db = get_db()
 
-    status_list = [s.strip() for s in statuses.split(",")]
+    status_list = [s.strip() for s in (statuses or PICKING_DEFAULT_STATUSES).split(",") if s.strip()]
     # F6 (sesi #10) — daftar ambil barang ikut lingkup toko: staf toko A tidak
     # boleh mengambil (atau melihat) pesanan toko B.
     q: dict = await _scope.scope_filter(db, user, {"status": {"$in": status_list}})
     if platform:
         q["platform"] = platform
+    if account_id:
+        q = {"$and": [q, {"account_id": account_id}]}
 
-    orders = await db.marketing_orders.find(q, {"_id": 0}).to_list(500)
-
-    # Group by SKU + Variation
-    picking: dict = {}
-    for o in orders:
-        key = f"{o.get('sku_id','')} | {o.get('variation','')}"
-        if key not in picking:
-            picking[key] = {
-                "sku_id":       o.get("sku_id", ""),
-                "variation":    o.get("variation", ""),
-                "product_name": o.get("product_name", ""),
-                "total_qty":    0,
-                "order_ids":    [],
-                "platforms":    set()
-            }
-        picking[key]["total_qty"]  += o.get("quantity", 1)
-        picking[key]["order_ids"].append(o.get("order_id", ""))
-        picking[key]["platforms"].add(o.get("platform", ""))
-
-    result = []
-    for k, v in sorted(picking.items(), key=lambda x: -x[1]["total_qty"]):
-        result.append({
-            "sku_id":       v["sku_id"],
-            "variation":    v["variation"],
-            "product_name": v["product_name"],
-            "total_qty":    v["total_qty"],
-            "order_count":  len(v["order_ids"]),
-            "platforms":    list(v["platforms"]),
-            "order_ids":    v["order_ids"][:10]
-        })
+    orders = await db.marketing_orders.find(q, {"_id": 0, "order_id": 1, "platform": 1, "items": 1, "sku_id": 1,
+                                                "variation": 1, "product_name": 1, "quantity": 1,
+                                                "fg_material_id": 1}).to_list(PICKING_MAX_ORDERS)
+    mids = sorted({ln["fg_material_id"] for o in orders for ln in picking_lines(o) if ln.get("fg_material_id")})
+    codes = {m["id"]: m.get("code") or m.get("sku") or "" for m in await db.rahaza_materials.find(
+        {"id": {"$in": mids}}, {"_id": 0, "id": 1, "code": 1, "sku": 1}).to_list(len(mids) or 1)} if mids else {}
+    result = group_picking(orders, codes)
 
     return {
         "picking_list": result,
         "total_items": len(result),
         "total_orders": len(orders),
+        "unlinked_items": sum(1 for r in result if not r["linked"]),
+        "truncated": len(orders) >= PICKING_MAX_ORDERS,
         "generated_at": _now().isoformat(),
         "status_filter": status_list
     }
@@ -986,7 +1023,11 @@ async def create_order(body: OrderCreateBody, request: Request):
         "order_channel":          "other",
         "payment_method":  body.payment_method or "",
         "status":          "new",
-        "fulfillment_status": "pending_fulfillment",
+        # 2026-11-09 (audit gudang G11, keputusan ★ = K15): pesanan manual juga keluar lewat Gudang → Scan
+        # Keluar Penjualan, BUKAN antrean Fulfillment (dulu `pending_fulfillment` ⇒ bila dialokasikan &
+        # di-dispatch, stok & HPP terpotong dua kali bersama scan keluar).
+        "fulfillment_status": "not_required",
+        "fulfillment_note": "Keluar lewat Scan Keluar Penjualan (K15)",
         "courier":         body.courier or "",
         "tracking_number": body.tracking_number,
         "customer_name":   body.customer_name,

@@ -420,7 +420,10 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
     _actor = {"id": str(user.get("id") or ""), "email": user.get("email", "")}
     _ref = {"source": "material_adjust", "reason": reason}
     if delta > 0:
-        await stock_service.add(material_id, location_id, delta, ref=_ref, actor=_actor, db=db)
+        # 2026-11-09 (audit gudang G8): baris baru hasil penyesuaian tambah mendapat identitas (baris itu
+        # sendiri bila ada, selain itu dari master) — dulu tanpa kategori ⇒ FG tak terlihat di Penjualan.
+        await stock_service.add(material_id, location_id, delta, ref=_ref, actor=_actor, db=db,
+                                meta=await stock_service.identity_meta(material_id, location_id, db=db))
     else:
         await stock_service.issue(material_id, location_id, abs(delta), ref=_ref, actor=_actor, db=db)
     mv = await _log_movement(db, user,

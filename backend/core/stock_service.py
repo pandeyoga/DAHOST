@@ -504,19 +504,76 @@ async def adjust_material(material_id, delta, *, ref=None, actor=None, db=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# IDENTITAS BARIS TUJUAN (2026-11-09, audit gudang G8)
+# ─────────────────────────────────────────────────────────────────────────────
+# Pemindahan / transfer / penyesuaian tambah / lepas karantina dulu membuat baris tujuan TANPA
+# `inventory_category`/`ownership` ⇒ FG hasil pindah lenyap dari Portal Penjualan & Fulfillment
+# (uji T1: GD-L2 null/null). Aturannya kini satu: identitas baris ASAL dibawa; bila asal tidak punya
+# (baris karantina, baris lama), diturunkan dari MASTER dengan kosakata penulis resmi
+# (`production_qty_ledger.post_fg_accepted`, penerimaan bahan): FG DA → fg_internal/cv_da, FG klien
+# maklon → maklon_fg/<id klien>, bahan → raw_material/cv_da.
+_DESC_FIELDS = ("material_type", "material_code", "material_name", "category", "category_name", "unit")
+
+
+def derive_identity(material: dict | None, source_row: dict | None = None) -> dict:
+    """Meta identitas + deskriptif untuk baris stok tujuan (fungsi murni, diuji unit)."""
+    src, mat = source_row or {}, material or {}
+    out = {k: src[k] for k in _DESC_FIELDS if src.get(k) not in (None, "")}
+    if src.get("ownership") not in (None, "") and src.get("inventory_category") not in (None, ""):
+        out.update(ownership=src["ownership"], inventory_category=src["inventory_category"])
+        return out
+    mtype = (mat.get("type") or src.get("material_type") or "").lower()
+    if mtype == "fg" and mat.get("owner_type") == "client":
+        ident = {"ownership": mat.get("owner_client_id") or "maklon_client", "inventory_category": "maklon_fg"}
+    elif mtype == "fg":
+        ident = {"ownership": "cv_da", "inventory_category": "fg_internal"}
+    elif mtype:
+        ident = {"ownership": "cv_da", "inventory_category": "raw_material"}
+    else:
+        ident = {}
+    # identitas yang SUDAH ada di baris asal tidak ditimpa turunan master
+    for k in ("ownership", "inventory_category"):
+        if src.get(k) not in (None, ""):
+            ident[k] = src[k]
+    out.update(ident)
+    if mtype and "material_type" not in out:
+        out["material_type"] = mtype
+    for k_src, k_out in (("code", "material_code"), ("name", "material_name"), ("unit", "unit")):
+        if mat.get(k_src) and k_out not in out:
+            out[k_out] = mat[k_src]
+    return out
+
+
+async def identity_meta(material_id, source_location=None, *, db=None) -> dict:
+    """:func:`derive_identity` dari DB (baris asal + master)."""
+    db = _db(db)
+    src = await _row(db, material_id, source_location) if source_location else None
+    mat = await db["rahaza_materials"].find_one(
+        {"id": material_id}, {"_id": 0, "type": 1, "owner_type": 1, "owner_client_id": 1, "code": 1,
+                              "name": 1, "unit": 1}) or {}
+    return derive_identity(mat, src)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TRANSFER
 # ─────────────────────────────────────────────────────────────────────────────
 async def move(material_id, from_location, to_location, qty, *, meta=None,
-               ref=None, actor=None, db=None, input_uom=None):
-    """Pindah stok antar lokasi (issue dari asal → add ke tujuan)."""
+               ref=None, actor=None, db=None, input_uom=None, carry_identity: bool = True):
+    """Pindah stok antar lokasi (issue dari asal → add ke tujuan).
+
+    2026-11-09 (G8): baris tujuan membawa identitas baris asal (:func:`identity_meta`); `meta` pemanggil
+    menang. `carry_identity=False` hanya untuk masuk karantina (baris karantina sengaja tanpa kategori)."""
     db = _db(db)
     if from_location == to_location:
         raise ValueError("lokasi asal & tujuan tidak boleh sama")
     # konversi SEKALI di sini supaya kedua sisi memakai angka yang identik
     qty, _ = await _conv(db, material_id, qty, input_uom)
+    dest_meta = dict(meta or {})
+    if carry_identity:
+        dest_meta = {**await identity_meta(material_id, from_location, db=db), **dest_meta}
     await issue(material_id, from_location, qty,
                 ref={**(ref or {}), "move_to": to_location}, actor=actor, db=db)
-    row = await add(material_id, to_location, qty, meta=meta,
+    row = await add(material_id, to_location, qty, meta=dest_meta or None,
                     ref={**(ref or {}), "move_from": from_location}, actor=actor, db=db)
     return row
 

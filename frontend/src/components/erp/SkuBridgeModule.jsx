@@ -543,8 +543,9 @@ export default function SkuBridgeModule({ onNavigate }) {
       footer={onNavigate ? (
         <p className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground">
           Lanjut ke:
-          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('fulfillment')} data-testid="goto-fulfillment">
-            Antrean gudang<ArrowRight />
+          {/* 2026-11-09 (audit gudang G11): Fulfillment dilepas (K6/K15) — barang keluar lewat Scan Keluar Penjualan */}
+          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('wh-scan-out')} data-testid="goto-scan-out">
+            Scan Keluar Penjualan<ArrowRight />
           </Button>
           <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('sync-audit')} data-testid="goto-sync-audit">
             Kesehatan sinkronisasi<ArrowRight />
