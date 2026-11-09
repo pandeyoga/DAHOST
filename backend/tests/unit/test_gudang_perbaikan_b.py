@@ -35,7 +35,11 @@ from core import gap_workbook as gw  # noqa: E402
 from core import opening_balance as ob  # noqa: E402
 from core import opname_engine as eng  # noqa: E402
 from core import stock_service  # noqa: E402
-from test_k9_opname_engine import USER, _count, env, seed  # noqa: E402,F401  (fixture `env` dipakai ulang)
+import test_k9_opname_engine as k9  # noqa: E402
+
+# fixture `env` (Mongo palsu + stok + posting palsu) dipakai ulang dari uji mesin opname K9
+env = k9.env
+USER, _count, seed = k9.USER, k9._count, k9.seed
 
 FIN = {"id": "u-fin", "name": "Keuangan", "email": "fin@x", "role": "accounting"}
 WH = {"id": "u-gd", "name": "Gudang", "email": "gd@x", "role": "admin_gudang"}
@@ -359,6 +363,21 @@ def test_roll_import_parse_groups_average_and_guards():
     db.rahaza_material_stock.docs.clear()
     db.rahaza_material_movements.docs.append({"type": "opening", "material_id": "KN1", "to_location_id": "L2"})
     assert "sudah punya stok awal" in " ".join(run(fri.parse(db, clean))["errors"])
+
+
+def test_roll_import_reapply_same_file_returns_existing_even_when_awaiting():
+    db = _roll_db()
+    data = _roll_wb([("KN-CND-01", "", "", "GD-L2", "LOT1", 3, 24.5, "")])
+    key = run(fri.parse(db, data))["batch_key"]
+    db[fri.IMPORTS].docs.append({"id": "I1", "import_no": "IMR-202611-001", "batch_key": key, "status": fri.ST_AWAITING,
+                                 "groups": [{"material_id": "KN1", "location_id": "L2"}]})
+    assert not run(fri.parse(db, data))["ok"]                      # baris kini "menunggu persetujuan"
+    res = run(fri.apply(db, USER, data))
+    assert res["already"] and res["import"]["id"] == "I1" and "IMR-202611-001" in res["message"]
+    db[fri.IMPORTS].docs[0]["status"] = fri.ST_CANCELLED           # impor dibatalkan → boleh diulang (lewat parse)
+    with pytest.raises(HTTPException):                             # (di sini masih galat: tidak ada stok awal/roll)
+        db.rahaza_material_movements.docs.append({"type": "opening", "material_id": "KN1", "to_location_id": "L2"})
+        run(fri.apply(db, USER, data))
 
 
 def test_roll_import_session_final_activates_or_cancels_rolls():

@@ -241,12 +241,14 @@ async def apply(db, user: dict, data: bytes, filename: str = "") -> dict:
     """Terapkan impor (idempoten per isi berkas): roll `pending_opening` + sesi opname stok awal per lokasi."""
     from core import opname_engine as eng
     parsed = await parse(db, data)
-    if not parsed["ok"]:
-        raise HTTPException(400, {"message": "Berkas belum lolos pemeriksaan.", "errors": parsed["errors"]})
-    key = parsed["batch_key"]
-    prev = await db[IMPORTS].find_one({"batch_key": key, "status": {"$ne": ST_CANCELLED}}, {"_id": 0})
+    # idempoten DULU: berkas yang sama (yang barisnya kini ditolak karena "sudah menunggu persetujuan" /
+    # "sudah punya stok awal") dijawab dengan impor lamanya, bukan galat.
+    key = parsed.get("batch_key") or ""
+    prev = await db[IMPORTS].find_one({"batch_key": key, "status": {"$ne": ST_CANCELLED}}, {"_id": 0}) if key else None
     if prev:
         return {"already": True, "import": prev, "message": f"Berkas yang sama sudah diimpor ({prev.get('import_no')})."}
+    if not parsed["ok"]:
+        raise HTTPException(400, {"message": "Berkas belum lolos pemeriksaan.", "errors": parsed["errors"]})
     imp_id = str(uuid.uuid4())
     from utils.counters import gen_prefixed_number
     imp_no = await gen_prefixed_number(db, IMPORTS, "import_no", f"IMR-{_now():%Y%m}-", 3)

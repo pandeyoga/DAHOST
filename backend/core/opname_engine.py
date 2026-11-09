@@ -1124,6 +1124,11 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
         m_meta = stock_meta(mat, sc["location"])
         if x["kind"] == "fg":
             m_meta.update({"inventory_category": "fg_internal", "ownership": "cv_da"})
+        else:
+            # 2026-11-09 (pola G8): baris bahan/aksesoris BARU hasil opname juga diberi identitas resmi
+            # (raw_material/cv_da, sama dengan penerimaan barang); baris lama tetap ($ifNull di stock_service).
+            ident = stock_service.derive_identity(mat, None)
+            m_meta.update({k: ident[k] for k in ("inventory_category", "ownership") if ident.get(k)})
         row_qty = {r.get("location_id"): _r(r.get("qty")) for r in rows.get(x["material_id"], [])}
         for loc_id, q in plan_stock_writes(rows.get(x["material_id"], []), target, sess["location_id"]):
             # 2026-11-06 (Tahap 1): tulis SELISIH (hasil rencana − qty yang dibaca saat approve) secara
