@@ -124,17 +124,22 @@ def _read_xlsx(raw: bytes, read_only: bool) -> Tuple[List[str], List[Dict[str, A
 
 
 def parse_table(raw: bytes, filename: str,
-                st: Optional[SourceType] = None) -> Tuple[List[str], List[Dict[str, Any]]]:
+                st: Optional[SourceType] = None, *,
+                deteksi: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
     """CSV/XLSX → (headers, rows). Baris kosong dibuang, header kosong diberi nama.
 
     F7.2 — bila `st` membawa `prenorm`, berkas dinormalkan lebih dulu oleh
     `core.marketing_import_prenorm` (memotong metadata/blok section, memilih baris
     header yang benar, menggabungkan sheet) dan hasilnya sudah berkolom kanonik.
     Tanpa jalur ini, ekspor KPI Seller Center terbaca 0 kolom terpetakan.
+
+    ``deteksi=True`` (2026-11-09) — dipakai hanya untuk MENGENALI jenis berkas: penormal
+    yang butuh isian staf (periode GMV Max) tidak menolak, sehingga jenisnya tetap bisa
+    diusulkan sebelum staf mengisi periodenya.
     """
     if st is not None and getattr(st, "prenorm", ""):
         from core import marketing_import_prenorm as prenorm
-        return prenorm.prenormalize(raw, filename, st.prenorm)
+        return prenorm.prenormalize(raw, filename, st.prenorm, deteksi=deteksi)
 
     name = (filename or "").lower()
 
@@ -209,11 +214,14 @@ def parse_table_lenient(raw: bytes, filename: str, st: Optional[SourceType]
     → ``(headers, rows, peringatan)``; ``peringatan`` None bila berkas dikenali.
     Galat baca berkas yang lain (bukan CSV/Excel, rusak) tetap dinaikkan.
     """
+    from core.marketing_import_prenorm import PrenormBlocked
     try:
         headers, rows = parse_table(raw, filename, st)
         return headers, rows, None
-    except TooManyRows:
-        raise                       # bukan "bentuk belum dikenal": jangan dibaca ulang apa adanya
+    except (TooManyRows, PrenormBlocked):
+        # bukan "bentuk belum dikenal": jangan dibaca ulang apa adanya. PrenormBlocked =
+        # berkas dikenali tetapi isian wajib belum ada (mis. periode GMV Max).
+        raise
     except ValueError as e:
         if st is None or not getattr(st, "prenorm", ""):
             raise
@@ -238,7 +246,8 @@ def auto_map(headers: List[str], st: SourceType) -> List[dict]:
     ``method``: ``exact`` · ``synonym`` · ``fuzzy`` · ``suggest`` · ``none``
     ``suggest`` berarti **belum** dipakai; layar harus meminta konfirmasi.
     """
-    fields = st.input_fields
+    # 2026-11-09 (G5) — field `dihitung` (diturunkan sistem) tidak pernah dipetakan otomatis
+    fields = [f for f in st.input_fields if not getattr(f, "dihitung", False)]
     # tabel pencarian
     exact: Dict[str, Field] = {}
     for f in fields:
@@ -369,14 +378,83 @@ def mapping_report(mapping: List[dict], st: SourceType) -> dict:
 # 3. KONVERSI NILAI
 # ═══════════════════════════════════════════════════════════════════════════════
 _CURRENCY = re.compile(r"(?i)\b(rp|idr|rupiah)\b|[^\d,.\-+eE]")
+# 2026-11-09 (riset G21) — teks bertanggal/berjam BUKAN angka. Dulu "01/08/2026" kehilangan
+# garis miringnya dan terbaca 1.082.026, sehingga kolom tanggal ikut "kolom uang".
+_TAMPAK_TANGGAL = re.compile(r"^\s*(\d{1,4}[/\-.]\d{1,2}[/\-.]\d{2,4}(\s|T|$)|\d{1,2}:\d{2}(:\d{2})?\s*$)")
+_TEKS_KOSONG = {"-", "--", "–", "—", "n/a", "na", "tidak terbatas", "none", "null"}
+
+# ── 2026-11-09 (riset G1) — GAYA ANGKA PER KOLOM ──────────────────────────────
+# Satu nilai "260.768" mustahil diputuskan sendirian: Rp260.768 (titik ribuan, gaya
+# ekspor pesanan Shopee) atau Rp260,768 (titik desimal 3 angka, gaya ekspor GMV Max
+# TikTok). Dulu mesin SELALU memilih ribuan → biaya iklan TikTok terbaca 18× lebih
+# besar pada berkas contoh (Σ Rp322.063 menjadi Rp5.852.211). Sekarang pemisah desimal
+# diputuskan dari SELURUH isi kolom: satu saja nilai "40797.000" (4 angka sebelum titik)
+# atau "0.768" membuktikan titik = desimal untuk kolom itu.
+GAYA_TITIK_DESIMAL = "titik_desimal"     # "40797.000", "3.15", "1,250,000.50"
+GAYA_KOMA_DESIMAL = "koma_desimal"       # "1.250.000", "94.344,64", "2,87"
+GAYA_OTOMATIS = ""                        # per nilai (perilaku lama)
+_ANGKA_POLOS = re.compile(r"^[\d.,]+$")
 
 
-def parse_number(raw: Any) -> Tuple[Optional[float], Optional[str]]:
+def _bersih_angka(s: str) -> str:
+    s = s.strip().strip("()")
+    s = re.sub(r"(?i)\b(rp|idr|rupiah)\b|%|\s", "", s)
+    return s.lstrip("+-")
+
+
+def _bukti_gaya(s: str) -> str:
+    """Bukti gaya dari SATU teks angka: 'titik' | 'koma' | '' (ambigu/tidak ada)."""
+    if not _ANGKA_POLOS.match(s) or not re.search(r"\d", s):
+        return ""
+    if "." in s and "," in s:
+        return "titik" if s.rfind(".") > s.rfind(",") else "koma"
+    for sep, other in ((".", "koma"), (",", "titik")):
+        if sep in s:
+            parts = s.split(sep)
+            this = "titik" if sep == "." else "koma"
+            if len(parts) > 2:
+                return other                      # 1.250.000 → titik = ribuan → desimal koma
+            head, tail = parts
+            if len(tail) != 3:
+                return this                       # 12.5 / 0.77 / 3,15 → pemisah = desimal
+            if len(head) > 3 or head in ("", "0"):
+                return this                       # 40797.000 / 0.768 → tidak mungkin ribuan
+            return ""                             # ddd.ddd — ambigu
+    return ""
+
+
+def gaya_angka_kolom(values) -> str:
+    """Gaya pemisah desimal satu kolom, diputuskan dari semua nilainya.
+
+    → :data:`GAYA_TITIK_DESIMAL` / :data:`GAYA_KOMA_DESIMAL` bila buktinya searah,
+    :data:`GAYA_OTOMATIS` bila tidak ada bukti atau buktinya bertentangan (nilai
+    tetap dibaca satu per satu seperti dulu — tidak ada tebakan baru)."""
+    titik = koma = 0
+    for v in values:
+        if v is None or isinstance(v, (bool, int, float)):
+            continue
+        s = _bersih_angka(str(v))
+        b = _bukti_gaya(s)
+        if b == "titik":
+            titik += 1
+        elif b == "koma":
+            koma += 1
+    if titik and not koma:
+        return GAYA_TITIK_DESIMAL
+    if koma and not titik:
+        return GAYA_KOMA_DESIMAL
+    return GAYA_OTOMATIS
+
+
+def parse_number(raw: Any, gaya: str = GAYA_OTOMATIS) -> Tuple[Optional[float], Optional[str]]:
     """Angka dari teks apa pun yang lazim di ekspor marketplace.
 
     Menerima: ``1250000`` · ``"Rp 1.250.000"`` · ``"1,250,000.50"`` ·
     ``"1.250.000,50"`` · ``"(1.500)"`` (negatif akuntansi) · ``"12,5%"``.
     Menolak (bukan menebak) kalau pemisahnya tidak konsisten.
+
+    ``gaya`` (2026-11-09, G1) = gaya pemisah desimal KOLOM ini (lihat
+    :func:`gaya_angka_kolom`); kosong = diputuskan per nilai seperti dulu.
     """
     if raw is None or raw == "":
         return None, None
@@ -386,6 +464,10 @@ def parse_number(raw: Any) -> Tuple[Optional[float], Optional[str]]:
         return float(raw), None
 
     s = str(raw).strip()
+    if s.lower() in _TEKS_KOSONG:
+        return None, None
+    if _TAMPAK_TANGGAL.match(s):
+        return None, f"'{raw}' tampak seperti tanggal/jam, bukan angka"
     neg = s.startswith("(") and s.endswith(")")
     s = s.strip("()")
     s = _CURRENCY.sub("", s).strip()
@@ -394,6 +476,20 @@ def parse_number(raw: Any) -> Tuple[Optional[float], Optional[str]]:
     if s.startswith("-"):
         neg = True
         s = s[1:]
+    elif s.startswith("+"):
+        s = s[1:]
+
+    if gaya in (GAYA_TITIK_DESIMAL, GAYA_KOMA_DESIMAL) and re.fullmatch(r"[\d.,]+", s):
+        dec, thou = (".", ",") if gaya == GAYA_TITIK_DESIMAL else (",", ".")
+        if s.count(dec) > 1:
+            return None, (f"format angka '{raw}' tidak cocok dengan kolomnya "
+                          f"(pemisah desimal '{dec}' muncul lebih dari sekali)")
+        t = s.replace(thou, "").replace(dec, ".")
+        try:
+            v = float(t)
+        except ValueError:
+            return None, f"'{raw}' bukan angka"
+        return (-v if neg else v), None
 
     has_dot, has_com = "." in s, "," in s
     if has_dot and has_com:
@@ -426,10 +522,16 @@ _DATE_FORMATS = (
     "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y",
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S",
     "%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
+    # 2026-11-09 (riset G22) — Statistik Toko/Live Shopee: "13-08-2026 00:00"
+    "%d-%m-%Y %H:%M",
     "%d %b %Y", "%d %B %Y", "%b %d, %Y",
 )
 # Penanda "tidak ada nilai" yang lazim di ekspor marketplace.
-_EMPTY_MARKS = ("-", "--", "–", "—")
+# 2026-11-09 (riset F20) — laporan iklan Shopee menulis "Tidak Terbatas" untuk kampanye
+# tanpa tanggal selesai: itu KOSONG, bukan tanggal rusak.
+_EMPTY_MARKS = ("-", "--", "–", "—", "Tidak Terbatas", "tidak terbatas", "N/A")
+_RENTANG_TANGGAL = re.compile(r"\d{1,2}[-/]\d{1,2}[-/]\d{4}.*\d{1,2}[-/]\d{1,2}[-/]\d{4}|"
+                              r"\d{4}-\d{2}-\d{2}.+\d{4}-\d{2}-\d{2}")
 _ID_MONTHS = {
     "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
     "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
@@ -460,6 +562,9 @@ def parse_date(raw: Any) -> Tuple[Optional[datetime], Optional[str]]:
     # Itu berarti KOSONG, bukan tanggal rusak — dulu seluruh pesanan ditolak.
     if s in _EMPTY_MARKS:
         return None, None
+    if _RENTANG_TANGGAL.search(s):
+        # "13-08-2026-13-08-2026" = RENTANG, bukan satu tanggal — tidak dipotong diam-diam
+        return None, f"'{raw}' berisi rentang tanggal, bukan satu tanggal"
     s = s.replace("Z", "").strip()
     for fmt in _DATE_FORMATS:
         try:
@@ -503,6 +608,47 @@ def value_key(raw: Any) -> str:
     return _norm_choice(re.sub(r"\d+", "0", str(raw or "")))
 
 
+_BERAT_RX = re.compile(r"^\s*([\d.,]+)\s*(kg|kilo|kilogram|g|gr|gram|grm)?\s*$", re.IGNORECASE)
+
+
+def parse_berat_kg(raw: Any, gaya: str = GAYA_OTOMATIS) -> Tuple[Optional[float], Optional[str]]:
+    """Berat → kilogram (2026-11-09, riset G13). "200 gr" → 0,2 · "0.6" → 0,6 · "1,2 kg" → 1,2.
+
+    Angka tanpa satuan dianggap kilogram (kolom ber-label "(kg)" di ekspor TikTok)."""
+    if raw is None or raw == "":
+        return None, None
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return float(raw), None
+    s = str(raw).strip()
+    if s.lower() in _TEKS_KOSONG:
+        return None, None
+    m = _BERAT_RX.match(s)
+    if not m:
+        return None, f"'{raw}' bukan berat (contoh yang dikenali: 200 gr, 0,6 kg)"
+    v, err = parse_number(m.group(1), gaya)
+    if err or v is None:
+        return None, err
+    unit = (m.group(2) or "kg").lower()
+    return (round(v / 1000.0, 6) if unit.startswith("g") else v), None
+
+
+_ID_ILMIAH = re.compile(r"^\s*\d+(?:[.,]\d+)?[eE][+]?\d+\s*$")
+
+
+def _id_rusak(f: Field, raw: Any) -> Optional[str]:
+    """Pesan galat bila NOMOR (id_teks) sudah rusak oleh Excel; None bila aman (G20)."""
+    pesan = (f"{f.label}: '{raw}' sudah berubah menjadi angka ilmiah/bulat oleh Excel — digit "
+             "terakhirnya hilang dan pesanan berbeda bisa tertukar. Ekspor ulang dari Seller "
+             "Center dan unggah berkas aslinya TANPA dibuka-simpan di Excel.")
+    if isinstance(raw, float):
+        return pesan if (not raw.is_integer() or abs(raw) >= 1e15) else None
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return pesan if len(str(abs(raw))) >= 16 else None
+    if isinstance(raw, str) and _ID_ILMIAH.match(raw):
+        return pesan
+    return None
+
+
 def _prefix_hit(f: Field, s_norm: str) -> Optional[str]:
     for prefix, canon_v in f.value_prefix_map:
         p = _norm_choice(prefix)
@@ -512,17 +658,32 @@ def _prefix_hit(f: Field, s_norm: str) -> Optional[str]:
 
 
 def coerce(f: Field, raw: Any,
-           extra_map: Optional[Dict[str, str]] = None) -> Tuple[Any, Optional[str], Optional[str]]:
+           extra_map: Optional[Dict[str, str]] = None, *,
+           gaya: str = GAYA_OTOMATIS,
+           skala_pecahan: Optional[bool] = None) -> Tuple[Any, Optional[str], Optional[str]]:
     """Konversi satu sel. → ``(nilai, error, warning)``.
 
     ``extra_map`` (2026-11-06, Tahap 2) = pemetaan NILAI yang dipilih staf di
     langkah pemetaan (kunci :func:`value_key` → nilai kanonik). Pilihan manusia
     menang atas kamus; hanya berlaku untuk field ber-``choices``.
+
+    2026-11-09 — profil KOLOM (lihat :func:`profil_kolom`):
+    ``gaya`` = pemisah desimal kolom (G1); ``skala_pecahan`` = kolom persen yang
+    SELURUHNYA berupa pecahan 0–1 tanpa tanda "%" (rasio 0.0359 → 3,59%). ``None`` =
+    tidak ada profil (diputuskan per nilai seperti dulu).
     """
     if raw is None or (isinstance(raw, str) and raw.strip() == ""):
         if f.required:
             return None, f"{f.label} wajib diisi", None
         return None, None, None
+    if f.id_teks:
+        rusak = _id_rusak(f, raw)
+        if rusak:
+            return None, rusak, None
+        if isinstance(raw, float) and raw.is_integer():
+            raw = str(int(raw))
+        elif isinstance(raw, int) and not isinstance(raw, bool):
+            raw = str(raw)
 
     pre_warn: Optional[str] = None
     if extra_map and f.choices:
@@ -598,7 +759,13 @@ def coerce(f: Field, raw: Any,
             return None, None, pre_warn
         return (d.date().isoformat() if k == "date" else d), None, pre_warn
 
-    v, err = parse_number(raw)
+    if k == "kg":
+        v, err = parse_berat_kg(raw, gaya)
+        if err:
+            return None, f"{f.label}: {err}", None
+        return v, None, pre_warn
+
+    v, err = parse_number(raw, gaya)
     if err:
         return None, f"{f.label}: {err}", None
     if v is None:
@@ -612,8 +779,13 @@ def coerce(f: Field, raw: Any,
     if k == "pct":
         if v < 0:
             return None, f"{f.label}: persen tidak boleh negatif", None
-        if v <= 1 and v != 0:
+        # 2026-11-09 (riset G2) — "0,50%" SUDAH persen (0,5%). Dulu setiap nilai ≤ 1
+        # dikali 100, jadi konversi 0,50% tampil 50% dan CTR 0,77% tampil 77%. Skala
+        # 0–1 → 0–100 hanya untuk nilai TANPA tanda "%" pada kolom pecahan.
+        ada_persen = isinstance(raw, str) and "%" in raw
+        if not ada_persen and v <= 1 and v != 0 and skala_pecahan is not False:
             return v * 100, None, (
+                None if skala_pecahan else
                 f"{f.label}: {raw} ditafsirkan {v*100:.4g}% (skala 0–1 → 0–100)")
         if v > 100:
             return v, None, f"{f.label}: {v} lebih dari 100% — periksa sekali"
@@ -690,8 +862,42 @@ def mapping_value_overrides(mapping: List[dict]) -> Dict[str, Dict[str, str]]:
     return out
 
 
+# 2026-11-09 — catatan TINGKAT BERKAS dari penormal (mis. "berkas tepat 100.000 baris —
+# mungkin terpotong"). Penormal hanya mengembalikan tabel, jadi catatan ditempel di setiap
+# baris dengan kunci ini (bukan kolom header, tidak pernah dipetakan) dan mesin
+# menjadikannya PERINGATAN baris supaya tampil di pratinjau yang sudah ada.
+KOLOM_CATATAN = "Catatan sistem"
+_JENIS_ANGKA = ("money", "int", "num", "pct", "kg")
+
+
+def profil_kolom(rows: List[dict], used: Dict[str, str], st: SourceType) -> Dict[str, dict]:
+    """Profil kolom angka yang terpetakan: ``{kolom: {gaya, skala_pecahan}}`` (G1/G2).
+
+    Dihitung dari SELURUH baris berkas sekali, sehingga pratinjau (500 baris pertama) dan
+    commit (semua baris) membaca angka dengan cara yang SAMA."""
+    out: Dict[str, dict] = {}
+    for col, fname in used.items():
+        f = st.field(fname)
+        if f is None or f.kind not in _JENIS_ANGKA:
+            continue
+        vals = [r.get(col) for r in rows]
+        gaya = gaya_angka_kolom(vals)
+        skala = None
+        if f.kind == "pct":
+            ada = [v for v in vals if v not in (None, "") and str(v).strip().lower() not in _TEKS_KOSONG]
+            if ada:
+                tanpa_persen = all(not (isinstance(v, str) and "%" in v) for v in ada)
+                nilai = [parse_number(v, gaya)[0] for v in ada]
+                nilai = [x for x in nilai if x is not None]
+                skala = bool(tanpa_persen and nilai and all(0 <= x <= 1 for x in nilai)
+                             and any(x != 0 for x in nilai))
+        out[col] = {"gaya": gaya, "skala_pecahan": skala}
+    return out
+
+
 def _coerce_row(raw_row: dict, used: Dict[str, str], st: SourceType,
-                overrides: Optional[Dict[str, Dict[str, str]]] = None
+                overrides: Optional[Dict[str, Dict[str, str]]] = None,
+                profil: Optional[Dict[str, dict]] = None
                 ) -> Tuple[dict, List[str], List[str]]:
     """Satu baris berkas → (data kanonik, errors, warnings). Tanpa database."""
     data: Dict[str, Any] = {}
@@ -702,7 +908,10 @@ def _coerce_row(raw_row: dict, used: Dict[str, str], st: SourceType,
         if f is None:
             continue
         raw = raw_row.get(col)
-        val, err, warn = coerce(f, raw, (overrides or {}).get(fname))
+        p = (profil or {}).get(col) or {}
+        val, err, warn = coerce(f, raw, (overrides or {}).get(fname),
+                                gaya=p.get("gaya", GAYA_OTOMATIS),
+                                skala_pecahan=p.get("skala_pecahan") if profil is not None else None)
         if err:
             errors.append(err)
         if warn:
@@ -711,7 +920,151 @@ def _coerce_row(raw_row: dict, used: Dict[str, str], st: SourceType,
             data[fname] = val
             if f.keep_raw and raw not in (None, ""):
                 data[f"{fname}_raw"] = str(raw).strip()
+    catatan = raw_row.get(KOLOM_CATATAN)
+    if catatan:
+        warnings.append(str(catatan))
+    _pasca_baris(st, data, warnings)
     return data, errors, warnings
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3b. ARTI GABUNGAN BEBERAPA KOLOM (2026-11-09) — ditulis, tidak ditebak
+# ═══════════════════════════════════════════════════════════════════════════════
+def _n(s: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
+
+
+def _pasca_baris(st: SourceType, data: dict, warnings: List[str]) -> None:
+    """Arti yang baru pasti bila DUA kolom dibaca bersama. Dipanggil per baris berkas."""
+    from core import marketing_import_schema as S
+    key = st.key
+    if key in ("marketplace_orders", "marketplace_fulfillment"):
+        # G16 — TikTok: status "Dikirim" + sub-status "Terkirim" = sudah diterima pembeli
+        sub = _n(data.get("substatus_raw"))
+        for st_from, sub_val, st_to in S.ORDER_SUBSTATUS_MAP:
+            if data.get("status") == st_from and sub == sub_val:
+                data["status"] = st_to
+                break
+    if key == "marketplace_orders":
+        # G17 — ekspor terpadu TikTok–Tokopedia: kanal Tokopedia = sub-kanal toko TikTok
+        pc = _n(data.get("purchase_channel"))
+        if pc:
+            if pc in ("tokopedia", "toped"):
+                data["sales_channel"] = "tokopedia"
+                data["purchase_channel"] = "TikTok"
+            elif pc.startswith("tiktok"):
+                data["sales_channel"] = "tiktok"
+    elif key == "returns":
+        # G10 — sub-status yang memutuskan (permintaan dibatalkan pembeli)
+        sub = _n(data.get("substatus_raw"))
+        for sub_val, st_to in S.RETURN_SUBSTATUS_MAP:
+            if sub == sub_val:
+                data["status"] = st_to
+                break
+        # Keputusan owner 9 Nov — "Refund only" = barang TIDAK kembali (tidak restock)
+        jenis = _n(data.get("refund_type_raw"))
+        if jenis:
+            if jenis in S.REFUND_ONLY_VALUES:
+                data["goods_returned"] = False
+            elif jenis in S.GOODS_RETURN_VALUES:
+                data["goods_returned"] = True
+    elif key == "tiktok_gmv_max":
+        _turunan_iklan(data)
+
+
+def _turunan_iklan(d: dict) -> None:
+    """Angka turunan iklan GMV Max — dihitung DI SINI supaya tidak ada rumus kedua di layar."""
+    spend = float(d.get("spend") or 0)
+    clicks = float(d.get("clicks") or 0)
+    impr = float(d.get("impressions") or 0)
+    conv = float(d.get("conversions") or 0)
+    rev = float(d.get("revenue") or 0)
+    d["ctr"] = round(clicks / impr * 100, 2) if impr > 0 else 0.0
+    d["cpa"] = round(spend / conv, 2) if conv > 0 else 0.0
+    d["roas"] = round(rev / spend, 2) if spend > 0 else 0.0
+    days = 1
+    try:
+        a = datetime.strptime(str(d.get("period_start"))[:10], "%Y-%m-%d")
+        b = datetime.strptime(str(d.get("period_end"))[:10], "%Y-%m-%d")
+        days = max(1, (b - a).days + 1)
+    except ValueError:
+        pass
+    d["period_days"] = days
+    d["spend_per_day_avg"] = round(spend / days, 2)
+    d["source_report"] = "tiktok_gmv_max"
+    d["ad_platform"] = "tiktok"
+    d.setdefault("status", "active")
+
+
+def omzet_basis_item(item: dict) -> Tuple[Optional[float], str, Optional[str]]:
+    """Dasar OMZET satu baris SKU = sebelum diskon − diskon PENJUAL (riset G5, K1/K5).
+
+    Diskon yang dibiayai PLATFORM (TikTok "SKU Platform Discount", Shopee "Diskon Dari
+    Shopee") diganti platform ke penjual di pencairan, jadi IKUT omzet; nilainya tetap
+    tercatat terpisah sebagai subsidi platform (``sku_platform_discount``).
+
+    → ``(nilai, cara, peringatan)``. Urutan cara (yang pertama bisa dihitung dipakai):
+      1. ``sebelum_dikurangi_diskon_penjual`` — subtotal sebelum diskon (atau harga awal ×
+         jumlah) − diskon penjual;
+      2. ``platform_ditambah_subsidi`` — subtotal platform (sesudah semua diskon) + diskon
+         platform;
+      3. ``dipetakan`` — kolom dasar omzet yang dipetakan staf sendiri;
+      4. ``harga_setelah_diskon_x_jumlah`` — cadangan lama (harga satuan × jumlah).
+    Peringatan diisi bila rumus platform (sesudah = sebelum − platform − penjual) tidak cocok.
+    """
+    def num(k):
+        v = item.get(k)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    qty = num("quantity")
+    before = num("sku_subtotal_before_discount")
+    if before is None and num("sku_unit_original_price") is not None and qty is not None:
+        before = round(num("sku_unit_original_price") * qty, 2)
+    seller = num("sku_seller_discount")
+    platform = num("sku_platform_discount")
+    after_all = num("sku_subtotal_after_all_discount")
+    if after_all is None and num("sku_unit_deal_price") is not None and qty is not None \
+            and num("sku_subtotal_after_discount") is None:
+        after_all = round(num("sku_unit_deal_price") * qty, 2)
+    warn = None
+    if None not in (before, seller, platform, after_all):
+        if abs(before - platform - seller - after_all) > 1.0:
+            warn = (f"Subtotal SKU tidak cocok rumus platform (sebelum {before:,.0f} − diskon "
+                    f"platform {platform:,.0f} − diskon penjual {seller:,.0f} ≠ sesudah "
+                    f"{after_all:,.0f}) — periksa pemetaan kolom diskon").replace(",", ".")
+    if before is not None and seller is not None:
+        return round(before - seller, 2), "sebelum_dikurangi_diskon_penjual", warn
+    if after_all is not None:
+        return round(after_all + (platform or 0.0), 2), "platform_ditambah_subsidi", warn
+    if num("sku_subtotal_after_discount") is not None:
+        return num("sku_subtotal_after_discount"), "dipetakan", warn
+    if num("sku_unit_deal_price") is not None and qty is not None:
+        return round(num("sku_unit_deal_price") * qty, 2), "harga_setelah_diskon_x_jumlah", warn
+    return None, "", warn
+
+
+def _pasca_item(st: SourceType, item: dict, warnings: List[str]) -> None:
+    if st.key != "marketplace_orders":
+        return
+    # subtotal sebelum diskon dari harga awal × jumlah (ekspor Shopee tidak punya kolomnya)
+    if item.get("sku_subtotal_before_discount") is None and \
+            isinstance(item.get("sku_unit_original_price"), (int, float)) and \
+            isinstance(item.get("quantity"), (int, float)):
+        item["sku_subtotal_before_discount"] = round(
+            float(item["sku_unit_original_price"]) * float(item["quantity"]), 2)
+    explicit = item.get("sku_subtotal_after_discount")
+    val, cara, warn = omzet_basis_item(item)
+    if warn:
+        warnings.append(warn)
+    if val is None:
+        return
+    if explicit is not None and cara != "dipetakan" and abs(float(explicit) - val) > 1.0:
+        warnings.append(
+            f"Kolom dasar omzet yang dipetakan ({float(explicit):,.0f}) berbeda dengan hitungan "
+            f"sebelum diskon − diskon penjual ({val:,.0f}); yang dipakai hitungan sistem"
+            .replace(",", "."))
+    item["sku_subtotal_after_discount"] = val
+    item["omzet_basis_source"] = cara
 
 
 def build_rows(rows: List[dict], mapping: List[dict], st: SourceType,
@@ -723,15 +1076,19 @@ def build_rows(rows: List[dict], mapping: List[dict], st: SourceType,
     """
     used = mapping_dict(mapping)
     overrides = mapping_value_overrides(mapping)
+    # 2026-11-09 (G1/G2) — gaya angka diputuskan dari SELURUH kolom, sekali, sebelum
+    # baris mana pun dibaca (pratinjau & commit memakai profil yang sama).
+    profil = profil_kolom(rows, used, st)
     if st.is_grouped:
         # Jenis berkelompok: 1 entri = 1 PESANAN, bukan 1 baris berkas. Batas
         # pratinjau per-baris tidak boleh memotong jumlah pesanan, kalau tidak
         # layar melaporkan "500 pesanan" untuk berkas 559 pesanan (dan staf
         # mengira 59 pesanan hilang). Baris sudah dibatasi MAX_ROWS saat dibaca.
-        return build_grouped_rows(rows, used, st, limit=MAX_ROWS, overrides=overrides)
+        return build_grouped_rows(rows, used, st, limit=MAX_ROWS, overrides=overrides,
+                                  profil=profil)
     out: List[dict] = []
     for i, raw_row in enumerate(rows[:limit]):
-        data, errors, warnings = _coerce_row(raw_row, used, st, overrides)
+        data, errors, warnings = _coerce_row(raw_row, used, st, overrides, profil)
         # field wajib yang tidak terpetakan sama sekali
         for f in st.required_fields:
             if f.name not in data and f.label not in " ".join(errors):
@@ -750,7 +1107,8 @@ def build_rows(rows: List[dict], mapping: List[dict], st: SourceType,
 
 def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
                        limit: int = MAX_PREVIEW_ROWS,
-                       overrides: Optional[Dict[str, Dict[str, str]]] = None) -> List[dict]:
+                       overrides: Optional[Dict[str, Dict[str, str]]] = None,
+                       profil: Optional[Dict[str, dict]] = None) -> List[dict]:
     """Kelompokkan baris per ``st.group_by`` ⇒ 1 entri = 1 dokumen ber-``items[]``.
 
     KENAPA (SSOT_KONTRAK_DATA §2): ekspor memberi 1 baris per SKU. Kalau setiap
@@ -771,8 +1129,10 @@ def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
     item_required = [f for f in st.required_fields if f.name in st.item_fields]
     header_required = [f for f in st.required_fields if f.name not in st.item_fields]
 
+    if profil is None:
+        profil = profil_kolom(rows, used, st)
     for i, raw_row in enumerate(rows):
-        data, errors, warnings = _coerce_row(raw_row, used, st, overrides)
+        data, errors, warnings = _coerce_row(raw_row, used, st, overrides, profil)
         key = tuple(str(data.get(g)) if data.get(g) is not None else "" for g in st.group_by)
         if any(k == "" for k in key):
             orphan.append({
@@ -806,6 +1166,7 @@ def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
         for f in item_required:
             if f.name not in item:
                 g["errors"].append(f"baris berkas ke-{i + 2}: {f.label} wajib diisi")
+        _pasca_item(st, item, g["warnings"])
         item["line_no"] = len(g["items"]) + 1
         item["raw_row_id"] = i
         g["items"].append(item)
@@ -835,6 +1196,12 @@ def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
             if f.name not in g["header"] and f.label not in " ".join(errors):
                 errors.append(f"{f.label} wajib diisi")
         data = dict(g["header"])
+        # G6 — uang per SKU yang juga dibutuhkan sebagai total pesanan: DIJUMLAH
+        for fname in st.item_sum_fields:
+            vals = [float(it[fname]) for it in g["items"]
+                    if isinstance(it.get(fname), (int, float)) and not isinstance(it.get(fname), bool)]
+            if vals:
+                data[fname] = round(sum(vals), 2)
         data["items"] = g["items"]
         data["raw_row_ids"] = g["raw_row_ids"]
         out.append({
@@ -992,7 +1359,7 @@ def build_template_xlsx(st: SourceType) -> bytes:
     kind_label = {"str": "teks", "date": "tanggal", "datetime": "tanggal",
                   "int": "bilangan bulat", "num": "angka", "money": "rupiah",
                   "pct": "persen (0-100)", "bool": "ya / tidak", "enum": "pilihan",
-                  "list": "daftar (pisah koma)"}
+                  "list": "daftar (pisah koma)", "kg": "berat (kg atau gr)"}
     for f in fields:
         doc.cell(row=r, column=1, value=f.label)
         doc.cell(row=r, column=2, value=kind_label.get(f.kind, f.kind))
@@ -1099,15 +1466,21 @@ def detect_source_type(raw: bytes, filename: str, catalog: List[SourceType],
     pertamanya bukan header). Tanpa itu, jenis ber-prenorm selalu tampak 0 kolom.
     """
     parses: Dict[str, Tuple[List[str], List[dict]]] = {}
+    too_many = False
     try:
         parses[""] = parse_table(raw, filename, None)
+    except TooManyRows:
+        # 2026-11-09 (G4) — berkas besar (ekspor GMV Max 100.000 baris) tetap BISA dikenali:
+        # header dibaca saja; penormal jenisnya yang membuang baris kosong biaya.
+        too_many = True
+        parses[""] = (baca_header(raw, filename), [])
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"berkas tidak bisa dibaca: {e}", "results": []}
     for st in catalog:
         key = getattr(st, "prenorm", "") or ""
         if key and key not in parses:
             try:
-                parses[key] = parse_table(raw, filename, st)
+                parses[key] = parse_table(raw, filename, st, deteksi=True)
             except Exception:  # noqa: BLE001
                 parses[key] = ([], [])
 
@@ -1144,7 +1517,39 @@ def detect_source_type(raw: bytes, filename: str, catalog: List[SourceType],
         "ok": True,
         "headers": base_headers,
         "row_count": len(base_rows),
+        "too_many_rows": too_many,
         "platform": plat,
         "best": results[0] if results else None,
         "results": results[:top],
     }
+
+
+def baca_header(raw: bytes, filename: str, scan: int = 25) -> List[str]:
+    """Baris header pertama berkas (tanpa membaca seluruh isi) — untuk berkas besar."""
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm", ".xls")):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            try:
+                ws.reset_dimensions()
+            except Exception:  # noqa: BLE001
+                pass
+            for i, values in enumerate(ws.iter_rows(values_only=True)):
+                if i >= scan:
+                    break
+                if values and any(v not in (None, "") for v in values):
+                    return [str(v).strip() if v is not None else f"kolom_{j + 1}"
+                            for j, v in enumerate(values)]
+        finally:
+            try:
+                wb.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return []
+    text = raw[:200_000].decode("utf-8-sig", errors="replace")
+    for line in csv.reader(io.StringIO(text)):
+        if any((c or "").strip() for c in line):
+            return [c.strip() for c in line]
+    return []

@@ -76,8 +76,98 @@ FIELD_KEYWORDS["other_deductions"] += ["premi", "fbs fee"]
 # baris Order). Dulu hanya sheet pertama yang dibaca ⇒ tidak ada kolom uang ⇒ buntu.
 HEADER_SCAN_ROWS = 12
 ROW_KIND_HEADER = "lihat berdasarkan"      # kolom penanda baris Order / Sku
+# 2026-11-09 (riset G25) — Seller Centre ber-UI bahasa Inggris menulis "View By"; dulu
+# penanda itu tidak dikenali dan baris "Sku" ikut dijumlah (angka dobel).
+ROW_KIND_HEADERS = ("lihat berdasarkan", "view by")
 ROW_KIND_KEEP = "order"
 MAX_ROWS = 20000
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-09 (riset G7) — KAMUS UTUH per platform + bahasa
+# ══════════════════════════════════════════════════════════════════════════════
+# Dulu setiap kolom dicocokkan dengan KATA KUNCI sebagai potongan teks. Akibatnya pada
+# laporan penghasilan TikTok:
+#   · "Subtotal after seller discounts" / "Subtotal setelah diskon penjual" (= PENJUALAN
+#     sesudah diskon penjual) tertangkap kata kunci "seller discount"/"diskon penjual" ⇒
+#     omzet tercatat sebagai DISKON PENJUAL di draf F9;
+#   · versi bahasa Indonesia tidak dikenali (Jumlah penyelesaian pembayaran = dana
+#     bersih, Biaya pemrosesan pesanan, PPh Pasal 22), dan "Waktu pembayaran pesanan"
+#     (= waktu dana diselesaikan) dianggap periode pesanan.
+# Sekarang nama kolom yang SUDAH DIKETAHUI dicocokkan UTUH (setelah dinormalkan) lewat
+# kamus di bawah; kata kunci hanya untuk kolom yang belum ada di kamus, dan dicocokkan per
+# KATA UTUH. Sumber nama kolom: riset_laporan_marketplace §4.2 (peta header EN/ID dari
+# parser publik ekspor asli). Rumus TikTok (non-AS): Total revenue = Subtotal after seller
+# discounts − Refund subtotal after seller discounts ⇒ "Total revenue"/"Total fees" adalah
+# kolom RINGKASAN (turunan) dan tidak ikut dijumlah, supaya tidak dobel.
+PERAN_TANGGAL = "date"
+PERAN_PERIODE = "period"
+PERAN_ID = "id"
+PERAN_RINGKASAN = "ringkasan"
+PERAN_ABAIKAN = "abaikan"
+PERAN_JENIS_BARIS = "jenis_baris"
+_TT = "tiktokshop"
+_SP = "shopee"
+KAMUS_UTUH: Dict[str, Tuple[str, str]] = {
+    # ── TikTok Shop, bahasa Inggris (non-AS) ─────────────────────────────────
+    "order adjustment id": (PERAN_ABAIKAN, _TT),
+    "type": (PERAN_JENIS_BARIS, _TT),
+    "order created time": (PERAN_PERIODE, _TT),
+    "order settled time": (PERAN_TANGGAL, _TT),
+    "total settlement amount": ("net_payout", _TT),
+    "total revenue": (PERAN_RINGKASAN, _TT),
+    "subtotal after seller discounts": ("gross_sales", _TT),
+    "refund subtotal after seller discounts": ("refunds", _TT),
+    "total refund after discounts": ("refunds", _TT),          # nama sejak ekspor Okt 2026
+    "total fees": (PERAN_RINGKASAN, _TT),
+    "tiktok shop commission fee": ("platform_commission", _TT),
+    "platform commission fee": ("platform_commission", _TT),
+    "platform commission": ("platform_commission", _TT),
+    "dynamic commission": ("platform_commission", _TT),
+    "order processing fee": ("platform_service_fee", _TT),
+    "affiliate commission": ("affiliate_commission", _TT),
+    "affiliate partner commission": ("affiliate_commission", _TT),
+    "affiliate shop ads commission": ("affiliate_commission", _TT),
+    "shipping cost": ("other_deductions", _TT),
+    "article 22 income tax withheld": ("other_deductions", _TT),
+    "adjustment amount": ("adjustments", _TT),
+    "ajustment amount": ("adjustments", _TT),                  # salah eja di ekspor asli
+    "related order id": (PERAN_ABAIKAN, _TT),
+    "order source": (PERAN_ABAIKAN, _TT),
+    # ── TikTok Shop, bahasa Indonesia ─────────────────────────────────────────
+    "id pesanan penyesuaian": (PERAN_ABAIKAN, _TT),
+    "jenis transaksi": (PERAN_JENIS_BARIS, _TT),
+    "waktu pemesanan": (PERAN_PERIODE, _TT),
+    "waktu pembayaran pesanan": (PERAN_TANGGAL, _TT),
+    "jumlah penyelesaian pembayaran": ("net_payout", _TT),
+    "total pendapatan": (PERAN_RINGKASAN, _TT),
+    "subtotal setelah diskon penjual": ("gross_sales", _TT),
+    "subtotal pengembalian dana setelah diskon penjual": ("refunds", _TT),
+    "total pengembalian dana setelah diskon": ("refunds", _TT),
+    "total biaya": (PERAN_RINGKASAN, _TT),
+    "biaya komisi platform": ("platform_commission", _TT),
+    "komisi dinamis": ("platform_commission", _TT),
+    "biaya pemrosesan pesanan": ("platform_service_fee", _TT),
+    "komisi afiliasi": ("affiliate_commission", _TT),
+    "komisi mitra afiliasi": ("affiliate_commission", _TT),
+    "komisi iklan toko afiliasi": ("affiliate_commission", _TT),
+    "deposit pengembalian dana komisi afiliasi": ("affiliate_commission", _TT),
+    "ongkir": ("other_deductions", _TT),
+    "pph pasal 22 dipungut": ("other_deductions", _TT),
+    "jumlah penyesuaian": ("adjustments", _TT),
+    "id pesanan terkait": (PERAN_ABAIKAN, _TT),
+    "sumber pesanan": (PERAN_ABAIKAN, _TT),
+    # ── bersama ──────────────────────────────────────────────────────────────
+    "currency": (PERAN_ABAIKAN, ""),
+    "mata uang": (PERAN_ABAIKAN, ""),
+    # ── Shopee Penghasilan (nama yang sudah pasti) ───────────────────────────
+    "total penghasilan": ("net_payout", _SP),
+    "tanggal dana dilepaskan": (PERAN_TANGGAL, _SP),
+}
+# Kolom ringkasan TikTok yang dipakai uji rumus (bukan dijumlah ke draf F9).
+_RINGKASAN_PENDAPATAN = ("total revenue", "total pendapatan")
+_RINGKASAN_BIAYA = ("total fees", "total biaya")
+# Kolom PENJUALAN tidak boleh pernah menjadi diskon/potongan (penjaga kata kunci).
+_AWALAN_PENJUALAN = ("subtotal",)
 
 
 def _header_score(cells: List[Any]) -> int:
@@ -88,7 +178,7 @@ def _header_score(cells: List[Any]) -> int:
         if c is None or isinstance(c, (int, float)):
             continue
         n = _norm_header(c)
-        if n and _match(n, kws):
+        if n and (n in KAMUS_UTUH or _match(n, kws)):
             score += 1
     return score
 
@@ -186,7 +276,7 @@ def read_report_table(raw: bytes, filename: str) -> Tuple[List[str], List[dict],
         headers, rows = parse_table(raw, filename)
 
     # Baris "Order" vs "Sku": angka baris Sku adalah PECAHAN baris Order-nya.
-    kind_col = next((h for h in headers if _norm_header(h) == ROW_KIND_HEADER), None)
+    kind_col = next((h for h in headers if _norm_header(h) in ROW_KIND_HEADERS), None)
     if kind_col:
         kinds = [_norm_header(r.get(kind_col)) for r in rows]
         if ROW_KIND_KEEP in kinds:
@@ -205,7 +295,19 @@ def _is_id_column(norm: str) -> bool:
 
 
 def _match(norm: str, keywords: List[str]) -> bool:
-    return any(_norm_header(k) in norm for k in keywords)
+    """Kata kunci cocok bila SEMUA katanya muncul BERURUTAN sebagai kata utuh di header.
+
+    2026-11-09 (riset G7) — dulu potongan teks: "seller discount" cocok dengan "subtotal
+    after seller discounts", "ams" cocok dengan kata apa pun yang memuat "ams"."""
+    tokens = norm.split()
+    for k in keywords:
+        kt = _norm_header(k).split()
+        if not kt:
+            continue
+        n = len(kt)
+        if any(tokens[i:i + n] == kt for i in range(len(tokens) - n + 1)):
+            return True
+    return False
 
 
 def _is_numeric_column(rows: List[dict], col: str) -> bool:
@@ -280,10 +382,36 @@ def parse_settlement_report(raw: bytes, filename: str,
     date_col = period_col = id_col = None
     numeric_cols: List[str] = []
     info_cols: List[str] = []
+    ringkasan_cols: List[str] = []
+    kind_rows_col = None
+    platform_kamus: Dict[str, int] = {}
 
     for h in headers:
         norm = _norm_header(h)
         if not norm:
+            continue
+        # ── 2026-11-09 (G7) — kamus UTUH lebih dulu ───────────────────────────
+        hit = KAMUS_UTUH.get(norm)
+        if hit:
+            peran, plat = hit
+            if plat:
+                platform_kamus[plat] = platform_kamus.get(plat, 0) + 1
+            used.add(h)
+            if peran == PERAN_TANGGAL:
+                date_col = date_col or h
+            elif peran == PERAN_PERIODE:
+                period_col = period_col or h
+            elif peran == PERAN_ID:
+                id_col = id_col or h
+            elif peran == PERAN_JENIS_BARIS:
+                kind_rows_col = kind_rows_col or h
+            elif peran == PERAN_RINGKASAN:
+                if _is_numeric_column(rows, h):
+                    ringkasan_cols.append(h)
+            elif peran in FIELD_KEYWORDS:
+                if _is_numeric_column(rows, h):
+                    numeric_cols.append(h)
+                    mapping[peran].append(h)
             continue
         if date_col is None and _match(norm, DATE_KEYWORDS):
             date_col = h; used.add(h); continue
@@ -308,6 +436,8 @@ def parse_settlement_report(raw: bytes, filename: str,
         for field in FIELD_PRIORITY:
             if field == "seller_discount" and any(_norm_header(t) in norm for t in PLATFORM_FUNDED_TOKENS):
                 continue           # diskon yang DIBIAYAI platform bukan potongan penjual
+            if norm.startswith(_AWALAN_PENJUALAN) and field not in ("gross_sales", "refunds"):
+                continue           # G7 — "Subtotal …" adalah PENJUALAN, tidak pernah potongan
             if _match(norm, FIELD_KEYWORDS[field]):
                 mapping[field].append(h); used.add(h)
                 break
@@ -319,6 +449,20 @@ def parse_settlement_report(raw: bytes, filename: str,
     for h in list(mapping["ads_deduction"]):
         if h in mapping["affiliate_commission"]:
             mapping["ads_deduction"].remove(h)
+
+    # TikTok versi ringkas: tanpa kolom subtotal, hanya "Total revenue" (sudah dikurangi
+    # refund) ⇒ itulah penjualan bersih, dan refund tidak dikurangkan lagi.
+    if not mapping["gross_sales"]:
+        tr = next((c for c in ringkasan_cols if _norm_header(c) in _RINGKASAN_PENDAPATAN), None)
+        if tr:
+            mapping["gross_sales"].append(tr)
+            numeric_cols.append(tr)
+            ringkasan_cols.remove(tr)
+            if mapping["refunds"]:
+                notes.append("Laporan tanpa kolom subtotal: penjualan diambil dari "
+                             f"\u201c{tr}\u201d yang sudah dikurangi refund, jadi kolom refund tidak "
+                             "dikurangkan lagi.")
+                mapping["refunds"] = []
 
     column_totals = {c: round(_sum_column(rows, c), 2) for c in numeric_cols}
 
@@ -344,6 +488,15 @@ def parse_settlement_report(raw: bytes, filename: str,
     if period_col:
         period_from, period_to = _date_range(rows, period_col)
 
+    invarian = uji_invarian_penghasilan(rows, mapping, ringkasan_cols)
+    warnings: List[str] = []
+    if invarian.get("diuji") and (invarian.get("lolos_persen") or 0) < 98:
+        warnings.append(
+            f"Rumus laporan hanya cocok di {invarian['lolos']} dari {invarian['diuji']} baris "
+            f"({invarian['lolos_persen']}%): dana bersih tidak sama dengan penjualan − refund − "
+            "potongan + penyesuaian. Periksa pemetaan kolom sebelum menyimpan.")
+    platform = max(platform_kamus.items(), key=lambda kv: kv[1])[0] if platform_kamus else ""
+
     return {
         "row_count": len(rows),
         "filename": filename,
@@ -362,11 +515,81 @@ def parse_settlement_report(raw: bytes, filename: str,
         "headers": headers,
         # 2026-11-06 (Tahap 2) — keterangan cara berkas dibaca (sheet, baris dilewati)
         "notes": notes,
-        "warnings": [],
+        "warnings": warnings,
+        # 2026-11-09 (G7) — kolom ringkasan (tidak dijumlah) + hasil uji rumus per baris
+        "summary_columns": ringkasan_cols,
+        "row_type_column": kind_rows_col,
+        "platform_from_headers": platform,
+        "invariant": invarian,
     }
 
 
+def _nilai_baris(r: dict, cols: List[str]) -> float:
+    total = 0.0
+    for c in cols:
+        n, _ = parse_number(r.get(c))
+        if n is not None:
+            total += n
+    return total
+
+
+def uji_invarian_penghasilan(rows: List[dict], mapping: Dict[str, List[str]],
+                             ringkasan_cols: Optional[List[str]] = None,
+                             tol: float = 1.0) -> Dict[str, Any]:
+    """Uji rumus PER BARIS (riset §7.4): dana bersih = Σ komponen dengan arah form F9.
+
+    Arah: penjualan + subsidi ongkir + penyesuaian (bertanda) − refund − diskon penjual −
+    semua potongan. Nilai mutlak dipakai kecuali penyesuaian, sama seperti `compute_values`.
+    Bila ada kolom ringkasan "Total revenue", diuji juga: revenue = penjualan − refund.
+    → ``{diuji, lolos, lolos_persen, gagal_contoh: [{baris, selisih}], rumus_pendapatan}``."""
+    if not mapping.get("net_payout"):
+        return {"diuji": 0, "lolos": 0, "lolos_persen": None, "gagal_contoh": [],
+                "catatan": "kolom dana bersih belum terpetakan"}
+    plus = ("gross_sales", "shipping_subsidy")
+    minus = ("refunds", "seller_discount", "platform_commission", "platform_service_fee",
+             "affiliate_commission", "ads_deduction", "other_deductions")
+    diuji = lolos = 0
+    gagal: List[dict] = []
+    net_cols = mapping.get("net_payout") or []
+    for i, r in enumerate(rows):
+        if all(r.get(c) in (None, "") for c in net_cols):
+            continue
+        net = _nilai_baris(r, net_cols)
+        exp = sum(abs(_nilai_baris(r, mapping.get(f) or [])) for f in plus)
+        exp -= sum(abs(_nilai_baris(r, mapping.get(f) or [])) for f in minus)
+        exp += _nilai_baris(r, mapping.get("adjustments") or [])
+        diuji += 1
+        if abs(exp - net) <= tol:
+            lolos += 1
+        elif len(gagal) < 10:
+            gagal.append({"baris": i + 1, "selisih": round(net - exp, 2)})
+    out: Dict[str, Any] = {"diuji": diuji, "lolos": lolos,
+                           "lolos_persen": round(lolos / diuji * 100, 1) if diuji else None,
+                           "gagal_contoh": gagal}
+    tr = next((c for c in (ringkasan_cols or []) if _norm_header(c) in _RINGKASAN_PENDAPATAN), None)
+    if tr and mapping.get("gross_sales"):
+        ok = n = 0
+        for r in rows:
+            if r.get(tr) in (None, ""):
+                continue
+            n += 1
+            rev = _nilai_baris(r, [tr])
+            calc = _nilai_baris(r, mapping["gross_sales"]) - abs(_nilai_baris(r, mapping.get("refunds") or []))
+            ok += abs(rev - calc) <= tol
+        out["rumus_pendapatan"] = {"diuji": n, "lolos": ok}
+    return out
+
+
 def guess_platform(headers: List[str]) -> str:
+    # 2026-11-09 (G7) — kamus utuh dulu (laporan TikTok berbahasa Indonesia tidak memuat
+    # kata "settlement"/"tiktok" sama sekali, dulu platformnya kosong)
+    hits: Dict[str, int] = {}
+    for h in headers:
+        k = KAMUS_UTUH.get(_norm_header(h))
+        if k and k[1]:
+            hits[k[1]] = hits.get(k[1], 0) + 1
+    if hits:
+        return max(hits.items(), key=lambda kv: kv[1])[0]
     joined = " ".join(_norm_header(h) for h in headers)
     if re.search(r"\b(settlement|statement|tiktok|affiliate commission)\b", joined):
         return "tiktokshop"

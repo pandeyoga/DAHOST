@@ -746,6 +746,8 @@ export const PORTAL_NAV = {
         items: [
           { id: 'toko-dashboard',   label: 'Dashboard Marketing', icon: LayoutDashboard },
           { id: 'marketing-reports', label: 'Laporan Marketing',  icon: BarChart3 },
+          // 9 Nov 2026 (agen MKT-AI) — angka dihitung sistem, analisis & rekomendasi oleh Asisten AI
+          { id: 'marketing-laporan-ai', label: 'Laporan AI',       icon: Sparkles },
         ],
       },
       {
@@ -791,6 +793,9 @@ export const PORTAL_NAV = {
           { id: 'marketing-health',    label: 'Kesehatan Akun',    icon: HeartPulse },
           { id: 'marketing-live-hub',  label: 'Live Selling',      icon: Video },
           { id: 'marketing-ai-hub',    label: 'AI Marketing',      icon: Sparkles },
+          // 9 Nov 2026 (agen MKT-AI) — section penjualan sudah 8 pintu (INV-NAV-01), jadi impor banyak
+          // berkas (dibantu AI pemeta) ditaruh di section AI.
+          { id: 'marketing-impor-paket', label: 'Impor Banyak Berkas', icon: FileSpreadsheet },
           { id: 'marketing-scheduler', label: 'Penjadwal Otomasi', icon: Timer },
           { id: 'marketing-change-log', label: 'Jejak Marketing', icon: History },
         ],
