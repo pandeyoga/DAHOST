@@ -70,15 +70,18 @@ def _sesi_publik(d: dict) -> dict:
             "updated_at": d.get("updated_at") or d.get("created_at"),
             "jumlah_pesan": int(d.get("jumlah_pesan") or 0),
             "ada_tindakan_menunggu": bool(d.get("ada_tindakan_menunggu", False)),
-            "jenis": d.get("jenis") if d.get("jenis") in JENIS_SESI else "chat"}
+            "jenis": d.get("jenis") if d.get("jenis") in JENIS_SESI else "chat",
+            "ruang": d.get("ruang") or "umum"}
 
 
-async def buat_sesi(db, user_id: str, judul: Optional[str] = None, *, jenis: str = "chat") -> dict:
+async def buat_sesi(db, user_id: str, judul: Optional[str] = None, *, jenis: str = "chat",
+                    ruang: str = "umum") -> dict:
     now = _sekarang()
     judul = (str(judul).strip()[:MAKS_JUDUL] if judul and str(judul).strip() else JUDUL_BAWAAN)
     doc = {"id": _id(), "user_id": user_id, "judul": judul, "judul_otomatis": judul == JUDUL_BAWAAN,
            "created_at": now, "updated_at": now, "jumlah_pesan": 0, "dihapus": False,
-           "ada_tindakan_menunggu": False, "jenis": jenis if jenis in JENIS_SESI else "chat"}
+           "ada_tindakan_menunggu": False, "jenis": jenis if jenis in JENIS_SESI else "chat",
+           "ruang": ruang if ruang in ("umum", "sdm", "saya") else "umum"}
     await db.ai_chat_sessions.insert_one(dict(doc))
     return _sesi_publik(doc)
 

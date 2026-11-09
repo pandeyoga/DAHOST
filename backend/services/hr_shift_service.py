@@ -128,6 +128,11 @@ def _to_hr_shape(doc: Dict) -> Dict:
     d.setdefault("is_default", False)
     d.setdefault("color", "#64748b")
     d.setdefault("description", "")
+    # Tahap C (audit HR, 9 Nov 2026): toleransi terlambat PER SHIFT (None = ikut setelan umum) + jam mulai istirahat.
+    if d.get("toleransi_menit") in (None, "") and d.get("grace_minutes") not in (None, ""):
+        d["toleransi_menit"] = d.get("grace_minutes")
+    d.setdefault("toleransi_menit", None)
+    d.setdefault("istirahat_mulai", None)
     if not d.get("status"):
         d["status"] = "active" if d.get("active", True) else "inactive"
     return d
@@ -231,6 +236,7 @@ async def create_shift(db, data: Dict) -> Dict:
     eff = _calc_effective_hours(
         data["start_time"], data["end_time"],
         int(data.get("break_duration_minutes", 60)), overnight)
+    tambahan = field_toleransi_istirahat(data)
     doc = {
         "id": str(_uuid.uuid4()),
         # kanonik
@@ -255,9 +261,105 @@ async def create_shift(db, data: Dict) -> Dict:
         "status": "active",
         "created_at": now,
         "updated_at": now,
+        **tambahan["set"],
     }
     await db.rahaza_shifts.insert_one(doc)
     return {k: v for k, v in doc.items() if k != "_id"}
+
+
+MAKS_TOLERANSI = 240
+
+
+def field_toleransi_istirahat(data: Dict, isian_ada=None) -> Dict:
+    """Field shift Tahap C → {set: {...}, unset: [...]}.
+
+    * `toleransi_menit` (0–240): toleransi terlambat KHUSUS shift ini; disalin ke `grace_minutes` yang sudah dibaca
+      aturan absen (`core.attendance_rules`). Kosong/None = ikut setelan umum (kedua field dihapus).
+    * `istirahat_mulai` (JJ:MM): jam mulai istirahat — acuan jam masuk cuti setengah hari pagi (keputusan Q5).
+    `isian_ada` = nama field yang benar-benar dikirim (ubah sebagian); None = semua dianggap dikirim (buat baru)."""
+    ada = set(isian_ada) if isian_ada is not None else {"toleransi_menit", "istirahat_mulai"}
+    out: Dict = {"set": {}, "unset": []}
+    if "toleransi_menit" in ada:
+        v = data.get("toleransi_menit")
+        if v in (None, ""):
+            out["unset"] += ["toleransi_menit", "grace_minutes"]
+        else:
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                raise ValueError("Toleransi terlambat harus angka menit.")
+            if not 0 <= n <= MAKS_TOLERANSI:
+                raise ValueError(f"Toleransi terlambat harus 0–{MAKS_TOLERANSI} menit.")
+            out["set"].update({"toleransi_menit": n, "grace_minutes": n})
+    if "istirahat_mulai" in ada:
+        v = str(data.get("istirahat_mulai") or "").strip()
+        if not v:
+            out["unset"].append("istirahat_mulai")
+        else:
+            try:
+                _parse_time(v)
+            except Exception:
+                raise ValueError("Jam mulai istirahat tidak valid. Gunakan JJ:MM.")
+            out["set"]["istirahat_mulai"] = v[:5]
+    if isian_ada is None:
+        out["unset"] = []
+    return out
+
+
+def _hari_sebelum(iso: str) -> str:
+    from datetime import date as _date
+    return (_date.fromisoformat(str(iso)[:10]) - timedelta(days=1)).isoformat()
+
+
+def _hari_sesudah(iso: str) -> str:
+    from datetime import date as _date
+    return (_date.fromisoformat(str(iso)[:10]) + timedelta(days=1)).isoformat()
+
+
+def _sampai(v) -> Optional[str]:
+    """Tanggal akhir penugasan; kosong/None = sampai dicabut."""
+    return str(v)[:10] if v else None
+
+
+async def _potong_penugasan_beririsan(db, employee_id: str, dari: str, sampai: Optional[str], now: str) -> dict:
+    """Tutup HANYA bagian penugasan aktif yang beririsan dengan [dari, sampai] (sampai None = tanpa akhir).
+
+    * bagian sebelum `dari` → penugasan lama tetap aktif dengan tanggal akhir = sehari sebelum `dari`;
+    * bagian sesudah `sampai` (penugasan baru sementara) → penugasan lanjutan baru dengan shift yang sama;
+    * penugasan lama yang seluruhnya tertutup → `superseded`.
+    Return {dipotong, diganti, dilanjutkan} (jumlah) untuk uji & jejak."""
+    dari = str(dari)[:10]
+    sampai = _sampai(sampai)
+    hasil = {"dipotong": 0, "diganti": 0, "dilanjutkan": 0}
+    lama = await db.hr_shift_assignments.find(
+        {"employee_id": employee_id, "status": "active"}, {"_id": 0}).to_list(200)
+    for a in lama:
+        a_dari = str(a.get("effective_from") or "")[:10] or "0000-01-01"
+        a_sampai = _sampai(a.get("effective_until"))
+        beririsan = (a_sampai is None or a_sampai >= dari) and (sampai is None or a_dari <= sampai)
+        if not beririsan:
+            continue
+        ada_kiri = a_dari < dari
+        ada_kanan = sampai is not None and (a_sampai is None or a_sampai > sampai)
+        if ada_kanan:
+            nid = await next_counter(db, "hr_shift_assignments")
+            lanjut = {k: v for k, v in a.items() if k not in ("_id",)}
+            lanjut.update({
+                "_id": nid, "id": nid, "effective_from": _hari_sesudah(sampai), "effective_until": a_sampai,
+                "lanjutan_dari": a.get("id"), "created_at": now, "updated_at": now,
+                "notes": ((a.get("notes") or "") + " (lanjutan otomatis sesudah penugasan sementara)").strip(),
+            })
+            await db.hr_shift_assignments.insert_one(lanjut)
+            hasil["dilanjutkan"] += 1
+        if ada_kiri:
+            await db.hr_shift_assignments.update_one(
+                {"id": a.get("id")}, {"$set": {"effective_until": _hari_sebelum(dari), "updated_at": now}})
+            hasil["dipotong"] += 1
+        else:
+            await db.hr_shift_assignments.update_one(
+                {"id": a.get("id")}, {"$set": {"status": "superseded", "updated_at": now}})
+            hasil["diganti"] += 1
+    return hasil
 
 
 async def assign_shift(
@@ -289,14 +391,15 @@ async def assign_shift(
     if effective_until and str(effective_until) < str(effective_from):
         raise ValueError("Tanggal berakhir tidak boleh sebelum tanggal mulai.")
 
-    # Deactivate previous active assignment for same employee
-    await db.hr_shift_assignments.update_many(
-        {"employee_id": employee_id, "status": "active"},
-        {"$set": {"status": "superseded", "updated_at": _now().isoformat()}},
-    )
+    # 2026-11-09 (audit HR M10): hanya bagian penugasan lama yang BERIRISAN dengan masa penugasan baru yang
+    # ditutup. Dulu SEMUA penugasan aktif ditandai `superseded`, sehingga penugasan sementara (ada tanggal akhir)
+    # menghapus shift tetap: setelah masa sementara habis karyawan jatuh ke shift cadangan, dan sebelum tanggal
+    # mulai tidak ada penugasan sama sekali. Sekarang penugasan lama dipotong (bagian sebelum tetap aktif) dan
+    # bagian sesudah masa sementara dilanjutkan sebagai penugasan baru — sehingga satu tanggal = satu penugasan.
+    now = _now().isoformat()
+    await _potong_penugasan_beririsan(db, employee_id, effective_from, effective_until, now)
 
     aid = await next_counter(db, "hr_shift_assignments")
-    now = _now().isoformat()
     doc = {
         "_id": aid,
         "id": aid,
@@ -335,6 +438,7 @@ async def get_employee_shift(db, employee_id: str, for_date: str) -> Dict:
             ],
         },
         {"_id": 0},
+        sort=[("effective_from", -1)],   # M10: bila data lama masih tumpang-tindih, penugasan termuda menang
     )
     if not assign:
         return DEFAULT_SHIFT

@@ -523,6 +523,74 @@ def _skrip_target(k: "Keadaan") -> tuple[list[dict], str, dict]:
                    "**Setujui** bila sudah sesuai."), _alat("pasang_target_toko", args)], "tool_use", {})
 
 
+# ── Audit HR Tahap D (9 Nov 2026): skrip SDM & data saya ──
+# Kata kunci → alat baca. Lanjutan: "koreksi"/"terapkan" sesudah pengecualian → `terapkan_koreksi_absen` (dari
+# `saran_koreksi`); "draf" sesudah cakupan shift → `susun_draf_shift` (cara berlaku, minggu yang sama).
+SDM_KATA = (("pengecualian", "rekap_absensi_pengecualian"), ("lupa absen", "rekap_absensi_pengecualian"),
+            ("cek payroll", "cek_payroll_sebelum_finalisasi"), ("draf shift", "cakupan_shift"),
+            ("cakupan shift", "cakupan_shift"), ("slip", "slip_gaji_saya"), ("sisa cuti", "cuti_saya"),
+            ("cuti saya", "cuti_saya"), ("absen saya", "absen_saya"), ("shift saya", "jadwal_shift_saya"))
+
+
+def alat_sdm_dari(q: str) -> Optional[str]:
+    for kata, nama in SDM_KATA:
+        if kata in q:
+            return nama
+    return None
+
+
+def _json_isi(isi) -> dict:
+    if isinstance(isi, dict):
+        return isi
+    try:
+        return json.loads(isi)
+    except (TypeError, ValueError):
+        return {}
+
+
+def _skrip_sdm(k: "Keadaan", nama: str) -> tuple[list[dict], str, dict]:
+    q = (k.pertanyaan or "").lower()
+    if nama not in k.tools:
+        return ([_teks(f"*(Mode uji: alat `{nama}` tidak tersedia di percakapan ini.)* Data itu dibuka dari menunya "
+                       "langsung.")], "end_turn", {})
+    if not k.sudah(nama):
+        return ([_pikir("Ambil datanya dengan alat SDM."), _teks("Saya cek datanya dulu."), _alat(nama, {})],
+                "tool_use", {})
+    _n, _i, isi, err = k.terakhir(nama)
+    if err:
+        return [_teks(f"Data belum bisa dibaca: {isi} *(mode uji)*")], "end_turn", {}
+    data = _json_isi(isi)
+    if nama == "rekap_absensi_pengecualian" and ("koreksi" in q or "terapkan" in q):
+        d = k.terakhir("terapkan_koreksi_absen")
+        if d is not None:
+            return [_teks(_teks_sesudah_kartu(d, "Koreksi absen diterapkan."))], "end_turn", {}
+        koreksi = []
+        for r in data.get("pengecualian") or []:
+            sar = r.get("saran_koreksi") or {}
+            if not sar or not r.get("employee_id"):
+                continue
+            x = {"employee_id": r["employee_id"], "tanggal": r["tanggal"]}
+            for a, b in (("status", "status"), ("clock_in", "jam_masuk"), ("clock_out", "jam_pulang")):
+                if sar.get(a):
+                    x[b] = sar[a]
+            koreksi.append(x)
+        if koreksi and "terapkan_koreksi_absen" in k.tools:
+            return ([_teks(f"Ada {len(koreksi)} saran koreksi. Saya siapkan kartunya; tulis alasan lalu tekan **Setujui**."),
+                     _alat("terapkan_koreksi_absen", {"koreksi": koreksi[:10]})], "tool_use", {})
+    if nama == "cakupan_shift" and "draf" in q and "susun_draf_shift" in k.tools:
+        d = k.terakhir("susun_draf_shift")
+        if d is not None:
+            return [_teks(_teks_sesudah_kartu(d, "Draf jadwal dibuat."))], "end_turn", {}
+        per = data.get("periode") or {}
+        if per.get("dari") and per.get("sampai"):
+            return ([_teks("Saya siapkan draf jadwalnya dari shift yang berlaku; periksa kartunya."),
+                     _alat("susun_draf_shift", {"mulai": per["dari"], "selesai": per["sampai"], "cara": "berlaku"})],
+                    "tool_use", {})
+    ringkas = data.get("ringkas") or data.get("rekap") or data.get("saldo") or data.get("daftar") or data.get("hari")
+    return ([_teks(f"Ringkasan dari data SDM (mode uji): {json.dumps(ringkas, ensure_ascii=False)[:400]}")],
+            "end_turn", {})
+
+
 # ── Tahap D: skrip "briefing" (briefing pagi & laporan mingguan otomatis) dan ingatan ──
 ALAT_BRIEFING = ("ringkasan_penjualan", "target_toko", "posisi_kas_bank", "umur_piutang", "stok_menipis",
                  "pantau_produksi_ringkas", "daftar_persetujuan_menunggu")
@@ -774,6 +842,9 @@ def skrip_bawaan(k: Keadaan) -> tuple[list[dict], str, dict]:
                 "end_turn", {"server_tool_use": {"web_search_requests": 1, "web_fetch_requests": 0}})
     if "pengingat" in q:
         return _skrip_pengingat(k)
+    nama_sdm = alat_sdm_dari(q)
+    if nama_sdm:
+        return _skrip_sdm(k, nama_sdm)
     if "target" in q:
         return _skrip_target(k)
     if "laporan" in q:

@@ -478,7 +478,7 @@ class Jalan:
                  batas_tindakan: int = tdk.BATAS_BAWAAN, putusan: Optional[tdk.Putusan] = None,
                  boleh_lanjut: bool = True, ingatan_aktif: bool = False, fitur: str = FITUR,
                  otomatis: bool = False, lampiran: Optional[list] = None,
-                 maks_putaran_kode: int = MAKS_PUTARAN_KODE):
+                 maks_putaran_kode: int = MAKS_PUTARAN_KODE, ruang: Optional[str] = None):
         self.db = db
         self.user = user or {}
         self.user_id = self.user.get("id")
@@ -518,6 +518,12 @@ class Jalan:
             self.tindakan_aktif = False
         self.ingatan_aktif = bool(ingatan_aktif)
         self.alat_ditahan = frozenset() if (self.ingatan_aktif and not self.otomatis) else frozenset(ing.ALAT_INGATAN)
+        # Audit HR Tahap D: ruang percakapan (umum | sdm | saya) — alat di luar ruang ditahan (lihat alat_base.RUANG).
+        self.ruang = ruang if ruang in ab.RUANG else str((sesi or {}).get("ruang") or "umum")
+        if self.ruang not in ab.RUANG:
+            self.ruang = "umum"
+        if self.ruang != "umum":
+            self.alat_ditahan = self.alat_ditahan | ab.alat_luar_ruang(self.ruang)
         # Tahap E: ruang hitung bisa dimatikan (env `ASISTEN_AI_KODE_AKTIF=0`, atau ditolak API → `_KODE`).
         self.kode = kode_aktif()
         self.tools = ab.tools_untuk_api(tindakan=self.tindakan_aktif, kecuali=self.alat_ditahan, kode=self.kode)
@@ -682,7 +688,7 @@ class Jalan:
             awal, kabar = await tdk.tutup_terbuka(self.db, self.user_id, self.sesi_id, riwayat)
             catatan = await tdk.kabar_dibalikkan(self.db, self.user_id, self.sesi_id)
             konteks = pr.konteks_giliran(today=self.today, cv=self.cv, periode=self.periode,
-                                         peran=str(self.user.get("role") or ""))
+                                         peran=str(self.user.get("role") or ""), ruang=self.ruang)
             isi = list(awal) + [{"type": "text", "text": konteks}]
             if not self.kode:
                 isi.append({"type": "text", "text": pr.TEKS_KODE_MATI})

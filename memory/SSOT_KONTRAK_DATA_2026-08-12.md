@@ -551,3 +551,16 @@ mengunggah ulang Ekspor A — dan justru itu yang membekukan status pesanan lama
 * **PERLU KEPUTUSAN PEMILIK:** `EXCLUDED_FOR_REVENUE = ('cancelled',)` ⇒ pesanan **`returned` ikut
   dihitung** sebagai omzet. Selama belum diputuskan, rincian WAJIB memuat catatan
   “PERLU KEPUTUSAN PEMILIK …” beserta jumlah & nilainya (jangan diubah sepihak: menyentuh F2 & F5).
+
+## §SHIFT — roster, pola rotasi, permintaan shift (Tahap C audit HR, 9 Nov 2026)
+
+* **Satu master shift** = `rahaza_shifts`. Field tambahan: `toleransi_menit` (0–240; kosong = setelan umum, disalin ke
+  `grace_minutes` yang dibaca aturan absen) dan `istirahat_mulai` (JJ:MM, acuan cuti setengah hari pagi).
+  `rahaza_shift_templates` ("Pola jadwal" lama) **dipensiunkan** — baca saja.
+* `hr_shift_pola` (master): `{id, nama, keterangan, urutan[id shift | null=libur] (kelipatan 7, ≤ 56), aktif}`.
+* `rahaza_schedules` (jadwal): `{id, judul, jenis: roster|perubahan, start_date, end_date, department, location_id,
+  employee_ids[], cara, pola_id, status: draft|published|dibatalkan, shifts[], metadata, …}`. Entri kerja WAJIB
+  menyimpan `shift_id` + `shift_code` + jam; entri libur `{libur: true}`. Hanya `published` yang dibaca absensi;
+  jadwal terbit terbaru menang (`core.attendance_rules.resolve_day_shift`). Aturan: `core/shift_roster.py`.
+* `hr_shift_requests` (transaksi): ganti/tukar shift Portal Saya; alur rekan → atasan (`manager_id` → akun) → SDM;
+  disetujui = jadwal terbit `jenis: perubahan` satu tanggal. Aturan: `core/shift_permintaan.py`.

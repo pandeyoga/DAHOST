@@ -23,10 +23,20 @@ const asList = (d, ...keys) => {
 
 export const asistenApi = {
   status: () => apiFetch(`${BASE}/status`),
-  saran: (peran) => apiFetch(`${BASE}/saran${peran ? `?peran=${encodeURIComponent(peran)}` : ''}`)
-    .then((d) => asList(d, 'saran', 'items', 'data')),
-  listSessions: () => apiFetch(`${BASE}/sessions`).then((d) => asList(d, 'sessions', 'items', 'data')),
-  createSession: (judul) => apiFetch(`${BASE}/sessions`, { method: 'POST', body: judul ? { judul } : {} }),
+  // Audit HR Tahap D (9 Nov 2026): `ruang` = umum (Portal Manajemen) | sdm (Portal SDM) | saya (Portal Saya).
+  // Tanpa ruang = perilaku lama (server memakai ruang paling luas yang diizinkan).
+  saran: (peran, ruang) => {
+    const q = new URLSearchParams();
+    if (peran) q.set('peran', peran);
+    if (ruang) q.set('ruang', ruang);
+    const qs = q.toString();
+    return apiFetch(`${BASE}/saran${qs ? `?${qs}` : ''}`).then((d) => asList(d, 'saran', 'items', 'data'));
+  },
+  listSessions: (ruang) => apiFetch(`${BASE}/sessions${ruang ? `?ruang=${encodeURIComponent(ruang)}` : ''}`)
+    .then((d) => asList(d, 'sessions', 'items', 'data')),
+  createSession: (judul, ruang) => apiFetch(`${BASE}/sessions`, {
+    method: 'POST', body: { ...(judul ? { judul } : {}), ...(ruang ? { ruang } : {}) },
+  }),
   getSession: (id) => apiFetch(`${BASE}/sessions/${encodeURIComponent(id)}`),
   renameSession: (id, judul) => apiFetch(`${BASE}/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: { judul } }),
   deleteSession: (id) => apiFetch(`${BASE}/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),

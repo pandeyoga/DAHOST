@@ -228,12 +228,20 @@ def test_route_penjadwal_shift_generate_dan_terbitkan_menolak_staf(monkeypatch):
     db.rahaza_schedules.docs.append({"id": "j1", "status": "draft"})
     monkeypatch.setattr(ss, "get_db", lambda: db)
 
+    async def _tanpa_log(*a, **k):
+        return None
+    monkeypatch.setattr(ss, "log_activity", _tanpa_log)   # Tahap C: terbit kini dicatat di log aktivitas
+
     async def _staf(request):
         return U("u1", "admin_gudang")
     monkeypatch.setattr(ss, "require_auth", _staf)
-    req = ss.GenerateScheduleRequest(start_date="2026-11-10", end_date="2026-11-11", shift_templates=["t1"])
+    # Tahap C audit HR (9 Nov 2026): jadwal otomatis lama dipensiunkan (410), tetapi gerbang penulis tetap lebih dulu.
     with pytest.raises(HTTPException) as e:
-        run(ss.generate_schedule(FakeRequest(), req))
+        run(ss.generate_schedule(FakeRequest()))
+    assert e.value.status_code == 403
+    with pytest.raises(HTTPException) as e:
+        run(ss.buat_jadwal(FakeRequest(), ss.JadwalBaruModel(start_date="2026-11-10", end_date="2026-11-11",
+                                                               cara="shift", shift_id="sh-x")))
     assert e.value.status_code == 403
     with pytest.raises(HTTPException) as e:
         run(ss.publish_schedule(FakeRequest(), "j1"))

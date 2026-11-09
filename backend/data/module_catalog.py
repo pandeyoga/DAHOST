@@ -516,6 +516,8 @@ ALSO_PORTALS = {
     "wh_sku_bridge": ["toko"], "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
     "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
     "fin_exec_report": ["management"],
+    # 2026-11-09 (audit HR Tahap D): Asisten AI juga dibuka di Portal SDM (ruang `sdm`, tab AI SDM).
+    "mgmt_asisten_ai": ["hr"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
     "wh_master": ["production", "rnd"],
     # 2026-11-02: tagihan CMT (posting/bayar) juga ditulis dari Portal Maklon (layar Tagihan CMT maklon) —

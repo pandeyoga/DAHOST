@@ -102,6 +102,10 @@ class ShiftCreateModel(BaseModel):
     is_default: bool = False
     color: str = "#64748b"
     description: str = ""
+    # Tahap C (audit HR 9 Nov 2026, keputusan Q4/Q5): toleransi terlambat per shift (kosong = setelan umum) dan
+    # jam mulai istirahat (acuan cuti setengah hari pagi).
+    toleransi_menit: Optional[int] = None
+    istirahat_mulai: Optional[str] = None
 
 
 class ShiftUpdateModel(BaseModel):
@@ -115,6 +119,8 @@ class ShiftUpdateModel(BaseModel):
     color: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    toleransi_menit: Optional[int] = None     # kirim null = kembali ke setelan umum
+    istirahat_mulai: Optional[str] = None     # kirim "" / null = hapus
 
 
 class AssignShiftModel(BaseModel):
@@ -123,6 +129,17 @@ class AssignShiftModel(BaseModel):
     effective_from: str          # YYYY-MM-DD
     effective_until: Optional[str] = None
     department: str = ""
+    notes: str = ""
+
+
+class AssignMassalModel(BaseModel):
+    """Penugasan massal (Tahap C): pilihan baris (`employee_ids`) ATAU semua karyawan aktif satu departemen/lokasi."""
+    employee_ids: Optional[List[str]] = None
+    department: Optional[str] = None
+    location_id: Optional[str] = None
+    shift_id: str
+    effective_from: str
+    effective_until: Optional[str] = None
     notes: str = ""
 
 
@@ -212,7 +229,7 @@ async def list_assignments(
     limit: int = Query(100, ge=1, le=500),
     skip: int = Query(0, ge=0),
 ):
-    await require_auth(request)
+    _require_view_all(await require_auth(request))
     db = get_db()
     q = {}
     if status:
@@ -255,9 +272,105 @@ async def create_assignment(request: Request, body: AssignShiftModel):
     return _ok(doc, message="Shift berhasil di-assign ke karyawan.")
 
 
+MAKS_MASSAL = 500
+
+
+@router.post("/assignments/massal")
+async def create_assignment_massal(request: Request, body: AssignMassalModel):
+    """Penugasan MASSAL (Tahap C audit HR): satu shift untuk banyak karyawan sekaligus — pilihan baris di layar
+    Penugasan shift, atau semua karyawan aktif satu departemen/lokasi. Tiap karyawan memakai aturan penugasan
+    tunggal yang sama (`assign_shift`: hanya bagian penugasan lama yang beririsan yang ditutup). Dulu 25 karyawan
+    = 25 kali membuka formulir."""
+    user = await require_auth(request)
+    _require_shift_writer(user)
+    db = get_db()
+    from core.shift_roster import karyawan_lingkup
+    if body.employee_ids is None and not (body.department or body.location_id):
+        raise HTTPException(400, "Pilih karyawan, departemen, atau lokasi yang akan ditugaskan.")
+    emps = await karyawan_lingkup(db, departemen=body.department or None, lokasi=body.location_id or None,
+                                  employee_ids=body.employee_ids, batas=MAKS_MASSAL + 1)
+    if not emps:
+        raise HTTPException(400, "Tidak ada karyawan aktif yang cocok dengan pilihan ini.")
+    if len(emps) > MAKS_MASSAL:
+        raise HTTPException(400, f"Paling banyak {MAKS_MASSAL} karyawan sekali tugaskan. Persempit pilihan.")
+    assigned_by = user.get("full_name") or user.get("name") or user.get("email") or ""
+    berhasil, gagal = [], []
+    for e in emps:
+        try:
+            doc = await assign_shift(db, employee_id=e["id"], shift_id=body.shift_id,
+                                     effective_from=body.effective_from, effective_until=body.effective_until,
+                                     assigned_by=assigned_by, notes=body.notes)
+            berhasil.append(doc["id"])
+        except ValueError as ex:
+            if not berhasil and "Shift" in str(ex) and "tidak ditemukan" in str(ex):
+                raise HTTPException(400, str(ex))
+            gagal.append({"employee_id": e["id"], "karyawan": e.get("name") or e.get("employee_code"), "pesan": str(ex)})
+    await log_activity(str(user.get("id") or ""), assigned_by, "assign_shift_massal", "hr_shift_assignments",
+                       f"shift={body.shift_id} karyawan={len(berhasil)} gagal={len(gagal)}")
+    pesan = f"Shift ditugaskan ke {len(berhasil)} karyawan." + (f" {len(gagal)} gagal." if gagal else "")
+    return _ok({"berhasil": len(berhasil), "gagal": gagal}, message=pesan)
+
+
+def _require_view_all(user: dict) -> None:
+    """Audit HR P1 (9 Nov 2026): penugasan & jadwal berisi nama + shift seluruh karyawan → hanya HR/atasan/
+    pemegang Portal SDM (pola `can_view_all_employees` yang sama dengan absensi). Master shift tetap terbuka."""
+    from utils.employee_identity import can_view_all_employees
+    if not can_view_all_employees(user):
+        raise HTTPException(403, "Hanya HR dan atasan yang boleh melihat penugasan shift karyawan lain.")
+
+
+@router.get("/penugasan-karyawan")
+async def penugasan_per_karyawan(
+    request: Request,
+    tanggal: Optional[str] = None,
+    department: Optional[str] = None,
+    location_id: Optional[str] = None,
+    q: Optional[str] = None,
+):
+    """Layar Penugasan shift (Tahap C): SEMUA karyawan aktif + shift yang berlaku pada `tanggal` (bawaan hari ini)
+    dan asalnya (jadwal terbit / penugasan / shift utama / belum ada) — dasar pilihan baris penugasan massal."""
+    user = await require_auth(request)
+    _require_view_all(user)
+    db = get_db()
+    from core.shift_roster import GalatRoster, karyawan_lingkup, muat_shift, penugasan_aktif, sel_berlaku, tgl
+    try:
+        hari = tgl(tanggal).isoformat() if tanggal else wib_date_str()
+    except GalatRoster as e:
+        raise HTTPException(e.status, e.pesan)
+    emps = await karyawan_lingkup(db, departemen=department or None, lokasi=location_id or None, cari=q)
+    shifts = await muat_shift(db)
+    sel = await sel_berlaku(db, emps, [hari], shifts)
+    tugas = await penugasan_aktif(db, [e["id"] for e in emps], hari, "9999-12-31")
+    lok = {}
+    async for r in db.rahaza_locations.find({}, {"_id": 0, "id": 1, "name": 1}):
+        lok[r.get("id")] = r.get("name")
+    rows = []
+    for e in emps:
+        c = (sel.get(e["id"]) or {}).get(hari) or {}
+        s = shifts.get(str(c.get("shift_id"))) if c.get("shift_id") else None
+        semua = tugas.get(e["id"]) or []
+        kini = next((a for a in semua if str(a.get("effective_from") or "") <= hari), None)
+        nanti = sorted((a for a in semua if str(a.get("effective_from") or "") > hari),
+                       key=lambda a: str(a.get("effective_from")))
+        rows.append({
+            "employee_id": e["id"], "employee_code": e.get("employee_code") or "", "name": e.get("name") or "",
+            "department": e.get("department") or "", "location_id": e.get("location_id"),
+            "location_name": lok.get(e.get("location_id")) or "",
+            "shift": ({"id": s["id"], "kode": s["kode"], "nama": s["nama"], "mulai": s["mulai"], "selesai": s["selesai"],
+                       "warna": s["warna"]} if s else None),
+            "sumber": c.get("sumber"),
+            "penugasan": ({"id": kini.get("id"), "effective_from": kini.get("effective_from"),
+                           "effective_until": kini.get("effective_until") or None} if kini else None),
+            "berikutnya": [{"id": a.get("id"), "shift_code": a.get("shift_code"), "effective_from": a.get("effective_from"),
+                            "effective_until": a.get("effective_until") or None} for a in nanti[:3]],
+        })
+    return _ok(rows, total=len(rows), tanggal=hari)
+
+
 @router.get("/assignments/employee/{employee_id}")
 async def get_employee_assignments(request: Request, employee_id: str):
-    await require_auth(request)
+    user = await require_auth(request)
+    _require_view_all(user)
     db = get_db()
     items = await db.hr_shift_assignments.find(
         {"employee_id": employee_id},
@@ -337,10 +450,19 @@ async def update_shift(request: Request, shift_id: str, body: ShiftUpdateModel):
     doc = await db.rahaza_shifts.find_one({"id": _coerce_id(shift_id)})
     if not doc:
         raise HTTPException(404, "Shift tidak ditemukan.")
-    update = {k: v for k, v in body.dict(exclude_none=True).items()}
+    update = {k: v for k, v in body.dict(exclude_none=True).items()
+              if k not in ("toleransi_menit", "istirahat_mulai")}
+    # Tahap C: toleransi & jam istirahat — null yang DIKIRIM berarti "hapus / ikut setelan umum".
+    from services.hr_shift_service import field_toleransi_istirahat
+    try:
+        tambahan = field_toleransi_istirahat(body.dict(), isian_ada=body.model_fields_set)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    update.update(tambahan["set"])
     st = update.get("start_time") or doc.get("start_time")
     et = update.get("end_time") or doc.get("end_time")
-    brk = update.get("break_duration_minutes") or doc.get("break_duration_minutes", 60)
+    # 2026-11-09: istirahat 0 menit sah (dulu `or` membuat 0 kembali ke nilai lama)
+    brk = update["break_duration_minutes"] if "break_duration_minutes" in update else doc.get("break_duration_minutes", 60)
     ov = update.get("is_overnight") if "is_overnight" in update else doc.get("is_overnight", False)
     from services.hr_shift_service import _calc_effective_hours
     update["effective_hours"] = _calc_effective_hours(st, et, brk, ov)
@@ -355,8 +477,11 @@ async def update_shift(request: Request, shift_id: str, body: ShiftUpdateModel):
     if update.get("status"):
         update["active"] = update["status"] == "active"
     update["updated_at"] = _now()
-    await db.rahaza_shifts.update_one({"id": _coerce_id(shift_id)}, {"$set": update})
-    return _ok(message="Shift diupdate.")
+    ops = {"$set": update}
+    if tambahan["unset"]:
+        ops["$unset"] = {k: "" for k in tambahan["unset"]}
+    await db.rahaza_shifts.update_one({"id": _coerce_id(shift_id)}, ops)
+    return _ok(message="Shift disimpan.")
 
 
 @router.delete("/{shift_id}")
