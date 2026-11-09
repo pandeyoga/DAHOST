@@ -621,6 +621,9 @@ class OrderCreateBody(BaseModel):
     customer_name: str
     # Identification
     order_id: Optional[str] = None  # marketplace reference (auto-gen if blank)
+    # Q-4 (9 Nov 2026) — tanggal pesanan dibuat (YYYY-MM-DD atau YYYY-MM-DD HH:MM). WAJIB
+    # untuk toko marketplace; toko non-marketplace boleh kosong (= sekarang).
+    order_date: Optional[str] = None
     account_name: Optional[str] = None
     # ── K-8a — TAUTAN KE MASTER (wajib salah satu) ────────────────────────────
     catalog_item_id: Optional[str] = None   # item katalog yang dijual
@@ -757,6 +760,56 @@ async def _resolve_order_link(db, *, catalog_item_id=None, variant_id=None,
 # 2026-11-02 (K6) — reservasi stok order manual DIMATIKAN (lihat docstring create_order).
 RESERVE_MANUAL_ORDERS = False
 
+# Q-4 (keputusan owner 9 Nov 2026) — platform yang punya ekspor pesanan Seller Center.
+MARKETPLACE_FAMILIES = ("shopee", "tiktok", "tokopedia", "lazada", "blibli")
+
+
+def _parse_order_wall(raw: Optional[str]) -> Optional[datetime]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+                "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s[:19], fmt)
+        except ValueError:
+            continue
+    raise HTTPException(400, f"Tanggal pesanan '{raw}' tidak dikenali (format TTTT-BB-HH atau "
+                             "TTTT-BB-HH JJ:MM).")
+
+
+async def _manual_order_identity(db, account: dict, body) -> tuple:
+    """Q-4 — pesanan manual untuk toko MARKETPLACE wajib nomor pesanan platform + tanggal
+    pesanan, dan nomor itu belum boleh tercatat. Dulu nomor `MAN-…` bertanggal hari ini
+    akan terhitung DUA KALI saat ekspor Seller Center hari itu diimpor (nomor tidak cocok).
+    Toko non-marketplace (WA/offline/website) tetap boleh tanpa nomor (`MAN-…`).
+    → ``(order_wall | None, order_ref | None)``.
+    """
+    from core import marketing_account_scope as _scope
+    from core import marketing_cycle as _cycle
+    fam = _scope.platform_family(account.get("platform"))
+    ref = str(body.order_id or "").strip()
+    wall = _parse_order_wall(body.order_date)
+    if fam in MARKETPLACE_FAMILIES:
+        if not ref or ref.upper().startswith("MAN-"):
+            raise HTTPException(400, (
+                f"Toko '{account.get('account_name')}' adalah toko {fam.capitalize()}: isi No. "
+                "Pesanan dari Seller Center. Pesanan marketplace sebaiknya masuk lewat impor "
+                "pesanan; input manual hanya untuk melengkapi pesanan yang belum ada di ekspor."))
+        if wall is None:
+            raise HTTPException(400, "Isi tanggal pesanan dibuat (sesuai Seller Center) untuk "
+                                     "pesanan toko marketplace.")
+    if ref:
+        dup = await db.marketing_orders.find_one({"order_id": ref}, {"_id": 0, "account_name": 1})
+        if dup:
+            raise HTTPException(409, f"No. Pesanan '{ref}' sudah tercatat (toko "
+                                     f"'{dup.get('account_name') or '-'}'). Buka pesanan itu — "
+                                     "jangan membuat pesanan kedua.")
+    if wall is not None:
+        await _cycle.assert_period_open(db, account.get("id"), wall.strftime("%Y-%m-%d"),
+                                        action="mencatat pesanan manual")
+    return wall, (ref or None)
+
 
 @router.post("", status_code=201)
 async def create_order(body: OrderCreateBody, request: Request):
@@ -792,6 +845,10 @@ async def create_order(body: OrderCreateBody, request: Request):
         platform=body.platform)
     if not _acc:
         raise HTTPException(400, f"Toko/akun tidak sah: {_why}")
+    # Lingkup toko: pesanan hanya untuk toko yang dipegang pemakai (account_name di body
+    # tidak terlihat middleware lingkup).
+    await _scope.assert_account_visible(db, user, _acc.get("id"))
+    order_wall_in, ref_in = await _manual_order_identity(db, _acc, body)
 
     # ── K-8b — SETIAP baris order ditautkan & direservasi, bukan hanya yang pertama
     # Dulu hanya `items[0]` yang ditautkan ke master dan hanya stok baris itu yang
@@ -857,9 +914,9 @@ async def create_order(body: OrderCreateBody, request: Request):
 
     now = _now()
     # tanggal bisnis pesanan = jam dinding WIB (lihat catatan `_now_wib_wall`)
-    order_wall = _now_wib_wall()
+    order_wall = order_wall_in or _now_wib_wall()
     new_id = str(uuid.uuid4())
-    order_ref = body.order_id or f"MAN-{order_wall.strftime('%Y%m%d')}-{new_id[:6].upper()}"
+    order_ref = ref_in or f"MAN-{order_wall.strftime('%Y%m%d')}-{new_id[:6].upper()}"
 
     # ── M10: reservasi stok saat order dibuat — PER BARIS (K-8b) ──────────────
     items_list: list = []

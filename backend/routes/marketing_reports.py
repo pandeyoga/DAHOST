@@ -161,6 +161,50 @@ async def daily_report(
     })
 
 
+def _hari_berjalan(y: int, m: int, total_days: int) -> int:
+    """M-26 — penyebut tingkat input = hari yang SUDAH lewat (bulan berjalan sampai hari ini)."""
+    today = now_wib()
+    if (today.year, today.month) == (y, m):
+        return max(1, min(total_days, today.day))
+    if (today.year, today.month) < (y, m):
+        return total_days
+    return total_days
+
+
+def _monthly_summary(result: list, n_accounts: int) -> dict:
+    """Ringkasan laporan bulanan — SATU pembuat untuk layar & PDF.
+
+    M-04 (audit 9 Nov 2026): persen capaian gabungan dulu = omzet SEMUA toko ÷ target toko
+    yang bertarget (117,3% padahal satu-satunya toko bertarget baru 68,6%). Pembilang &
+    penyebut sekarang dari toko bertarget yang sama; omzet toko tanpa target dilaporkan
+    terpisah. `rev_actual` (omzet resmi semua toko) TIDAK berubah.
+    """
+    cap_r = _ukuran.capaian_gabungan(result, lambda r: r["target"]["revenue"],
+                                     lambda r: r["actual"]["revenue"])
+    cap_o = _ukuran.capaian_gabungan(result, lambda r: r["target"]["orders"],
+                                     lambda r: r["actual"]["orders"])
+    tot_tasks = sum(r["task_stats"]["total"] for r in result)
+    tot_done = sum(r["task_stats"]["done"] for r in result)
+    avg_input = (round(sum(r["actual"]["input_rate"] for r in result) / len(result), 1)
+                 if result else 0)
+    return {
+        "total_accounts": n_accounts,
+        "rev_target": cap_r["target"],
+        "rev_actual": sum(r["actual"]["revenue"] for r in result),
+        "rev_pct": cap_r["persen"],
+        "rev_actual_targeted": cap_r["aktual_bertarget"],
+        "rev_actual_untargeted": cap_r["aktual_tanpa_target"],
+        "accounts_with_target": cap_r["toko_bertarget"],
+        "accounts_without_target": cap_r["toko_tanpa_target"],
+        "ord_target": cap_o["target"],
+        "ord_actual": sum(r["actual"]["orders"] for r in result),
+        "ord_pct": cap_o["persen"],
+        "task_completion": round(tot_done / tot_tasks * 100, 1) if tot_tasks > 0 else None,
+        "avg_sales_input_rate": avg_input,
+        "pct_basis": "hanya toko yang punya target bulan ini",
+    }
+
+
 # ── LAPORAN BULANAN ───────────────────────────────────────────────────────────
 @router.get("/monthly")
 async def monthly_report(
@@ -211,7 +255,7 @@ async def monthly_report(
         rev_actual  = _act["omzet"]
         ord_actual  = _act["pesanan"]
         sales_days  = _act["hari_ada_data"]
-        input_rate  = round(sales_days / total_days * 100, 1)
+        input_rate  = round(sales_days / _hari_berjalan(y, m, total_days) * 100, 1)
 
         # Daily chart data
         daily_chart = [
@@ -277,27 +321,9 @@ async def monthly_report(
             "daily_chart": daily_chart,
         })
 
-    # Overall summary
-    tot_rev_tgt    = sum(r["target"]["revenue"] or 0  for r in result)
-    tot_rev_actual = sum(r["actual"]["revenue"]       for r in result)
-    tot_ord_tgt    = sum(r["target"]["orders"]  or 0  for r in result)
-    tot_ord_actual = sum(r["actual"]["orders"]        for r in result)
-    tot_tasks      = sum(r["task_stats"]["total"]     for r in result)
-    tot_done       = sum(r["task_stats"]["done"]      for r in result)
-    avg_input      = round(sum(r["actual"]["input_rate"] for r in result) / len(result), 1) if result else 0
-
     return serialize_doc({
         "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
-        "summary": {
-            "total_accounts":     len(accounts),
-            "rev_target":         tot_rev_tgt,
-            "rev_actual":         tot_rev_actual,
-            "rev_pct":            round(tot_rev_actual / tot_rev_tgt * 100, 1) if tot_rev_tgt > 0 else None,
-            "ord_target":         tot_ord_tgt,
-            "ord_actual":         tot_ord_actual,
-            "task_completion":    round(tot_done / tot_tasks * 100, 1) if tot_tasks > 0 else None,
-            "avg_sales_input_rate": avg_input,
-        },
+        "summary": _monthly_summary(result, len(accounts)),
         "accounts": result,
     })
 
@@ -348,7 +374,7 @@ async def export_monthly_report_pdf(
         rev_actual  = _act["omzet"]
         ord_actual  = _act["pesanan"]
         sales_days  = _act["hari_ada_data"]
-        input_rate  = round(sales_days / total_days * 100, 1)
+        input_rate  = round(sales_days / _hari_berjalan(y, m, total_days) * 100, 1)
         tasks_all   = await db.marketing_tasks.count_documents({
             "account_id": acc_id, "created_at": {"$gte": month_start, "$lt": month_end}, "status": {"$ne": "cancelled"}
         })
@@ -377,24 +403,9 @@ async def export_monthly_report_pdf(
             "task_stats": {"total": tasks_all, "done": tasks_done, "completion_rate": round(tasks_done/tasks_all*100,1) if tasks_all else None},
         })
 
-    tot_rev_tgt    = sum(r["target"]["revenue"] or 0 for r in result)
-    tot_rev_actual = sum(r["actual"]["revenue"]      for r in result)
-    tot_ord_tgt    = sum(r["target"]["orders"]  or 0 for r in result)
-    tot_ord_actual = sum(r["actual"]["orders"]       for r in result)
-    tot_tasks      = sum(r["task_stats"]["total"]    for r in result)
-    tot_done       = sum(r["task_stats"]["done"]     for r in result)
-    avg_input      = round(sum(r["actual"]["input_rate"] for r in result) / len(result), 1) if result else 0
-
     report_payload = {
         "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
-        "summary": {
-            "total_accounts": len(accounts),
-            "rev_target": tot_rev_tgt, "rev_actual": tot_rev_actual,
-            "rev_pct": round(tot_rev_actual / tot_rev_tgt * 100, 1) if tot_rev_tgt > 0 else None,
-            "ord_target": tot_ord_tgt, "ord_actual": tot_ord_actual,
-            "task_completion": round(tot_done / tot_tasks * 100, 1) if tot_tasks > 0 else None,
-            "avg_sales_input_rate": avg_input,
-        },
+        "summary": _monthly_summary(result, len(accounts)),
         "accounts": result,
     }
 

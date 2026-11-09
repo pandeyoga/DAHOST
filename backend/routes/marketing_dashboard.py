@@ -57,11 +57,14 @@ async def get_dashboard_overview(
     # dibaca lewat `core.ukuran_penjualan` (tanpa batas baris, tanpa data contoh, satu
     # dokumen per toko-tanggal) — angka yang sama dengan laporan bulanan & Asisten AI.
     oms = await _ukuran.ringkas_omzet(db, active_accounts_list, date_from, date_to)
-    live_rows, _dup_live = await _ukuran.baca_rekap(db, active_ids, date_from, date_to,
-                                                    revenue_type="live")
     total_revenue = oms["total"]["omzet"]
     total_orders = oms["total"]["pesanan"]
-    total_revenue_live = sum(r["omzet"] for r in live_rows)
+    # M-07 / Q-2 (9 Nov 2026) — omzet live resmi = pesanan berkanal LIVE (bagian dari omzet
+    # total). Dulu = rekap jenis "live" hasil sinkron shift host + sesi kreator, sehingga satu
+    # siaran terhitung dua kali (Rp578.854 untuk siaran Rp289.427) dan tidak turun saat sesi
+    # kreator dihapus.
+    total_revenue_live = (await _ukuran.ringkas_live(db, active_accounts_list, date_from,
+                                                     date_to))["omzet"]
 
     # Top performing account (by revenue) — only from active accounts
     account_revenue = {aid: t["omzet"] for aid, t in oms["per_toko"].items() if t["hari_ada_data"]}
@@ -81,6 +84,7 @@ async def get_dashboard_overview(
             "active_accounts": len(active_accounts_list),
             "total_revenue": round(total_revenue),
             "total_revenue_live": round(total_revenue_live),
+            "live_definition": _ukuran.DEFINISI_LIVE,
             "total_orders": total_orders,
             "avg_order_value": round(total_revenue / total_orders) if total_orders > 0 else 0
         },
@@ -121,12 +125,21 @@ async def get_account_dashboard(
     # Get sales data for this account
     query = {
         "account_id": account_id,
-        "date": {"$gte": date_from, "$lte": date_to}
+        "date": {"$gte": date_from, "$lte": date_to},
+        "revenue_type": "total",
     }
-    
+
     # 2026-11-07 (audit #1) — tanpa batas 500 baris & tanpa data contoh.
+    # 9 Nov 2026 — satu dokumen per tanggal (kembaran lama: yang terbaru), aturan baku.
     query.update(_ukuran.TANPA_CONTOH)
-    sales_data = [s async for s in db.marketing_sales_data.find(query, {"_id": 0}).sort("date", 1)]
+    _pick: dict = {}
+    async for _d in db.marketing_sales_data.find(query, {"_id": 0}):
+        _k = str(_d.get("date") or "")[:10]
+        if _k in _pick and str(_d.get("updated_at") or "") <= str(_pick[_k].get("updated_at") or ""):
+            continue
+        _pick[_k] = _d
+    sales_data = [_pick[k] for k in sorted(_pick)]
+    _live = await _ukuran.ringkas_live(db, [account], date_from, date_to)
     
     # Separate total vs live
     total_revenue = 0
@@ -156,14 +169,13 @@ async def get_account_dashboard(
                 latest_fulfillment = _shape.read_group(sale, "fulfillment")
             if _shape.read_group(sale, "customer_satisfaction"):
                 latest_satisfaction = _shape.read_group(sale, "customer_satisfaction")
-        elif sale.get("revenue_type") == "live":
-            live_revenue += m.get("revenue", 0)
-            live_orders += m.get("orders", 0)
-            daily_chart_live.append({
-                "date": sale.get("date"),
-                "revenue": m.get("revenue", 0),
-                "orders": m.get("orders", 0)
-            })
+            # Q-2 — omzet live resmi = pesanan berkanal LIVE (kanal di rekap total)
+            _lv = _ukuran._num(_shape.read_group(sale, "traffic").get("live"))
+            live_revenue += _lv
+            if _lv:
+                daily_chart_live.append({"date": sale.get("date"), "revenue": _lv, "orders": None})
+    live_orders = _live["pesanan"]
+    live_revenue = _live["omzet"]      # satu definisi (termasuk rekap live ketikan toko manual)
     
     return serialize_doc({
         "account": {
@@ -188,7 +200,10 @@ async def get_account_dashboard(
             "revenue": round(live_revenue),
             "orders": live_orders,
             "aov": round(live_revenue / live_orders) if live_orders > 0 else 0,
-            "daily_chart": daily_chart_live
+            "daily_chart": daily_chart_live,
+            "sessions": _live["sesi"],
+            "recorded_in_sessions": _live["omzet_tercatat_sesi"],
+            "definition": _ukuran.DEFINISI_LIVE,
         },
         "health_metrics": {
             "rating": latest_satisfaction.get("rating", 0),

@@ -68,6 +68,14 @@ async def create_sales_data(
     user = _get_user(request)
     reason = (override_reason or getattr(data, "override_reason", None) or "").strip()
 
+    # Q-5 (keputusan owner 9 Nov 2026) — toko bermode "Impor pesanan" tidak menerima rekap
+    # TOTAL yang diketik (kecuali override SPV beralasan): omzetnya dari pesanan.
+    if data.revenue_type == "total" and not override:
+        from core import marketing_input_mode as _mode
+        if await _mode.mode_toko(db, account) == _mode.IMPOR and not (
+                existing and _shape.is_derived(existing)):
+            raise HTTPException(409, _mode.pesan_tolak_manual(account, data.date))
+
     if existing:
         derived = _shape.is_derived(existing)
         if not override:
@@ -204,11 +212,15 @@ async def get_account_sales_data(
     request: Request,
     date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
     date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    revenue_type: Optional[str] = Query(None, description="total | live | all")
+    revenue_type: Optional[str] = Query(None, description="total | live | all"),
+    limit: int = Query(500, ge=1, le=2000),
 ):
     """
     Get sales data for an account with date range filter.
     revenue_type='all' returns both total and live data.
+
+    M-08 (audit 9 Nov 2026) — `limit` dulu diabaikan (selalu 500) dan data contoh ikut;
+    sekarang `limit` dipakai dan dokumen ber-`_seed_origin` dibuang (aturan omzet baku).
     """
     await require_auth(request)
     db = get_db()
@@ -217,7 +229,7 @@ async def get_account_sales_data(
     if not account:
         raise HTTPException(404, "Account not found")
     
-    query = {"account_id": account_id}
+    query = {"account_id": account_id, "_seed_origin": {"$ne": True}}
     
     # Date range filter
     if date_from or date_to:
@@ -233,7 +245,7 @@ async def get_account_sales_data(
             raise HTTPException(400, "revenue_type must be 'total', 'live', or 'all'")
         query["revenue_type"] = revenue_type
     
-    sales_data = await db.marketing_sales_data.find(query, {"_id": 0}).sort("date", -1).to_list(500)
+    sales_data = await db.marketing_sales_data.find(query, {"_id": 0}).sort("date", -1).to_list(limit)
     
     return serialize_doc(sales_data)
 

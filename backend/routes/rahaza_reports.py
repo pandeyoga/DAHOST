@@ -1129,35 +1129,43 @@ async def reports_hub_summary(request: Request):
 
     # ── MARKETING ──────────────────────────────────────────────────────────
     else:
-        orders = await db.marketing_orders.find({}, {"_id": 0}).to_list(MAX_DOCS)
-        in_period_rows = [o for o in orders
-                          if _in_period(o.get("order_date") or o.get("created_at"), start, end)]
-        revenue = sum(_f(o.get("revenue") or o.get("price_final")) for o in in_period_rows)
-        qty = sum(_i(o.get("quantity")) for o in in_period_rows)
+        # M-12 (audit Marketing 9 Nov 2026) — dulu Σ `revenue`‖`price_final` SEMUA pesanan
+        # (termasuk batal, belum dibayar, dan data contoh), tanpa lingkup toko: angka
+        # Manajemen ≠ angka Marketing. Sekarang satu definisi omzet (`core.ukuran_penjualan`):
+        # total dari rekap harian, rincian produk dari pesanan yang dihitung omzet.
+        from core import ukuran_penjualan as _uk
+        user = getattr(request.state, "user", None) or {}
+        accounts = await _uk.toko_terlihat(db, user)
+        ids = [a_["id"] for a_ in accounts]
+        oms = await _uk.ringkas_omzet(db, accounts, start, end)
+        tot = oms["total"]
+        counted = await _uk.baca_pesanan(db, ids, start, end)
+        produk = await _uk.rincian_item(db, counted, "produk")
+        recent = await db.marketing_orders.find(
+            {"account_id": {"$in": ids}, **_uk.TANPA_CONTOH}, {"_id": 0}
+        ).sort("order_date", -1).limit(10).to_list(10) if ids else []
+        n_orders = await db.marketing_orders.count_documents(
+            {"account_id": {"$in": ids}, **_uk.TANPA_CONTOH}) if ids else 0
         by_status: dict = {}
-        for o in in_period_rows:
-            k = o.get("fulfillment_status") or "belum diproses"
+        for o in counted:
+            k = o.get("status") or "-"
             by_status[k] = by_status.get(k, 0) + 1
-        by_product: dict = {}
-        for o in in_period_rows:
-            k = o.get("product_name") or "-"
-            row = by_product.setdefault(k, {"produk": k, "qty": 0, "omzet": 0.0, "order": 0})
-            row["qty"] += _i(o.get("quantity"))
-            row["omzet"] += _f(o.get("revenue") or o.get("price_final"))
-            row["order"] += 1
         kpis = [
-            _kpi("Order Periode", len(in_period_rows), "number", f"{start} → {end}", "primary"),
-            _kpi("Omzet Periode", round(revenue), "currency", f"{qty} pcs terjual", "success"),
-            _kpi("Total Order", len(orders), "number", "seluruh riwayat", "info"),
-            _kpi("Status Pengiriman", len(by_status), "number",
-                 " · ".join(f"{k}: {v}" for k, v in by_status.items()) or "-", "info"),
+            _kpi("Pesanan Periode", tot["pesanan"], "number",
+                 f"{start} → {end} · batal & belum dibayar tidak dihitung", "primary"),
+            _kpi("Omzet Periode", round(tot["omzet"]), "currency",
+                 f"{tot['unit']} pcs · sebelum potongan platform", "success"),
+            _kpi("Omzet Setelah Retur", round(tot["omzet_setelah_retur"]), "currency",
+                 f"retur Rp{round(tot['retur_nilai']):,}".replace(",", "."), "info"),
+            _kpi("Total Pesanan Tercatat", n_orders, "number", "seluruh riwayat, semua status", "info"),
         ]
         tables.append(_table(
             "top-produk", "Produk Terlaris", "Berdasarkan omzet pada periode terpilih",
             [{"key": "produk", "label": "PRODUK"}, {"key": "order", "label": "ORDER", "format": "number"},
              {"key": "qty", "label": "QTY", "format": "number"},
              {"key": "omzet", "label": "OMZET", "format": "currency"}],
-            sorted(by_product.values(), key=lambda r: -r["omzet"])[:10],
+            [{"produk": r["label"], "order": r["pesanan"], "qty": r["unit"], "omzet": r["omzet"]}
+             for r in produk[:10]],
             "marketing-catalog", "Buka Katalog", "Belum ada order pada periode ini."))
         tables.append(_table(
             "order-terbaru", "Order Terbaru", "Order online paling baru",
@@ -1167,16 +1175,19 @@ async def reports_hub_summary(request: Request):
              {"key": "qty", "label": "QTY", "format": "number"},
              {"key": "omzet", "label": "OMZET", "format": "currency"},
              {"key": "status", "label": "STATUS"}],
-            sorted([{
+            [{
                 "tanggal": _as_iso_date(o.get("order_date") or o.get("created_at")),
                 "no_order": o.get("order_id") or "-", "platform": o.get("platform") or "-",
-                "pelanggan": o.get("customer_name") or "-", "produk": o.get("product_name") or "-",
+                "pelanggan": o.get("customer_name") or "-",
+                "produk": o.get("product_name") or ((o.get("items") or [{}])[0].get("product_name_raw")) or "-",
                 "qty": _i(o.get("quantity")),
-                "omzet": _f(o.get("revenue") or o.get("price_final")),
-                "status": o.get("fulfillment_status") or "belum diproses",
-            } for o in orders], key=lambda r: r["tanggal"], reverse=True)[:10],
+                "omzet": (_uk._rollup.order_revenue_product(o) if _uk.dihitung_omzet(o) else 0.0),
+                "status": o.get("status") or "-",
+            } for o in recent],
             "marketing-orders", "Buka Order Marketing", "Belum ada order online."))
-        sources = [{"collection": "marketing_orders", "count": len(orders), "note": "order online"}]
+        sources = [{"collection": "marketing_sales_data", "count": len(oms["baris"]),
+                    "note": "rekap harian (omzet resmi)"},
+                   {"collection": "marketing_orders", "count": n_orders, "note": "order online"}]
 
     return {
         "category": meta["id"], "label": meta["label"], "portal": meta["portal"],

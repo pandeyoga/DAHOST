@@ -89,7 +89,7 @@ export function MarketingCycleStrip({ token, period }) {
           sub={adaAnggaran
             ? `${compact(t.total_spend)} dari ${compact(t.total_plan)} · sisa ${compact(t.total_remaining)}`
             : `Belum ada rencana anggaran · terpakai ${compact(t.total_spend)}`} />
-        <StatTile testId="cycle-roas" label="ROAS · ROI"
+        <StatTile testId="cycle-roas" label="Omzet ÷ belanja marketing · ROI"
           accent={!adaBiaya ? 'default' : t.roi_reliable ? (t.roi_pct >= 0 ? 'success' : 'danger') : 'warning'}
           value={adaBiaya ? `${Number(t.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}×` : '—'}
           sub={!adaBiaya ? 'Belum ada biaya iklan bulan ini'

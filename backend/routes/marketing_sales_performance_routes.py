@@ -59,7 +59,8 @@ def _range(start: Optional[str], end: Optional[str], days: int = 30) -> tuple:
     """Rentang tanggal kalender (bagian tanggal APA ADANYA, seperti rekap harian)."""
     today = today_wib()
     d1 = (end or "")[:10] or today.isoformat()
-    d0 = (start or "")[:10] or (today - timedelta(days=days)).isoformat()
+    # M-26 — N hari TERMASUK hari ini (dulu N+1 hari)
+    d0 = (start or "")[:10] or (today - timedelta(days=max(days, 1) - 1)).isoformat()
     try:
         return _ukuran.periode(d0, d1, maks_hari=3700)
     except _ukuran.PeriodeSalah as e:

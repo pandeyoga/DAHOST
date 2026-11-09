@@ -317,18 +317,14 @@ async def _hr_kpis(db, year: int, month: int) -> dict:
 async def _marketing_kpis(db, year: int, month: int) -> dict:
     start, end = _month_range(year, month)
 
-    # Live sessions — RC-02: field SSOT = gmv/total_orders; session_date string "YYYY-MM-DD"
-    live_pipeline = [
-        {"$match": {"session_date": {"$gte": start, "$lte": end}}},
-        {"$group": {
-            "_id": None,
-            "total_sessions": {"$sum": 1},
-            "total_revenue": {"$sum": {"$ifNull": ["$gmv", 0]}},
-            "total_orders": {"$sum": {"$ifNull": ["$total_orders", 0]}},
-        }},
-    ]
-    live_rows = await db.marketing_live_sessions.aggregate(live_pipeline).to_list(1)
-    live_data = live_rows[0] if live_rows else {}
+    # M-13 / Q-2 (9 Nov 2026) — dulu `$gmv`/`$total_orders` (field yang tidak ditulis siapa
+    # pun lagi) ⇒ omzet live selalu 0. Sekarang definisi resmi: pesanan berkanal LIVE.
+    from core import ukuran_penjualan as _uk
+    _accs = await db.marketing_platform_accounts.find(
+        {}, {"_id": 0, "id": 1, "account_name": 1}).to_list(1000)
+    _live = await _uk.ringkas_live(db, _accs, start, end)
+    live_data = {"total_sessions": _live["sesi"], "total_revenue": _live["omzet"],
+                 "total_orders": _live["pesanan"]}
 
     # Webhook orders (from marketplace)
     webhook_orders = await db.marketing_orders.count_documents(

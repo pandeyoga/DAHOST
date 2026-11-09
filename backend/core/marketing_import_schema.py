@@ -464,7 +464,7 @@ MARKETPLACE_ORDERS = SourceType(
     platform_guard="purchase_channel",
     shop_guard="warehouse_name_raw",
     item_fields=(
-        "platform_sku_id", "seller_sku", "product_name_raw", "variation_raw",
+        "platform_sku_id", "seller_sku", "parent_sku", "product_name_raw", "variation_raw",
         "product_category_raw", "quantity", "qty_returned", "sku_unit_original_price",
         "sku_subtotal_before_discount", "sku_platform_discount", "sku_seller_discount",
         "sku_subtotal_after_discount", "is_preorder",
@@ -481,6 +481,7 @@ MARKETPLACE_ORDERS = SourceType(
         # ekspor Shopee (sesi #34). `total_discount` DIPINDAH ke item_fields
         # (2026-11-06): nilainya berbeda per baris SKU, jadi bukan uang per pesanan.
         "total_payment", "voucher_seller", "voucher_platform",
+        "bundle_discount_seller", "bundle_discount_platform",
         "coin_cashback", "buyer_paid_shipping", "shipping_fee_estimate",
         "shipping_rebate_estimate", "return_shipping_fee",
     ),
@@ -502,13 +503,20 @@ MARKETPLACE_ORDERS = SourceType(
               ("cancelation return type", "cancellation return type",
                "status pembatalan pengembalian", "status pembatalan/ pengembalian")),
         # ── item (masuk items[]) ──────────────────────────────────────────────
+        # G2 (audit Gudang 9 Nov 2026) — "Nomor Referensi SKU" Shopee = SKU VARIASI yang
+        # diisi penjual (= SKU internal) ⇒ SKU Penjual. "SKU Induk" = SKU produk induk
+        # (tanpa varian) ⇒ disimpan terpisah, TIDAK lagi dipetakan ke SKU ID Platform
+        # (dulu "SKU Induk" merebut SKU ID Platform lalu "Nomor Referensi SKU" ditinggal
+        # tak terpetakan ⇒ 0 pesanan Shopee tertaut).
         Field("platform_sku_id", "SKU ID Platform", "str", False,
-              ("sku id", "id sku", "sku", "sku induk", "nomor referensi sku"),
+              ("sku id", "id sku", "sku"),
               example="1731234567890123456",
               note="Ekspor Shopee tidak punya kolom ini — sistem memakai SKU Penjual"),
         Field("seller_sku", "SKU Penjual", "str", False,
-              ("seller sku", "kode sku penjual", "nomor referensi sku", "sku induk",
-               "kode variasi")),
+              ("seller sku", "nomor referensi sku", "kode sku penjual", "kode variasi"),
+              note="Shopee: 'Nomor Referensi SKU' (SKU variasi) — dasar tautan ke barang"),
+        Field("parent_sku", "SKU Induk (produk)", "str", False, ("sku induk",),
+              note="SKU produk induk tanpa varian — hanya dicatat, tidak dipakai menautkan"),
         Field("product_name_raw", "Nama Produk (platform)", "str", False,
               ("product name", "nama produk")),
         Field("variation_raw", "Variasi (platform)", "str", False,
@@ -568,6 +576,12 @@ MARKETPLACE_ORDERS = SourceType(
               note="Diskon penjual + diskon platform untuk baris SKU ini"),
         Field("voucher_seller", "Voucher Ditanggung Penjual", "money", False,
               ("voucher ditanggung penjual",)),
+        # Q-1 (keputusan owner 9 Nov 2026) — biaya diskon marketing = voucher toko +
+        # paket diskon penjual + subsidi ongkir penjual; selisih harga coret BUKAN biaya.
+        Field("bundle_discount_seller", "Paket Diskon (ditanggung penjual)", "money", False,
+              ("paket diskon diskon dari penjual",)),
+        Field("bundle_discount_platform", "Paket Diskon (ditanggung platform)", "money", False,
+              ("paket diskon diskon dari shopee", "paket diskon diskon dari platform")),
         Field("voucher_platform", "Voucher Ditanggung Platform", "money", False,
               ("voucher ditanggung shopee", "voucher ditanggung platform")),
         Field("coin_cashback", "Cashback Koin", "money", False,
@@ -669,6 +683,10 @@ RETIRED_MAPPINGS: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "marketplace_orders": (
         ("harga setelah diskon", "sku_subtotal_after_discount"),
         ("subtotal pesanan", "sku_subtotal_before_discount"),
+        # G2 (9 Nov 2026) — kolom SKU Shopee yang dulu tertukar
+        ("sku induk", "platform_sku_id"),
+        ("sku induk", "seller_sku"),
+        ("nomor referensi sku", "platform_sku_id"),
     ),
 }
 

@@ -288,15 +288,26 @@ async def monthly_summary(
         total_ord_target += ord_tgt or 0
         total_ord_actual += ord_actual
 
+    # M-04 — persen gabungan: pembilang & penyebut dari toko bertarget yang SAMA
+    _cap = _ukuran.capaian_gabungan(result, lambda r: r["target"]["revenue"],
+                                    lambda r: r["actual"]["revenue"])
+    _cap_o = _ukuran.capaian_gabungan(result, lambda r: r["target"]["orders"],
+                                      lambda r: r["actual"]["orders"])
     return serialize_doc({
         "period":  {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
         "summary": {
             "total_accounts":  len(accounts),
             "rev_target":      total_rev_target,
             "rev_actual":      total_rev_actual,
-            "rev_pct":         round(total_rev_actual / total_rev_target * 100, 1) if total_rev_target > 0 else None,
+            "rev_pct":         _cap["persen"],
+            "rev_actual_targeted": _cap["aktual_bertarget"],
+            "rev_actual_untargeted": _cap["aktual_tanpa_target"],
+            "accounts_with_target": _cap["toko_bertarget"],
+            "accounts_without_target": _cap["toko_tanpa_target"],
             "ord_target":      total_ord_target,
             "ord_actual":      total_ord_actual,
+            "ord_pct":         _cap_o["persen"],
+            "pct_basis":       "hanya toko yang punya target bulan ini",
         },
         "accounts": result,
     })
@@ -505,7 +516,10 @@ async def creator_monthly_summary(
             "total_creators": len(creators),
             "rev_target":     total_rev_tgt,
             "rev_actual":     round(total_rev_act),
-            "rev_pct":        round(total_rev_act / total_rev_tgt * 100, 1) if total_rev_tgt > 0 else None,
+            # M-04 — pembilang & penyebut dari kreator bertarget yang SAMA
+            "rev_pct":        _ukuran.capaian_gabungan(
+                result, lambda r: r["target"]["revenue"],
+                lambda r: r["actual"]["revenue"])["persen"],
         },
         "creators": result,
     })
@@ -518,7 +532,7 @@ async def export_creator_targets_pdf(
     month: Optional[int] = Query(None),
 ):
     """Export PDF Target KOL/Creator untuk bulan tertentu."""
-    await require_auth(request)
+    user = await require_auth(request)
     db  = get_db()
     now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y   = year  or now.year
@@ -528,7 +542,12 @@ async def export_creator_targets_pdf(
     last_day  = _calendar.monthrange(y, m)[1]
     date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
 
-    creators = await db.marketing_kol_creators.find({"status": "active"}, {"_id": 0}).to_list(500)
+    # Lingkup toko sama dengan layar (dulu PDF memuat kreator SEMUA toko)
+    _cq: dict = {"status": "active"}
+    _vis = await _scope.visible_account_ids(db, user)
+    if _vis is not None:
+        _cq["assigned_account_ids"] = {"$in": _vis}
+    creators = await db.marketing_kol_creators.find(_cq, {"_id": 0}).to_list(500)
     result = []
     total_rev_tgt = 0.0
     total_rev_act = 0.0
@@ -578,7 +597,10 @@ async def export_creator_targets_pdf(
             "total_creators": len(creators),
             "rev_target":     total_rev_tgt,
             "rev_actual":     round(total_rev_act),
-            "rev_pct":        round(total_rev_act / total_rev_tgt * 100, 1) if total_rev_tgt > 0 else None,
+            # M-04 — pembilang & penyebut dari kreator bertarget yang SAMA
+            "rev_pct":        _ukuran.capaian_gabungan(
+                result, lambda r: r["target"]["revenue"],
+                lambda r: r["actual"]["revenue"])["persen"],
         },
         "creators": result,
     }

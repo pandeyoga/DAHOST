@@ -457,43 +457,88 @@ async def job_auto_create_tasks_from_templates():
 # P1-7: FILE CLEANUP JOB (Marketing Uploads > 30 Days)
 # ══════════════════════════════════════════════════════════════════════════════
 
+UPLOAD_SUBDIR_MARKETING_IMPORT = "marketing-data-import"
+# Sesi yang BELUM selesai (pemetaan / siap di-commit) tidak pernah dibersihkan sebelum
+# umur ini — staf sering mengunggah sore dan menyimpan keesokan harinya.
+KEEP_OPEN_SESSION_DAYS = 7
+
+
+def _upload_key_variants(file_path) -> set:
+    """Semua bentuk penunjuk berkas sesi yang mungkin tersimpan di `file_path`.
+
+    M-02 (audit Marketing 9 Nov 2026) — sejak penyimpanan lokal (`object_storage`), sesi
+    menyimpan KUNCI RELATIF `marketing-data-import/<id>.xlsx`, sedangkan penjadwal
+    membandingkan PATH ABSOLUT berkas di disk. Tidak pernah cocok ⇒ SEMUA berkas > 1 jam
+    dianggap yatim dan dihapus pukul 02.00, termasuk berkas sesi yang belum di-commit
+    (commit esok hari → 410 "berkas sudah tidak ada"). Dibandingkan dalam bentuk kunci.
+    """
+    raw = str(file_path or "").strip()
+    if not raw:
+        return set()
+    norm = raw.replace("\\", "/")
+    out = {norm, norm.lstrip("/")}
+    marker = UPLOAD_SUBDIR_MARKETING_IMPORT + "/"
+    if marker in norm:
+        out.add(norm[norm.index(marker):])
+    return out
+
+
+def marketing_upload_is_orphan(rel_key: str, referenced, *, mtime, now) -> bool:
+    """Murni: berkas `rel_key` (relatif terhadap akar unggahan) boleh dihapus sebagai yatim?
+
+    `referenced=None` ⇒ daftar sesi tidak terbaca ⇒ JANGAN hapus apa pun sebagai yatim.
+    """
+    from datetime import timedelta as _td
+    if referenced is None:
+        return False
+    if mtime >= now - _td(hours=1):        # sesi yang baru dibuat mungkin belum tersimpan
+        return False
+    return rel_key.replace("\\", "/") not in referenced
+
+
 async def job_cleanup_old_marketing_uploads():
     """
-    D24 / F0.6(e) 2026-08-12 — DULU menunjuk `/app/uploads/marketing` yang TIDAK PERNAH
-    ADA, jadi job ini tidak pernah membersihkan apa pun sejak dibuat (log-nya hanya
-    "not found, skipping" sehingga terlihat sehat). Folder unggahan yang benar-benar
-    dipakai jalur impor resmi adalah `/app/uploads/marketing-data-import`
-    (lihat routes/marketing_data_import.py UPLOAD_DIR).
+    Bersihkan berkas unggahan impor Marketing. Jalan setiap hari 02:00.
 
-    Hapus berkas unggahan impor yang lebih dari 30 hari. Jalan setiap hari 02:00.
+    * berkas > 30 hari dihapus, KECUALI milik sesi yang belum selesai < 7 hari
+      (tidak mungkin terjadi pada umur 30 hari, tetapi aturannya ditulis eksplisit);
+    * berkas YATIM (tidak ditunjuk sesi mana pun, > 1 jam) dihapus.
+
+    M-02 (9 Nov 2026) — akar unggahan dibaca dari `object_storage.UPLOAD_ROOT` (dulu
+    `/app/uploads` tertulis mati) dan penunjuk sesi dibandingkan sebagai KUNCI RELATIF
+    (`_upload_key_variants`), bukan path absolut. Dulu tidak ada satu pun yang cocok,
+    jadi berkas setiap sesi — termasuk yang belum di-commit — terhapus malam itu juga.
     """
     from datetime import datetime, timezone, timedelta
-    from pathlib import Path
 
     try:
-        uploads_dir = Path("/app/uploads/marketing-data-import")
+        from object_storage import UPLOAD_ROOT
+        uploads_dir = UPLOAD_ROOT / UPLOAD_SUBDIR_MARKETING_IMPORT
 
         if not uploads_dir.exists():
             logger.info("[scheduler] cleanup_uploads: %s tidak ada, dilewati", uploads_dir)
             return
-        
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+
+        now = datetime.now(timezone.utc)
+        cutoff_date = now - timedelta(days=30)
         deleted_count = 0
         deleted_size = 0
 
-        # 2026-08-12 — berkas YATIM juga dibersihkan (bukan hanya yang tua).
-        # Sesi impor bisa hilang lebih cepat dari 30 hari (dihapus staf, atau sesi
-        # pratinjau yang tidak pernah di-commit lalu dibuang). Berkasnya tetap
-        # tertinggal dan tidak akan pernah bisa dipakai lagi oleh siapa pun —
-        # satu sore uji saja meninggalkan 73 berkas (±18 MB) di disk pod.
-        # Karena itu: berkas yang TIDAK ditunjuk sesi mana pun langsung dihapus.
         referenced: set = set()
+        open_recent: set = set()
         try:
             db = get_db()
             async for s in db["marketing_data_import_sessions"].find(
-                    {}, {"_id": 0, "file_path": 1}):
-                if s.get("file_path"):
-                    referenced.add(str(s["file_path"]))
+                    {}, {"_id": 0, "file_path": 1, "status": 1, "created_at": 1}):
+                keys = _upload_key_variants(s.get("file_path"))
+                referenced |= keys
+                created = s.get("created_at")
+                if (str(s.get("status") or "") in ("mapping", "ready")
+                        and isinstance(created, datetime)):
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if created >= now - timedelta(days=KEEP_OPEN_SESSION_DAYS):
+                        open_recent |= keys
         except Exception:
             # Kalau daftar sesi tidak bisa dibaca, JANGAN menghapus apa pun sebagai
             # "yatim" — lebih baik menyisakan berkas daripada membuang bukti impor.
@@ -502,41 +547,40 @@ async def job_cleanup_old_marketing_uploads():
                              "— pembersihan berkas yatim dilewati")
 
         orphan_count = 0
-        # Scan all files in marketing uploads
+        root = UPLOAD_ROOT.resolve()
         for file_path in uploads_dir.rglob("*"):
-            if file_path.is_file():
-                # Get file modification time
-                file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
-                is_orphan = (referenced is not None
-                             and str(file_path) not in referenced
-                             # jeda 1 jam: sesi yang BARU dibuat mungkin belum
-                             # tersimpan saat job berjalan
-                             and file_mtime < datetime.now(timezone.utc) - timedelta(hours=1))
-
-                if file_mtime < cutoff_date or is_orphan:
-                    try:
-                        file_size = file_path.stat().st_size
-                        file_path.unlink()
-                        deleted_count += 1
-                        deleted_size += file_size
-                        if is_orphan:
-                            orphan_count += 1
-                        logger.info(
-                            "[scheduler] cleanup_uploads: deleted %s (%s)",
-                            file_path.name,
-                            "yatim — tidak ada sesi yang memakainya" if is_orphan
-                            else f"umur {(datetime.now(timezone.utc) - file_mtime).days} hari")
-                    except Exception as e:
-                        logger.error(f"[scheduler] cleanup_uploads: failed to delete {file_path}: {e}")
+            if not file_path.is_file():
+                continue
+            file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+            try:
+                rel_key = file_path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if open_recent and rel_key in open_recent:
+                continue                     # sesi belum selesai < 7 hari: jangan disentuh
+            is_orphan = marketing_upload_is_orphan(rel_key, referenced,
+                                                   mtime=file_mtime, now=now)
+            if file_mtime < cutoff_date or is_orphan:
+                try:
+                    file_size = file_path.stat().st_size
+                    file_path.unlink()
+                    deleted_count += 1
+                    deleted_size += file_size
+                    if is_orphan:
+                        orphan_count += 1
+                    logger.info(
+                        "[scheduler] cleanup_uploads: deleted %s (%s)",
+                        file_path.name,
+                        "yatim — tidak ada sesi yang memakainya" if is_orphan
+                        else f"umur {(now - file_mtime).days} hari")
+                except Exception as e:
+                    logger.error(f"[scheduler] cleanup_uploads: failed to delete {file_path}: {e}")
 
         deleted_size_mb = deleted_size / (1024 * 1024)
         logger.info("[scheduler] cleanup_uploads: deleted %s files (%s yatim), freed %.2f MB",
                     deleted_count, orphan_count, deleted_size_mb)
-        
+
     except Exception as e:
-        # Note: This job doesn't register a scheduler_runs entry so we can't update
-        # error status here. Just log the exception. (Session #11.17: removed undefined
-        # `db` and `run_id` references that triggered ruff F821.)
         logger.exception("[scheduler] cleanup_uploads error: %s", e)
 
 
@@ -591,6 +635,34 @@ async def job_auto_create_marketing_tasks():
             if not account_id:
                 continue
             
+            # Q-5 (keputusan owner 9 Nov 2026) — toko bermode "Impor pesanan" TIDAK mendapat
+            # tugas input manual (angkanya akan diganti turunan pesanan = kerja dobel); PIC
+            # cukup diingatkan bila pesanan kemarin belum diimpor.
+            from core import marketing_input_mode as _mode
+            if await _mode.mode_toko(db, acc) == _mode.IMPOR:
+                derived = await db.marketing_sales_data.find_one(
+                    {"account_id": account_id, "date": yesterday, "revenue_type": "total",
+                     "source": "orders_auto"}, {"_id": 0, "id": 1})
+                imported = await db.marketing_data_import_sessions.find_one(
+                    {"account_id": account_id, "status": "committed",
+                     "source_type": {"$in": list(_mode.IMPORT_TYPES)},
+                     "committed_at": {"$gte": now - timedelta(hours=36)}}, {"_id": 0, "id": 1})
+                pic_id = acc.get("pic_user_id")
+                if not derived and not imported and pic_id:
+                    try:
+                        from routes.rahaza_notifications import publish_notification
+                        await publish_notification(
+                            db, type_="marketing_import_reminder", severity="warning",
+                            title=f"Pesanan {account_name} {yesterday} belum diimpor",
+                            message=(f"Omzet {account_name} dihitung dari pesanan yang diimpor. "
+                                     f"Ekspor pesanan Seller Center tanggal {yesterday} lalu "
+                                     "impor di menu Impor Data."),
+                            link_module="marketing-import", target_user_ids=[pic_id],
+                            dedup_key=f"import_reminder_{account_id}_{yesterday}")
+                    except Exception as _ne:
+                        logger.warning(f"[scheduler] Gagal kirim pengingat impor: {_ne}")
+                continue
+
             # Check if sales data already entered for yesterday
             existing_sales = await db.marketing_sales_data.find_one({
                 "account_id": account_id,

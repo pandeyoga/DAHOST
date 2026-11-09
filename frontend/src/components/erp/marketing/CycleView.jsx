@@ -437,8 +437,8 @@ function DetailDialog({ open, onOpenChange, row, period, token }) {
           <span className="block text-muted-foreground">HPP {fmtRp(m.hpp)} · cakupan HPP {pct(m.hpp_coverage_pct)} ({fmtNum(m.units_covered)}/{fmtNum(m.units_total)} unit)</span>
           {!m.trustworthy && <span className="block text-[hsl(var(--warning-text))]">Cakupan HPP di bawah 80% — marjin ini belum bisa dipercaya untuk keputusan harga.</span>}
         </BarisDetail>
-        <BarisDetail label="ROAS / ROI">
-          ROAS {Number(row.roi?.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
+        <BarisDetail label="Omzet ÷ belanja marketing / ROI">
+          {Number(row.roi?.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
           {' · '}{row.roi?.reliable ? `ROI ${pct(row.roi?.roi_pct)}` : <span className="text-muted-foreground">ROI belum bisa dihitung</span>}
           <span className="block text-muted-foreground">Belanja {fmtRp(row.roi?.spend)} = {pct(row.roi?.spend_of_revenue_pct)} dari omzet</span>
           {!row.roi?.reliable && row.roi?.reliability_note && (
@@ -524,7 +524,7 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
     ['Rencana anggaran', (r) => r.budget?.total_plan ?? 0], ['Terpakai', (r) => r.budget?.total_spend ?? 0],
     ['Sisa', (r) => r.budget?.total_remaining ?? 0], ['Pakai %', (r) => r.budget?.total_used_pct ?? 0],
     ['Marjin %', (r) => r.margin?.gross_margin_pct ?? 0], ['Cakupan HPP %', (r) => r.margin?.hpp_coverage_pct ?? 0],
-    ['ROAS', (r) => r.roi?.roas ?? 0], ['Peringatan', (r) => (r.flags || []).map((f) => FLAG_SHORT[f.code] || f.title).join(' | ')],
+    ['Omzet ÷ belanja marketing', (r) => r.roi?.roas ?? 0], ['Peringatan', (r) => (r.flags || []).map((f) => FLAG_SHORT[f.code] || f.title).join(' | ')],
   ].map(([label, nilai]) => ({ label, nilai }));
 
   const aksiBaris = (r) => (
@@ -741,7 +741,7 @@ export default function CycleView({ token, period, monthLabel, scope = 'marketin
                     <dd className="tabular-nums">{fmtRp(b.total_spend)} / {fmtRp(b.total_plan)}</dd></div>
                   <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Marjin (cakupan HPP)</dt>
                     <dd>{pct(r.margin?.gross_margin_pct)} ({pct(r.margin?.hpp_coverage_pct)})</dd></div>
-                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">ROAS</dt>
+                  <div className="flex justify-between gap-2"><dt className="text-muted-foreground">Omzet ÷ belanja</dt>
                     <dd>{Number(r.roi?.roas || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}</dd></div>
                 </dl>
                 <div>{bendera(r, 3)}</div>

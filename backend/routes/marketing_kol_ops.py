@@ -88,6 +88,14 @@ async def delete_session(session_id: str, request: Request):
     if not sess:
         raise HTTPException(404, 'Sesi tidak ditemukan')
     await db.marketing_creator_sessions.delete_one({'id': session_id})
+    # M-07 (audit 9 Nov 2026) — rekap catatan live toko-tanggal itu dihitung ulang; dulu
+    # angka sesi yang dihapus tetap tertinggal di rekap (Rp578.854 tidak turun).
+    try:
+        from routes.marketing_live_sales_sync import sync_live_sales_to_marketing
+        await sync_live_sales_to_marketing(db, sess.get('account_id'), sess.get('date'))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("sync_live_sales gagal (hapus sesi kreator)", exc_info=True)
     return serialize_doc({'message': 'Sesi dihapus'})
 
 

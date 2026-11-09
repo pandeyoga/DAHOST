@@ -63,6 +63,7 @@ const emptyLine = () => ({
 const emptyOrder = {
   platform: 'manual',
   order_id: '',
+  order_date: '',
   customer_name: '',
   customer_address: '',
   city: '',
@@ -241,6 +242,8 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
       const body = {
         platform: orderForm.platform,
         order_id: orderForm.order_id || undefined,
+        // Q-4 — tanggal pesanan wajib untuk toko marketplace (kosong = sekarang)
+        order_date: orderForm.order_date || undefined,
         customer_name: orderForm.customer_name,
         customer_address: orderForm.customer_address,
         city: orderForm.city,
@@ -736,14 +739,24 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
                 </Select>
               </div>
               <div>
-                <Label className="text-xs">No. Ref Marketplace</Label>
+                <Label className="text-xs">No. pesanan platform</Label>
                 <Input
                   className="mt-1"
-                  placeholder="Auto-generate jika kosong"
+                  placeholder="Wajib untuk toko marketplace"
                   value={orderForm.order_id}
                   onChange={(e) => setOrderForm((f) => ({ ...f, order_id: e.target.value }))}
                 />
               </div>
+            </div>
+            <div>
+              <Label className="text-xs">Tanggal pesanan dibuat</Label>
+              <Input
+                className="mt-1"
+                placeholder="TTTT-BB-HH (wajib untuk toko marketplace)"
+                value={orderForm.order_date}
+                onChange={(e) => setOrderForm((f) => ({ ...f, order_date: e.target.value }))}
+                data-testid="input-order-date"
+              />
             </div>
             <div>
               <Label className="text-xs">Nama Customer *</Label>

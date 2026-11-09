@@ -162,7 +162,7 @@ export default function WeeklyMeetingReportModule({ token }) {
       ? <span className="tabular-nums" title={`Target prorata ${rp(s.target.revenue)}`}>{pct(s.pencapaian_target_persen)}</span>
       : <span className="text-muted-foreground">Belum ada target</span>) },
     { kunci: 'iklan', label: 'Iklan', rata: 'kanan', isi: (s) => (s.iklan?.terisi
-      ? <span className="tabular-nums md:whitespace-nowrap">{rp(s.iklan.spend)}<span className="block text-xs text-muted-foreground">ROAS {s.iklan.roas ?? '—'}</span></span>
+      ? <span className="tabular-nums md:whitespace-nowrap">{rp(s.iklan.spend)}<span className="block text-xs text-muted-foreground">omzet ÷ iklan {s.iklan.roas ?? '—'}</span></span>
       : <span className="text-muted-foreground">Belum diimpor</span>) },
     { kunci: 'hari', label: 'Hari berdata', rata: 'kanan', isi: (s) => (s._gabungan ? '—' : <span className="tabular-nums">{s.hari_berdata}/7</span>) },
   ];
@@ -211,9 +211,9 @@ export default function WeeklyMeetingReportModule({ token }) {
           <StatTile label="Pesanan" value={num(g.pesanan)} testId="weekly-tile-pesanan"
             sub={`${num(g.pcs)} pcs · rata-rata ${rp(g.aov)}`} />
           <StatTile label="Capai target prorata" value={pct(g.pencapaian_target_persen)} testId="weekly-tile-target"
-            sub={`Target ${rp(g.target_prorata)}`} />
+            sub={`Target ${rp(g.target_prorata)} · hanya toko bertarget`} />
           <StatTile label="Belanja iklan" value={rp(g.iklan_spend)} testId="weekly-tile-iklan"
-            sub={`ROAS ${g.roas ?? '—'}`} />
+            sub={`Omzet toko ÷ biaya iklan ${g.roas ?? '—'}`} />
         </div>
         <div className="space-y-0.5 text-sm text-muted-foreground">
           <p data-testid="weekly-tile-setelah-retur">Setelah retur {rp(g.omzet_setelah_retur)}
@@ -275,7 +275,7 @@ export default function WeeklyMeetingReportModule({ token }) {
             <BarisDetail label="Target prorata">{detail.target?.lengkap ? `${rp(detail.target.revenue)} · capai ${pct(detail.pencapaian_target_persen)}` : 'Belum ada target'}</BarisDetail>
             <BarisDetail label="Kanal">Live {rp(detail.kanal?.live)} · Video {rp(detail.kanal?.video)} · Kartu produk {rp(detail.kanal?.product_card)}</BarisDetail>
             <BarisDetail label="Pemenuhan">{pct(detail.pemenuhan?.fulfillment_rate)} · batal {num(detail.pesanan_mentah?.batal)} · belum kirim {num(detail.pesanan_mentah?.belum_dikirim)}</BarisDetail>
-            <BarisDetail label="Iklan">{detail.iklan?.terisi ? `${rp(detail.iklan.spend)} · ROAS ${detail.iklan.roas ?? '—'}` : 'Belum diimpor'}</BarisDetail>
+            <BarisDetail label="Iklan">{detail.iklan?.terisi ? `${rp(detail.iklan.spend)} · omzet ÷ iklan ${detail.iklan.roas ?? '—'}` : 'Belum diimpor'}</BarisDetail>
             <BarisDetail label="Hari berdata">{detail.hari_berdata}/7</BarisDetail>
             <BarisDetail label="Sumber angka">{(detail.sumber_angka || []).map(sumber).join(', ') || '—'}</BarisDetail>
           </dl>

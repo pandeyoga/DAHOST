@@ -2106,7 +2106,7 @@ export default function DataImportWizard({ token }) {
               { label: 'Jenis', nilai: (h) => h.source_label || h.source_type }, { label: 'Toko', nilai: (h) => h.account_name || '' },
               { label: 'Berkas', nilai: (h) => h.filename || '' }, { label: 'Masuk', nilai: (h) => Number(h.committed_count || 0) },
               { label: 'Diperbarui', nilai: (h) => Number(h.updated_count || 0) }, { label: 'Oleh', nilai: (h) => h.committed_by || h.created_by || '' },
-              { label: 'Status', nilai: (h) => (h.status === 'committed' ? 'Tersimpan' : 'Dibatalkan') },
+              { label: 'Status', nilai: (h) => (h.status === 'committed' ? 'Tersimpan' : h.status === 'partial' ? 'Terhenti di tengah' : 'Dibatalkan') },
             ]} />
         </div>
           <p className="text-sm text-muted-foreground">
@@ -2160,6 +2160,9 @@ export default function DataImportWizard({ token }) {
                         <td className="px-3 py-1.5">
                           {h.status === 'committed'
                             ? <Badge className="bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] text-xs">tersimpan</Badge>
+                            : h.status === 'partial'
+                            ? <Badge className="bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))] text-xs"
+                                title={h.commit_error || 'Penyimpanan terhenti di tengah — batalkan lalu ulangi'}>terhenti di tengah</Badge>
                             : (
                               <div className="space-y-0.5">
                                 <Badge variant="outline" className="text-xs">dibatalkan</Badge>
@@ -2172,7 +2175,7 @@ export default function DataImportWizard({ token }) {
                             )}
                         </td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                          {h.status === 'committed' ? (
+                          {(h.status === 'committed' || h.status === 'partial') ? (
                             /* F3.F — LABEL YANG JUJUR. "Batalkan impor" pada Ekspor
                                B/C tidak menghapus baris apa pun; yang terjadi adalah
                                keadaan pesanan dipulihkan. Memakai label yang sama

@@ -289,6 +289,15 @@ async def update_shift(shift_id: str, data: ShiftUpdate, request: Request):
     update_data['updated_at'] = _now()
     
     await db.marketing_livehost_shifts.update_one({'id': shift_id}, {'$set': update_data})
+    # M-07 — pindah toko/tanggal: rekap catatan live di KEDUA tempat dihitung ulang
+    if 'account_id' in update_data or 'date' in update_data:
+        try:
+            from routes.marketing_live_sales_sync import sync_live_sales_to_marketing
+            await sync_live_sales_to_marketing(db, shift.get('account_id'), shift.get('date'))
+            await sync_live_sales_to_marketing(db, update_data.get('account_id', shift.get('account_id')),
+                                               update_data.get('date', shift.get('date')))
+        except Exception:
+            logging.getLogger(__name__).warning("sync_live_sales gagal (ubah shift)", exc_info=True)
     
     return serialize_doc({'message': 'Shift berhasil diupdate'})
 
@@ -308,6 +317,11 @@ async def delete_shift(shift_id: str, request: Request):
         raise HTTPException(400, 'Tidak dapat menghapus shift yang sudah dimulai. Gunakan update status.')
     
     await db.marketing_livehost_shifts.delete_one({'id': shift_id})
+    try:   # M-07 — rekap catatan live ikut turun
+        from routes.marketing_live_sales_sync import sync_live_sales_to_marketing
+        await sync_live_sales_to_marketing(db, shift.get('account_id'), shift.get('date'))
+    except Exception:
+        logging.getLogger(__name__).warning("sync_live_sales gagal (hapus shift)", exc_info=True)
     
     return serialize_doc({'message': 'Shift berhasil dihapus'})
 
