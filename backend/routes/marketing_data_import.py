@@ -2398,8 +2398,12 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
                         f"dengan {label} '{mine}'. Pilih toko yang benar — kalau tidak, "
                         f"biaya iklan masuk ke toko lain.")})
                 continue
+            _fam = scope.platform_family(account.get("platform"))
+            _plats = list(scope.TIKTOK_PLATFORMS) if _fam == "tiktok" else [account.get("platform")]
+            # username yang sama boleh dipakai toko lain di PLATFORM LAIN (Shopee vs TikTok)
             owner = await db[scope.ACCOUNTS].find_one(
-                {"id": {"$ne": account.get("id")}, acc_fld: {"$in": vals}},
+                {"id": {"$ne": account.get("id")}, acc_fld: {"$in": vals},
+                 "platform": {"$in": _plats}},
                 {"_id": 0, "account_name": 1, "account_code": 1})
             if owner:
                 out.append({"http": 409, "code": "identitas_toko_milik_lain", "message": (

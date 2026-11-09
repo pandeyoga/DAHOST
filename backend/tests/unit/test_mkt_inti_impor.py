@@ -352,3 +352,11 @@ def test_g15_pesan_impor_mengarah_ke_scan_keluar():
         encoding="utf-8")
     assert "alokasikan di Fulfillment" not in src
     assert "Scan Keluar Penjualan" in src
+
+
+def test_m18_username_sama_di_platform_lain_tidak_menghalangi(env):
+    """Data VPS: 'rayonagrosirsolo' dipakai Shopee Rayona DAN TikTok Rayona — bukan bentrok."""
+    db, md = env
+    db.marketing_platform_accounts.docs[0]["username"] = "toko_tiktok"          # TTK-01 (TikTok)
+    _sid, res = run(import_file(md, _cpc("toko_tiktok", "9"), "iklan.csv", "shopee_ads_cpc", "SHP-01"))
+    assert res["inserted"] == 1
