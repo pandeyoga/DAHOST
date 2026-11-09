@@ -784,6 +784,15 @@ class TestKuotaCuti:
         assert ltypes.quota_rule_of(LT_NIKAH) == "per_kejadian"
         assert ltypes.quota_rule_of({"code": "PERSONAL", "name": "Izin Pribadi", "request_type": "izin"}) == "per_tahun"
 
+    def test_formulir_jenis_cuti_menyimpan_aturan_kuota(self):
+        d = ltypes.build_leave_type_doc({"code": "IZ_X", "name": "Izin khusus X", "request_type": "izin",
+                                         "quota_rule": "per_kejadian", "quota_default": 2})
+        assert d["quota_rule"] == "per_kejadian" and d["max_carry_days"] == 0 and d["min_service_months"] == 12
+        assert ltypes.build_leave_type_doc({"code": "ANNUAL", "name": "Cuti Tahunan"})["quota_rule"] == "tahunan"
+        with pytest.raises(HTTPException):
+            ltypes.build_leave_type_doc({"code": "X", "name": "X", "quota_rule": "bebas"})
+        assert ltypes.public_leave_type(LT_HAID)["quota_rule_label"] == "per bulan"
+
     def test_cuti_tahunan_baru_berhak_setelah_12_bulan_tanpa_prorata(self, db):
         db.rahaza_employees.docs[2]["join_date"] = "2026-03-15"
         self._lv(db, "lt-ct", "2026-11-11")

@@ -350,6 +350,7 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
           ...typeForm,
           quota_default: parseInt(typeForm.quota_default, 10) || 0,
           max_days_without_doc: parseInt(typeForm.max_days_without_doc, 10) || 0,
+          max_carry_days: parseInt(typeForm.max_carry_days, 10) || 0,
         }) });
       if (!r.ok) { const e = await r.json(); throw new Error(e.detail || 'Gagal menyimpan'); }
       toast.success(editing ? 'Jenis cuti disimpan' : 'Jenis cuti ditambahkan');
@@ -460,7 +461,10 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
         <p className="text-xs text-muted-foreground">{lt.code}{lt.legal_basis ? ` · ${lt.legal_basis}` : ''}</p>
       </div>) },
     { kunci: 'kelompok', label: 'Kelompok', isi: (lt) => <RequestTypeBadge type={lt.request_type || 'cuti'} /> },
-    { kunci: 'kuota', label: 'Kuota / tahun', rata: 'kanan', isi: (lt) => <span className="tabular-nums">{lt.quota_default} hari</span> },
+    { kunci: 'kuota', label: 'Kuota', rata: 'kanan', isi: (lt) => (
+      <span className="tabular-nums">{lt.quota_rule === 'sakit_bersurat' ? 'Bersurat: tanpa batas' : `${lt.quota_default} hari`}
+        {lt.quota_rule_label && lt.quota_rule !== 'sakit_bersurat' && <span className="block text-xs text-muted-foreground">{lt.quota_rule_label}</span>}
+      </span>) },
     /* BUG-4: dulu hanya membaca `unpaid`; jenis buatan HR (yang menulis `paid`) tidak pernah menampilkan status apa pun. */
     { kunci: 'dibayar', label: 'Gaji', isi: (lt) => (lt.unpaid
       ? <span data-testid={`lt-unpaid-${lt.code}`}><StatusBadge status="unpaid" label="Tanpa gaji" tone="muted" /></span>
@@ -582,7 +586,8 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
             { label: 'Kode', nilai: (lt) => lt.code },
             { label: 'Nama', nilai: (lt) => lt.name },
             { label: 'Kelompok', nilai: (lt) => (REQ_TYPE_CFG[lt.request_type || 'cuti'] || REQ_TYPE_CFG.izin).label },
-            { label: 'Kuota per tahun (hari)', nilai: (lt) => Number(lt.quota_default) || 0 },
+            { label: 'Kuota (hari)', nilai: (lt) => Number(lt.quota_default) || 0 },
+            { label: 'Aturan kuota', nilai: (lt) => lt.quota_rule_label || '' },
             { label: 'Gaji', nilai: (lt) => (lt.unpaid ? 'Tanpa gaji' : 'Dibayar') },
             { label: 'Wajib dokumen', nilai: (lt) => (lt.requires_document ? 'Ya' : 'Tidak') },
             { label: 'Maks. hari tanpa dokumen', nilai: (lt) => Number(lt.max_days_without_doc) || 0 },
@@ -813,6 +818,24 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
             <Input id="lt-quota" type="number" min={0} value={typeForm.quota_default}
               onChange={e => setTypeForm(f => ({ ...f, quota_default: e.target.value }))} />
           </Isian>
+          {/* 2026-11-09 (Q7): cara menghitung kuota mengikuti UU 13/2003; kosong = ditebak dari jenis bawaan */}
+          <Isian label="Aturan kuota" petunjuk="Kuota bawaan berlaku sesuai aturan ini.">
+            <SmartNativeSelect value={typeForm.quota_rule || ''} searchable={false} aria-label="Aturan kuota"
+              onChange={e => setTypeForm(f => ({ ...f, quota_rule: e.target.value }))} data-testid="lt-quota-rule">
+              <option value="">Otomatis dari jenis</option>
+              <option value="tahunan">Cuti tahunan (berhak setelah masa kerja)</option>
+              <option value="per_tahun">Jatah per tahun</option>
+              <option value="per_bulan">Paling banyak per bulan</option>
+              <option value="per_kejadian">Paling banyak per kejadian</option>
+              <option value="sakit_bersurat">Sakit: tanpa batas dengan surat dokter</option>
+            </SmartNativeSelect>
+          </Isian>
+          {(typeForm.quota_rule || '') === 'tahunan' && (
+            <Isian label="Sisa dibawa ke tahun berikut (hari)" htmlFor="lt-carry" petunjuk="0 = tidak dibawa.">
+              <Input id="lt-carry" type="number" min={0} value={typeForm.max_carry_days ?? 0}
+                onChange={e => setTypeForm(f => ({ ...f, max_carry_days: e.target.value }))} />
+            </Isian>
+          )}
         </div>
         <div className="flex flex-wrap gap-6">
           <label className="flex items-center gap-2 text-sm" htmlFor="lt-paid">
