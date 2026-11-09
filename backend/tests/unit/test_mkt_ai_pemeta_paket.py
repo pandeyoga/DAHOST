@@ -401,3 +401,73 @@ def test_periode_laporan_bawaan():
     assert (a, b, label) == ("2026-10-01", "2026-10-31", "Oktober 2026")
     with pytest.raises(lm.GalatLaporan):
         lm.periode_laporan("rentang", date(2026, 11, 9), "2026-01-01", "2026-12-31")
+
+
+# ═══ Paket fakta Laporan Marketing & alat penjaga angka ════════════════════════
+def _db_laporan():
+    db = FakeDB()
+    acc = {"id": "a1", "account_name": "Toko A", "platform": "tiktok", "status": "active"}
+    db.marketing_platform_accounts.docs.append(acc)
+    for d, rev in (("2026-11-02", 100000), ("2026-11-03", 120000), ("2026-10-27", 90000)):
+        db.marketing_sales_data.docs.append({"id": d, "account_id": "a1", "date": d, "revenue_type": "total",
+                                             "metrics": {"revenue": rev, "revenue_product": rev, "orders": 3},
+                                             "source": "orders_auto"})
+    db.marketing_ads_data.docs.append({"account_id": "a1", "date": "2026-11-02", "campaign_name": "K",
+                                       "spend": 50000, "revenue": 20000})
+    return db, acc
+
+
+def test_paket_fakta_dari_pembaca_resmi_dengan_pembanding_dan_anomali():
+    db, acc = _db_laporan()
+    f = asyncio.run(lm.paket_fakta(db, [acc], jenis="mingguan", dari="2026-11-02", sampai="2026-11-08", label="x"))
+    k = f["kpi"]
+    assert (k["omzet"], k["pesanan"], k["belanja_iklan"], k["tacos_persen"], k["roas_iklan"]) == (220000, 6, 50000, 22.7, 0.4)
+    p = f["pembanding"]["periode_sebelumnya"]
+    assert p["omzet"] == 90000 and p["selisih_omzet_persen"] == 144.4
+    jenis = {a["jenis"] for a in f["anomali"]}
+    assert {"toko_tanpa_data", "kampanye_rugi"} <= jenis
+    assert f["per_toko"][0]["hari_ada_data"] == 2 and f["kualitas_data"]["toko_tanpa_setoran"] == ["Toko A"]
+    assert f["versi"] == lm.VERSI and "omzet" in f["definisi"]
+
+
+def test_alat_buat_laporan_marketing_menolak_angka_di_luar_fakta():
+    from datetime import date
+    from core.asisten_ai import alat_base as ab
+    db, acc = _db_laporan()
+    f = asyncio.run(lm.paket_fakta(db, [acc], jenis="mingguan", dari="2026-11-02", sampai="2026-11-08", label="x"))
+    user = {"id": "u1", "role": "owner"}
+    fid = asyncio.run(lm.simpan_fakta(db, f, user))
+    ctx = ab.AlatContext(user=user, cv="DA", today=date(2026, 11, 9), db=db)
+    spec = {"fakta_id": fid, "judul": "Laporan Marketing", "format": ["pdf"],
+            "bagian": [{"teks": "Omzet Rp220.000, naik 144,4%; iklan Rp50.000 (TACoS 22,7%). Proyeksi Rp1.000.000."}]}
+    h = asyncio.run(ab.jalankan_satu("t1", "buat_laporan_marketing", spec, ctx))
+    assert h.is_error and "Rp1.000.000" in h.isi and "Rp220.000" not in h.isi
+    h2 = asyncio.run(ab.jalankan_satu("t2", "buat_laporan_marketing", {**spec, "fakta_id": "fakta-tidak-ada"}, ctx))
+    assert h2.is_error and "paket_laporan_marketing" in h2.isi
+    assert ab.cari_alat("analisis_impor") and ab.cari_alat("paket_laporan_marketing").kode
+
+
+# ═══ Migrasi dasar omzet pesanan tersimpan (G5) ════════════════════════════════
+def _migrasi():
+    import importlib.util
+    p = ROOT / "scripts" / "migrations" / "2026_11_09_omzet_basis_penjual.py"
+    spec = importlib.util.spec_from_file_location("mig_2026_11_09_omzet", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_migrasi_omzet_basis_penjual_idempoten_dan_pratinjau_tidak_menulis():
+    mig = _migrasi()
+    o = {"id": "o1", "_import_source_type": "marketplace_orders", "revenue_product": 90000, "items": [
+        {"quantity": 1, "sku_subtotal_before_discount": 100000, "sku_platform_discount": 2000,
+         "sku_seller_discount": 8000, "sku_subtotal_after_discount": 90000}]}
+    upd, d = mig.perbaiki_pesanan(o)
+    assert upd["revenue_product"] == 92000 and d == 2000
+    assert upd["items"][0]["sku_subtotal_after_all_discount"] == 90000
+    assert mig.perbaiki_pesanan({**o, **upd}) == (None, 0.0)                # sudah dasar baru
+    db = FakeDB()
+    db.marketing_orders.docs.append(dict(o))
+    out = asyncio.run(mig.run(False, db=db))
+    assert out == {"pesanan": 1, "naik": 1, "selisih": 2000.0}
+    assert db.marketing_orders.docs[0]["revenue_product"] == 90000           # pratinjau tidak menulis
