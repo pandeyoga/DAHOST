@@ -551,3 +551,14 @@ mengunggah ulang Ekspor A — dan justru itu yang membekukan status pesanan lama
 * **PERLU KEPUTUSAN PEMILIK:** `EXCLUDED_FOR_REVENUE = ('cancelled',)` ⇒ pesanan **`returned` ikut
   dihitung** sebagai omzet. Selama belum diputuskan, rincian WAJIB memuat catatan
   “PERLU KEPUTUSAN PEMILIK …” beserta jumlah & nilainya (jangan diubah sepihak: menyentuh F2 & F5).
+
+## §IMPOR ROLL KAIN STOK AWAL — `wh_fabric_roll_imports` (2026-11-09, klarifikasi owner C5)
+
+* Satu dokumen per berkas yang diterapkan: `id`, `import_no` (IMR-YYYYMM-NNN), `batch_key` (sha256 isi baris yang
+  dinormalkan — kunci idempoten; berkas yang sama tidak membuat roll/sesi kedua kecuali impor lama `dibatalkan`),
+  `status` (`memproses` → `menunggu_persetujuan` → `selesai` | `sebagian` | `dibatalkan`), `groups[]`
+  (material_id, code, location_id, location_code, rolls, qty, average_rolls, value), `totals`, `session_ids[]`,
+  `sessions[]`, `session_status{}`, `rolls_created`, `filename`, `created_at/by`.
+* Penulis tunggal `core/fabric_roll_import.py`. Roll yang dibuat (`wh_fabric_rolls`) berstatus `pending_opening`
+  (tidak bisa dipotong/dikeluarkan) dengan `opening_import_id`, `opening_session_id`, `is_average`; stok & nilai
+  HANYA lahir lewat persetujuan sesi Opname stok awal (`wh_opname3_sessions.mode='opening'`, `roll_import_id`).

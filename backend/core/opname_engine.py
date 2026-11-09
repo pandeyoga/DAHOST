@@ -94,6 +94,80 @@ CONTRA_ROLES = {VARIANCE_EVENT: {"selisih": "adjustment_expense", "rusak": "debi
 APPROVE_ROLES = ["admin", "admin_gudang", "supervisor", "supervisor_produksi", "manajer", "manager",
                  "warehouse_manager", "superadmin", "owner"]
 
+# ── 2026-11-09 — OPNAME STOK AWAL (klarifikasi owner C3-b, audit gudang G7★a) ─────────────────────
+# Opname biasa menjurnal selisih lebih ke 5-1950 (akun HPP) ⇒ bila dipakai sebagai stok awal, SELURUH nilai
+# stok awal menaikkan laba bulan berjalan. Mode "stok awal": lawan jurnal = akun ekuitas saldo awal yang
+# SAMA dengan layar Saldo Awal (`core.opening_balance.retained_earnings_code`, bawaan 3-2000), hanya Keuangan/
+# owner yang menyetujui, baris berstok tanpa harga DITOLAK (daftar dikembalikan), satu kali per barang×lokasi
+# (penanda mutasi `type='opening'`, sama dengan impor Excel STOK_AWAL), dan ditolak bila Saldo Awal sudah
+# mengisi akun persediaan jenis yang sama (dobel). FG dinilai WAC; bila belum ada, HPP standar master.
+MODE_OPENING = "opening"
+OPENING_EVENT = "inventory_opening_count"     # source_module jurnal opname stok awal
+OPENING_APPROVE_PERMS = ("finance.manage", "finance.approve")
+
+
+def is_opening(sess: Optional[dict]) -> bool:
+    return (sess or {}).get("mode") == MODE_OPENING
+
+
+def hpp_components(mat: Optional[dict]) -> Optional[dict]:
+    """Komponen HPP standar per pcs dari `hpp_breakdown` master FG (bahan / upah CMT+internal / overhead)."""
+    bd = (mat or {}).get("hpp_breakdown") or {}
+    f = lambda k: float(bd.get(k) or 0)  # noqa: E731
+    comps = {"material": f("material"), "labor": f("cmt") + f("internal_labor"), "overhead": f("overhead")}
+    return comps if sum(comps.values()) > 0 else None
+
+
+async def opening_unit_cost(db, mat: dict) -> tuple:
+    """(harga per satuan dasar, sumber, komponen|None) untuk opname stok awal.
+
+    FG: WAC bila sudah ada; selain itu HPP standar master (`hpp`, kalkulator BOM + upah) — keputusan G7★a.
+    Bahan/aksesoris: harga master (`unit_cost`). Tanpa harga → (0, '', None) ⇒ approve ditolak."""
+    if kind_of(mat) == "fg":
+        wac = await _wac(db, mat)
+        if wac > 0:
+            return wac, "wac", None
+        hpp = round(float((mat or {}).get("hpp") or 0), 4)
+        return (hpp, "hpp_standar", hpp_components(mat)) if hpp > 0 else (0.0, "", None)
+    uc = round(float((mat or {}).get("unit_cost") or 0), 4)
+    return (uc, "harga_master", None) if uc > 0 else (0.0, "", None)
+
+
+def opening_problems(lines: list, *, opened: set, client_ids: set) -> dict:
+    """Pemeriksaan baris opname stok awal (fungsi murni, diuji unit) → {kunci: [baris]}.
+
+    lines     : baris terevaluasi (`variance_qty`, `unit_cost`, `material_id`, …)
+    opened    : material_id yang SUDAH punya stok awal di lokasi sesi
+    client_ids: material_id barang jadi milik klien maklon"""
+    out = {"tanpa_harga": [], "berkurang": [], "sudah_ada_stok_awal": [], "barang_klien": []}
+    for x in lines:
+        var = float(x.get("variance_qty") or 0)
+        if not var:
+            continue
+        row = {"material_code": x.get("material_code"), "material_name": x.get("material_name"),
+               "unit": x.get("unit"), "counted_qty": x.get("counted_qty"), "system_qty": x.get("system_qty"),
+               "variance_qty": var}
+        if x.get("material_id") in client_ids:
+            out["barang_klien"].append(row)
+        elif var < 0:
+            out["berkurang"].append(row)
+        elif x.get("material_id") in opened:
+            out["sudah_ada_stok_awal"].append(row)
+        elif float(x.get("unit_cost") or 0) <= 0:
+            out["tanpa_harga"].append(row)
+    return {k: v for k, v in out.items() if v}
+
+
+OPENING_PROBLEM_TEXT = {
+    "tanpa_harga": "barang berstok tanpa harga (isi harga master / HPP standar FG dulu — stok tanpa nilai membuat "
+                   "HPP penjualan Rp 0 dan nilainya terhitung dua kali saat barang bernilai pertama masuk)",
+    "berkurang": "hitungan lebih kecil dari stok sistem (opname stok awal hanya MENAMBAH stok yang belum tercatat — "
+                 "pakai Sesi Opname biasa untuk koreksi)",
+    "sudah_ada_stok_awal": "barang×lokasi ini sudah pernah dimuat stok awalnya (Excel STOK_AWAL atau opname stok "
+                           "awal) — koreksi lewat Sesi Opname biasa",
+    "barang_klien": "barang jadi milik klien maklon (titipan) — catat lewat Titipan Klien, bukan persediaan DA",
+}
+
 def _uid() -> str:
     return str(uuid.uuid4())
 
@@ -432,7 +506,7 @@ async def _wac(db, mat: dict) -> float:
 
 
 async def _new_line(db, mat: dict, *, level: str, bin_id: str = "", bin_label: str = "",
-                    snapshot_qty: float = 0.0, in_snapshot: bool = True) -> dict:
+                    snapshot_qty: float = 0.0, in_snapshot: bool = True, opening: bool = False) -> dict:
     ln = {
         "key": line_key(mat["id"], bin_id, level), "material_id": mat["id"],
         "material_code": mat.get("code") or "", "material_name": mat.get("name") or "",
@@ -441,6 +515,9 @@ async def _new_line(db, mat: dict, *, level: str, bin_id: str = "", bin_label: s
         "snapshot_qty": _r(snapshot_qty), "unit_cost": await _wac(db, mat),
         "in_snapshot": bool(in_snapshot), "status": ST_BELUM, "reason": "",
     }
+    if opening:   # 2026-11-09: harga stok awal (FG tanpa WAC → HPP standar) + asal harganya
+        uc, src, comps = await opening_unit_cost(db, mat)
+        ln.update({"unit_cost": uc, "cost_source": src, "opening_components": comps})
     if level == LEVEL_RAK and not in_snapshot:
         ln["resolution"] = "pindah"
     return ln
@@ -459,10 +536,13 @@ async def resolve_materials_by_codes(db, codes: Iterable[str]) -> tuple:
 
 async def create_session(db, user: dict, *, location_id: str, sub_type: str = "", sub_id: str = "",
                          kinds: Iterable[str] = (), material_ids: Iterable[str] = (),
-                         material_codes: Iterable[str] = (), notes: str = "", source: str = "gudang") -> dict:
+                         material_codes: Iterable[str] = (), notes: str = "", source: str = "gudang",
+                         opening: bool = False, extra: Optional[dict] = None) -> dict:
     from utils.counters import gen_prefixed_number
     if not location_id:
         raise HTTPException(400, "Lokasi wajib dipilih (Sesi Opname per lokasi)")
+    if opening and sub_type:
+        raise HTTPException(400, "Opname stok awal = hitung seluruh lokasi (tanpa sub-cakupan zona/rak/bin).")
     sc = await location_scope(db, location_id)
     loc = sc["location"]
     if _is_quarantine(loc):
@@ -507,7 +587,7 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
             mat = meta.get(mid)
             if not mat or (kinds and kind_of(mat) not in kinds):
                 continue
-            lines.append(await _new_line(db, mat, level=level, snapshot_qty=by_mat.get(mid, 0.0)))
+            lines.append(await _new_line(db, mat, level=level, snapshot_qty=by_mat.get(mid, 0.0), opening=opening))
     else:
         bins = [p for p in sc["positions"] if _in_sub_scope(p, sub)]
         meta = await _material_meta(db, [p.get("material_id") for p in bins])
@@ -520,14 +600,15 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
             lines.append(await _new_line(db, mat, level=level, bin_id=p["id"], bin_label=_pos_label(p),
                                          snapshot_qty=float(p.get("qty") or 0)))
     session_no = await gen_prefixed_number(db, SESS, "session_no", f"OPN-{fmt_wib('%Y%m', _now())}-", 4)
-    scope_label = f"{loc.get('code')} — {loc.get('name')}" + (f" · {sub['label']}" if sub else "")
+    scope_label = (("Stok awal · " if opening else "") + f"{loc.get('code')} — {loc.get('name')}"
+                   + (f" · {sub['label']}" if sub else ""))
     if kinds:
         scope_label += " · " + ", ".join(KIND_LABELS[k] for k in kinds)
     if mids:
         scope_label += f" · {len(mids)} barang (cycle count)"
     doc = {
         "id": _uid(), "session_no": session_no, "engine": ENGINE, "level": level,
-        "mode": "cycle" if (mids or kinds or sub) else "full",
+        "mode": MODE_OPENING if opening else ("cycle" if (mids or kinds or sub) else "full"),
         "location_id": loc["id"], "location_code": loc.get("code"), "location_name": loc.get("name"),
         "location_ids": sc["location_ids"], "zone_ids": [z["id"] for z in sc["zones"]],
         "sub_scope": sub, "kinds": kinds, "material_ids": mids, "source": source or "gudang",
@@ -535,6 +616,7 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
         "lines": lines, "notes": notes or "",
         "created_by": user.get("id", ""), "created_by_name": user.get("name", ""), "created_at": snapshot_at,
         "submitted_at": None, "approved_at": None, "approved_by": None, "summary": None,
+        **(extra or {}),
     }
     await db[SESS].insert_one(dict(doc))
     return doc
@@ -614,7 +696,7 @@ async def record_count(db, user: dict, sess: dict, *, mat: dict, bin_id: str, bi
     key = line_key(mat["id"], bin_id, level)
     if not any(ln.get("key") == key for ln in sess.get("lines") or []):
         ln = await _new_line(db, mat, level=level, bin_id=bin_id, bin_label=bin_label,
-                             snapshot_qty=0.0, in_snapshot=False)
+                             snapshot_qty=0.0, in_snapshot=False, opening=is_opening(sess))
         await db[SESS].update_one({"id": sess["id"], "lines.key": {"$ne": key}}, {"$push": {"lines": ln}})
     ek = {"session_id": sess["id"], "material_id": mat["id"], "bin_id": bin_id or ""}
     cur = await db[CNT].find_one(ek, {"_id": 0})
@@ -844,34 +926,112 @@ async def check_scan_out_sheets(db, sess: dict, count_date: str):
                                  "di layar Scan Keluar Penjualan dulu.")
 
 
+async def inventory_codes(db, kinds: Iterable[str]) -> tuple:
+    """({jenis: kode akun persediaan}, galat) lewat profil `inventory_adjust` (1-1401/1-1402/1-1404)."""
+    from routes import rahaza_posting as rp
+    adj_map = await rp.get_mapping(db, "inventory_adjust")
+    out = {}
+    for kind in sorted(set(kinds)):
+        code, err = rp.inventory_account(adj_map, "inventory_adjust", kind)
+        if not code:
+            return out, err
+        out[kind] = code
+    return out, ""
+
+
+async def saldo_awal_inventory_lines(db, codes: Iterable[str], entity: str = "DA") -> list:
+    """Baris jurnal Saldo Awal aktif (layar Saldo Awal) yang MENGISI akun persediaan `codes` — [{code, amount}]."""
+    from core.opening_balance import existing_opening
+    je = await existing_opening(db, entity)
+    if not je:
+        return []
+    full = await db.rahaza_journal_entries.find_one({"id": je["id"]}, {"_id": 0, "lines": 1, "je_number": 1}) or {}
+    want, out = set(codes), {}
+    for ln in full.get("lines") or []:
+        c = ln.get("account_code")
+        if c in want:
+            out[c] = round(out.get(c, 0.0) + float(ln.get("debit") or 0) - float(ln.get("credit") or 0), 2)
+    return [{"account_code": c, "amount": v, "je_number": full.get("je_number") or je.get("je_number")}
+            for c, v in sorted(out.items()) if abs(v) >= 0.01]
+
+
+async def opened_materials(db, material_ids: Iterable[str], location_ids: Iterable[str]) -> set:
+    """material_id yang SUDAH punya stok awal (mutasi `type='opening'`) di salah satu `location_ids`."""
+    mids, locs = sorted(set(material_ids)), sorted(set(location_ids))
+    if not mids or not locs:
+        return set()
+    return {m.get("material_id") async for m in db.rahaza_material_movements.find(
+        {"type": "opening", "material_id": {"$in": mids}, "to_location_id": {"$in": locs}},
+        {"_id": 0, "material_id": 1})}
+
+
+async def check_opening(db, sess: dict, ev: dict) -> dict:
+    """Gerbang approve opname stok awal. Melempar 409 (daftar per masalah) atau mengembalikan ringkasan."""
+    lines = [x for x in ev["lines"] if x.get("variance_qty")]
+    mids = [x["material_id"] for x in lines]
+    opened = await opened_materials(db, mids, sess.get("location_ids") or [sess.get("location_id")])
+    client_ids = {m["id"] async for m in db.rahaza_materials.find(
+        {"id": {"$in": mids}, "owner_type": "client"}, {"_id": 0, "id": 1})} if mids else set()
+    probs = opening_problems(lines, opened=opened, client_ids=client_ids)
+    if probs:
+        parts = [f"{len(v)} {OPENING_PROBLEM_TEXT[k]}" for k, v in probs.items()]
+        raise HTTPException(409, {"code": "opname_awal_ditolak",
+                                  "message": "Approve opname stok awal ditolak: " + "; ".join(parts) + ".",
+                                  "problems": probs})
+    codes, err = await inventory_codes(db, {x["kind"] for x in lines})
+    if err:
+        raise HTTPException(400, f"Approve ditolak: {err}")
+    clash = await saldo_awal_inventory_lines(db, codes.values())
+    if clash:
+        what = ", ".join(f"{c['account_code']} Rp {c['amount']:,.0f}" for c in clash)
+        raise HTTPException(409, {"code": "bentrok_saldo_awal", "message": (
+            f"Approve opname stok awal ditolak: jurnal Saldo Awal ({clash[0]['je_number']}) sudah mengisi akun "
+            f"persediaan {what}. Opname stok awal juga menjurnal nilai stok ke akun itu ⇒ persediaan DOBEL. "
+            "Pilih satu jalur: kosongkan baris persediaan di Saldo Awal (void & posting ulang), atau muat stok "
+            "lewat Excel STOK_AWAL (nilai dari Saldo Awal) — bukan keduanya."), "saldo_awal": clash})
+    return {"inventory_codes": codes, "had_stock": [x.get("material_code") for x in lines
+                                                    if float(x.get("system_qty") or 0) != 0]}
+
+
 async def _post_session_je(db, user: dict, sess: dict, valued: list, je_date: str) -> dict:
-    """SATU jurnal per sesi — idempoten `opname:{id}` (source_module `inventory_count_variance`)."""
+    """SATU jurnal per sesi — idempoten `opname:{id}` (source_module `inventory_count_variance`).
+
+    2026-11-09: sesi STOK AWAL → source_module `inventory_opening_count`, lawan = akun ekuitas saldo awal
+    (`core.opening_balance.retained_earnings_code`, sama dengan layar Saldo Awal), bukan 5-1950."""
     from datetime import date as _date
     from routes import rahaza_posting as rp
+    opening = is_opening(sess)
+    event = OPENING_EVENT if opening else VARIANCE_EVENT
     ref = f"opname:{sess['id']}"
-    existing = await rp._find_existing_je(db, VARIANCE_EVENT, ref)
+    existing = await rp._find_existing_je(db, event, ref)
     if existing:
         return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"), "already_posted": True}
     if not valued:
         return {"ok": True, "skipped": "tanpa selisih bernilai"}
-    adj_map = await rp.get_mapping(db, "inventory_adjust")
-    contra_map = await rp.get_mapping(db, VARIANCE_EVENT)
-    roles = CONTRA_ROLES[VARIANCE_EVENT]
-    contra = {k: str(contra_map.get(r) or "").strip() for k, r in roles.items()}
-    missing = [f"{VARIANCE_EVENT}.{roles[k]}" for k, v in contra.items() if not v]
-    inv_code_of = {}
-    for kind in sorted({v["kind"] for v in valued}):
-        code, err = rp.inventory_account(adj_map, "inventory_adjust", kind)
-        if not code:
-            return {"ok": False, "error": err}
-        inv_code_of[kind] = code
+    if opening:
+        from core.opening_balance import retained_earnings_code
+        eq = await retained_earnings_code(db)
+        contra = {"selisih": eq, "rusak": eq}
+        missing = [] if eq else ["subledger_opening_balance.credit_retained_earnings_balancing"]
+    else:
+        contra_map = await rp.get_mapping(db, VARIANCE_EVENT)
+        roles = CONTRA_ROLES[VARIANCE_EVENT]
+        contra = {k: str(contra_map.get(r) or "").strip() for k, r in roles.items()}
+        missing = [f"{VARIANCE_EVENT}.{roles[k]}" for k, v in contra.items() if not v]
+    inv_code_of, err = await inventory_codes(db, {v["kind"] for v in valued})
+    if err:
+        return {"ok": False, "error": err}
     if missing:
         return {"ok": False, "error": f"Mapping {', '.join(missing)} belum diisi — lengkapi di Profil Posting."}
-    memo = f"Opname {sess.get('session_no')} · {sess.get('location_code')}"
+    memo = (f"Opname stok awal {sess.get('session_no')} · {sess.get('location_code')}" if opening
+            else f"Opname {sess.get('session_no')} · {sess.get('location_code')}")
     lines = build_je_lines(valued, inv_code_of, contra, memo)
+    if opening:
+        for ln in lines:
+            ln["description"] = ln["description"].replace("selisih lebih", "stok awal")
     if not lines:
         return {"ok": True, "skipped": "nilai selisih 0"}
-    return await rp._create_posted_je(db, _date.fromisoformat(je_date), memo, VARIANCE_EVENT, ref, lines, user)
+    return await rp._create_posted_je(db, _date.fromisoformat(je_date), memo, event, ref, lines, user)
 
 
 async def approve(db, user: dict, sess: dict) -> dict:
@@ -884,6 +1044,8 @@ async def approve(db, user: dict, sess: dict) -> dict:
         raise HTTPException(409, "Masih ada baris belum dihitung — ajukan ulang dengan konfirmasi 'anggap 0'")
     count_date = sess.get("count_date") or count_date_of(sess, ev["lines"])
     await check_scan_out_sheets(db, sess, count_date)
+    if is_opening(sess):
+        await check_opening(db, sess, ev)
     level = sess.get("level") or LEVEL_LOKASI
     loc_ids = sess.get("location_ids") or [sess["location_id"]]
     mids = sorted({x["material_id"] for x in ev["lines"]})
@@ -971,10 +1133,24 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
                 await stock_service.adjust_by(x["material_id"], loc_id, delta, meta=m_meta, ref=ref,
                                               actor=actor, db=db)
             writes.append({"material_id": x["material_id"], "location_id": loc_id, "qty": q, "delta": delta})
+        opening = is_opening(sess)
+        if opening and x["kind"] == "fg" and float(x.get("unit_cost") or 0) > 0 and (x["variance_qty"] or 0) > 0:
+            # 2026-11-09: WAC awal FG = harga stok awal (WAC berjalan / HPP standar); lapisan → jurnal sesi.
+            from core import fg_cost_layers as fcl
+            layer = await fcl.push_layer(
+                db, material_id=x["material_id"], qty=int(round(x["variance_qty"])), actor=actor,
+                unit_cost=float(x["unit_cost"]), components=x.get("opening_components"),
+                ref={"type": "opening_count", "receipt_id": sess["id"], "receipt_code": sess.get("session_no")})
+            if layer and je.get("je_id"):
+                await db[fcl.LAYERS].update_one({"id": layer["id"]}, {"$set": {
+                    "gl_je_id": je["je_id"], "gl_basis": "opname_stok_awal"}})
         await db.rahaza_material_movements.insert_one({
             # type 'opname' (bukan 'adjust'): jurnalnya SATU per sesi; tombol "post ulang" per mutasi
             # (`/material-movements/{id}/post-to-gl`) menolak tipe ini → tidak bisa terjurnal dobel.
-            "id": _uid(), "type": "opname", "movement_type": "opname", "material_id": x["material_id"],
+            # 2026-11-09: sesi stok awal = type 'opening' (penanda "stok awal sekali per barang×lokasi", sama
+            # dengan impor Excel STOK_AWAL; juga ditolak tombol post ulang).
+            "id": _uid(), "type": "opening" if opening else "opname",
+            "movement_type": "opening" if opening else "opname", "material_id": x["material_id"],
             "material_name": x.get("material_name"), "material_code": x.get("material_code"),
             "qty": x["variance_qty"], "qty_signed": x["variance_qty"], "unit_cost": x.get("unit_cost"),
             "adjustment_reason": x.get("reason") or "opname", "location_id": sess["location_id"],
@@ -1002,7 +1178,16 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
         "je_id": je.get("je_id"), "je_number": je.get("je_number"),
         "result": {"lines": ev["lines"], "totals": ev["totals"], "writes": writes,
                    "positions": {k: list(v) for k, v in place_changes.items()}, "je": je, "findings": findings}}})
+    await _roll_import_hook(db, sess, "approved")
     return await get_session(db, sess["id"])
+
+
+async def _roll_import_hook(db, sess: dict, status: str) -> None:
+    """2026-11-09: sesi stok awal dari impor roll kain — roll ikut aktif (disetujui) / batal (ditolak)."""
+    if not (sess or {}).get("roll_import_id"):
+        return
+    from core import fabric_roll_import as fri
+    await fri.on_session_final(db, sess, status)
 
 
 async def reject(db, user: dict, sess: dict, reason: str = "") -> dict:
@@ -1010,6 +1195,7 @@ async def reject(db, user: dict, sess: dict, reason: str = "") -> dict:
     await db[SESS].update_one({"id": sess["id"], "status": "submitted"}, {"$set": {
         "status": "rejected", "rejected_at": _now(), "rejected_by": user.get("id", ""),
         "rejected_by_name": user.get("name", ""), "reject_reason": reason or ""}})
+    await _roll_import_hook(db, sess, "rejected")
     return {"ok": True, "status": "rejected"}
 
 
@@ -1017,6 +1203,7 @@ async def cancel(db, user: dict, sess: dict) -> dict:
     _require_status(sess, "counting", "submitted")
     await db[SESS].update_one({"id": sess["id"], "status": {"$in": ["counting", "submitted"]}}, {"$set": {
         "status": "cancelled", "cancelled_at": _now(), "cancelled_by": user.get("id", "")}})
+    await _roll_import_hook(db, sess, "cancelled")
     return {"ok": True, "status": "cancelled"}
 
 

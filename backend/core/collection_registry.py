@@ -455,6 +455,8 @@ REGISTRY: dict[str, str] = {
     "wh_delivery_notes": "gudang",
     "wh_fabric_roll_movements": "gudang",
     "wh_fabric_rolls": "gudang",
+    # 2026-11-09: impor roll kain massal stok awal (core/fabric_roll_import) — satu dokumen per berkas
+    "wh_fabric_roll_imports": "gudang",
     "wh_location_migration_map": "gudang",
     "wh_opname3_counts": "gudang",
     "wh_opname3_sessions": "gudang",
@@ -678,7 +680,7 @@ rahaza_shift_handovers rahaza_shipments rahaza_stock_ledger rahaza_wip_events ra
 rahaza_year_end_closings sales_direct_notes sales_direct_returns vendor_jobs
 vendor_material_inspection_items vendor_material_inspections vendor_progress_reports
 vendor_shipment_items vendor_shipments warehouse_opname warehouse_receiving wh_cmt_dispatches
-wh_delivery_notes wh_fabric_roll_movements wh_fabric_rolls wh_opname3_counts wh_opname3_sessions
+wh_delivery_notes wh_fabric_roll_imports wh_fabric_roll_movements wh_fabric_rolls wh_opname3_counts wh_opname3_sessions
 wh_opname_lines wh_opname_sessions wh_opname_sessions2 wh_pending_movements wh_picklists
 wh_placement_movements wh_quarantine_items wh_returns wh_scan_out_controls wh_scan_out_lines
 wh_scan_out_rejects wh_scan_out_sheets wms_fabric_rolls work_orders

@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Package, Plus, RefreshCw, Search, CheckCircle2, Loader2, MoreHorizontal, Printer, Truck, Brain, MapPin,
+  Package, Plus, RefreshCw, Search, CheckCircle2, Loader2, MoreHorizontal, Printer, Truck, Brain, MapPin, FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +34,7 @@ import { EmptyState, StatusBadge } from './moduleAtoms';
 // FASE H-5 — gulungan LAHIR dari penerimaan kain; layar ini juga menutup lubang
 // penerimaan lama yang belum punya gulungan (backfill).
 import RollLinesEditor from './warehouse/RollLinesEditor';
+import RollImportPopup from './warehouse/RollImportPopup';
 import { rollLinesState, fmtQty } from './warehouse/rollLines';
 
 // Satuan roll ADA DI DATANYA (`uom`) — layar tidak boleh menebak "meter" dari
@@ -59,6 +60,9 @@ const STOCK_STATUS = {
   fully_issued: { label: 'Habis', tone: 'muted' },
   returned: { label: 'Dikembalikan', tone: 'primary' },
   rejected: { label: 'Ditolak', tone: 'danger' },
+  // 2026-11-09: roll impor stok awal — menunggu persetujuan Keuangan (belum bisa dipotong) / dibatalkan
+  pending_opening: { label: 'Menunggu persetujuan stok awal', tone: 'warning' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
 };
 // Jenis pergerakan roll (core/fabric_roll_engine) dalam bahasa staf
 const GERAK = {
@@ -84,6 +88,7 @@ const URUTAN = [
 const TAB = [
   { key: 'all', label: 'Semua' }, { key: 'in_stock', label: 'Tersedia' },
   { key: 'partly_issued', label: 'Sebagian terpakai' }, { key: 'fully_issued', label: 'Habis' },
+  { key: 'pending_opening', label: 'Menunggu stok awal' },
 ];
 const ROLL_BARU = { color_lot: '', uom: 'meter', length_m: '0', weight_kg: '0', notes: '' };
 
@@ -125,6 +130,7 @@ export default function WMSFabricRollsModule({ token }) {
   const [missingLoading, setMissingLoading] = useState(false);
   const [rollPolicy, setRollPolicy] = useState(null);
   const [issueRollsDialog, setIssueRollsDialog] = useState(null); // {row, lines}
+  const [importDialog, setImportDialog] = useState(false);   // 2026-11-09: impor roll stok awal
   const [issuing, setIssuing] = useState(false);
 
   // Semua halaman dimuat (server membatasi 200 per permintaan; dulu hanya halaman pertama 50 roll).
@@ -497,6 +503,9 @@ export default function WMSFabricRollsModule({ token }) {
             {aiLoading ? <Loader2 className="animate-spin" /> : <Brain />}
             Analisis AI
           </Button>
+          <Button variant="outline" onClick={() => setImportDialog(true)} data-testid="import-roll-btn">
+            <FileSpreadsheet />Impor roll
+          </Button>
           <Button onClick={() => setCreateDialog(true)} data-testid="create-roll-btn">
             <Plus />Roll baru
           </Button>
@@ -613,6 +622,8 @@ export default function WMSFabricRollsModule({ token }) {
               : 'Gulungan lahir otomatis dari Penerimaan Barang: isi "Rincian gulungan" pada baris kain, dan nomor roll diterbitkan sistem. Untuk penerimaan yang sudah lewat, buka "Penerimaan tanpa roll".'}
             action={{ label: 'Buat roll manual', onClick: () => setCreateDialog(true), icon: Plus }} />} />
       )}
+
+      <RollImportPopup open={importDialog} onClose={() => setImportDialog(false)} onDone={() => load()} />
 
       {/* ── Roll baru (manual) ───────────────────────────────────────────────── */}
       <FormPopup open={createDialog} onClose={() => setCreateDialog(false)} ukuran="panjang" testId="create-roll-dialog"

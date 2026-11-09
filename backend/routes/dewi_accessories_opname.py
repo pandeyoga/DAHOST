@@ -150,9 +150,10 @@ async def complete_opname(session_id: str, request: Request):
 async def approve_opname(session_id: str, request: Request):
     from routes.wms_opname3 import assert_can_approve
     user = await require_auth(request)
-    assert_can_approve(user, "approve opname aksesoris")
     db = get_db()
-    sess = await eng.approve(db, user, await eng.get_session(db, session_id, for_write=True))
+    sess = await eng.get_session(db, session_id, for_write=True)
+    assert_can_approve(user, "approve opname aksesoris", sess)   # 2026-11-09: stok awal = Keuangan/owner
+    sess = await eng.approve(db, user, sess)
     summ = sess.get("summary") or {}
     return {"ok": True, "status": "approved", "adjustments_made": summ.get("stock_writes", 0),
             "je_posted": summ.get("je_posted", 0), "je_number": summ.get("je_number"),
@@ -163,13 +164,13 @@ async def approve_opname(session_id: str, request: Request):
 async def reject_opname(session_id: str, request: Request):
     from routes.wms_opname3 import assert_can_approve
     user = await require_auth(request)
-    assert_can_approve(user, "menolak opname aksesoris")
     db = get_db()
     try:
         body = await request.json()
     except Exception:
         body = {}
     sess = await eng.get_session(db, session_id, for_write=True)
+    assert_can_approve(user, "menolak opname aksesoris", sess)
     return await eng.reject(db, user, sess, (body or {}).get("reason", "") or (body or {}).get("notes", ""))
 
 
