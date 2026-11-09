@@ -764,6 +764,10 @@ RETIRED_MAPPINGS: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "marketplace_orders": (
         ("harga setelah diskon", "sku_subtotal_after_discount"),
         ("subtotal pesanan", "sku_subtotal_before_discount"),
+        # G2 (9 Nov 2026) — kolom SKU Shopee yang dulu tertukar
+        ("sku induk", "platform_sku_id"),
+        ("sku induk", "seller_sku"),
+        ("nomor referensi sku", "platform_sku_id"),
         # 2026-11-09 (riset G5) — kolom subtotal PLATFORM dulu langsung menjadi dasar omzet;
         # angkanya sudah dipotong diskon yang dibiayai platform (omzet 2,2–4,1% terlalu kecil).
         ("subtotal pesanan", "sku_subtotal_after_discount"),

@@ -717,6 +717,17 @@ _LOG += " ai_lampiran ai_berkas "
 _KONFIGURASI += " ai_memories "
 _LOG += " ai_proaktif_runs "
 # ── akhir Asisten AI (proaktif) ──
+# 2026-11-09 (agen MKT-AI) — impor banyak berkas satu langkah, pemetaan kolom per toko yang
+# dikonfirmasi staf (AI pemeta), dan paket fakta Laporan Marketing mode AI (penjaga angka).
+REGISTRY.update({
+    "marketing_impor_paket": "marketing",
+    "marketing_impor_pemetaan_toko": "marketing",
+    "ai_fakta_laporan_marketing": "lain",
+})
+_TRANSAKSI += " marketing_impor_paket "
+_KONFIGURASI += " marketing_impor_pemetaan_toko "
+_LOG += " ai_fakta_laporan_marketing "
+# ── akhir MKT-AI ──
 
 
 def _kind_table() -> dict[str, str]:

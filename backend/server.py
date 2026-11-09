@@ -1122,6 +1122,12 @@ app.include_router(marketing_advanced_ai_router, dependencies=_DENY_EXTERNAL)
 # ── Asisten AI (data) ── analitik Marketing baca-saja (satu definisi omzet) ──
 from routes.marketing_analitik import router as marketing_analitik_router  # noqa: E402
 app.include_router(marketing_analitik_router, dependencies=_DENY_EXTERNAL)
+# 2026-11-09 (agen MKT-AI) — impor banyak berkas satu langkah + AI pemeta + analisis impor,
+# dan Laporan Marketing mode AI (paket fakta + penjaga angka).
+from routes.marketing_impor_paket import router as marketing_impor_paket_router  # noqa: E402
+app.include_router(marketing_impor_paket_router, dependencies=_DENY_EXTERNAL)
+from routes.marketing_laporan_ai import router as marketing_laporan_ai_router  # noqa: E402
+app.include_router(marketing_laporan_ai_router, dependencies=_DENY_EXTERNAL)
 # ── akhir Asisten AI (data) ──
 
 # WMS Phase 1 — Units, Structure, Receiving
