@@ -45,7 +45,9 @@ def _harapan_tiktok(path):
             continue
         o = per.setdefault(oid, {"st": r[ix["Order Status"]], "c": str(r[ix["Created Time"]]),
                                  "paid": r[ix["Paid Time"]], "sub": 0.0})
-        o["sub"] += _num(r[ix["SKU Subtotal After Discount"]])
+        # Basis omzet = setelah diskon PENJUAL saja (riset G5, definisi owner K1/K5): diskon yang dibiayai
+        # platform ikut omzet. Dihitung tangan dari kolom "sebelum diskon" − "diskon penjual".
+        o["sub"] += _num(r[ix["SKU Subtotal Before Discount"]]) - _num(r[ix["SKU Seller Discount"]])
     by = collections.defaultdict(lambda: [0.0, 0])
     for o in per.values():
         st = str(o["st"] or "")
@@ -92,7 +94,7 @@ def test_s1_manual_lalu_impor_tiktok_asli_tidak_dobel_dan_jejak_manual_disimpan(
     monkeypatch.setattr(ms, "_recalculate_health_score", _noop)
 
     harapan = _harapan_tiktok(TIKTOK)
-    assert round(sum(v[0] for v in harapan.values())) == 6855287          # angka audit §1
+    assert round(sum(v[0] for v in harapan.values())) == 7146408          # angka audit §1 (6.855.287) + diskon platform (G5)
     assert sum(v[1] for v in harapan.values()) == 72
     hari = sorted(harapan)[0]
 
@@ -113,7 +115,7 @@ def test_s1_manual_lalu_impor_tiktok_asli_tidak_dobel_dan_jejak_manual_disimpan(
     # total semua hari = hitungan tangan (tidak dobel dengan manual)
     tot = sum((d.get("metrics") or {}).get("revenue", 0) for d in db.marketing_sales_data.docs
               if d["account_id"] == "TTK-01" and d["revenue_type"] == "total")
-    assert round(tot) == 6855287
+    assert round(tot) == 7146408
     # D. manual sesudah impor pada tanggal turunan → 409
     with pytest.raises(HTTPException) as e:
         run(ms.create_sales_data(SalesDataEntry(account_id="TTK-01", date=hari,
