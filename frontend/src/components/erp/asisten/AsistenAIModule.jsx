@@ -16,10 +16,12 @@
  * Tata letak (Standar UI/UX v2): cetakan PageLayout — kepala tipis, isi = jendela chat selebar layar; pilihan CV & periode di
  * kepala percakapan (bukan baris penyaring sendiri); sambutan + saran di tengah utas:
  *   [riwayat percakapan | kepala utas · utas pesan · kotak tanya]. Di HP riwayat pindah ke laci (Sheet).
+ * Owner 9 Nov 2026: jendela chat mengisi area kerja sampai bawah layar; tombol "Layar penuh" di kepala utas menutupi
+ * menu & kepala portal (diingat per peramban, Esc kembali).
  * Kontrak HTTP + SSE: lihat `asistenApi.js` (Kontrak B, `/api/asisten-ai`).
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PanelLeft, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Maximize2, Minimize2, PanelLeft, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -116,20 +118,27 @@ function useSempit() {
   return sempit;
 }
 
-/** Tinggi jendela chat = sisa tinggi area kerja (tanpa gulir ganda), menyisakan ruang bawah cetakan (G12). */
+/**
+ * Tinggi jendela chat = SELURUH sisa tinggi area kerja sampai bawah layar (owner 9 Nov 2026: "kotak chat terlalu
+ * kecil, ingin full"). Ruang bawah cetakan G12 (pb-24, dulu untuk tombol chat mengambang — sekarang di menu samping)
+ * tidak dipakai di halaman ini: jarak bawah = jarak atas cetakan, kelebihannya ditarik dengan margin negatif supaya
+ * area kerja tidak ikut bergulir. Hasil: { tinggi, tarik } (px).
+ */
 function useTinggiPenuh(ref, min = 440) {
-  const [tinggi, setTinggi] = useState(null);
+  const [ukuran, setUkuran] = useState({ tinggi: null, tarik: 0 });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
     const main = el.closest('main');
     const hitung = () => {
       const r = el.getBoundingClientRect();
-      if (!main) { setTinggi(Math.max(min, Math.floor(window.innerHeight - r.top - 16))); return; }
+      if (!main) { setUkuran({ tinggi: Math.max(min, Math.floor(window.innerHeight - r.top - 16)), tarik: 0 }); return; }
       const wrap = main.firstElementChild;
-      const pb = wrap ? parseFloat(getComputedStyle(wrap).paddingBottom) || 0 : 16;
+      const gaya = wrap ? getComputedStyle(wrap) : null;
+      const pb = gaya ? parseFloat(gaya.paddingBottom) || 0 : 0;
+      const jarak = gaya ? Math.min(pb, parseFloat(gaya.paddingTop) || 0) : 16;
       const atas = r.top - main.getBoundingClientRect().top + main.scrollTop;
-      setTinggi(Math.max(min, Math.floor(main.clientHeight - atas - pb)));
+      setUkuran({ tinggi: Math.max(min, Math.floor(main.clientHeight - atas - jarak)), tarik: Math.max(0, pb - jarak) });
     };
     hitung();
     window.addEventListener('resize', hitung);
@@ -137,7 +146,27 @@ function useTinggiPenuh(ref, min = 440) {
     if (ro) { if (main) ro.observe(main); if (el.parentElement) ro.observe(el.parentElement); }
     return () => { window.removeEventListener('resize', hitung); if (ro) ro.disconnect(); };
   }, [ref, min]);
-  return tinggi;
+  return ukuran;
+}
+
+/** Pilihan "Layar penuh" (menutupi menu & kepala portal) diingat per peramban; Esc mengembalikan. */
+const KUNCI_LAYAR_PENUH = 'asisten-ai-layar-penuh';
+function useLayarPenuh() {
+  const [penuh, setPenuh] = useState(() => {
+    try { return window.localStorage.getItem(KUNCI_LAYAR_PENUH) === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(KUNCI_LAYAR_PENUH, penuh ? '1' : '0'); } catch { /* penyimpanan diblokir */ }
+    if (!penuh) return undefined;
+    const onKey = (e) => {
+      // Esc milik dialog/laci yang sedang terbuka didahulukan.
+      if (e.key !== 'Escape' || e.defaultPrevented || document.querySelector('[role="dialog"][data-state="open"]')) return;
+      setPenuh(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [penuh]);
+  return [penuh, setPenuh];
 }
 
 export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruang }) {
@@ -165,8 +194,9 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
   const mengalirRef = useRef(false);
   const komposerRef = useRef(null);
   const wadahRef = useRef(null);
-  const tinggi = useTinggiPenuh(wadahRef);
+  const { tinggi, tarik } = useTinggiPenuh(wadahRef);
   const sempit = useSempit();
+  const [penuh, setPenuh] = useLayarPenuh();
 
   const periodeOpsi = useMemo(() => monthOptions(13), []);
   const siap = status.data?.siap === true;
@@ -528,8 +558,10 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
       title={teksRuang.judul}
       subtitle={sempit ? undefined : teksRuang.sub}
     >
-      <div ref={wadahRef} className="min-h-[440px]" style={tinggi ? { height: tinggi } : { height: 'calc(100dvh - 12rem)' }}
-        data-testid="asisten-wadah">
+      <div ref={wadahRef}
+        className={penuh ? 'fixed inset-0 z-50 !mt-0 bg-background p-2 sm:p-3' : 'min-h-[440px]'}
+        style={penuh ? undefined : (tinggi ? { height: tinggi, marginBottom: tarik ? -tarik : undefined } : { height: 'calc(100dvh - 12rem)' })}
+        data-layar-penuh={penuh ? '1' : '0'} data-testid="asisten-wadah">
         <GlassCard className="flex h-full overflow-hidden p-0" data-testid="asisten-jendela">
           <aside className="hidden w-64 shrink-0 flex-col border-r border-[var(--glass-border)] md:flex" aria-label="Riwayat percakapan">
             {riwayat}
@@ -560,6 +592,11 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
               <Button variant="outline" size="icon" className="shrink-0 md:hidden" onClick={baru}
                 title="Percakapan baru" aria-label="Percakapan baru" data-testid="asisten-baru-hp">
                 <Plus />
+              </Button>
+              <Button variant="outline" size="icon" className="shrink-0" onClick={() => setPenuh((p) => !p)}
+                title={penuh ? 'Keluar dari layar penuh (Esc)' : 'Layar penuh'} aria-label={penuh ? 'Keluar dari layar penuh' : 'Layar penuh'}
+                aria-pressed={penuh} data-testid="asisten-layar-penuh">
+                {penuh ? <Minimize2 /> : <Maximize2 />}
               </Button>
               <div className="order-last w-full sm:order-none sm:w-auto">{pilihan}</div>
             </div>
