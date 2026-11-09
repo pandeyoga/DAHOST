@@ -294,20 +294,20 @@ async def delete_partner(partner_id: str, request: Request, hard: bool = Query(d
     if hard:
         # Tahap 9: dulu hanya `vendor_jobs` (model lama, selalu 0) yang diperiksa — vendor yang punya PO,
         # job, atau kiriman NYATA bisa terhapus permanen dan meninggalkan data yatim.
-        used = {
-            'PO': await db.production_pos.count_documents({'vendor_id': partner_id}),
-            'job produksi': await db.production_jobs.count_documents({'vendor_id': partner_id}),
-            'kiriman material': await db.vendor_shipments.count_documents({'vendor_id': partner_id}),
-            'job lama': await db.vendor_jobs.count_documents({'partner_id': partner_id}),
-        }
-        used = {k: v for k, v in used.items() if v}
-        if used:
-            rincian = ', '.join(f"{v} {k}" for k, v in used.items())
-            raise HTTPException(400, f"Tidak bisa hapus permanen: vendor sudah dipakai ({rincian}). "
-                                     "Nonaktifkan saja supaya riwayatnya tetap ada.")
+        # 10 Nov 2026: hitungan & kalimat diseragamkan lewat core.hapus_master (409 → layar menawarkan Nonaktifkan).
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        used = await hitung_pemakaian(db, [
+            ('PO', 'production_pos', {'vendor_id': partner_id}),
+            ('job produksi', 'production_jobs', {'vendor_id': partner_id}),
+            ('kiriman material', 'vendor_shipments', {'vendor_id': partner_id}),
+            ('tagihan CMT', 'dewi_cmt_payments', {'vendor_id': partner_id}),
+            ('job lama', 'vendor_jobs', {'partner_id': partner_id}),
+        ])
+        tolak_bila_dipakai('Vendor', partner.get('name') or '', used)
         acc_count = await db.users.count_documents({'cmt_vendor_id': partner_id})
         if acc_count > 0:
-            raise HTTPException(400, f"Tidak bisa hapus permanen: vendor masih punya {acc_count} akun login. Hapus akun vendor dulu.")
+            raise HTTPException(409, f"Vendor \"{partner.get('name') or ''}\" tidak bisa dihapus karena masih punya {acc_count} akun login. "
+                                     "Hapus akun vendor dulu di tab Akun vendor.")
         await db.vendor_partners.delete_one({'id': partner_id})
         await log_activity(user['id'], user.get('name',''), f"delete_vendor_partner:{partner.get('name','')}", 'vendor_portal', partner_id)
         return {'ok': True, 'deleted': True}

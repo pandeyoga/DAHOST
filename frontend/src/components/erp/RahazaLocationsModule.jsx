@@ -16,6 +16,9 @@ const ROLE_OPTIONS = [
 ];
 const ROLE_LABEL = Object.fromEntries(ROLE_OPTIONS.map((o) => [o.value, o.label]));
 const JENIS_LOKASI = { gedung: 'Gedung', zona: 'Zona', gudang: 'Gudang', kantor: 'Kantor', produksi: 'Produksi' };
+// 10 Nov 2026 (keputusan owner): lokasi kantor = lokasi kerja karyawan → dikelola di SDM › Lokasi kerja (master sama,
+// `rahaza_locations`); layar gudang hanya menampilkan gedung, zona, dan jenis lama lainnya.
+const bukanKantor = (r) => r.type !== 'kantor';
 
 export default function RahazaLocationsModule({ token }) {
   const [locs, setLocs] = useState([]);
@@ -30,10 +33,13 @@ export default function RahazaLocationsModule({ token }) {
   return (
     <MasterDataCRUD
       title="Lokasi gudang"
-      description="Gedung dan zona penyimpanan beserta perannya; peran menentukan perilaku stok."
+      description="Gedung dan zona penyimpanan beserta perannya; peran menentukan perilaku stok. Lokasi kantor (lokasi kerja karyawan) dikelola di SDM › Lokasi kerja."
       endpoint="/api/rahaza/locations"
       token={token}
       testIdPrefix="rahaza-location"
+      hapusPermanen
+      jenis="lokasi"
+      saringBaris={bukanKantor}
       ieKey="locations"
       columns={[
         { key: 'code', label: 'Kode' },
@@ -49,7 +55,7 @@ export default function RahazaLocationsModule({ token }) {
         { key: 'type', label: 'Jenis', type: 'select', required: true,
           options: [{ value: 'gedung', label: 'Gedung' }, { value: 'zona', label: 'Zona' }] },
         { key: 'storage_role', label: 'Peran gudang', type: 'select', options: ROLE_OPTIONS,
-          help: "Barang jadi ikut stok jual katalog, Karantina QC dikecualikan, Bahan/kain menjadi sumber Portal Cutting. Kosongkan untuk kantor. Satu peran penyimpanan idealnya hanya dipegang satu lokasi aktif." },
+          help: "Barang jadi ikut stok jual katalog, Karantina QC dikecualikan, Bahan/kain menjadi sumber Portal Cutting. Satu peran penyimpanan idealnya hanya dipegang satu lokasi aktif." },
         { key: 'parent_id', label: 'Induk gedung (khusus zona)', type: 'select',
           options: gedungOptions, help: 'Isi hanya bila jenisnya Zona.' },
       ]}

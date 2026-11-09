@@ -208,10 +208,96 @@ async def update_building(building_id: str, data: BuildingIn, request: Request):
     return {"message": "Gedung diupdate"}
 
 
+# ─── Hapus permanen gedung/zona/rak (10 Nov 2026, permintaan owner "master data bisa dihapus") ─────────────
+# Tanpa `?hard=true` endpoint DELETE tetap menonaktifkan (perilaku lama, dengan penjaga 400 lamanya). Dengan
+# `hard`: boleh dihapus hanya bila struktur itu belum pernah menyimpan barang — tidak ada posisi terisi, stok
+# bersaldo, riwayat stok/penempatan, opname, atau gulungan kain di posisinya; anak AKTIF (rak di zona, zona di
+# gedung) harus dihapus dulu. Anak NONAKTIF yang juga bersih ikut terhapus (layar tidak menampilkannya lagi,
+# jadi tidak bisa dihapus satu per satu). Bila sudah dipakai → 409 (`core.hapus_master`) dan layar menawarkan
+# Nonaktifkan.
+async def _pemakaian_lokasi(db, loc_ids: list) -> dict:
+    """Stok bersaldo & riwayat stok yang menyimpan `location_id` gedung/zona/posisi ini."""
+    from core.hapus_master import hitung_pemakaian
+    from routes.rahaza_inventory_materials import baris_stok_bersaldo
+    ids = [i for i in loc_ids if i]
+    if not ids:
+        return {}
+    pakai = await hitung_pemakaian(db, [
+        ("riwayat stok", "rahaza_stock_ledger", {"location_id": {"$in": ids}}),
+    ])
+    n = await baris_stok_bersaldo(db, {"location_id": {"$in": ids}})
+    return {"lokasi stok bersaldo": n, **pakai} if n else pakai
+
+
+async def _pemakaian_rak(db, rack_ids: list) -> dict:
+    """Pemakaian posisi (bin) milik rak-rak ini: terisi, stok/riwayat, penempatan, opname, gulungan kain."""
+    from core.hapus_master import hitung_pemakaian
+    if not rack_ids:
+        return {}
+    pos_ids = [p["id"] async for p in db.wh_positions.find({"rack_id": {"$in": rack_ids}}, {"_id": 0, "id": 1})]
+    pakai = await hitung_pemakaian(db, [
+        ("posisi terisi", "wh_positions", {"rack_id": {"$in": rack_ids}, "status": "occupied"}),
+    ])
+    if pos_ids:
+        pakai.update(await _pemakaian_lokasi(db, pos_ids))
+        for label, n in (await hitung_pemakaian(db, [
+            ("riwayat penempatan rak", "wh_placement_movements", {"position_id": {"$in": pos_ids}}),
+            ("opname stok", "wh_opname3_sessions", {"lines.bin_id": {"$in": pos_ids}}),
+            ("gulungan kain", "wh_fabric_rolls", {"position_id": {"$in": pos_ids}}),
+        ])).items():
+            pakai[label] = pakai.get(label, 0) + n
+    return pakai
+
+
+def _gabung(*bagian: dict) -> dict:
+    out: dict = {}
+    for b in bagian:
+        for k, v in (b or {}).items():
+            if v:
+                out[k] = out.get(k, 0) + v
+    return out
+
+
+async def _hapus_rak_permanen(db, rack_ids: list) -> int:
+    if not rack_ids:
+        return 0
+    await db.wh_positions.delete_many({"rack_id": {"$in": rack_ids}})
+    res = await db.wh_racks.delete_many({"id": {"$in": rack_ids}})
+    return res.deleted_count
+
+
+def _nama(doc: dict) -> str:
+    return f"{doc.get('code') or ''} {doc.get('name') or ''}".strip()
+
+
 @router.delete("/buildings/{building_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
-async def delete_building(building_id: str, request: Request):
-    await require_auth(request)
+async def delete_building(building_id: str, request: Request, hard: bool = Query(False)):
+    user = await require_auth(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai, SARAN_NONAKTIF
+        bldg = await db.wh_buildings.find_one({"id": building_id}, {"_id": 0})
+        if not bldg:
+            raise HTTPException(404, "Gedung tidak ditemukan")
+        zone_ids = [z["id"] async for z in db.wh_zones.find({"building_id": building_id}, {"_id": 0, "id": 1})]
+        rack_ids = [r["id"] async for r in db.wh_racks.find(
+            {"$or": [{"building_id": building_id}, {"zone_id": {"$in": zone_ids}}]}, {"_id": 0, "id": 1})]
+        aktif = {
+            "zona aktif": await db.wh_zones.count_documents({"building_id": building_id, "active": True}),
+            "rak aktif": await db.wh_racks.count_documents({"id": {"$in": rack_ids}, "active": True}),
+        }
+        pakai = _gabung(aktif, await _pemakaian_rak(db, rack_ids),
+                        await _pemakaian_lokasi(db, [building_id, *zone_ids]),
+                        {"tautan lokasi gudang lama": await db.wh_location_migration_map.count_documents(
+                            {"wh_zone_id": {"$in": zone_ids}})} if zone_ids else {})
+        saran = "Hapus atau nonaktifkan zona dan raknya dulu." if any(aktif.values()) else SARAN_NONAKTIF
+        tolak_bila_dipakai("Gedung", _nama(bldg), pakai, saran)
+        n_rak = await _hapus_rak_permanen(db, rack_ids)
+        n_zona = (await db.wh_zones.delete_many({"building_id": building_id})).deleted_count
+        await db.wh_buildings.delete_one({"id": building_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "wh_building",
+                           f"Gedung {bldg.get('code')} dihapus permanen (zona nonaktif {n_zona}, rak nonaktif {n_rak})")
+        return {"message": "Gedung dihapus", "deleted": True}
     rack_count = await db.wh_racks.count_documents({"building_id": building_id, "active": True})
     if rack_count > 0:
         raise HTTPException(400, f"Gedung masih memiliki {rack_count} rak aktif. Hapus/nonaktifkan rak dulu.")
@@ -286,9 +372,26 @@ async def update_zone(zone_id: str, data: ZoneIn, request: Request):
 
 
 @router.delete("/zones/{zone_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
-async def delete_zone(zone_id: str, request: Request):
-    await require_auth(request)
+async def delete_zone(zone_id: str, request: Request, hard: bool = Query(False)):
+    user = await require_auth(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai, SARAN_NONAKTIF
+        zone = await db.wh_zones.find_one({"id": zone_id}, {"_id": 0})
+        if not zone:
+            raise HTTPException(404, "Zona tidak ditemukan")
+        rack_ids = [r["id"] async for r in db.wh_racks.find({"zone_id": zone_id}, {"_id": 0, "id": 1})]
+        aktif = {"rak aktif": await db.wh_racks.count_documents({"zone_id": zone_id, "active": True})}
+        pakai = _gabung(aktif, await _pemakaian_rak(db, rack_ids), await _pemakaian_lokasi(db, [zone_id]),
+                        {"tautan lokasi gudang lama": await db.wh_location_migration_map.count_documents(
+                            {"wh_zone_id": zone_id})})
+        saran = "Hapus atau nonaktifkan rak di zona ini dulu." if any(aktif.values()) else SARAN_NONAKTIF
+        tolak_bila_dipakai("Zona", _nama(zone), pakai, saran)
+        n_rak = await _hapus_rak_permanen(db, rack_ids)
+        await db.wh_zones.delete_one({"id": zone_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "wh_zone",
+                           f"Zona {zone.get('building_code') or ''}-{zone.get('code')} dihapus permanen (rak nonaktif {n_rak})")
+        return {"message": "Zona dihapus", "deleted": True}
     rack_count = await db.wh_racks.count_documents({"zone_id": zone_id, "active": True})
     if rack_count > 0:
         raise HTTPException(400, f"Zona masih memiliki {rack_count} rak. Hapus/nonaktifkan rak dulu.")
@@ -497,9 +600,19 @@ async def update_rack(rack_id: str, data: RackIn, request: Request):
 
 
 @router.delete("/racks/{rack_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
-async def delete_rack(rack_id: str, request: Request):
-    await require_auth(request)
+async def delete_rack(rack_id: str, request: Request, hard: bool = Query(False)):
+    user = await require_auth(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        rack = await db.wh_racks.find_one({"id": rack_id}, {"_id": 0})
+        if not rack:
+            raise HTTPException(404, "Rak tidak ditemukan")
+        tolak_bila_dipakai("Rak", _nama(rack), await _pemakaian_rak(db, [rack_id]))
+        await _hapus_rak_permanen(db, [rack_id])
+        await log_activity(user["id"], user.get("name", ""), "delete", "wh_rack",
+                           f"Rak {rack.get('code')} dihapus permanen beserta posisinya")
+        return {"message": "Rak dihapus", "deleted": True}
     occupied = await db.wh_positions.count_documents({"rack_id": rack_id, "status": "occupied"})
     if occupied > 0:
         raise HTTPException(400, f"Rak masih memiliki {occupied} posisi terisi. Pindahkan barang dulu.")

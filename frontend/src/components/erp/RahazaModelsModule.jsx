@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Plus, Edit2, Trash2, X, Upload, Camera, FileText, Video, Image as ImageIcon,
+  Plus, Pencil, Ban, Trash2, X, Upload, Camera, FileText, Video, Image as ImageIcon,
   ArrowUp, ArrowDown, Link2, ListChecks, BookOpen, Info, Wand2, AlertTriangle,
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -18,6 +18,8 @@ import ImportExportToolbar from './ImportExportToolbar';
 import { toast } from 'sonner';
 import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 import { MoneyInput } from '@/components/ui/money-input';
+import { apiDelete } from '../../lib/api';
+import { hapusMaster } from '../../lib/hapusMaster';
 
 // Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
@@ -432,6 +434,19 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
     } else toast.error(d.detail || 'Gagal menonaktifkan');
   };
 
+  // 10 Nov 2026 (owner "master data bisa dihapus"): hapus permanen bila model & variannya belum dipakai;
+  // bila sudah (409) dialog kedua menampilkan alasannya dan menawarkan Nonaktifkan.
+  const handleHapus = async (row) => {
+    const hasil = await hapusMaster({
+      jenis: 'model', nama: [row.code, row.name].filter(Boolean).join(' '),
+      keterangan: 'Model dihapus permanen beserta varian, BOM, dan barang jadi miliknya yang belum punya stok. '
+        + 'Bila sudah dipakai PO, cutting, katalog, pesanan, atau stok, penghapusan ditolak dan Anda bisa menonaktifkannya saja.',
+      hapus: () => apiDelete(`/rahaza/models/${row.id}?hard=true`),
+      nonaktifkan: row.active !== false ? () => apiDelete(`/rahaza/models/${row.id}`) : null,
+    });
+    if (hasil) fetchRows();
+  };
+
   const columns = [
     { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="tabular-nums text-xs">{row.code}</span> },
     { key: 'name', label: 'Nama Model', sortable: true },
@@ -522,11 +537,17 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       render: (row) => (
         <div className="flex items-center gap-1">
           <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }}
-            title="Ubah" aria-label="Ubah" data-testid={`model-edit-${row.code}`}>
-            <Edit2 className="w-3.5 h-3.5" />
+            title="Ubah" aria-label={`Ubah model ${row.code}`} data-testid={`model-edit-${row.code}`}>
+            <Pencil className="w-3.5 h-3.5" />
           </Button>
-          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
-            title="Nonaktifkan" aria-label="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
+          {row.active !== false && (
+            <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
+              title="Nonaktifkan" aria-label={`Nonaktifkan model ${row.code}`} data-testid={`model-deactivate-${row.code}`}>
+              <Ban className="w-3.5 h-3.5" />
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleHapus(row); }}
+            title="Hapus" aria-label={`Hapus model ${row.code}`} data-testid={`model-delete-${row.code}`}>
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
         </div>

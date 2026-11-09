@@ -2,7 +2,7 @@
 import re
 from fastapi import Depends, HTTPException, Query
 from database import get_db
-from auth import require_auth
+from auth import log_activity, require_auth
 from routes.shared import assert_can_act  # T-01 2.3
 from routes.dewi_rnd_shared import (
     router, now_utc, sid, serialize,
@@ -414,14 +414,53 @@ async def update_material(material_id: str, body: dict, user: dict = Depends(req
     return serialize(updated)
 
 
+async def rnd_material_usage(db, mat: dict) -> dict:
+    """Di mana bahan riset dipakai. Tidak ada dokumen yang menyimpan id-nya: baris HPP, costing sampel, dan BOM
+    tech pack menunjuk bahan lewat KODE atau NAMA (`resolve_rnd_material`: kode → nama, tanpa beda huruf besar).
+    Dihitung dengan aturan pencocokan yang sama supaya bahan yang masih menjadi sumber harga tidak hilang."""
+    from core.hapus_master import hitung_pemakaian
+    code = str(mat.get('material_code') or '').strip().upper()
+    name = str(mat.get('material_name') or '').strip()
+    kode_re = {'$regex': f'^{re.escape(code)}$', '$options': 'i'} if code else None
+    nama_re = {'$regex': f'^{re.escape(name)}$', '$options': 'i'} if name else None
+
+    def baris(kunci_kode=(), kunci_nama=()):
+        cocok = ([{k: kode_re} for k in kunci_kode] if code else []) + ([{k: nama_re} for k in kunci_nama] if name else [])
+        return {'$elemMatch': {'$or': cocok}} if cocok else None
+
+    def salah_satu(*pasang):
+        fs = [{f: b} for f, b in pasang if b]
+        return ({'$or': fs} if len(fs) > 1 else fs[0]) if fs else None
+
+    hpp_baris = baris(('material_code',), ('material_name',))
+    costing = baris(('material_code', 'code'), ('material_name', 'name'))
+    return await hitung_pemakaian(db, [
+        ('hitungan HPP', 'dewi_rnd_hpp', salah_satu(('cost_lines', hpp_baris), ('bom_breakdown', hpp_baris))),
+        ('costing sampel', 'dewi_rnd_sample_costing',
+         salah_satu(('fabric_items', costing), ('trim_items', costing), ('bom_lines', costing))),
+        ('tech pack', 'dewi_rnd_tech_packs',
+         salah_satu(('bom_items', baris(('material_code', 'code'), ('material', 'material_name', 'name'))),
+                    ('fabrics', baris(('code', 'material_code'), ('name',))))),
+    ])
+
+
 @router.delete('/materials/{material_id}')
 async def delete_material(material_id: str, user: dict = Depends(require_auth)):
+    """Hapus permanen satu bahan riset. 10 Nov 2026 (owner "master data bisa dihapus"): dulu tanpa cek; kini
+    ditolak 409 bila bahan masih dipakai HPP/costing sampel/tech pack (`rnd_material_usage`) — layar menawarkan
+    Nonaktifkan (status 'inactive')."""
     assert_can_act(user, 'rnd.manage', portal='rnd', what='menghapus data R&D')  # T-01 2.3
+    from core.hapus_master import tolak_bila_dipakai
     db = get_db()
-    res = await db.dewi_rnd_materials.delete_one({'id': material_id})
-    if res.deleted_count == 0:
+    mat = await db.dewi_rnd_materials.find_one({'id': material_id}, {'_id': 0})
+    if not mat:
         raise HTTPException(404, 'Material tidak ditemukan')
-    return {'success': True}
+    nama = f"{mat.get('material_code') or ''} {mat.get('material_name') or ''}".strip()
+    tolak_bila_dipakai('Bahan riset', nama, await rnd_material_usage(db, mat))
+    await db.dewi_rnd_materials.delete_one({'id': material_id})
+    await log_activity(user.get('id') or '', user.get('name') or '', 'delete', 'rnd.material',
+                       f"id={material_id} {nama}")
+    return {'success': True, 'deleted': True}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

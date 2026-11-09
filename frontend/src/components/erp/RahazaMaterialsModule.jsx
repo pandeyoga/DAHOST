@@ -11,7 +11,7 @@
  * /api/rahaza/materials?low_stock=true (definisi rendah satu sumber: core/stock_thresholds).
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Pencil, Ban, AlertTriangle, Search, RefreshCw } from 'lucide-react';
+import { Plus, Pencil, Ban, Trash2, AlertTriangle, Search, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +30,7 @@ import { CATEGORY_OPTIONS, categoryToStoredType, typeToCategory, isKgLike } from
 import UomEditor from './UomEditor';
 import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf, MATERIAL_UNITS } from '@/lib/uom';
 import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
+import { hapusMaster } from '@/lib/hapusMaster';
 
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk jadi). Semua tipe lama dipetakan ke kategori yang sama.
 const JENIS_LABEL = {
@@ -215,6 +216,21 @@ export default function RahazaMaterialsModule({ token }) {
     else toast.error(`Gagal menonaktifkan (HTTP ${res.status}).`);
     fetchRows(); fetchJumlah();
   };
+  // 10 Nov 2026 (permintaan owner): Hapus sungguhan. Server menolak (409) bila material sudah dipakai stok, BOM,
+  // atau dokumen pengadaan/gudang → dialog kedua menawarkan Nonaktifkan (lib/hapusMaster).
+  const deleteReq = async (r, hard) => {
+    const res = await fetch(`/api/rahaza/materials/${r.id}${hard ? '?hard=true' : ''}`, { method: 'DELETE', headers });
+    if (!res.ok) {
+      let msg = `Gagal (HTTP ${res.status})`;
+      try { const d = await res.clone().json(); if (d && typeof d.detail === 'string') msg = d.detail; } catch { /* body tak terbaca */ }
+      const e = new Error(msg); e.status = res.status; throw e;
+    }
+  };
+  const hapus = async (r) => {
+    const hasil = await hapusMaster({ jenis: 'material', nama: r.name || r.code,
+      hapus: () => deleteReq(r, true), nonaktifkan: r.active ? () => deleteReq(r, false) : null });
+    if (hasil) { fetchRows(page); fetchJumlah(); }
+  };
 
   const kolom = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (r) => {
@@ -241,7 +257,7 @@ export default function RahazaMaterialsModule({ token }) {
     { kunci: 'active', label: 'Status', hp: false, isi: (r) => (r.active
       ? <StatusBadge status="aktif" label="Aktif" tone="success" />
       : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="inline-flex items-center gap-1">
         <Button variant="ghost" size="icon-sm" onClick={() => openEdit(r)} title="Ubah" aria-label={`Ubah ${r.code}`}
           data-testid={`mat-edit-${r.code}`}><Pencil /></Button>
@@ -249,6 +265,8 @@ export default function RahazaMaterialsModule({ token }) {
           <Button variant="ghost" size="icon-sm" onClick={() => remove(r)} title="Nonaktifkan" aria-label={`Nonaktifkan ${r.code}`}
             data-testid={`mat-deactivate-${r.code}`}><Ban /></Button>
         )}
+        <Button variant="ghost" size="icon-sm" onClick={() => hapus(r)} title="Hapus" aria-label={`Hapus ${r.code}`}
+          data-testid={`mat-delete-${r.code}`}><Trash2 /></Button>
       </div>
     ) },
   ];

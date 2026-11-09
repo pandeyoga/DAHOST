@@ -22,11 +22,11 @@ Collections:
 
 Endpoints (prefix /api/wms/fabric-rolls):
   GET    /                          list + filters (material, color, status, qc, position)
-  POST   /                          create new roll (from receiving)
+  POST   /                          DITUTUP (410) sejak 10 Nov 2026 — lihat `create_roll`
   GET    /{roll_id}                  detail + movements
   PUT    /{roll_id}                  update (qc_status, position, notes)
   DELETE /{roll_id}                  soft delete (only draft/pending)
-  POST   /{roll_id}/putaway          assign to position
+  POST   /{roll_id}/putaway          simpan ke posisi rak — posisi WAJIB ada di master struktur gudang
   POST   /{roll_id}/issue            issue to WO/CMT (reduce remaining)
   POST   /{roll_id}/return           return remaining to stock
   POST   /{roll_id}/reject           mark as reject + supplier claim
@@ -49,7 +49,6 @@ from core import fabric_roll_engine  # FASE H-5: satu pintu penerbitan & pemakai
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
-from utils.waktu import wib_date_str
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/fabric-rolls", tags=["wms-fabric-rolls"])
@@ -71,30 +70,10 @@ def _now(): return datetime.now(timezone.utc)
 def _id(): return str(uuid.uuid4())
 
 
-class RollIn(BaseModel):
-    # FASE H-5: nomor roll TIDAK diketik. Dikosongkan → diterbitkan otomatis lewat
-    # SSOT penomoran (`wh_fabric_rolls.roll_no`, bawaan `RL-{YYYY}{MM}-{SEQ:4}`).
-    # Kalau Administrasi Sistem mengubah mode jenis dokumen ini ke MANUAL, nomor
-    # yang dikirim tetap diperiksa terhadap polanya — bukan diterima apa adanya.
-    roll_no: str = Field("", description="Kosongkan — nomor roll diterbitkan otomatis")
-    material_id: str
-    material_code: str
-    material_name: str
-    color: str = ""
-    color_lot: str = ""
-    supplier_name: str = ""
-    uom: str = Field("meter", pattern="^(meter|kg|yard)$")
-    length_m: float = Field(0.0, ge=0)
-    weight_kg: float = Field(0.0, ge=0)
-    received_date: Optional[str] = None
-    po_no: str = ""
-    qc_status: str = Field("pending")
-    unit_cost: float = Field(0.0, ge=0)
-    notes: str = ""
-
-
 class PutAwayIn(BaseModel):
-    position_id: str
+    # 2026-11-10 (keputusan owner): posisi dipilih dari master (gudang → zona → rak → posisi) ATAU di-scan.
+    # Salah satu wajib; server mencocokkannya ke `wh_positions` — dulu dua-duanya teks bebas dan disimpan apa adanya.
+    position_id: str = ""
     position_barcode: str = ""
     notes: str = ""
 
@@ -225,54 +204,26 @@ async def list_rolls(
     }
 
 
+# 2026-11-10 (keputusan owner): input roll manual DITUTUP. Roll buatan tangan berstatus "Tersedia" tanpa
+# menambah stok bahan dan tanpa jurnal ⇒ gulungan tanpa stok, atau gulungan dobel untuk kain yang sudah
+# punya roll dari penerimaannya. Tiga jalur resmi (semuanya menjaga stok = isi gulungan):
+#   1. Penerimaan Barang › rincian gulungan pada baris kain (`routes/warehouse.py` → engine);
+#   2. "Penerimaan tanpa roll" (`/missing-from-receipts` + `/issue-from-receipt`);
+#   3. Impor roll stok awal (`/import/*`, disetujui Keuangan lewat sesi Opname stok awal).
+# Tidak ada pemanggil resmi lain (diperiksa: layar, impor stok awal, uji unit). Skrip demo/verifikasi lama yang
+# masih memanggil jalur ini akan mendapat 410 dengan kalimat yang sama.
+JALUR_ROLL_RESMI = (
+    "Roll kain tidak bisa lagi dibuat manual: roll manual tidak menambah stok bahan dan tidak tercatat di "
+    "jurnal, sehingga roll dan stok tidak cocok. Roll lahir dari tiga jalur: (1) Penerimaan Barang — isi "
+    "rincian gulungan pada baris kain; (2) Roll Kain › Penerimaan tanpa roll — untuk penerimaan yang sudah "
+    "lewat; (3) Impor roll stok awal — untuk kain yang sudah ada di gudang sebelum sistem dipakai.")
+
+
 @router.post("")
-async def create_roll(data: RollIn, request: Request):
-    user = await require_auth(request)
-    db = get_db()
-    # FASE H-5: nomor roll lewat SSOT penomoran. Mode `auto` (bawaan) MENOLAK nomor
-    # ketikan dengan pesan yang menyebut nomor yang akan dipakai — pemakai yang
-    # mengetik nomor lalu melihat nomor lain muncul akan menyimpulkan sistemnya rusak.
-    roll_no = await fabric_roll_engine.issue_roll_no(db, requested=data.roll_no)
-    if await db.wh_fabric_rolls.find_one({"roll_no": roll_no}):
-        raise HTTPException(409, f"Roll dengan nomor '{roll_no}' sudah ada")
-    qty = float(data.length_m or 0) or float(data.weight_kg or 0)
-    if qty <= 0:
-        raise HTTPException(400, "Isi panjang (meter/yard) atau berat (kg) roll — harus lebih dari 0.")
-    roll_id = _id()
-    now = _now()
-    roll = {
-        "id": roll_id,
-        "roll_no": roll_no,
-        "material_id": data.material_id,
-        "material_code": data.material_code,
-        "material_name": data.material_name,
-        "color": data.color,
-        "color_lot": data.color_lot,
-        "supplier_name": data.supplier_name,
-        "uom": data.uom,
-        "length_m": data.length_m,
-        "weight_kg": data.weight_kg,
-        "remaining_m": data.length_m,
-        "remaining_kg": data.weight_kg,
-        "received_date": data.received_date or wib_date_str(now),
-        "po_no": data.po_no,
-        "qc_status": data.qc_status,
-        "status": "in_stock",
-        "position_id": None,
-        "position_barcode": "",
-        "unit_cost": data.unit_cost,
-        "notes": data.notes,
-        "created_at": now,
-        "created_by": user.get("name", user["id"]),
-        "updated_at": now,
-        "updated_by": user.get("name", user["id"]),
-    }
-    await db.wh_fabric_rolls.insert_one(roll)
-    await _log_movement(db, roll, "receive", data.length_m or data.weight_kg,
-                        data.uom, "manual", "", data.po_no, "", "gudang",
-                        f"Roll {roll_no} diterima", user.get("name", ""))
-    out = await db.wh_fabric_rolls.find_one({"id": roll_id}, {"_id": 0})
-    return {"ok": True, "roll": serialize_doc(out)}
+async def create_roll(request: Request):
+    """DITUTUP (410). Body sengaja tidak dibaca: isian apa pun dijawab dengan jalur resminya, bukan galat 422."""
+    await require_auth(request)
+    raise HTTPException(410, JALUR_ROLL_RESMI)
 
 
 # ── FASE H-5: penerimaan kain yang belum punya gulungan (backfill) ───────────────
@@ -483,6 +434,48 @@ async def update_roll(roll_id: str, data: dict, request: Request):
     return {"ok": True, "roll": serialize_doc(out)}
 
 
+_TAK_BISA_DISIMPAN = {"rejected": "ditolak QC", "fully_issued": "sudah habis", "cancelled": "sudah dibatalkan"}
+
+
+async def _posisi_dari_master(db, position_id: str, position_barcode: str) -> dict:
+    """Posisi tujuan put-away HARUS dokumen `wh_positions` di rak/zona/gudang yang aktif (2026-11-10).
+
+    Dulu `position_id`/`position_barcode` diketik bebas dan disimpan apa adanya: roll bisa "berada" di posisi
+    yang tidak ada di peta gudang, dan pencarian roll per posisi tidak pernah menemukannya. Barcode dicocokkan
+    lewat SSOT kode scan (`core.scan_resolver.position_by_barcode`: huruf besar/kecil & awalan scanner, label lama
+    ikut dikenali) — sama dengan put-away barang, scan masuk/keluar, dan opname.
+    """
+    from core.scan_resolver import position_by_barcode
+    pid, code = (position_id or "").strip(), (position_barcode or "").strip()
+    if not pid and not code:
+        raise HTTPException(400, "Pilih posisi dari daftar gudang › zona › rak › posisi, atau scan barcode posisinya.")
+    if pid:
+        pos = await db.wh_positions.find_one({"id": pid}, {"_id": 0})
+        if not pos:
+            raise HTTPException(400, "Posisi yang dipilih tidak ada di master struktur gudang (mungkin raknya sudah "
+                                     "dihapus). Muat ulang, lalu pilih posisinya lagi.")
+        if code:
+            by_code = await position_by_barcode(db, code)
+            if not by_code or by_code.get("id") != pos["id"]:
+                raise HTTPException(400, f"Barcode '{code}' bukan milik posisi yang dipilih ({pos.get('barcode')}).")
+    else:
+        pos = await position_by_barcode(db, code)
+        if not pos:
+            raise HTTPException(400, f"Barcode posisi '{code}' tidak dikenal di master struktur gudang. Periksa "
+                                     "labelnya, atau pilih posisi dari daftar gudang › zona › rak › posisi.")
+    if pos.get("active") is False:
+        raise HTTPException(400, f"Posisi {pos.get('barcode')} sudah dinonaktifkan — pilih posisi lain.")
+    rak = await db.wh_racks.find_one({"id": pos.get("rack_id")}, {"_id": 0, "id": 1, "active": 1})
+    if not rak or rak.get("active") is False:
+        raise HTTPException(400, f"Rak posisi {pos.get('barcode')} sudah dinonaktifkan atau dihapus — pilih posisi "
+                                 "di rak yang aktif.")
+    for coll, key, nama in (("wh_zones", "zone_id", "Zona"), ("wh_buildings", "building_id", "Gudang")):
+        induk = await db[coll].find_one({"id": pos.get(key)}, {"_id": 0, "id": 1, "active": 1}) if pos.get(key) else None
+        if induk is not None and induk.get("active") is False:
+            raise HTTPException(400, f"{nama} posisi {pos.get('barcode')} sudah dinonaktifkan — pilih posisi lain.")
+    return pos
+
+
 @router.post("/{roll_id}/putaway")
 async def putaway_roll(roll_id: str, data: PutAwayIn, request: Request):
     user = await require_auth(request)
@@ -490,20 +483,23 @@ async def putaway_roll(roll_id: str, data: PutAwayIn, request: Request):
     roll = await db.wh_fabric_rolls.find_one({"id": roll_id})
     if not roll:
         raise HTTPException(404, "Roll tidak ditemukan")
-    if roll.get("status") in ("rejected", "fully_issued"):
-        raise HTTPException(400, f"Roll berstatus '{roll['status']}' tidak dapat di-putaway")
+    if roll.get("status") in _TAK_BISA_DISIMPAN:
+        raise HTTPException(400, f"Roll {roll.get('roll_no')} {_TAK_BISA_DISIMPAN[roll['status']]} — "
+                                 "tidak bisa disimpan ke posisi.")
+    pos = await _posisi_dari_master(db, data.position_id, data.position_barcode)
+    barcode = pos.get("barcode") or ""   # kode baku dari master (bukan ketikan/scan mentah)
     old_pos = roll.get("position_barcode", "")
     await db.wh_fabric_rolls.update_one({"id": roll_id}, {"$set": {
-        "position_id": data.position_id,
-        "position_barcode": data.position_barcode,
+        "position_id": pos["id"],
+        "position_barcode": barcode,
         "updated_at": _now(),
         "updated_by": user.get("name", user["id"]),
     }})
     await _log_movement(db, roll, "putaway", 0, roll.get("uom", "meter"),
-                        "manual", "", "", old_pos, data.position_barcode,
-                        data.notes or f"Put-away ke posisi {data.position_barcode}",
+                        "manual", "", "", old_pos, barcode,
+                        data.notes or f"Disimpan ke posisi {barcode}",
                         user.get("name", ""))
-    return {"ok": True, "position_barcode": data.position_barcode}
+    return {"ok": True, "position_id": pos["id"], "position_barcode": barcode}
 
 
 @router.post("/{roll_id}/issue")

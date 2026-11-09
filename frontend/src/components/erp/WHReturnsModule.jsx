@@ -11,6 +11,10 @@
  * + unduhan Excel/CSV; detail = DetailPopup; tiap langkah (terima, inspeksi, selesaikan, batalkan, terima &
  * putuskan) = FormPopup — dulu form menempel di bawah panel detail; window.confirm/prompt/alert → confirmDialog
  * & toast; status/tipe berbahasa Indonesia. Aturan, isian, dan API tidak berubah.
+ *
+ * 2026-11-10 (keputusan owner "wajib referensi + tautkan"): "Catat retur" memilih pesanan Marketing lewat
+ * pencarian no. pesanan/resi (bukan ketikan bebas); pesanan yang sudah punya retur aktif ditolak dan retur
+ * yang ada ditawarkan untuk dibuka; retur manual otomatis tertaut saat retur Marketing-nya masuk.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -36,14 +40,12 @@ import {
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
-import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 // W4 (sesi #29) — barang retur WAJIB dipilih dari master produk jadi (INV-F14).
 import { FGMaterialSelect } from './masters/MasterSelects';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-const CHANNELS   = ['Shopee', 'Tokopedia', 'TikTok Shop', 'Lazada', 'Instagram', 'WhatsApp', 'Lainnya'];
 // W4 — kondisi 'Rusak' ditambah supaya pilihan pemilik (Baik/Rusak) ada apa adanya.
 const CONDITIONS = ['Baik', 'Rusak', 'Rusak Ringan', 'Rusak Berat', 'Tidak Layak Jual'];
 const CAUSES     = ['Kesalahan Gudang', 'Kesalahan Customer', 'Kesalahan Ekspedisi', 'Lainnya'];
@@ -108,6 +110,14 @@ function StockBadge({ ret }) {
   const e = efekStok(ret);
   return <span data-testid={`stock-badge-${ret.id}`}><StatusBadge label={e.label} tone={e.tone} /></span>;
 }
+// Asal pekerjaan retur dalam kalimat staf (retur manual yang kemudian tertaut tetap terlihat asalnya).
+const asalRetur = (ret) => {
+  if (ret.source_marketing_return_id) {
+    return ret.marketing_linked_at ? 'Dicatat gudang lebih dulu, tertaut ke retur Marketing' : 'Retur Marketing (otomatis)';
+  }
+  if (ret.rts) return 'Pesanan dibatalkan setelah dikirim';
+  return 'Dicatat gudang (belum tertaut retur Marketing)';
+};
 function SourceBadge({ ret }) {
   const fromMkt = !!ret.source_marketing_return_id;
   return (
@@ -134,7 +144,14 @@ async function api(method, path, token, body) {
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(`${API}${path}`, opts);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+  if (!r.ok) {
+    // 409 "retur sudah ada" membawa detail terstruktur {message, existing[]} — pesannya tetap kalimat staf.
+    const d = data.detail;
+    const err = new Error((d && typeof d === 'object' ? d.message : d) || `HTTP ${r.status}`);
+    err.status = r.status;
+    err.detail = d;
+    throw err;
+  }
   return data;
 }
 
@@ -156,40 +173,88 @@ function WorkflowBar({ status }) {
 }
 
 // ─── FORM CATAT RETUR (popup panjang) ─────────────────────────────────────────
-function CreateModal({ onClose, onSaved, token, defaultType }) {
+// 2026-11-10 (keputusan owner "wajib referensi + tautkan"): no. pesanan/resi TIDAK lagi diketik bebas.
+// Pesanan dipilih dari data pesanan Marketing (sumber yang sama dengan jembatan retur), barang diambil
+// dari baris pesanannya (cadangan: master produk jadi bila barisnya belum tertaut — W4), dan pesanan yang
+// sudah punya retur gudang aktif ditolak dengan tawaran membuka retur yang ada.
+const ORDER_STATUS = {
+  new: 'Baru', paid: 'Dibayar', packed: 'Dikemas', shipped: 'Dikirim', delivered: 'Diterima pembeli',
+  completed: 'Selesai', cancelled: 'Dibatalkan', returned: 'Dikembalikan',
+};
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok Shop', tiktok_shop: 'TikTok Shop', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const platformLabel = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '';
+const barisLabel = (it) => [it.product_name || it.sku || `Barang ${it.line}`, it.variation].filter(Boolean).join(' · ');
+const labelPesanan = (o) => [
+  o.order_id, platformLabel(o.platform), o.customer_name, `${(o.items || []).length} barang`,
+  (o.active_returns || []).length ? `sudah ada retur ${o.active_returns.map((r) => r.return_code).join(', ')}` : '',
+].filter(Boolean).join(' · ');
+
+function CreateModal({ onClose, onSaved, onOpenExisting, token, defaultType }) {
   const [form, setForm] = useState({
-    return_type: defaultType || 'expedition_return',
-    order_number: '', resi_number: '', channel: '',
-    customer_name: '', customer_contact: '',
-    material_id: '', sku_code: '', product_name: '', qty: 1,
-    order_value: 0, initial_reason: '', notes: '',
+    return_type: defaultType || 'expedition_return', material_id: '', qty: '', initial_reason: '',
   });
+  const [cari, setCari] = useState('');
+  const [mencari, setMencari] = useState(false);
+  const [hasil, setHasil] = useState(null);          // null = belum mencari
+  const [orderId, setOrderId] = useState('');
+  const [line, setLine] = useState('');
+  const [sudahAda, setSudahAda] = useState([]);      // retur aktif yang dilaporkan server (409)
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   // SESI #19 — kebijakan penomoran Retur Gudang (Otomatis/Manual).
   const numPolicy = useDocNumberPolicy('wh_returns.return_code', token);
   const [returnCode, setReturnCode] = useState('');
 
+  const pesanan = (hasil || []).find((o) => o.id === orderId) || null;
+  const items = pesanan?.items || [];
+  const baris = items.length === 1 ? items[0] : (items.find((it) => String(it.line) === String(line)) || null);
+  const penghalang = sudahAda.length ? sudahAda : (baris?.blocked_by || []);
+  const qtyNilai = form.qty === '' ? (baris?.quantity || 1) : form.qty;
+
+  const resetBaris = () => { setSudahAda([]); setForm((f) => ({ ...f, material_id: '', qty: '' })); };
+  const pilihPesanan = (id) => { setOrderId(id); setLine(''); resetBaris(); setErr(''); };
+
+  const cariPesanan = async () => {
+    const q = cari.trim();
+    if (q.length < 3) { setErr('Ketik minimal 3 huruf/angka no. pesanan atau no. resi.'); return; }
+    setMencari(true); setErr('');
+    try {
+      const res = await api('GET', `/api/wh/returns/order-lookup?q=${encodeURIComponent(q)}`, token);
+      const rows = Array.isArray(res.data) ? res.data : [];
+      setHasil(rows);
+      pilihPesanan(rows.length === 1 ? rows[0].id : '');
+    } catch (e) { setErr(e.message); }
+    finally { setMencari(false); }
+  };
+
   const submit = async () => {
-    if (!form.order_number && !form.resi_number) { setErr('Nomor order atau resi wajib diisi'); return; }
-    if (!form.material_id) { setErr('Barang jadi wajib dipilih dari master — tanpa itu stok tidak bisa bertambah.'); return; }
+    if (!pesanan) { setErr('Pilih pesanan yang dikembalikan — cari lewat no. pesanan atau no. resi.'); return; }
+    if (!baris) { setErr('Pilih barang yang kembali dari daftar barang pesanan.'); return; }
+    if (penghalang.length) { setErr('Pesanan ini sudah punya retur gudang — buka retur yang ada.'); return; }
+    if (!baris.material_id && !form.material_id) { setErr('Barang jadi wajib dipilih dari master — tanpa itu stok tidak bisa bertambah.'); return; }
     if (numPolicy?.mode === 'manual' && !returnCode.trim()) {
       setErr(`Nomor retur wajib diisi (pola ${numPolicy.format}).`); return;
     }
     setSaving(true); setErr('');
     try {
       const ret = await api('POST', '/api/wh/returns', token, {
-        ...form, ...docNumberPayload(numPolicy, 'return_code', returnCode),
+        return_type: form.return_type, order_doc_id: pesanan.id, order_line: baris.line,
+        material_id: baris.material_id ? undefined : form.material_id,
+        qty: Number(qtyNilai), initial_reason: form.initial_reason,
+        ...docNumberPayload(numPolicy, 'return_code', returnCode),
       });
       onSaved(ret);
-    } catch (e) { setErr(e.message); }
-    finally { setSaving(false); }
+    } catch (e) {
+      if (e.status === 409 && Array.isArray(e.detail?.existing)) setSudahAda(e.detail.existing);
+      setErr(e.message);
+    } finally { setSaving(false); }
   };
 
   return (
     <FormPopup open onClose={onClose} ukuran="panjang" testId="create-return-form"
-      judul="Catat retur baru" keterangan="Barang wajib dipilih dari master produk jadi supaya stok bisa bertambah tepat sasaran."
-      onSimpan={submit} menyimpan={saving} galat={err} labelSimpan="Catat retur">
+      judul="Catat retur"
+      keterangan="Retur pembeli dari Marketing masuk ke sini otomatis. Catat manual hanya untuk paket yang datang lebih dulu — retur ini otomatis tertaut saat retur Marketing-nya masuk."
+      onSimpan={submit} menyimpan={saving} galat={err} labelSimpan="Catat retur" bisaSimpan={!penghalang.length}>
       <DocNumberField policy={numPolicy} value={returnCode} onChange={setReturnCode} label="Nomor retur" testId="whret-number" />
       <Isian label="Tipe retur" wajib htmlFor="ret-tipe">
         <SmartNativeSelect id="ret-tipe" value={form.return_type} onChange={e => setForm({ ...form, return_type: e.target.value })}
@@ -197,40 +262,89 @@ function CreateModal({ onClose, onSaved, token, defaultType }) {
           {Object.entries(TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </SmartNativeSelect>
       </Isian>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Isian label="No. order" htmlFor="ret-order" petunjuk="Isi no. order atau no. resi (salah satu wajib).">
-          <Input id="ret-order" value={form.order_number} onChange={e => setForm({ ...form, order_number: e.target.value })}
-            placeholder="SPX-00001" data-testid="ret-order-number" />
-        </Isian>
-        <Isian label="No. resi" htmlFor="ret-resi">
-          <Input id="ret-resi" value={form.resi_number} onChange={e => setForm({ ...form, resi_number: e.target.value })}
-            placeholder="JNE-123456" data-testid="ret-resi-number" />
-        </Isian>
-        <Isian label="Channel" htmlFor="ret-channel">
-          <SmartNativeSelect id="ret-channel" value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })} data-testid="ret-channel">
-            <option value="">Pilih channel</option>
-            {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+      <Isian label="Cari pesanan" wajib htmlFor="ret-cari" petunjuk="Ketik no. pesanan atau no. resi (minimal 3 huruf/angka), lalu tekan Cari.">
+        <div className="flex gap-2">
+          <Input id="ret-cari" value={cari} onChange={(e) => setCari(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); cariPesanan(); } }}
+            placeholder="No. pesanan atau no. resi" data-testid="ret-order-search" />
+          <Button type="button" variant="outline" onClick={cariPesanan} disabled={mencari} data-testid="ret-order-search-btn">
+            <Search />{mencari ? 'Mencari…' : 'Cari'}
+          </Button>
+        </div>
+      </Isian>
+      {hasil && hasil.length === 0 && (
+        <Notice tone="warning" testId="ret-order-none" title="Pesanan tidak ditemukan">
+          Retur fisik hanya bisa dicatat untuk pesanan yang ada di data pesanan Marketing. Periksa nomornya, atau minta
+          tim Marketing mengimpor pesanannya dulu.
+        </Notice>
+      )}
+      {hasil && hasil.length > 0 && (
+        <Isian label="Pesanan" wajib htmlFor="ret-order-pick">
+          <SmartNativeSelect id="ret-order-pick" value={orderId} onChange={(e) => pilihPesanan(e.target.value)} data-testid="ret-order-pick">
+            <option value="">{`Pilih pesanan (${hasil.length} ditemukan)`}</option>
+            {hasil.map((o) => <option key={o.id} value={o.id}>{labelPesanan(o)}</option>)}
           </SmartNativeSelect>
         </Isian>
-        <Isian label="Nama pembeli" htmlFor="ret-customer">
-          <Input id="ret-customer" value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })}
-            placeholder="Nama pembeli" data-testid="ret-customer-name" />
+      )}
+      {pesanan && (
+        <dl className="grid gap-x-6 sm:grid-cols-2" data-testid="ret-order-info">
+          <BarisDetail label="No. resi">{pesanan.tracking_number || '-'}</BarisDetail>
+          <BarisDetail label="Channel">{platformLabel(pesanan.platform) || '-'}{pesanan.account_name ? ` · ${pesanan.account_name}` : ''}</BarisDetail>
+          <BarisDetail label="Pembeli">{pesanan.customer_name || '-'}</BarisDetail>
+          <BarisDetail label="Status pesanan">
+            {ORDER_STATUS[pesanan.status] || pesanan.status || '-'}{pesanan.order_date ? ` · ${fmtDateShort(pesanan.order_date)}` : ''}
+          </BarisDetail>
+          {items.length === 1 && <BarisDetail label="Barang di pesanan">{barisLabel(items[0])} · {items[0].quantity || '?'} pcs</BarisDetail>}
+        </dl>
+      )}
+      {pesanan && items.length > 1 && (
+        <Isian label="Barang yang kembali" wajib htmlFor="ret-line" petunjuk={`Pesanan ini berisi ${items.length} barang — pilih yang ada di paket.`}>
+          <SmartNativeSelect id="ret-line" value={String(line)} onChange={(e) => { setLine(e.target.value); resetBaris(); }} data-testid="ret-order-line">
+            <option value="">Pilih barang</option>
+            {items.map((it) => (
+              <option key={it.line} value={String(it.line)}>
+                {`${barisLabel(it)} · ${it.quantity || '?'} pcs${(it.blocked_by || []).length ? ` · sudah ada retur ${it.blocked_by.map((b) => b.return_code).join(', ')}` : ''}`}
+              </option>
+            ))}
+          </SmartNativeSelect>
         </Isian>
-      </div>
-      {/* W4 — BARANG DARI MASTER (bukan ketikan): teks bebas tidak pernah cocok dengan master ⇒ stok tak bergerak. */}
-      <Isian label="Barang jadi yang kembali" wajib petunjuk="Wajib dari Master Produk Jadi — inilah yang membuat stok bisa bertambah tepat sasaran.">
-        <FGMaterialSelect value={form.material_id} onChange={(v) => setForm({ ...form, material_id: v })}
-          label={null} testId="ret-material-select" />
-      </Isian>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Isian label="Qty retur" htmlFor="ret-qty">
-          <Input id="ret-qty" type="number" min="1" value={form.qty} onChange={e => setForm({ ...form, qty: +e.target.value })} data-testid="ret-qty" />
+      )}
+      {penghalang.length > 0 && (
+        <Notice tone="warning" testId="ret-sudah-ada"
+          title={`Pesanan ini sudah punya retur gudang: ${penghalang.map((b) => `${b.return_code} (${b.status_label || statusLabel(b.status)})`).join(', ')}`}
+          action={(
+            <div className="flex flex-wrap gap-2">
+              {penghalang.map((b) => (
+                <Button key={b.id} type="button" size="sm" variant="outline" onClick={() => onOpenExisting(b.id)} data-testid={`ret-buka-${b.id}`}>
+                  Buka {b.return_code}
+                </Button>
+              ))}
+            </div>
+          )}>
+          Paket yang sama tidak boleh dicatat dua kali. Buka retur yang ada untuk menerima atau memutuskan paketnya.
+        </Notice>
+      )}
+      {baris && !penghalang.length && (baris.material_id ? (
+        <dl data-testid="ret-line-material">
+          <BarisDetail label="Barang jadi (dari pesanan)">{[baris.material_code, baris.material_name].filter(Boolean).join(' · ')}</BarisDetail>
+        </dl>
+      ) : (
+        // W4 — baris pesanan belum tertaut master: barang DIPILIH dari master (bukan ketikan).
+        <Isian label="Barang jadi yang kembali" wajib
+          petunjuk="Baris pesanan ini belum tertaut master produk jadi — pilih barangnya dari master supaya stok bisa bertambah tepat sasaran.">
+          <FGMaterialSelect value={form.material_id} onChange={(v) => setForm({ ...form, material_id: v })}
+            label={null} testId="ret-material-select" />
         </Isian>
-        <Isian label="Nilai order (Rp)" htmlFor="ret-nilai">
-          <MoneyInput id="ret-nilai" value={form.order_value} onChange={e => setForm({ ...form, order_value: +e.target.value })}
-            placeholder="0" data-testid="ret-order-value" />
-        </Isian>
-      </div>
+      ))}
+      {baris && !penghalang.length && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label={`Qty retur (di pesanan ${baris.quantity || '?'} pcs)`} htmlFor="ret-qty">
+            <Input id="ret-qty" type="number" min="1" max={baris.quantity || undefined} value={qtyNilai}
+              onChange={(e) => setForm({ ...form, qty: e.target.value === '' ? '' : Math.max(1, parseInt(e.target.value, 10) || 1) })}
+              data-testid="ret-qty" />
+          </Isian>
+        </div>
+      )}
       <Isian label="Alasan retur (awal)" htmlFor="ret-alasan">
         <Textarea id="ret-alasan" rows={2} value={form.initial_reason} onChange={e => setForm({ ...form, initial_reason: e.target.value })}
           placeholder="Barang tidak sampai / ukuran tidak sesuai / dll." data-testid="ret-reason" />
@@ -569,6 +683,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
       {err && <Notice tone="danger" title={err} />}
       {info && <Notice tone="success" icon={CheckCircle} testId="ret-info" title={info} />}
       <dl className="grid gap-x-6 sm:grid-cols-2">
+        <BarisDetail label="Asal">{asalRetur(data)}</BarisDetail>
         <BarisDetail label="No. order">{data.order_number || '-'}</BarisDetail>
         <BarisDetail label="No. resi">{data.resi_number || '-'}</BarisDetail>
         <BarisDetail label="Channel">{data.channel || '-'}</BarisDetail>
@@ -880,6 +995,7 @@ export default function WHReturnsModule({ token, onNavigate }) {
       const d = res.data || {};
       // 2026-11-02 (K1) — tarik HANYA membuat pekerjaan Menunggu; stok menunggu keputusan.
       setPullMsg(`Diperiksa ${d.scanned} retur Marketing · ${d.created} pekerjaan baru (menunggu paket) · `
+        + (d.linked ? `${d.linked} tertaut ke retur yang sudah dicatat gudang · ` : '')
         + `${d.skipped} perlu dipilih produknya`
         + (d.failed ? ` · ${d.failed} gagal` : ''));
       refreshCurrent();
@@ -888,6 +1004,14 @@ export default function WHReturnsModule({ token, onNavigate }) {
   };
 
   const quickCreate = (type) => { setCreateType(type); setShowCreate(true); };
+  // Dari form Catat retur: pesanan sudah punya retur aktif → buka retur yang ada (bukan mencatat dua kali).
+  const openExisting = async (id) => {
+    try {
+      const d = await api('GET', `/api/wh/returns/${id}`, token);
+      setShowCreate(false);
+      setSelected(d);
+    } catch (e) { toast.error(e.message); }
+  };
   const ringkasan = tab === 'dashboard';
   const barisUnduh = ringkasan ? actionItems : returns;
   const kosongDaftar = (
@@ -1013,7 +1137,7 @@ export default function WHReturnsModule({ token, onNavigate }) {
       )}
 
       {showCreate && (
-        <CreateModal token={token} defaultType={createType}
+        <CreateModal token={token} defaultType={createType} onOpenExisting={openExisting}
           onClose={() => setShowCreate(false)}
           onSaved={(ret) => { setShowCreate(false); setSelected(ret); refreshCurrent(); }} />
       )}

@@ -172,16 +172,36 @@ async def update_task_template(template_id: str, data: TaskTemplateCreate, reque
 
 
 @router.delete("/task-templates/{template_id}", dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
-async def delete_task_template(template_id: str, request: Request):
-    """Delete task template (set is_active=false)"""
+async def delete_task_template(template_id: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard` = nonaktifkan (is_active=false, perilaku lama).
+
+    `?hard=true` (10 Nov 2026): hapus permanen bila templat belum pernah menerbitkan tugas (`marketing_tasks`
+    ber-`template_id` ini); bila sudah → 409 dan layar menawarkan Nonaktifkan.
+    """
     await require_auth(request)
     db = get_db()
     user = _get_user(request)
-    
+
     template = await db.marketing_task_templates.find_one({"id": template_id}, {"_id": 0})
     if not template:
-        raise HTTPException(404, "Task template not found")
-    
+        raise HTTPException(404, "Templat tugas tidak ditemukan.")
+
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        pakai = await hitung_pemakaian(db, [
+            ("tugas yang sudah terbit", "marketing_tasks", {"template_id": template_id}),
+        ])
+        tolak_bila_dipakai("Templat tugas", template.get("template_name") or "", pakai)
+        await db.marketing_task_templates.delete_one({"id": template_id})
+        await log_activity(
+            user.get("id", "system"),
+            user.get("name") or user.get("email", "system"),
+            "delete",
+            "marketing_task_template",
+            f"Hapus permanen templat tugas: {template.get('template_name', '')}"
+        )
+        return {"ok": True, "deleted": True, "message": "Templat tugas dihapus"}
+
     await db.marketing_task_templates.update_one(
         {"id": template_id},
         {"$set": {"is_active": False, "updated_at": _now()}}

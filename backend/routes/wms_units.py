@@ -26,7 +26,7 @@ Routes:
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
@@ -236,13 +236,36 @@ async def update_unit(unit_id: str, data: UnitIn, request: Request):
     return serialize_doc({"message": "Unit diupdate"})
 
 
+async def unit_usage(db, unit: dict) -> dict:
+    """Di mana satuan dipakai (label → jumlah): satuan barang (dasar/beli/keluar/tampil/kemasan/daftar satuan)
+    dan aturan konversi AKTIF. Konversi nonaktif yang menunjuk satuan ini ikut terhapus saat hapus permanen."""
+    from core.hapus_master import hitung_pemakaian
+    code, uid = unit.get("code") or "", unit["id"]
+    cek = [("aturan konversi", "wh_unit_conversions",
+            {"active": True, "$or": [{"from_unit_id": uid}, {"to_unit_id": uid}]})]
+    if code:
+        cek.insert(0, ("barang", "rahaza_materials", {"$or": [
+            {"unit": code}, {"base_uom": code}, {"uoms.code": code}, {"pack_unit": code},
+            {"purchase_uom": code}, {"issue_uom": code}, {"display_uom": code}]}))
+    return await hitung_pemakaian(db, cek)
+
+
 @router.delete("/units/{unit_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
-async def delete_unit(unit_id: str, request: Request):
-    await require_auth(request)
+async def delete_unit(unit_id: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, permintaan owner "master data bisa
+    dihapus"): hapus permanen bila satuan belum dipakai barang/konversi aktif; bila sudah → 409."""
+    user = await require_auth(request)
     db = get_db()
     unit = await db.wh_unit_master.find_one({"id": unit_id}, {"_id": 0})
     if not unit:
         raise HTTPException(404, "Unit tidak ditemukan")
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        tolak_bila_dipakai("Satuan", unit.get("code") or unit.get("name") or "", await unit_usage(db, unit))
+        await db.wh_unit_conversions.delete_many({"$or": [{"from_unit_id": unit_id}, {"to_unit_id": unit_id}]})
+        await db.wh_unit_master.delete_one({"id": unit_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "wh_unit", f"Satuan {unit.get('code')} dihapus permanen")
+        return {"message": "Satuan dihapus", "deleted": True}
     # Soft delete
     await db.wh_unit_master.update_one({"id": unit_id}, {"$set": {"active": False, "updated_at": _now()}})
     return {"message": "Unit dinonaktifkan"}
@@ -297,9 +320,19 @@ async def update_conversion(conv_id: str, data: ConversionIn, request: Request):
 
 
 @router.delete("/unit-conversions/{conv_id}", dependencies=only(*WAREHOUSE_ROLES, perm="wh.bin.manage"))  # T-01 2.3
-async def delete_conversion(conv_id: str, request: Request):
-    await require_auth(request)
+async def delete_conversion(conv_id: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026): hapus permanen — aturan konversi
+    tidak dirujuk dokumen lain (kalkulator & pemilih satuan membacanya langsung), jadi tidak ada cek pemakaian."""
+    user = await require_auth(request)
     db = get_db()
+    if hard:
+        conv = await db.wh_unit_conversions.find_one({"id": conv_id}, {"_id": 0})
+        if not conv:
+            raise HTTPException(404, "Konversi tidak ditemukan")
+        await db.wh_unit_conversions.delete_one({"id": conv_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "wh_unit_conversion",
+                           f"Konversi {conv.get('from_unit_code')}→{conv.get('to_unit_code')} dihapus permanen")
+        return {"message": "Konversi dihapus", "deleted": True}
     await db.wh_unit_conversions.update_one({"id": conv_id}, {"$set": {"active": False, "updated_at": _now()}})
     return {"message": "Konversi dihapus"}
 

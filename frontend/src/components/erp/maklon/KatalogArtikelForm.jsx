@@ -46,6 +46,11 @@ export default function KatalogArtikelForm({ data, clients, onCancel, onSaved, o
   const [palette, setPalette] = useState([]);
   const [sizeMaster, setSizeMaster] = useState([]);
   const [autoGen, setAutoGen] = useState(!isEdit);
+  // 10 Nov 2026 (owner: daftar panjang wajib bisa dicari) — master warna >100 baris.
+  const [cariWarna, setCariWarna] = useState('');
+  const kataWarna = cariWarna.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const paletteTampil = kataWarna.length
+    ? palette.filter((c) => kataWarna.every((k) => `${c.name || ''} ${c.code || ''}`.toLowerCase().includes(k))) : palette;
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   useEffect(() => {
@@ -142,9 +147,12 @@ export default function KatalogArtikelForm({ data, clients, onCancel, onSaved, o
       <div className="space-y-2" data-testid="bc-form-variants">
         <p className="text-sm font-semibold text-foreground">Varian & SKU</p>
         <div>
-          <p className="mb-1 text-sm text-muted-foreground">Warna (dari master warna)</p>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5" data-testid="bc-form-color-palette">
-            {palette.map((c) => (
+          <p className="mb-1 text-sm text-muted-foreground">Warna (dari master warna){form.color_options.length ? ` · dipilih: ${form.color_options.join(', ')}` : ''}</p>
+          <Input value={cariWarna} onChange={(e) => setCariWarna(e.target.value)} placeholder="Cari nama atau kode warna"
+            className="mb-2 w-full sm:w-72" data-testid="bc-form-color-search" aria-label="Cari warna" />
+          <div className="flex max-h-48 flex-wrap gap-x-4 gap-y-1.5 overflow-y-auto" data-testid="bc-form-color-palette">
+            {palette.length > 0 && !paletteTampil.length && <span className="text-sm text-muted-foreground">Tidak ada warna yang cocok.</span>}
+            {paletteTampil.map((c) => (
               <label key={c.id} className="inline-flex cursor-pointer items-center gap-1.5 text-sm" data-testid={`bc-color-chip-${c.code}`}>
                 <Checkbox checked={form.color_options.includes(c.name)} onCheckedChange={() => toggleIn('color_options', c.name)} />
                 {/* warna contoh dari master warna (data), bukan warna tampilan */}

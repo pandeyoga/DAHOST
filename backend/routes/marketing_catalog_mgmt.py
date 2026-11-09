@@ -819,17 +819,32 @@ async def update_catalog(catalog_id: str, data: CatalogUpdate, request: Request)
 
 @router.delete('/{catalog_id}')
 async def delete_catalog(catalog_id: str, request: Request):
-    """Hapus catalog dan semua item-nya."""
-    await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
-                       message='Akses ditolak: Anda tidak berhak menghapus katalog.')  # T-01 2.3
+    """Hapus PERMANEN katalog beserta item-nya — hanya bila belum ada satu item pun yang dipakai.
+
+    10 Nov 2026: dulu katalog + SEMUA itemnya langsung dihapus tanpa cek apa pun (pesanan, retur, sesi live yang
+    menunjuk item itu kehilangan tautannya). Kini item katalog dicek dengan daftar yang sama dengan hapus item
+    (`routes.marketing_catalog_items.item_usage_checks`); bila ada yang dipakai → 409 dan layar menawarkan
+    Nonaktifkan katalog (`PUT /{id}` `is_active: false`).
+    """
+    user = await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
+                              message='Akses ditolak: Anda tidak berhak menghapus katalog.')  # T-01 2.3
     db = get_db()
 
     cat = await db.marketing_catalogs.find_one({'id': catalog_id}, {'_id': 0, 'name': 1})
     if not cat:
         raise HTTPException(404, 'Katalog tidak ditemukan.')
 
-    item_count = await db.marketing_catalog_items.count_documents({'catalog_id': catalog_id})
+    from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+    from routes.marketing_catalog_items import item_usage_checks
+    item_ids = [d.get('id') async for d in db.marketing_catalog_items.find(
+        {'catalog_id': catalog_id}, {'_id': 0, 'id': 1})]
+    pakai = await hitung_pemakaian(db, item_usage_checks(item_ids))
+    tolak_bila_dipakai('Katalog', cat.get('name') or '', pakai)
+
+    item_count = len(item_ids)
     await db.marketing_catalog_items.delete_many({'catalog_id': catalog_id})
     await db.marketing_catalogs.delete_one({'id': catalog_id})
+    await log_activity(user.get('id', ''), user.get('name', ''),
+                       f"delete_catalog:{cat.get('name') or ''}", 'marketing_catalog', catalog_id)
 
-    return {'ok': True, 'message': f"Katalog '{cat['name']}' dan {item_count} item dihapus."}
+    return {'ok': True, 'deleted': True, 'message': f"Katalog '{cat['name']}' dan {item_count} item dihapus."}

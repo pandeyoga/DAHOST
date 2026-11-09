@@ -157,6 +157,97 @@ async def apply_progress_value(db, *, fabric_id: str, panel_id: str,
         return trace
 
 
+async def apply_progress_value_multi(db, *, fabrics: list[dict], panels: list[dict],
+                                     actor: dict | None = None, reference: str = "") -> dict:
+    """Order cutting BANYAK KAIN × BANYAK HASIL (keputusan owner 10 Nov 2026).
+
+    `fabrics` = [{fabric_id, qty}] (kain terpakai per kain), `panels` = [{panel_id, qty, qty_before}] (pcs per hasil).
+    Satu aturan HPP untuk semua baris order: HPP masuk/pcs = Σ(qty kain × harga satuan kain itu) ÷ Σ pcs hasil, lalu
+    tiap master potongan dirata-rata bergerak dengan HPP masuk yang SAMA. Satu kain + satu hasil = angka persis
+    `apply_progress_value` (nilai kain ÷ pcs).
+
+    Kain yang belum berharga TIDAK dipaksa jadi angka: nilainya tidak ikut (bukan nol yang seolah benar), potongan
+    ditandai `unvalued` bila TIDAK ADA kain yang berharga, dan bila sebagian berharga catatannya menyebut kain mana
+    yang belum masuk HPP. Tidak pernah melempar (kain sudah terpotong).
+    """
+    trace = {"value_source": VALUE_SOURCE, "value_out": 0.0, "cost_per_pcs_in": 0.0,
+             "value_status": "unvalued", "value_note": "", "fabrics": [], "panels": [],
+             "fabric_unit_cost": 0.0, "panel_unit_cost_before": 0.0, "panel_unit_cost_after": 0.0,
+             "panel_qty_before": 0.0}
+    try:
+        total_pcs = sum(_f(p.get("qty")) for p in panels)
+        missing: list[dict] = []
+        value_total = 0.0
+        for fx in fabrics:
+            fabric = await db.rahaza_materials.find_one({"id": fx.get("fabric_id")}, {"_id": 0}) or {}
+            cost = accessory_valuation.resolve_unit_cost(fabric)
+            qty = _f(fx.get("qty"))
+            value = round(cost * qty, 4) if cost > 0 else 0.0
+            value_total += value
+            trace["fabrics"].append({"fabric_id": fx.get("fabric_id"), "code": fabric.get("code", ""),
+                                     "qty": round(qty, 4), "fabric_unit_cost": round(cost, 4), "value_out": value})
+            if cost <= 0:
+                missing.append(fabric)
+                try:
+                    await accessory_valuation.notify_unvalued(
+                        db, material=fabric, movement_type="cutting_issue", qty=qty, actor=actor)
+                except Exception:  # noqa: BLE001 — notifikasi bukan alasan gagal
+                    _log.warning("notify_unvalued gagal untuk kain %s", fx.get("fabric_id"))
+        value_total = round(value_total, 4)
+        trace["value_out"] = value_total
+        if len(trace["fabrics"]) == 1:
+            trace["fabric_unit_cost"] = trace["fabrics"][0]["fabric_unit_cost"]
+        if total_pcs <= 0:
+            trace["value_note"] = "pcs potongan 0 — tidak ada yang bisa dinilai"
+            return trace
+        if value_total <= 0:
+            f0 = missing[0] if missing else {}
+            trace["value_note"] = unvalued_message(
+                ", ".join(m.get("code", "") for m in missing) or f0.get("code", ""),
+                f0.get("name", "") if len(missing) == 1 else "")
+            for p in panels:
+                await _mark_panel(db, p["panel_id"], "unvalued", trace["value_note"], f0)
+                panel = await db.rahaza_materials.find_one({"id": p["panel_id"]}, {"_id": 0}) or {}
+                c = round(accessory_valuation.resolve_unit_cost(panel), 4)
+                trace["panels"].append({"panel_id": p["panel_id"], "qty": _f(p.get("qty")),
+                                        "panel_qty_before": round(_f(p.get("qty_before")), 4),
+                                        "panel_unit_cost_before": c, "panel_unit_cost_after": c})
+            return trace
+        cpp = round(value_total / total_pcs, 6)
+        note = (f"Nilai kain keluar {value_total:,.2f} dibagi {total_pcs:g} pcs = {cpp:,.2f}/pcs, "
+                "dirata-rata dengan stok potongan lama.")
+        if missing:
+            note += (" Kain " + ", ".join(m.get("code", "") or "?" for m in missing)
+                     + " belum punya harga, jadi belum ikut HPP potongan (isi harganya lewat pembelian).")
+        trace.update({"cost_per_pcs_in": cpp, "value_status": "valued", "value_note": note})
+        src = trace["fabrics"][0] if trace["fabrics"] else {}
+        for p in panels:
+            qty = _f(p.get("qty"))
+            panel = await db.rahaza_materials.find_one({"id": p["panel_id"]}, {"_id": 0}) or {}
+            before = round(accessory_valuation.resolve_unit_cost(panel), 4)
+            row = {"panel_id": p["panel_id"], "qty": qty, "panel_qty_before": round(_f(p.get("qty_before")), 4),
+                   "panel_unit_cost_before": before, "panel_unit_cost_after": before}
+            if qty > 0:
+                res = await accessory_valuation.apply_receipt_cost(
+                    db, p["panel_id"], qty, cpp, qty_before=p.get("qty_before"), actor=actor,
+                    notes=(f"Potongan dari cutting {reference}" if reference else "Potongan dari cutting"))
+                row["panel_unit_cost_before"] = res.get("old_unit_cost", before)
+                row["panel_unit_cost_after"] = res.get("new_unit_cost", 0.0)
+                await _mark_panel(db, p["panel_id"], "valued", note, {"code": src.get("code", "")})
+            trace["panels"].append(row)
+        return trace
+    except Exception as e:  # noqa: BLE001 — kain SUDAH terpotong; nilai tidak boleh membatalkannya
+        _log.exception("nilai potongan (banyak baris) gagal dihitung: %s", e)
+        trace["value_note"] = f"nilai potongan gagal dihitung: {e}"
+        return trace
+    finally:
+        if len(trace["panels"]) == 1:
+            p0 = trace["panels"][0]
+            trace["panel_unit_cost_before"] = p0["panel_unit_cost_before"]
+            trace["panel_unit_cost_after"] = p0["panel_unit_cost_after"]
+            trace["panel_qty_before"] = p0["panel_qty_before"]
+
+
 async def _mark_panel(db, panel_id: str, status: str, note: str, fabric: dict) -> None:
     """Tandai master potongan supaya LAYAR bisa mengatakan status nilainya."""
     patch = {

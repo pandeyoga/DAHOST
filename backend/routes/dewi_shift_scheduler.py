@@ -168,10 +168,23 @@ async def ubah_pola(request: Request, pola_id: str, body: PolaModel):
 
 
 @router.delete("/pola/{pola_id}")
-async def hapus_pola(request: Request, pola_id: str):
+async def hapus_pola(request: Request, pola_id: str, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"):
+    hapus permanen bila belum ada jadwal yang disusun dari pola ini; selain itu 409 (layar menawarkan Nonaktifkan)."""
     user = await require_auth(request)
     _require_shift_writer(user)
     db = get_db()
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        pola = await db.hr_shift_pola.find_one({"id": pola_id}, {"_id": 0})
+        if not pola:
+            raise HTTPException(404, "Pola tidak ditemukan.")
+        tolak_bila_dipakai("Pola rotasi", pola.get("nama") or "", await hitung_pemakaian(db, [
+            ("jadwal shift", "rahaza_schedules", {"pola_id": pola_id}),
+        ]))
+        await db.hr_shift_pola.delete_one({"id": pola_id})
+        await log_activity(str(user.get("id") or ""), _nama(user), "delete_shift_pola", "hr_shift_pola", pola.get("nama") or pola_id)
+        return {"success": True, "deleted": True, "message": f"Pola {pola.get('nama') or ''} dihapus."}
     r = await db.hr_shift_pola.update_one({"id": pola_id}, {"$set": {"aktif": False, "updated_at": _now()}})
     if not r.matched_count:
         raise HTTPException(404, "Pola tidak ditemukan.")

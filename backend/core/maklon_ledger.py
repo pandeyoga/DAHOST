@@ -170,10 +170,12 @@ def ar_amounts(ar: dict, payments: list) -> dict:
     ar_direct = _r2(sum(_f(p.get('ar_portion')) for p in payments))
     applied = _r2(sum(_f(a.get('amount')) for a in ar.get('advance_postings') or []))
     ar_credit = _r2(ar_direct + applied)
+    # 10 Nov 2026 (owner): denda dari klien saat Tutup PO (`core.denda_po`) mengurangi tagihan klien.
+    denda = _r2(sum(_f(d.get('amount')) for d in ar.get('denda_postings') or []))
     return {'billed_subtotal': billed_sub, 'billed_tax': billed_tax, 'billed_total': billed_total,
             'paid_total': paid_total, 'ar_direct': ar_direct, 'advance_applied': applied,
-            'ar_credit': ar_credit, 'advance_balance': _r2(paid_total - ar_credit),
-            'amount_due': _r2(max(0.0, billed_total - ar_credit))}
+            'ar_credit': ar_credit, 'advance_balance': _r2(paid_total - ar_credit), 'denda_credit': denda,
+            'amount_due': _r2(max(0.0, billed_total - ar_credit - denda))}
 
 
 def due_date_fifo(postings: list, ar_credit: float, term_days: int) -> str | None:
@@ -343,7 +345,9 @@ async def _advance_reconcile(db, ar: dict, payments: list, user: dict) -> dict:
     from routes.dewi_maklon_finance import maklon_advance_account, post_maklon_advance_apply
     from utils.waktu import today_wib
     a = ar_amounts(ar, payments)
-    target = _r2(min(a['paid_total'], a['billed_total']))
+    # Denda klien ikut menutup piutang: uang muka hanya dipakai sampai tertagih − denda. Bila denda melebihi sisa
+    # tagihan, target negatif → kelebihan kredit piutang dipindah ke uang muka klien (kredit klien), bukan hilang.
+    target = _r2(min(a['paid_total'], a['billed_total'] - a['denda_credit']))
     delta = _r2(target - a['ar_credit'])
     postings = list(ar.get('advance_postings') or [])
     if abs(delta) < 0.01:
@@ -435,10 +439,11 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
     sched_tax = _r2(_tax(kena, sched_sub)) if kena else 0.0
     a = ar_amounts(ar, payments)
     term = ar.get('payment_terms') or 'net_30'
-    due = due_date_fifo(ar['revenue_postings'], a['ar_credit'], TERM_DAYS.get(term, 30))
+    due = due_date_fifo(ar['revenue_postings'], a['ar_credit'] + a['denda_credit'], TERM_DAYS.get(term, 30))
     sched_total = _r2(sched_sub + sched_tax)
     status = ar_status(amount_due=a['amount_due'], billed_total=a['billed_total'], scheduled_total=sched_total,
-                       ar_credit=a['ar_credit'], due_date=due, po_closed=po_closed, paid_total=a['paid_total'])
+                       ar_credit=a['ar_credit'] + a['denda_credit'], due_date=due, po_closed=po_closed,
+                       paid_total=a['paid_total'])
     first = min([p.get('date') for p in ar['revenue_postings'] if not p.get('reverse')] or [None], key=lambda x: x or '')
     errors = list(rec['errors']) + ([adv['error']] if adv.get('error') else [])
     upd = {
@@ -455,7 +460,8 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
         'amount_due': a['amount_due'], 'balance': a['amount_due'],
         'ar_credit': a['ar_credit'], 'advance_received': _r2(a['paid_total'] - a['ar_direct']),
         'advance_applied': a['advance_applied'], 'advance_balance': a['advance_balance'],
-        'outstanding_total': _r2(max(sched_total, a['billed_total']) - a['paid_total']),
+        'denda_credit': a['denda_credit'],
+        'outstanding_total': _r2(max(sched_total, a['billed_total']) - a['paid_total'] - a['denda_credit']),
         'scheduled_remaining': _r2(max(0.0, sched_total - a['billed_total'])),
         'due_date': due, 'status': status,
         'customer_id': po.get('buyer_id'), 'customer_name': po.get('customer_name', ''),
@@ -514,7 +520,8 @@ async def _record_client_payment_locked(db, ar_id: str, *, amount: float, cash_a
     # angka terbaru dulu (pendapatan kiriman terakhir)
     await sync_ar_schedule(db, ar['linked_maklon_po_id'], user)
     ar = await db.rahaza_ar_invoices.find_one({'id': ar_id}, {'_id': 0})
-    cap = _r2(max(_f(ar.get('scheduled_total')), _f(ar.get('billed_total'))) - _f(ar.get('amount_paid')))
+    cap = _r2(max(_f(ar.get('scheduled_total')), _f(ar.get('billed_total'))) - _f(ar.get('amount_paid'))
+              - _f(ar.get('denda_credit')))
     if amount > cap + 0.5:
         raise ValueError(f"Pembayaran melebihi sisa tagihan PO ({fmt_rp(cap)}).")
     if not ar.get('gl_ar_account_code'):

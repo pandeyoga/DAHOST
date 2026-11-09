@@ -1431,6 +1431,8 @@ export const MODULE_REGISTRY = {
   // ── Tahap 9 (master) — 7 Nov 2026 (lihat blok di atas MODULE_REGISTRY) ──
   'maklon-klien-katalog':  MaklonKlienKatalogHub,
   'hr-holiday-calendar':   RahazaProductionCalendarModule,
+  // 10 Nov 2026 (owner): lokasi KANTOR = lokasi kerja karyawan, dipisah dari Gudang › Lokasi gudang (master sama).
+  'hr-work-locations':     lazyRetry(() => import('./hr/LokasiKerjaModule')),
   // Tahap 9 (pantau) — satu layar dua portal, disaring per portal (portalId → internal / maklon).
   //   pantau-produksi menggantikan: prod-monitoring, prod-work-orders, maklon-tracking, cmt-monitor,
   //     prod-control-tower (+ tab Kapasitas di prod-analytics-hub). Tab: ringkasan · vendor · po · kejar ·

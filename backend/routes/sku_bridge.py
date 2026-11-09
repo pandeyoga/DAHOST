@@ -171,6 +171,8 @@ async def map_sku(body: MapIn, user: dict = Depends(require_auth)):
     db = get_db()
     if not (body.catalog_item_id or body.variant_id or body.fg_material_id):
         raise HTTPException(400, 'Pilih sasaran: catalog_item_id, variant_id, atau fg_material_id.')
+    psid = str(body.platform_sku_id or '').strip()
+    lama = await db[bridge.BRIDGE].find_one({'platform_sku_id': psid}, {'_id': 0, 'catalog_item_id': 1})
     res = await bridge.apply_mapping(
         db, body.platform_sku_id, catalog_item_id=body.catalog_item_id,
         variant_id=body.variant_id, fg_material_id=body.fg_material_id,
@@ -179,6 +181,12 @@ async def map_sku(body: MapIn, user: dict = Depends(require_auth)):
         variation=body.variation)
     if not res.get('ok'):
         raise HTTPException(res.get('status', 400), res.get('message', 'Pemetaan gagal.'))
+    # 10 Nov 2026 — "Ganti barang gudang" (Ubah di tab Sudah dipetakan): SKU yang pindah ke item katalog lain
+    # dilepas dari item LAMA-nya (jejak warisan `platform_sku_ids`/`bridge_keys`), sama seperti saat dilepas.
+    old_item = (lama or {}).get('catalog_item_id')
+    if old_item and old_item != (res.get('target') or {}).get('id'):
+        await db.marketing_catalog_items.update_one(
+            {'id': old_item}, {'$pull': {'platform_sku_ids': psid, 'bridge_keys': psid}})
     await log_activity(user.get('id', ''), user.get('name', ''),
                        f"Jembatan SKU: {body.platform_sku_id} → {res['target'].get('name')} "
                        f"({res['orders_updated']} pesanan tertaut)",

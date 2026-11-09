@@ -14,7 +14,7 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import { Plus, RefreshCw, Pencil, Power, MoreHorizontal } from 'lucide-react';
+import { Plus, RefreshCw, Pencil, Power, MoreHorizontal, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +36,7 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect, useActiveEmployees, useDepartmentFilterOptions, useHrMasters } from './hr/hrPickers';
 import { checkPerm } from '@/lib/rbac';
+import { hapusMaster } from '@/lib/hapusMaster';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const DAYS_ID = { Mon: 'Sen', Tue: 'Sel', Wed: 'Rab', Thu: 'Kam', Fri: 'Jum', Sat: 'Sab', Sun: 'Min' };
@@ -354,6 +355,17 @@ export default function HRShiftManagementModule({ user, bagian }) {
     } catch (e) { toast.error(e.response?.data?.detail || 'Gagal menonaktifkan shift'); }
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen bila shift belum dipakai karyawan, penugasan,
+  // jadwal, pola, atau absensi; bila sudah dipakai server menjawab 409 dan dialog kedua menawarkan Nonaktifkan.
+  const hapusShift = async (s) => {
+    const hasil = await hapusMaster({
+      jenis: 'shift', nama: namaShift(s),
+      hapus: () => axios.delete(`${API}/api/hr/shifts/${s.id}?hard=true`, { headers }),
+      nonaktifkan: s.status === 'inactive' || s.active === false ? null : () => axios.delete(`${API}/api/hr/shifts/${s.id}`, { headers }),
+    });
+    if (hasil) load();
+  };
+
   const handleAssign = async (body) => {
     const r = await axios.post(`${API}/api/hr/shifts/assignments/massal`, body, { headers });
     const gagal = r.data?.data?.gagal || [];
@@ -404,7 +416,7 @@ export default function HRShiftManagementModule({ user, bagian }) {
     { kunci: 'jenis', label: 'Jenis', isi: (s) => (s.is_default
       ? <StatusBadge status="bawaan" label="Bawaan" tone="muted" />
       : <StatusBadge status="active" label="Aktif" tone="success" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (s.is_default ? null : (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (s) => (s.is_default ? null : (
       <div className="flex items-center justify-end gap-1">
         <Button size="sm" variant="outline" onClick={() => setShiftForm(s)} data-testid={`shift-edit-${s.id}`}><Pencil />Ubah</Button>
         <DropdownMenu>
@@ -412,8 +424,13 @@ export default function HRShiftManagementModule({ user, bagian }) {
             <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya"><MoreHorizontal /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => handleDeleteShift(s)} className="text-[hsl(var(--danger-text))]">
+            <DropdownMenuItem onSelect={() => handleDeleteShift(s)} className="text-[hsl(var(--danger-text))]"
+              data-testid={`shift-deactivate-${s.id}`}>
               <Power className="mr-2 h-4 w-4" />Nonaktifkan
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => hapusShift(s)} className="text-[hsl(var(--danger-text))]"
+              data-testid={`shift-delete-${s.id}`}>
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

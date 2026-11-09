@@ -35,6 +35,7 @@ import PageLayout from '../layout/PageLayout';
 import { PageLayoutSatuBaris } from './DataTable';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import RencanaAksesorisPO, { planRowsFromPo } from './kirim/RencanaAksesorisPO';   // Tahap 9 (kirim)
+import DendaTutupPO, { dendaAwal, dendaGalat, dendaPayload } from './DendaTutupPO';   // 10 Nov 2026: denda saat Tutup PO
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 // PO yang sudah ditutup terkunci untuk semua peran (Tahap 2) — tombol Ubah/Tutup tidak ditawarkan.
@@ -108,6 +109,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const [detailPo, setDetailPo] = useState(null);
   const [detailReload, setDetailReload] = useState(0);
   const [closeTargetPO, setCloseTargetPO] = useState(null);
+  const [closeDenda, setCloseDenda] = useState(() => dendaAwal(0));
   const [filterStatus, setFilterStatus] = useState('');
   const [cari, setCari] = useState('');
   const [closeForm, setCloseForm] = useState({ close_reason: CLOSE_REASONS[0], close_notes: '' });
@@ -593,13 +595,18 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const openCloseModal = (po) => {
     setCloseTargetPO(po);
     setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' });
+    setCloseDenda(dendaAwal(po.total_qty || 0));
     setShowCloseModal(true);
   };
 
   const handleClosePO = async (e) => {
     e?.preventDefault?.();
+    const galat = dendaGalat(closeDenda);
+    if (galat) { toast.error(galat); return; }
     try {
-      await apiPost(`/production-pos/${closeTargetPO.id}/close`, closeForm);
+      // 10 Nov 2026 (owner): denda dari klien / ke CMT ikut dicatat saat PO ditutup (DendaTutupPO)
+      const res = await apiPost(`/production-pos/${closeTargetPO.id}/close`, { ...closeForm, denda: dendaPayload(closeDenda) });
+      (res?.denda || []).forEach((d) => toast.success(`${d.nomor}: denda Rp ${Number(d.jumlah || 0).toLocaleString('id-ID')} dicatat`));
       setShowCloseModal(false);
       refetchPOs();
       reloadDetail();
@@ -1152,8 +1159,8 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
 
       {/* Tutup PO manual — FormPopup pendek */}
       {showCloseModal && closeTargetPO && (
-        <FormPopup open onClose={() => setShowCloseModal(false)} ukuran="pendek" testId="po-close-form"
-          judul={`Tutup PO ${closeTargetPO.po_number}`} onSimpan={handleClosePO} labelSimpan="Tutup PO">
+        <FormPopup open onClose={() => setShowCloseModal(false)} ukuran={closeDenda.klien.aktif || closeDenda.cmt.aktif ? 'panjang' : 'pendek'}
+          testId="po-close-form" judul={`Tutup PO ${closeTargetPO.po_number}`} onSimpan={handleClosePO} labelSimpan="Tutup PO">
           <Notice tone="warning" icon={AlertTriangle}>
             Qty diperiksa per ukuran. Semua terpenuhi ⇒ PO <strong>Ditutup</strong>; ada ukuran yang kurang ⇒ pilih alasan dan PO
             menjadi <strong>Ditutup kurang</strong>. PO yang ditutup terkunci dari kiriman dan perubahan.
@@ -1166,6 +1173,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           <Isian label="Keterangan tambahan" htmlFor="po-close-notes">
             <Textarea id="po-close-notes" rows={3} value={closeForm.close_notes} onChange={e => setCloseForm({...closeForm, close_notes: e.target.value})} placeholder="Jelaskan detail alasan penutupan PO…" />
           </Isian>
+          <DendaTutupPO po={closeTargetPO} qtyPesanan={closeTargetPO.total_qty} value={closeDenda} onChange={setCloseDenda} />
         </FormPopup>
       )}
 

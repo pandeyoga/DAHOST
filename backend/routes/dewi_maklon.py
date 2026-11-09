@@ -13,13 +13,13 @@ Collections:
                          All consumers (client portal, billing, samples,
                          management tools) now read from dewi_maklon_pos.
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from routes.production_rbac import deny_external_dep
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc
+from auth import require_auth, serialize_doc, log_activity
 from routes._maklon_adapter import legacy_orders_view as _lmo
 from core import stock_service
 from core import location_resolver
@@ -262,9 +262,45 @@ async def update_client(client_id: str, payload: MaklonClient, user: dict = Depe
     return {'message': 'Client berhasil diperbarui'}
 
 
+async def client_usage(db, client_id: str) -> dict:
+    """Di mana klien dipakai (label → jumlah). Dipakai hapus permanen (10 Nov 2026, permintaan owner)."""
+    from core.hapus_master import hitung_pemakaian
+    cek = [
+        ('PO maklon', 'dewi_maklon_pos', {'client_id': client_id}),
+        ('PO produksi', 'production_pos', {'buyer_id': client_id}),
+        ('artikel katalog', 'dewi_maklon_buyer_catalog', {'client_id': client_id}),
+        ('sampel', 'dewi_maklon_samples', {'client_id': client_id}),
+        ('faktur piutang', 'rahaza_ar_invoices', {'customer_id': client_id}),
+        ('pembayaran piutang', 'rahaza_ar_payments', {'customer_id': client_id}),
+        ('catatan barang milik klien', 'dewi_maklon_inventory', {'maklon_client_id': client_id}),
+    ]
+    codes = [a.get('code') async for a in db.rahaza_coa_accounts.find(
+        {'flags.subledger_entity_id': client_id}, {'_id': 0, 'code': 1}) if a.get('code')]
+    if codes:
+        cek.append(('baris jurnal', 'rahaza_journal_lines', {'account_code': {'$in': codes}}))
+    return await hitung_pemakaian(db, cek)
+
+
 @router.delete('/clients/{client_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
-async def delete_client(client_id: str, user: dict = Depends(require_auth)):
+async def delete_client(client_id: str, hard: bool = Query(False), user: dict = Depends(require_auth)):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, permintaan owner "master data bisa
+    dihapus"): hapus permanen bila klien BELUM dipakai PO/katalog/sampel/piutang/jurnal; bila sudah dipakai →
+    409 dengan rincian (layar menawarkan Nonaktifkan). Ikut terhapus: akun login portal klien dan akun piutang /
+    pendapatan otomatis klien itu (dipastikan belum pernah dijurnal)."""
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        client = await db.dewi_maklon_clients.find_one({'id': client_id}, {'_id': 0})
+        if not client:
+            raise HTTPException(404, 'Klien tidak ditemukan')
+        tolak_bila_dipakai('Klien', client.get('name') or client.get('code') or '', await client_usage(db, client_id))
+        portal = await db.dewi_client_users.delete_many({'client_id': client_id})
+        akun = await db.rahaza_coa_accounts.delete_many({'flags.subledger_entity_id': client_id,
+                                                         'flags.subledger_entity_type': {'$in': ['maklon_client', 'maklon_revenue']}})
+        await db.dewi_maklon_clients.delete_one({'id': client_id})
+        await log_activity(user.get('id') or '', user.get('name') or '', 'maklon_client.delete', 'dewi-maklon',
+                           f"id={client_id} kode={client.get('code')} akun_portal={portal.deleted_count} akun_gl={akun.deleted_count}")
+        return {'message': f"Klien {client.get('name') or ''} dihapus", 'deleted': True}
     result = await db.dewi_maklon_clients.update_one(
         {'id': client_id},
         {'$set': {'status': 'inactive', 'updated_at': _now()}}

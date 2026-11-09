@@ -180,9 +180,14 @@ async def update_master_category(
 @router.delete('/master-categories/{cat_id}')
 async def delete_master_category(
     cat_id: str,
+    hard: bool = False,
     user: dict = Depends(require_auth),
 ):
-    """Soft-delete kategori (set is_active=false). Hanya admin/finance."""
+    """Soft-delete kategori (set is_active=false). Hanya admin/finance.
+
+    `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"): hapus permanen bila nama kategori belum dipakai
+    klaim biaya, penyelesaian perjalanan dinas, atau pemetaan akun (dokumen itu menyimpan NAMA kategori); selain
+    itu 409 dan layar menawarkan Nonaktifkan."""
     if not _is_category_admin(user):
         raise HTTPException(403, 'Hanya admin/finance yang dapat menonaktifkan kategori.')
     db = get_db()
@@ -190,6 +195,19 @@ async def delete_master_category(
     existing = await db.employee_expense_categories.find_one({'id': cat_id}, {'_id': 0})
     if not existing:
         raise HTTPException(404, 'Kategori tidak ditemukan.')
+
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        nama = existing.get('name') or ''
+        tolak_bila_dipakai('Kategori', nama, await hitung_pemakaian(db, [
+            ('klaim biaya', 'rahaza_expense_claims', {'$or': [{'category': nama}, {'items.category': nama}]}),
+            ('penyelesaian perjalanan dinas', 'employee_travel_settlements', {'actual_items.category': nama}),
+            ('pemetaan akun', 'employee_expense_gl_mappings', {'category': nama}),
+        ] if nama else []))
+        await db.employee_expense_categories.delete_one({'id': cat_id})
+        await log_activity(user['id'], user.get('name', user.get('email')),
+                           'DELETE_EEM_CATEGORY', 'employee_expense_categories', f"Deleted category: {nama}")
+        return {'ok': True, 'deleted': True, 'message': f'Kategori "{nama}" dihapus.'}
 
     await db.employee_expense_categories.update_one(
         {'id': cat_id},

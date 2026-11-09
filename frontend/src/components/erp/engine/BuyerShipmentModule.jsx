@@ -12,6 +12,11 @@
  *   • "Laporan selisih terima" tetap satu tampilan di sini, isinya komponen bersama
  *     `BuyerReceiptVarianceReport` (endpoint `/buyer-receipt-variance`, pemilik: Laporan Selisih).
  *
+ * 10 Nov 2026 (owner: "kirim hasil ini ke siapa? tidak bisa pilih namanya? ini kan produksi internal"): di Portal Produksi
+ *   penerima SELALU gudang barang jadi DA — ditampilkan sebagai isian baca-saja, pilihan "Gabungkan beberapa PO milik
+ *   penerima yang sama" (khusus klien maklon) disembunyikan, dan kolom Penerima surat jalan internal tertulis "Gudang DA".
+ *   PO yang produksinya sudah selesai (Produksi selesai … Siap ditutup) juga bisa dipilih untuk dikirim.
+ *
  * Angka "sisa bisa kirim" SELALU dari backend (`/api/buyer-dispatch-capacity`, FASE E) — rumus yang sama
  * dengan pagar yang menolak saat Simpan.
  */
@@ -51,6 +56,10 @@ const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const fmtRp = (v) => `Rp ${Math.round(Number(v || 0)).toLocaleString('id-ID')}`;
 const fmtDate = (d) => (d ? formatDateID(d) : '—');
 const shipStatus = (pct) => (pct >= 100 ? ['Terkirim penuh', 'success'] : pct > 0 ? ['Terkirim sebagian', 'warning'] : ['Menunggu', 'muted']);
+// PO yang barangnya boleh dikirim/diserahkan: sedang/selesai produksi dan belum ditutup (PO tertutup dikunci server).
+const SHIPPABLE_PO_STATUSES = ['Distributed', 'In Production', 'Production Complete', 'Variance Review', 'Return Review',
+  'Ready to Close', 'Completed'];
+const GUDANG_DA = 'Gudang DA';
 const BUYER_RESOLUTIONS = [
   ['dikirim_ulang', 'Akan dikirim ulang (barang ketinggalan / salah hitung)'],
   ['tanggungan_cmt', 'Hilang — ditanggung vendor CMT (keputusan Keuangan)'],
@@ -111,8 +120,8 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       setShipments(Array.isArray(sData) ? sData : []);
       setBuyerShorts(sh && typeof sh === 'object' ? sh : { items: [], total_qty_open: 0 });
       // PO yang masih punya sisa untuk dikirim
-      setPOs((Array.isArray(allPOs) ? allPOs : []).filter((p) =>
-        ['In Production', 'Completed', 'Distributed'].includes(p.status) && (p.remaining_qty_to_ship || p.total_qty) > 0));
+      setPOs((Array.isArray(allPOs) ? allPOs : []).filter((p) => SHIPPABLE_PO_STATUSES.includes(p.status)
+        && (p.remaining_qty_to_ship || p.total_qty) > 0));
     } catch (e) {
       toast.error(`Gagal memuat surat jalan: ${e.message || e}`);
       setShipments([]); setPOs([]);
@@ -409,7 +418,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                             <><span className="font-medium">{nums.length} PO</span><span className="block text-muted-foreground">{nums.join(', ')}</span></>
                           )}
                         </TableCell>
-                        <TableCell>{row.customer_name || '—'}</TableCell>
+                        <TableCell>{row.customer_name || (row.business_type === 'internal' || businessType === 'internal' ? GUDANG_DA : '—')}</TableCell>
                         <TableCell className="min-w-[180px]">
                           <div className="flex items-center justify-between text-xs mb-1 tabular-nums">
                             <span>{fmtNum(row.total_shipped)} / {fmtNum(row.total_ordered)} pcs</span><span className="font-medium">{pct}%</span>
@@ -705,6 +714,7 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
   const [consLoading, setConsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const isInternalPO = selectedPO?.business_type === 'internal';
+  const portalInternal = businessType === 'internal';   // Portal Produksi: penerima selalu gudang DA
 
   const fetchCapacity = async (param, ids) => {
     const list = (ids || []).filter(Boolean);
@@ -891,7 +901,8 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
     <FormPopup open onClose={onClose} ukuran="panjang" testId="buyer-shipment-form"
       judul={continueShip ? `Kirim lagi — ${continueShip.shipment_number}` : 'Buat surat jalan'}
       keterangan={continueShip ? 'Kiriman ditambahkan sebagai kiriman berikutnya pada surat jalan ini; nomornya tidak berubah.'
-        : 'Qty maksimal = sisa bisa kirim (lolos QC + hasil permak − yang sudah dikirim).'}
+        : portalInternal ? 'Serah terima hasil produksi PO internal ke gudang barang jadi DA. Qty maksimal = lolos QC − yang sudah diserahkan.'
+          : 'Qty maksimal = sisa bisa kirim (lolos QC + hasil permak − yang sudah dikirim).'}
       onSimpan={submit} menyimpan={saving} labelSimpan={continueShip ? 'Tambah kiriman' : 'Simpan'}>
       {continueShip && <Notice tone="info" icon={Info} testId="continue-dispatch-banner">
         Progres pengiriman PO naik pada surat jalan yang sama ({continueShip.shipment_number}).
@@ -904,6 +915,11 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
         <Field label="Tanggal">
           <DatePicker value={form.shipment_date} onChange={(v) => setForm((f) => ({ ...f, shipment_date: v }))} bolehKosong={false} testId="sj-date" />
         </Field>
+        {portalInternal && !consolidate && (
+          <Field label="Penerima" className="sm:col-span-2" hint="Hasil produksi internal selalu diserahkan ke gudang barang jadi DA sendiri.">
+            <Input value="Gudang barang jadi DA (serah terima internal)" readOnly aria-readonly="true" className="h-9" data-testid="internal-receiver" />
+          </Field>
+        )}
         {!consolidate ? (
           <Field label="PO *" className="sm:col-span-2">
             <SmartNativeSelect className="w-full h-9" data-testid="buyer-shipment-po-select" aria-label="PO" disabled={!!continueShip}
@@ -927,10 +943,12 @@ function ShipmentForm({ businessType, pos, setPOs, continueShip, presetPoId, onC
           </Field>
         )}
       </div>
-      <label className={`flex items-center gap-2 text-sm ${continueShip ? 'opacity-60' : 'cursor-pointer'}`} data-testid="consolidate-toggle">
-        <Checkbox checked={consolidate} disabled={!!continueShip} onCheckedChange={(v) => toggleConsolidate(!!v)} />
-        Gabungkan beberapa PO milik penerima yang sama dalam satu surat jalan (progres tetap dihitung per PO)
-      </label>
+      {!(portalInternal && !consolidate) && (
+        <label className={`flex items-center gap-2 text-sm ${continueShip ? 'opacity-60' : 'cursor-pointer'}`} data-testid="consolidate-toggle">
+          <Checkbox checked={consolidate} disabled={!!continueShip} onCheckedChange={(v) => toggleConsolidate(!!v)} />
+          Gabungkan beberapa PO milik penerima yang sama dalam satu surat jalan (progres tetap dihitung per PO)
+        </label>
+      )}
 
       {!consolidate && form.po_id && isInternalPO && (
         <Notice tone="info" icon={Info} testId="internal-dispatch-info" title="PO internal — serah terima hasil produksi ke gudang sendiri">

@@ -15,6 +15,7 @@ Endpoint (semua di bawah `/api/rahaza/product-categories`):
   POST   /                 tambah kategori
   PUT    /{cid}            ubah nama / prefix / urutan / aktif
   DELETE /{cid}            nonaktifkan — **409 bila masih dipakai produk** (PR-8)
+                           `?hard=true` hapus permanen bila belum dipakai sama sekali (409 bila sudah)
 """
 import logging
 from datetime import datetime, timezone
@@ -196,14 +197,38 @@ async def update_category(cid: str, data: CategoryUpdate, request: Request):
     return {'ok': True, 'category': serialize_doc(after)}
 
 
+async def pemakaian_kategori(db, cid: str) -> dict:
+    """Pemakaian untuk HAPUS PERMANEN: sama dengan `_usage_count` tetapi TANPA saringan aktif — produk/barang/
+    item katalog yang sudah nonaktif pun tetap menunjuk kategori ini (bila dihapus, rujukannya jadi yatim)."""
+    from core.hapus_master import hitung_pemakaian
+    return await hitung_pemakaian(db, [
+        ('produk', 'rahaza_models', {'category_id': cid}),
+        ('barang jadi', 'rahaza_materials', {'type': 'fg', 'category_id': cid}),
+        ('item katalog marketing', 'marketing_catalog_items', {'category_id': cid}),
+    ])
+
+
 @router.delete('/{cid}')
-async def deactivate_category(cid: str, request: Request):
-    """Nonaktifkan kategori. **PR-8**: ditolak 409 bila masih dipakai."""
+async def deactivate_category(cid: str, request: Request, hard: bool = False):
+    """Nonaktifkan kategori. **PR-8**: ditolak 409 bila masih dipakai.
+
+    `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"): hapus permanen bila kategori belum dipakai
+    produk/barang jadi/item katalog mana pun (aktif maupun nonaktif); bila sudah → 409 dengan rinciannya."""
     user = await _require_internal(request)
     db = get_db()
     cur = await db[COLL].find_one({'id': cid}, {'_id': 0})
     if not cur:
         raise HTTPException(404, 'Kategori tidak ditemukan.')
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        from routes.rahaza_variants import izinkan_hapus_permanen
+        izinkan_hapus_permanen(user)
+        tolak_bila_dipakai('Kategori', cur.get('name') or '', await pemakaian_kategori(db, cid))
+        await db[COLL].delete_one({'id': cid})
+        await log_activity(user['id'], user.get('name', ''), 'delete', 'rahaza.product_category',
+                           f"id={cid} kode={cur.get('code')}")
+        return {'ok': True, 'status': 'deleted', 'deleted': True,
+                'message': f"Kategori {cur.get('name') or ''} dihapus."}
     usage = await _usage_count(db, cid)
     if usage['total'] > 0:
         raise HTTPException(

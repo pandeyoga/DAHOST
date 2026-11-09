@@ -72,10 +72,12 @@ def test_supplier_aksesoris_dari_master():
 
 
 def test_roll_kain_tertaut_master():
+    # 10 Nov 2026 (keputusan owner): form roll MANUAL dihapus — roll lahir dari penerimaan / impor stok awal
+    # (penjaga lengkap: test_roll_kain_tanpa_manual.py). Yang tersisa di layar ini: posisi dari master gudang.
     s = src("WMSFabricRollsModule.jsx")
-    assert "material_id: createPick.material_id" in s
-    assert "fd.get('material_id')" not in s
-    assert 'data-testid="input-material"' in s
+    assert "createPick" not in s and "fd.get('material_id')" not in s
+    assert 'data-testid="create-roll-btn"' not in s
+    assert 'data-testid="putaway-position-select"' in src("warehouse/RollPutawayPopup.jsx")
 
 
 def test_karantina_lokasi_tidak_dipilihkan_dan_opname_tanpa_kantor():

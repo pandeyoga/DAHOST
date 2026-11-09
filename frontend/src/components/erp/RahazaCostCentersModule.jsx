@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Edit2, Trash2, PieChart } from 'lucide-react';
+import { Plus, RefreshCw, Edit2, Trash2, PieChart, Ban } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -48,6 +50,16 @@ export default function RahazaCostCentersModule({ token }) {
     const r = await fetch(`/api/rahaza/cost-centers/${id}`, { method: 'DELETE', headers });
     if (r.ok) fetchRows();
   };
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen bila belum dipakai jurnal, pengeluaran, faktur,
+  // klaim, atau anggaran; bila sudah, server menjawab 409 dan dialog kedua menawarkan Nonaktifkan.
+  const hapus = async (r) => {
+    const hasil = await hapusMaster({
+      jenis: 'pusat biaya', nama: r.name || r.code,
+      hapus: () => apiDelete(`/api/rahaza/cost-centers/${r.id}?hard=true`),
+      nonaktifkan: r.active === false ? null : () => apiDelete(`/api/rahaza/cost-centers/${r.id}`),
+    });
+    if (hasil) fetchRows();
+  };
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(rows, PAGE_SIZE);
   return (
@@ -90,7 +102,8 @@ export default function RahazaCostCentersModule({ token }) {
                     <td className="text-right">
                       <div className="flex gap-1 justify-end">
                         <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ ...r })} title="Ubah" aria-label="Ubah" data-testid={`cc-edit-${r.code}`}><Edit2 className="w-4 h-4" /></Button>
-                        <Button variant="ghost" size="icon-sm" onClick={() => del(r.id)} title="Nonaktifkan" aria-label="Nonaktifkan" className="text-[hsl(var(--danger-text))]" data-testid={`cc-delete-${r.code}`}><Trash2 className="w-4 h-4" /></Button>
+                        <Button variant="ghost" size="icon-sm" onClick={() => del(r.id)} title="Nonaktifkan" aria-label={`Nonaktifkan ${r.name}`} data-testid={`cc-deactivate-${r.code}`}><Ban className="w-4 h-4" /></Button>
+                        <Button variant="ghost" size="icon-sm" onClick={() => hapus(r)} title="Hapus" aria-label={`Hapus ${r.name}`} className="text-[hsl(var(--danger-text))]" data-testid={`cc-delete-${r.code}`}><Trash2 className="w-4 h-4" /></Button>
                       </div>
                     </td>
                   </tr>

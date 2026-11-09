@@ -272,7 +272,11 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{r.po_number || r.source_receipt_code || '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmtNum(r.total_pcs)}</TableCell>
-                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount)}
+                    {Number(r.denda_dipotong || 0) > 0 && (
+                      <span className="block text-xs text-muted-foreground" data-testid={`cmt-billing-denda-${r.payment_code}`}>setelah denda {fmtRp(r.denda_dipotong)}</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.payable_amount)}</TableCell>
                   <TableCell className="text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
                     {Number(r.blocked_amount || 0) > 0 ? (
@@ -453,6 +457,15 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
         {' '}(dibayar {fmtRp(bill.paid_amount)}{blocked > 0 ? `, tertahan ${fmtRp(blocked)}` : ''})
         {sched && <span className="text-muted-foreground"> · jadwal hutang PO ini ke vendor: {fmtRp(sched.scheduled_amount)}, bisa dibayar {fmtRp(sched.payable_amount)}</span>}
       </p>
+      {(bill.potongan_denda || []).length > 0 && (
+        <Notice tone="info" icon={Receipt} testId="cmt-bill-denda" title={`Dipotong denda ke CMT ${fmtRp(bill.denda_dipotong)}`}>
+          <ul className="text-xs list-disc pl-4">
+            {bill.potongan_denda.map((d, i) => (
+              <li key={i}>{d.nomor} (PO {d.po_number || '—'}) {fmtRp(d.jumlah)} · {d.saat === 'tagihan_baru' ? 'sisa denda memotong tagihan ini' : 'saat PO ditutup'}</li>
+            ))}
+          </ul>
+        </Notice>
+      )}
       {bill.variance_flagged && (
         <Notice tone={blocked > 0 ? 'danger' : 'warning'} icon={AlertTriangle} testId="cmt-bill-variance-alert"
           title={bill.variance_resolution ? 'Selisih sudah diputuskan Keuangan' : blocked > 0 ? `Rp ${fmtNum(blocked)} tertahan — selisih perlu diputuskan Keuangan` : 'Ada selisih qty pada penerimaan'}

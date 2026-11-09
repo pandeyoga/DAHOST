@@ -1839,18 +1839,59 @@ async def _log_price_change(db, item: dict, patch: dict, *, account_id, user: di
     await _runs.log_price_change(db, item, patch, account_id=account_id, user=user, reason=reason)
 
 
+def item_usage_checks(item_ids) -> list:
+    """Daftar cek (label staf, koleksi, filter) "item katalog ini sudah dipakai di mana" — 10 Nov 2026.
+
+    SATU daftar untuk hapus item (di bawah) dan hapus katalog (`routes.marketing_catalog_mgmt.delete_catalog`),
+    supaya keduanya tidak pernah berbeda. Isinya = semua dokumen yang menyimpan `catalog_item_id` item katalog
+    jual (dicari dengan grep `catalog_item_id` di backend): pesanan (baris + baris pemenuhan), produk & sesi live,
+    sampel, retur, ulasan, komplain, jadwal konten, permintaan produk kreator, dan pemetaan Jembatan SKU.
+    Koleksi jejak/log (riwayat harga, aksi massal, sinkron stok) bukan pemakaian.
+    """
+    ids = [i for i in (item_ids or []) if i]
+    if not ids:
+        return []
+    q = {'$in': ids}
+    return [
+        ('pesanan', 'marketing_orders', {'$or': [{'catalog_item_id': q}, {'items.catalog_item_id': q},
+                                                 {'fulfillment_items.catalog_item_id': q}]}),
+        ('produk sesi live', 'marketing_live_session_products', {'catalog_item_id': q}),
+        ('sesi live', 'marketing_live_sessions', {'products.catalog_item_id': q}),
+        ('kiriman sampel', 'marketing_samples', {'catalog_item_id': q}),
+        ('retur', 'marketing_returns', {'catalog_item_id': q}),
+        ('ulasan', 'marketing_reviews', {'catalog_item_id': q}),
+        ('komplain', 'marketing_complaints', {'catalog_item_id': q}),
+        ('jadwal konten', 'marketing_content_calendar', {'catalog_item_id': q}),
+        ('permintaan produk kreator', 'marketing_creator_item_requests', {'catalog_item_id': q}),
+        ('pemetaan SKU marketplace', 'marketing_sku_bridge', {'catalog_item_id': q}),
+    ]
+
+
 @router.delete('/{catalog_id}/items/{item_id}')
 async def delete_catalog_item(catalog_id: str, item_id: str, request: Request):
-    """Hapus item dari katalog."""
-    await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
-                       message='Akses ditolak: Anda tidak berhak menghapus item katalog.')  # T-01 2.3
+    """Hapus PERMANEN item dari katalog — hanya bila item itu belum dipakai.
+
+    10 Nov 2026 (owner: "pastikan tabel master data bisa dihapus"): dulu item langsung dihapus tanpa cek apa pun,
+    sehingga pesanan/retur/sesi live yang menunjuk item itu kehilangan tautannya. Kini bila item sudah dipakai
+    (`item_usage_checks`) server menjawab 409 dengan kalimat "… sudah dipakai di 3 pesanan …" dan layar
+    menawarkan Nonaktifkan = Arsipkan (`POST …/archive`, item nonaktif, riwayat tetap utuh).
+    """
+    user = await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
+                              message='Akses ditolak: Anda tidak berhak menghapus item katalog.')  # T-01 2.3
     db = get_db()
 
-    res = await db.marketing_catalog_items.delete_one({'id': item_id, 'catalog_id': catalog_id})
-    if res.deleted_count == 0:
+    item = await db.marketing_catalog_items.find_one({'id': item_id, 'catalog_id': catalog_id}, {'_id': 0})
+    if not item:
         raise HTTPException(404, 'Item tidak ditemukan.')
+    from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+    pakai = await hitung_pemakaian(db, item_usage_checks([item_id]))
+    tolak_bila_dipakai('Item katalog', item.get('name') or item.get('sku') or '', pakai)
+
+    await db.marketing_catalog_items.delete_one({'id': item_id, 'catalog_id': catalog_id})
     await _refresh_catalog_stats(db, catalog_id)
-    return {'ok': True, 'message': 'Item dihapus.'}
+    await log_activity(user.get('id', ''), user.get('name', ''),
+                       f"delete_catalog_item:{item.get('sku') or ''}", 'marketing_catalog', item_id)
+    return {'ok': True, 'deleted': True, 'message': 'Item dihapus.'}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

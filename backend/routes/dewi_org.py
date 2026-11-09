@@ -4,9 +4,10 @@ Modul: Unit organisasi, posisi, bagan organisasi, headcount planning
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from database import get_db
-from auth import require_auth
+from auth import require_auth, log_activity
 from datetime import datetime, timezone
 from typing import Optional
+import re
 import uuid
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
@@ -106,20 +107,53 @@ async def update_unit(
     doc = await db.dewi_org_units.find_one({"unit_id": unit_id})
     return {"ok": True, "unit": serialize(doc)}
 
+def _rx_nama(nama: str) -> dict:
+    """Nama departemen/jabatan karyawan disimpan sebagai TEKS (core.departments) → cocokkan utuh, tanpa beda huruf."""
+    return {"$regex": f"^\\s*{re.escape(' '.join(str(nama or '').split()))}\\s*$", "$options": "i"}
+
+
+async def pemakaian_unit(db, unit: dict) -> dict:
+    """Unit dipakai bila masih punya unit anak, jabatan, karyawan (departemen = nama unit), atau sub-unit."""
+    from core.hapus_master import hitung_pemakaian
+    uid = unit["unit_id"]
+    cek = [
+        ("unit anak", "dewi_org_units", {"parent_id": uid}),
+        ("jabatan", "dewi_org_positions", {"unit_id": uid}),
+    ]
+    if (unit.get("name") or "").strip():
+        cek.append(("karyawan", "rahaza_employees", {"department": _rx_nama(unit["name"])}))
+    return await hitung_pemakaian(db, cek)
+
+
+async def pemakaian_jabatan(db, pos: dict) -> dict:
+    """Jabatan dipakai karyawan (jabatan = judul jabatan, di unitnya atau tanpa departemen) dan jabatan bawahan."""
+    from core.hapus_master import hitung_pemakaian
+    cek = [("jabatan bawahan", "dewi_org_positions", {"reports_to_position_id": pos["position_id"]})]
+    if (pos.get("title") or "").strip():
+        f = {"job_title": _rx_nama(pos["title"])}
+        if (pos.get("unit_name") or "").strip():
+            f["$or"] = [{"department": _rx_nama(pos["unit_name"])}, {"department": {"$in": [None, ""]}}]
+        cek.append(("karyawan", "rahaza_employees", f))
+    return await hitung_pemakaian(db, cek)
+
+
 @router.delete("/units/{unit_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # T-01 2.3
 async def delete_unit(
     unit_id: str,
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
-    # check no children
-    children = await db.dewi_org_units.count_documents({"parent_id": unit_id})
-    if children > 0:
-        raise HTTPException(400, "Hapus unit anak terlebih dahulu sebelum menghapus unit ini")
-    res = await db.dewi_org_units.delete_one({"unit_id": unit_id})
-    if res.deleted_count == 0:
+    """Hapus permanen (perilaku lama). 10 Nov 2026: dulu hanya unit anak yang dicek padahal layar berjanji unit yang
+    masih punya jabatan juga ditolak, dan karyawan di unit itu ikut kehilangan departemennya. Kini 409 bila masih
+    punya unit anak, jabatan, atau karyawan — layar menawarkan Nonaktifkan (PUT is_active=false)."""
+    from core.hapus_master import tolak_bila_dipakai
+    unit = await db.dewi_org_units.find_one({"unit_id": unit_id})
+    if not unit:
         raise HTTPException(404, "Unit tidak ditemukan")
-    return {"ok": True}
+    tolak_bila_dipakai("Unit", unit.get("name") or "", await pemakaian_unit(db, unit))
+    await db.dewi_org_units.delete_one({"unit_id": unit_id})
+    await log_activity(user.get("id") or "", user.get("name") or "", "delete", "dewi_org.unit", unit.get("name") or unit_id)
+    return {"ok": True, "deleted": True}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # POSITIONS
@@ -188,10 +222,16 @@ async def delete_position(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
-    res = await db.dewi_org_positions.delete_one({"position_id": position_id})
-    if res.deleted_count == 0:
-        raise HTTPException(404, "Posisi tidak ditemukan")
-    return {"ok": True}
+    """Hapus permanen (perilaku lama). 10 Nov 2026: dulu tanpa cek — kini 409 bila jabatan masih dipegang karyawan
+    atau menjadi atasan jabatan lain (layar menawarkan Nonaktifkan)."""
+    from core.hapus_master import tolak_bila_dipakai
+    pos = await db.dewi_org_positions.find_one({"position_id": position_id})
+    if not pos:
+        raise HTTPException(404, "Jabatan tidak ditemukan")
+    tolak_bila_dipakai("Jabatan", pos.get("title") or "", await pemakaian_jabatan(db, pos))
+    await db.dewi_org_positions.delete_one({"position_id": position_id})
+    await log_activity(user.get("id") or "", user.get("name") or "", "delete", "dewi_org.position", pos.get("title") or position_id)
+    return {"ok": True, "deleted": True}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ORG CHART TREE

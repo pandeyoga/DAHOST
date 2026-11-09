@@ -15,10 +15,10 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { Skeleton } from '@/components/ui/skeleton';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Beaker, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { MoneyInput } from '@/components/ui/money-input';
 import RnDUnitSelect from './RnDUnitSelect';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -175,18 +175,19 @@ export default function RnDMaterialsTab({ token }) {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!(await confirmDialog({ title: 'Hapus material ini?', confirmLabel: 'Hapus', danger: true }))) return;
-    try {
-      await apiFetch(`/dewi/rnd/materials/${id}`, { method: 'DELETE' });
-      toast.success('Material berhasil dihapus');
-      setDetail(null);
-      fetchMaterials();
-    } catch (e) {
-      if (e instanceof ApiError && !e.isUnauthorized) {
-        toast.error(e.userMessage || 'Gagal menghapus material');
-      }
-    }
+  // 10 Nov 2026 (owner "master data bisa dihapus"): server menolak (409) bahan yang masih dipakai HPP, costing
+  // sampel, atau tech pack; dialog kedua menawarkan Nonaktifkan (status nonaktif).
+  const handleDelete = async (m) => {
+    const hasil = await hapusMaster({
+      jenis: 'bahan', nama: [m.material_code, m.material_name].filter(Boolean).join(' '),
+      hapus: () => apiFetch(`/dewi/rnd/materials/${m.id}`, { method: 'DELETE' }),
+      nonaktifkan: m.status !== 'inactive'
+        ? () => apiFetch(`/dewi/rnd/materials/${m.id}`, { method: 'PUT', body: { status: 'inactive' } })
+        : null,
+    });
+    if (!hasil) return;
+    setDetail(null);
+    fetchMaterials();
   };
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(materials, 25);
@@ -197,7 +198,7 @@ export default function RnDMaterialsTab({ token }) {
         data-testid={`edit-material-${m.id}`}>
         <Pencil />
       </Button>
-      <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(m.id)} aria-label="Hapus material" title="Hapus material"
+      <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(m)} aria-label={`Hapus bahan ${m.material_code || ''}`} title="Hapus"
         className="text-[hsl(var(--danger-text))]" data-testid={`delete-material-${m.id}`}>
         <Trash2 />
       </Button>
@@ -216,7 +217,7 @@ export default function RnDMaterialsTab({ token }) {
       <span className="tabular-nums md:whitespace-nowrap" data-testid={`material-price-${m.id}`}>
         Rp {Number(hargaOf(m)).toLocaleString('id-ID')}<span className="text-muted-foreground"> / {m.price_unit || 'm'}</span>
       </span>) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (m) => <AksiBaris m={m} /> },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (m) => <AksiBaris m={m} /> },
   ];
 
   return (
@@ -267,7 +268,7 @@ export default function RnDMaterialsTab({ token }) {
           status={STATUS_MAT[detail.status] && <StatusBadge status={detail.status} tone={STATUS_MAT[detail.status].tone} label={STATUS_MAT[detail.status].label} />}
           aksi={<>
             <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><Pencil />Ubah</Button>
-            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail.id)}><Trash2 />Hapus</Button>
+            <Button size="sm" variant="destructive" onClick={() => handleDelete(detail)}><Trash2 />Hapus</Button>
           </>}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Kategori">{detail.category || '—'}</BarisDetail>

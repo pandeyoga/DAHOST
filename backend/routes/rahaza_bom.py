@@ -11,7 +11,7 @@ Endpoints (prefix /api/rahaza):
   - PUT    /boms/{id}                  : Update BOM (untuk edit versi aktif)
   - POST   /boms/{id}/activate         : Activate versi (dan deactivate yang lain)
   - POST   /boms/{id}/requirements     : Preview kebutuhan material untuk X pcs
-  - DELETE /boms/{id}                  : Soft-delete
+  - DELETE /boms/{id}                  : Soft-delete · `?hard=true` hapus permanen bila belum dasar HPP (409)
   - POST   /boms/{id}/copy-to-sizes    : Copy this BOM to other sizes (same model)
 
 Schema (rahaza_boms) — Phase 7A Fase 1:
@@ -930,10 +930,39 @@ async def preview_requirements(bid: str, request: Request):
     })
 
 
+async def pemakaian_bom(db, bid: str) -> dict:
+    """Di mana satu versi BOM dirujuk dengan id-nya. Dokumen transaksi (PO, job, pengeluaran material) TIDAK
+    menyimpan id BOM — BOM dicari saat itu juga lewat model+ukuran+warna — jadi rujukan tetapnya hanya jejak HPP:
+    rincian HPP barang jadi (`product_costing`) dan riwayat penerapan HPP per ukuran."""
+    from core.hapus_master import hitung_pemakaian
+    return await hitung_pemakaian(db, [
+        ("HPP barang jadi", "rahaza_materials", {"hpp_breakdown.bom_id": bid}),
+        ("riwayat penerapan HPP", "product_cost_snapshots", {"applied_sizes.breakdown.bom_id": bid}),
+    ])
+
+
 @router.delete("/boms/{bid}")
-async def delete_bom(bid: str, request: Request):
+async def delete_bom(bid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan versi BOM (perilaku lama). `?hard=true` (10 Nov 2026, owner "master data bisa
+    dihapus"): hapus permanen versi ini bila belum menjadi dasar HPP; bila sudah → 409 (layar menawarkan
+    Nonaktifkan). Versi lain model+ukuran+warna yang sama tidak disentuh."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        from routes.rahaza_variants import izinkan_hapus_permanen
+        izinkan_hapus_permanen(user)
+        bom = await db.rahaza_boms.find_one({"id": bid}, {"_id": 0, "materials": 0})
+        if not bom:
+            raise HTTPException(404, "BOM tidak ditemukan")
+        model = await db.rahaza_models.find_one({"id": bom.get("model_id")}, {"_id": 0, "code": 1}) or {}
+        size = await db.rahaza_sizes.find_one({"id": bom.get("size_id")}, {"_id": 0, "code": 1}) or {}
+        nama = " ".join(str(p) for p in (model.get("code"), size.get("code"), bom.get("color_code") or bom.get("color"),
+                                          f"v{bom.get('version')}" if bom.get("version") else None) if p)
+        tolak_bila_dipakai("BOM", nama, await pemakaian_bom(db, bid))
+        await db.rahaza_boms.delete_one({"id": bid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.bom", f"id={bid} {nama}")
+        return {"status": "deleted", "deleted": True, "message": f"BOM {nama} dihapus.".replace("  ", " ")}
     res = await db.rahaza_boms.update_one({"id": bid}, {"$set": {"active": False, "updated_at": _now()}})
     if res.matched_count == 0:
         raise HTTPException(404, "BOM tidak ditemukan")

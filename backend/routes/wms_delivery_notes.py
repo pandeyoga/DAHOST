@@ -9,6 +9,20 @@ Tipe:
   SJ-INTERNAL : transfer antar gedung/lokasi internal
   SJ-ONLINE   : pengiriman online shop (batch resi)
 
+10 Nov 2026 (owner: "surat jalan tidak bisa asal input, harus ada referensinya, jangan double"):
+  Yang BOLEH DIBUAT di layar Gudang hanya dua jenis, dan keduanya wajib berreferensi:
+    * SJ-INTERNAL — pindah antar lokasi: barang dari master, lokasi asal ≠ tujuan, qty ≤ stok
+      tersedia di asal (dicek saat buat/ubah dan sekali lagi saat terbit). Penerima = lokasi tujuan.
+    * SJ-SUPPLIER — retur ke pemasok: WAJIB menunjuk Retur Pembelian yang sudah DIKIRIM
+      (`rahaza_purchase_returns`, status menunggu penyelesaian/selesai, penyelesaian tukar/nota
+      debit/refund). Penerima & baris diambil dari dokumen itu; satu retur = satu SJ aktif (409).
+      Retur Pembelian TIDAK punya surat jalan sendiri, jadi ini bukan jalur kedua; stok & jurnalnya
+      tetap milik Retur Pembelian (SJ ini dokumen pengantar saja).
+  SJ-CMT / SJ-MAKLON / SJ-ONLINE TIDAK dibuat di sini (400 berisi menu asalnya). SJ-CMT yang lahir
+  dari `wms_cmt_dispatches.execute_dispatch` tetap masuk koleksi ini (langsung terbit, via
+  `_next_sj_number`). Draf lama ketiga jenis itu (dan draf retur ke pemasok tanpa Retur Pembelian)
+  tidak bisa diubah/diterbitkan lagi (409); dokumen lama tidak diubah atau dihapus.
+
 Collection: wh_delivery_notes
   id, sj_number (SJ/2026/05/0001), sj_type, status (draft|issued|received|cancelled),
   recipient_name, recipient_address, recipient_phone,
@@ -108,7 +122,9 @@ class SJIn(BaseModel):
     # disetel MANUAL. Pada mode OTOMATIS, mengirim nomor DITOLAK (bukan diabaikan
     # diam-diam) oleh `core.doc_number_policy.issue_number`.
     sj_number: str = ""
-    recipient_name: str = Field(..., min_length=1)
+    # 10 Nov 2026: penerima TIDAK lagi diketik — internal = lokasi tujuan, retur = pemasok dari
+    # dokumen Retur Pembelian. Kolom dibiarkan (opsional) supaya pemanggil lama tidak 422.
+    recipient_name: str = ""
     recipient_address: str = ""
     recipient_phone: str = ""
     shipper_name: str = ""
@@ -121,6 +137,8 @@ class SJIn(BaseModel):
     # masuk saat diterima). Dua kolom ini WAJIB untuk SJ-INTERNAL, diabaikan jenis lain.
     from_location_id: str = ""
     to_location_id: str = ""
+    # 10 Nov 2026: SJ-SUPPLIER wajib menunjuk Retur Pembelian (id dokumen `rahaza_purchase_returns`).
+    purchase_return_id: str = ""
     lines: list[SJLine] = []
 
 
@@ -218,8 +236,9 @@ async def _internal_payload(db, *, from_location_id: str, to_location_id: str, l
                 factor, _src = _bom_uom.factor_to_base(mat, unit)
             except _uom.UomError as e:
                 raise HTTPException(400, f"Baris {i}: {e}")
+        # 10 Nov 2026: uraian = nama barang di master (bukan ketikan) — dokumen tidak bisa "asal input".
         out.append({**ln, "line_no": i, "material_id": mat["id"], "material_code": mat.get("code", ""),
-                    "description": ln.get("description") or mat.get("name", ""), "unit": unit,
+                    "description": mat.get("name") or ln.get("description") or "", "unit": unit,
                     "unit_base": base, "qty": round(qty, 4), "qty_base": round(qty * float(factor), 4)})
     return {"from_location_id": src, "from_location_name": await _location_label(db, src),
             "to_location_id": dst, "to_location_name": await _location_label(db, dst), "lines": out}
@@ -238,6 +257,119 @@ async def _check_internal_stock(db, sj: dict) -> None:
         except stock_transfer.TransferError as e:
             code = next((ln.get("material_code") for ln in sj["lines"] if ln["material_id"] == mid), mid)
             raise HTTPException(400, f"{code}: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10 Nov 2026 (owner) — HANYA dua jenis yang sah dibuat di Gudang, keduanya berreferensi
+# ═══════════════════════════════════════════════════════════════════════════════
+SUPPLIER = "SJ-SUPPLIER"
+SJ_GUDANG_TYPES = (INTERNAL, SUPPLIER)
+# Jenis yang dokumennya milik alur lain — kalimat staf yang menyebut menu asalnya.
+SJ_ALUR_LAIN = {
+    "SJ-CMT": "Surat jalan kirim bahan ke CMT dibuat dari menu Produksi › Kirim ke CMT.",
+    "SJ-MAKLON": "Surat jalan kirim barang jadi ke klien dibuat dari menu Maklon/Produksi › Kirim hasil.",
+    "SJ-ONLINE": "Barang keluar untuk toko online dicatat dari menu Gudang › Scan Keluar Penjualan.",
+}
+HANYA_GUDANG = "Di layar Surat Jalan Gudang hanya bisa dibuat surat jalan pindah antar lokasi dan retur ke pemasok."
+REF_RTP = "purchase_return"
+REF_LABELS = {REF_RTP: "Retur Pembelian", "wo": "WO", "po": "PO", "maklon_order": "Order maklon"}
+# Retur Pembelian yang barangnya BENAR-BENAR berangkat ke pemasok (sudah "Kirim" di Pengadaan).
+# Dimusnahkan / diterima dengan diskon tidak mengirim barang → tidak butuh surat jalan.
+RTP_SENT_STATUSES = ("awaiting_settlement", "settled")
+RTP_SJ_SETTLEMENTS = ("exchange", "debit_note", "refund")
+RTP_MENU = "Pengadaan › Retur Pembelian"
+
+
+def _tolak_jenis(sj_type: str) -> None:
+    """400 untuk jenis yang tidak sah dibuat di Gudang (kalimat staf, tanpa istilah program)."""
+    if sj_type in SJ_GUDANG_TYPES:
+        return
+    if sj_type in SJ_ALUR_LAIN:
+        raise HTTPException(400, f"{SJ_ALUR_LAIN[sj_type]} {HANYA_GUDANG}")
+    raise HTTPException(400, f"Jenis surat jalan tidak dikenal. {HANYA_GUDANG}")
+
+
+def _draf_lama(sj: dict) -> str:
+    """Pesan bila draf ini dibuat sebelum aturan 10 Nov 2026 dan tidak boleh diubah/diterbitkan lagi
+    (kosong = draf sah). Dokumennya TIDAK diubah/dihapus — tetap tampil dan bisa dibatalkan/dihapus."""
+    kind = sj.get("sj_type") or ""
+    if kind in SJ_ALUR_LAIN:
+        return (f"Draf lama ini tidak bisa diterbitkan atau diubah dari Gudang. {SJ_ALUR_LAIN[kind]} "
+                "Batalkan atau hapus draf ini.")
+    if kind == SUPPLIER and not (sj.get("reference_type") == REF_RTP and sj.get("reference_id")):
+        return ("Draf lama ini tidak menunjuk dokumen Retur Pembelian, jadi tidak bisa diterbitkan atau diubah. "
+                "Batalkan atau hapus draf ini, lalu buat ulang dengan memilih returnya.")
+    if kind not in SJ_GUDANG_TYPES:
+        return f"Jenis surat jalan ini tidak dikenal. {HANYA_GUDANG}"
+    return ""
+
+
+def _rtp_blocker(rtp: dict) -> str:
+    """Kenapa Retur Pembelian ini BELUM/TIDAK bisa dibuatkan surat jalan ('' = bisa)."""
+    no = rtp.get("rtp_number") or "ini"
+    st, settle = rtp.get("status"), rtp.get("settlement")
+    if st == "cancelled":
+        return f"Retur {no} sudah dibatalkan."
+    if settle == "destroy":
+        return f"Retur {no} dimusnahkan — barangnya tidak dikirim ke pemasok, jadi tidak perlu surat jalan."
+    if settle not in RTP_SJ_SETTLEMENTS:
+        return f"Retur {no} diterima dengan diskon — barangnya tidak dikirim ke pemasok, jadi tidak perlu surat jalan."
+    if st not in RTP_SENT_STATUSES or not rtp.get("sent_at"):
+        return (f"Retur {no} belum dikirim. Klik \"Kirim\" di {RTP_MENU} dulu (stok keluar di sana), "
+                "lalu buat surat jalannya di sini.")
+    return ""
+
+
+async def _active_sj_for_rtp(db, rid: str, exclude_id: str = "") -> dict | None:
+    q = {"sj_type": SUPPLIER, "reference_type": REF_RTP, "reference_id": rid, "status": {"$ne": "cancelled"}}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    return await db.wh_delivery_notes.find_one(q, {"_id": 0, "id": 1, "sj_number": 1, "status": 1})
+
+
+def _ganda(rtp: dict, other: dict) -> HTTPException:
+    st = {"draft": "draf", "issued": "terbit", "received": "diterima"}.get(other.get("status"), other.get("status"))
+    return HTTPException(409, f"Retur {rtp.get('rtp_number') or ''} sudah punya surat jalan {other.get('sj_number')} "
+                              f"({st}). Satu retur hanya boleh satu surat jalan — batalkan yang lama dulu bila "
+                              "perlu membuat ulang.")
+
+
+async def _supplier_payload(db, rid: str) -> dict:
+    """SJ retur ke pemasok: penerima & baris DIAMBIL dari dokumen Retur Pembelian (tidak diketik)."""
+    from core import purchase_returns as pr
+    rid = (rid or "").strip()
+    if not rid:
+        raise HTTPException(400, f"Surat jalan retur ke pemasok wajib memilih dokumen Retur Pembelian. Buat dan "
+                                 f"kirim returnya dulu di {RTP_MENU}.")
+    rtp = await db[pr.RTP_COLL].find_one({"id": rid}, {"_id": 0})
+    if not rtp:
+        raise HTTPException(400, f"Dokumen Retur Pembelian tidak ditemukan. Pilih ulang dari daftar di {RTP_MENU}.")
+    why = _rtp_blocker(rtp)
+    if why:
+        raise HTTPException(400, why)
+    sup = None
+    if rtp.get("supplier_id"):
+        sup = await db.rahaza_suppliers.find_one({"id": rtp["supplier_id"]}, {"_id": 0})
+    if not sup and rtp.get("supplier_name"):
+        sup = await db.rahaza_suppliers.find_one({"name": rtp["supplier_name"]}, {"_id": 0})
+    sup = sup or {}
+    lines = []
+    for ln in rtp.get("lines") or []:
+        qty = float(ln.get("qty") or 0)
+        if qty <= 0:
+            continue
+        lines.append({"line_no": len(lines) + 1, "material_id": ln.get("material_id") or "",
+                      "material_code": ln.get("material_code") or "",
+                      "description": ln.get("material_name") or ln.get("material_code") or "",
+                      "qty": round(qty, 4), "unit": ln.get("unit") or "", "remarks": ln.get("reason") or "",
+                      "roll_no": ""})
+    if not lines:
+        raise HTTPException(400, f"Retur {rtp.get('rtp_number')} tidak punya barang untuk dikirim.")
+    addr = ", ".join(x for x in (str(sup.get("address") or "").strip(), str(sup.get("city") or "").strip()) if x)
+    return {"rtp": rtp, "recipient_name": rtp.get("supplier_name") or sup.get("name") or "",
+            "recipient_address": addr, "recipient_phone": str(sup.get("phone") or "").strip(),
+            "reference_type": REF_RTP, "reference_id": rtp["id"], "reference_no": rtp.get("rtp_number") or "",
+            "lines": lines}
 
 
 @router.get("")
@@ -280,14 +412,40 @@ async def list_sj(
 async def create_sj(data: SJIn, request: Request):
     user = await require_auth(request)
     db = get_db()
-    if data.sj_type not in SJ_TYPES:
-        raise HTTPException(400, f"sj_type harus salah satu dari {SJ_TYPES}")
-    internal = None
+    # 10 Nov 2026 (owner): hanya pindah antar lokasi & retur ke pemasok; jenis lain = menu asalnya.
+    _tolak_jenis(data.sj_type)
+    # Validasi SEBELUM nomor diterbitkan (nomor tidak terbuang).
     if data.sj_type == INTERNAL:
-        # 2026-11-06 (Tahap 2): validasi SEBELUM nomor diterbitkan (nomor tidak terbuang).
         internal = await _internal_payload(db, from_location_id=data.from_location_id,
                                            to_location_id=data.to_location_id,
                                            lines=[ln.dict() for ln in data.lines])
+        await _check_internal_stock(db, internal)   # qty ≤ stok tersedia di asal (diulang saat terbit)
+        head = {k: internal[k] for k in ("from_location_id", "from_location_name",
+                                         "to_location_id", "to_location_name")}
+        head.update({"stock_mode": "transfer", "recipient_name": internal["to_location_name"] or "Lokasi tujuan",
+                     "recipient_address": "", "recipient_phone": "",
+                     "reference_type": "", "reference_id": "", "reference_no": ""})
+        return await _insert_sj(db, user, data, head, internal["lines"])
+
+    sup = await _supplier_payload(db, data.purchase_return_id)
+    rtp = sup.pop("rtp")
+    # "Jangan sampai double": satu Retur Pembelian = satu SJ aktif. Retur DIKUNCI selama SJ dibuat
+    # (pola P9 `core.doc_lock`) supaya dua klik/dua orang bersamaan tidak sama-sama lolos cek ganda.
+    from core import doc_lock
+    from core import purchase_returns as pr
+    token = await doc_lock.claim(
+        db, pr.RTP_COLL, rtp["id"], field="sj_lock", actor=user,
+        busy=f"Retur {rtp.get('rtp_number')} sedang dibuatkan surat jalan oleh pengguna lain — muat ulang.")
+    try:
+        other = await _active_sj_for_rtp(db, rtp["id"])
+        if other:
+            raise _ganda(rtp, other)
+        return await _insert_sj(db, user, data, sup, sup.pop("lines"))
+    finally:
+        await doc_lock.release(db, pr.RTP_COLL, rtp["id"], token, field="sj_lock")
+
+
+async def _insert_sj(db, user: dict, data: SJIn, head: dict, lines: list) -> dict:
     sj_id = _id()
     now = _now()
     # SESI #19 — SATU PINTU penomoran: menghormati mode Otomatis/Manual yang disetel
@@ -295,22 +453,15 @@ async def create_sj(data: SJIn, request: Request):
     # setelan MANUAL tersimpan tetapi tidak pernah berlaku).
     sj_number = await issue_number(db, SJ_DOCNUM_KEY, ctx={"TIPE": data.sj_type},
                                    requested=data.sj_number)
-    lines = (internal or {}).get("lines") or [
-        {"line_no": i + 1, **line.dict()} for i, line in enumerate(data.lines)]
     doc = {
         "id": sj_id,
         "sj_number": sj_number,
         "sj_type": data.sj_type,
         "status": "draft",
-        "recipient_name": data.recipient_name,
-        "recipient_address": data.recipient_address,
-        "recipient_phone": data.recipient_phone,
         "shipper_name": data.shipper_name,
         "vehicle_no": data.vehicle_no,
         "notes": data.notes,
-        "reference_type": data.reference_type,
-        "reference_id": data.reference_id,
-        "reference_no": data.reference_no,
+        **head,
         "lines": lines,
         "issued_at": None, "received_at": None, "cancelled_at": None,
         "created_at": now,
@@ -318,10 +469,6 @@ async def create_sj(data: SJIn, request: Request):
         "updated_at": now,
         "updated_by": user.get("name", user["id"]),
     }
-    if internal:
-        doc.update({k: internal[k] for k in ("from_location_id", "from_location_name",
-                                             "to_location_id", "to_location_name")})
-        doc["stock_mode"] = "transfer"
     await db.wh_delivery_notes.insert_one(doc)
     out = await db.wh_delivery_notes.find_one({"id": sj_id}, {"_id": 0})
     return {"ok": True, "sj": serialize_doc(out)}
@@ -340,7 +487,7 @@ async def create_sj(data: SJIn, request: Request):
 # kurir. Menggabungnya per shipment akan menyembunyikan pengiriman ke-2 dan ke-3.
 
 SOURCE_META = {
-    "gudang": {"label": "Gudang (internal/manual)", "module": "wms-delivery-notes"},
+    "gudang": {"label": "Gudang (pindah lokasi/retur pemasok)", "module": "wms-delivery-notes"},
     "vendor": {"label": "Kirim Material ke CMT", "module": "prod-shipments-vendor"},
     "buyer": {"label": "Dispatch ke Buyer", "module": "prod-shipments-buyer"},
 }
@@ -514,6 +661,40 @@ async def list_sj_all_sources(
     })
 
 
+@router.get("/supplier-returns")
+async def list_supplier_returns(request: Request):
+    """Pilihan form "Retur ke pemasok" (10 Nov 2026): Retur Pembelian yang barangnya sudah dikirim ke
+    pemasok, beserta nomor SJ aktifnya bila sudah ada (yang sudah ber-SJ tidak bisa dipilih lagi).
+    Hanya baca — dokumen & aturannya tetap milik `routes.rahaza_purchase_returns`."""
+    await require_auth(request)
+    db = get_db()
+    from core import purchase_returns as pr
+    active: dict = {}
+    async for sj in db.wh_delivery_notes.find(
+            {"sj_type": SUPPLIER, "reference_type": REF_RTP, "status": {"$ne": "cancelled"}},
+            {"_id": 0, "reference_id": 1, "sj_number": 1}):
+        active.setdefault(sj.get("reference_id"), sj.get("sj_number") or "")
+    rows = await db[pr.RTP_COLL].find(
+        {"status": {"$in": list(RTP_SENT_STATUSES)}, "settlement": {"$in": list(RTP_SJ_SETTLEMENTS)}},
+        {"_id": 0, "journals": 0, "history": 0}).sort("created_at", -1).to_list(500)
+    items = []
+    for r in rows:
+        if _rtp_blocker(r):
+            continue
+        items.append({
+            "id": r.get("id"), "rtp_number": r.get("rtp_number") or "",
+            "supplier_name": r.get("supplier_name") or "", "gr_number": r.get("gr_number") or "",
+            "settlement_label": pr.SETTLEMENTS.get(r.get("settlement"), ""),
+            "status_label": pr.STATUS_LABELS.get(r.get("status"), ""),
+            "ship_date": r.get("ship_date") or "", "total_qty": _f(r.get("total_qty")),
+            "lines": [{"material_code": ln.get("material_code") or "", "description": ln.get("material_name") or "",
+                       "qty": _f(ln.get("qty")), "unit": ln.get("unit") or "", "remarks": ln.get("reason") or ""}
+                      for ln in (r.get("lines") or []) if _f(ln.get("qty")) > 0],
+            "sj_number": active.get(r.get("id"), ""),
+        })
+    return serialize_doc({"items": items})
+
+
 @router.get("/sources/recap-pdf")
 async def recap_pdf_all_sources(
     request: Request,
@@ -616,9 +797,13 @@ async def update_sj(sj_id: str, data: dict, request: Request):
         raise HTTPException(404, "Surat Jalan tidak ditemukan")
     if sj["status"] != "draft":
         raise HTTPException(400, "Hanya draft Surat Jalan yang dapat diupdate")
-    allowed = {"recipient_name", "recipient_address", "recipient_phone", "shipper_name",
-               "vehicle_no", "notes", "lines", "reference_type", "reference_id", "reference_no",
-               "from_location_id", "to_location_id"}
+    lama = _draf_lama(sj)
+    if lama:
+        raise HTTPException(409, lama)
+    # 10 Nov 2026: penerima, acuan, dan barang TIDAK bisa diketik ulang — hanya data pengantar.
+    allowed = {"shipper_name", "vehicle_no", "notes"}
+    if sj.get("sj_type") == INTERNAL:
+        allowed |= {"lines", "from_location_id", "to_location_id"}
     updates = {k: v for k, v in data.items() if k in allowed}
     if sj.get("sj_type") == INTERNAL:
         # 2026-11-06 (Tahap 2): draft internal divalidasi ulang dengan aturan yang sama seperti buat.
@@ -626,13 +811,10 @@ async def update_sj(sj_id: str, data: dict, request: Request):
             db, from_location_id=updates.get("from_location_id", sj.get("from_location_id")),
             to_location_id=updates.get("to_location_id", sj.get("to_location_id")),
             lines=updates.get("lines", sj.get("lines") or []))
+        await _check_internal_stock(db, internal)
         updates.update(internal)
         updates["stock_mode"] = "transfer"
-    else:
-        updates.pop("from_location_id", None)
-        updates.pop("to_location_id", None)
-        if "lines" in updates:
-            updates["lines"] = [{**ln, "line_no": i + 1} for i, ln in enumerate(updates["lines"])]
+        updates["recipient_name"] = internal["to_location_name"] or "Lokasi tujuan"
     updates["updated_at"] = _now()
     updates["updated_by"] = user.get("name", user["id"])
     await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": updates})
@@ -649,8 +831,22 @@ async def issue_sj(sj_id: str, data: IssueIn, request: Request):
         raise HTTPException(404, "Surat Jalan tidak ditemukan")
     if sj["status"] != "draft":
         raise HTTPException(400, "Hanya draft yang dapat di-issue")
+    # 10 Nov 2026: draf lama CMT/Maklon/Toko online (dan retur pemasok tanpa Retur Pembelian) tidak
+    # bisa diterbitkan lagi dari Gudang — dokumennya dibiarkan apa adanya.
+    lama = _draf_lama(sj)
+    if lama:
+        raise HTTPException(409, lama)
     if not sj.get("lines"):
         raise HTTPException(400, "Surat Jalan harus memiliki minimal 1 item")
+    if sj.get("sj_type") == SUPPLIER:
+        from core import purchase_returns as pr
+        rtp = await db[pr.RTP_COLL].find_one({"id": sj.get("reference_id")}, {"_id": 0})
+        why = _rtp_blocker(rtp) if rtp else "Dokumen Retur Pembelian acuan surat jalan ini sudah tidak ada."
+        if why:
+            raise HTTPException(409, f"Surat jalan belum diterbitkan — {why}")
+        other = await _active_sj_for_rtp(db, rtp["id"], exclude_id=sj_id)
+        if other:
+            raise _ganda(rtp, other)
     updates = {
         "status": "issued",
         "issued_at": _now(),
@@ -664,7 +860,10 @@ async def issue_sj(sj_id: str, data: IssueIn, request: Request):
     if data.notes:
         updates["notes"] = (sj.get("notes", "") + " " + data.notes).strip()
     if sj.get("sj_type") != INTERNAL:
-        await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": updates})
+        # Retur ke pemasok = dokumen pengantar saja: stok & jurnal sudah dicatat Retur Pembelian saat "Kirim".
+        res = await db.wh_delivery_notes.update_one({"id": sj_id, "status": "draft"}, {"$set": updates})
+        if not res.matched_count:
+            raise HTTPException(409, "Surat Jalan ini sedang/sudah diterbitkan pengguna lain — muat ulang.")
         out = await db.wh_delivery_notes.find_one({"id": sj_id}, {"_id": 0})
         return {"ok": True, "sj": serialize_doc(out), "stock_moved": False}
 
@@ -891,8 +1090,9 @@ async def sj_pdf(
         info.append(("Dari lokasi", sj.get("from_location_name") or "-"))
         info.append(("Ke lokasi", sj.get("to_location_name") or "-"))
     if sj.get("reference_no"):
-        info.append((f"Acuan ({(sj.get('reference_type') or '-').upper()})",
-                     sj["reference_no"]))
+        # 10 Nov 2026: label acuan dalam kalimat staf (dulu "Acuan (PURCHASE_RETURN)" dsb.).
+        rt = sj.get("reference_type") or ""
+        info.append((f"Acuan ({REF_LABELS.get(rt, rt.upper() or '-')})", sj["reference_no"]))
     info.append(("No. Kendaraan", sj.get("vehicle_no") or "-"))
     info.append(("Pengirim", sj.get("shipper_name") or "-"))
 

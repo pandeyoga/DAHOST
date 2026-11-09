@@ -9,14 +9,14 @@ Endpoints (prefix /api/rahaza):
     GET    /colors                                 : List (seed lazy palet techpack)
     POST   /colors                                 : Create
     PUT    /colors/{cid}                           : Update
-    DELETE /colors/{cid}                           : Soft delete
+    DELETE /colors/{cid}                           : Soft delete · `?hard=true` hapus permanen bila belum dipakai (409)
   Model Variants:
     GET    /variants                               : List (filter model_id / include_inactive)
     GET    /models/{model_id}/variants             : List varian per model (enriched)
     POST   /models/{model_id}/variants/generate    : Generate matriks (color_ids × size_ids) → SKU auto
     POST   /variants                               : Create single variant
     PUT    /variants/{vid}                          : Update (active/barcode/notes/product_status)
-    DELETE /variants/{vid}                          : Soft delete
+    DELETE /variants/{vid}                          : Soft delete · `?hard=true` hapus permanen bila belum dipakai (409)
   Penyaring daftar varian: `product_status=best_seller` · `stop,dead` · `belum_diisi` (core/product_status).
 
 Schema rahaza_colors:   {id, code, name, hex, order_seq, active, created_at, updated_at}
@@ -32,6 +32,7 @@ from utils.variant_ssot import ensure_fg_material
 from core.cut_panel_master import ensure_panel_for_variant, ensure_bom_for_variant  # 2026-09-24: potongan + BOM otomatis per varian
 from core import product_master as pm  # K-9a: varian dihentikan ⇒ item katalog nonaktif
 from core import product_status as ps  # status produk per SKU (keputusan owner 6 Nov 2026)
+from core.roles import PRODUCTION_ROLES, RND_ROLES  # gerbang hapus permanen master produk (10 Nov 2026)
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -71,6 +72,131 @@ async def _require_admin(request: Request):
     if role in ("cmt_vendor", "vendor", "klien_maklon"):
         raise HTTPException(403, "Akses master hanya untuk staff internal.")
     return user
+
+
+# ══════════════════════════ HAPUS PERMANEN MASTER PRODUK (10 Nov 2026) ══════════════════════════
+# Permintaan owner: "pastikan tabel tabel master data bisa dihapus". DELETE tanpa `?hard=true` tetap
+# menonaktifkan (perilaku lama). Dengan `hard`: hapus permanen HANYA bila belum dipakai transaksi/dokumen
+# mana pun — hitungan & kalimat 409 lewat `core.hapus_master` (layar menawarkan Nonaktifkan, lib/hapusMaster).
+# Dipakai juga oleh master model & ukuran (`routes.rahaza_production`), kategori produk, dan BOM.
+
+# Endpoint master produk sengaja terbuka untuk SEMUA staf internal (keputusan user, lihat `_require_admin`).
+# Hapus permanen lebih berat dari ubah/nonaktifkan: hanya tim produksi/R&D/manajemen atau peran yang punya izin
+# master produk/R&D. Jalur nonaktifkan TIDAK ikut diperketat.
+PRODUK_HAPUS_ROLES = ("admin",) + PRODUCTION_ROLES + RND_ROLES
+PRODUK_HAPUS_PERMS = ("products.delete", "rnd.manage", "bom.manage")
+
+
+def izinkan_hapus_permanen(user: dict) -> None:
+    """403 bila `user` tidak boleh menghapus permanen master produk (model, varian, warna, ukuran, kategori, BOM)."""
+    from auth import check_role
+    if not check_role(user, list(PRODUK_HAPUS_ROLES), PRODUK_HAPUS_PERMS):
+        raise HTTPException(403, "Akses ditolak: hapus permanen data master produk hanya untuk tim produksi, R&D, "
+                                 "atau manajemen. Nonaktifkan saja, atau minta atasan menghapusnya.")
+
+
+def _isi(field: str, nilai):
+    """{field: nilai} atau None bila nilai kosong (filter yang dilewati `hitung_pemakaian`)."""
+    return {field: nilai} if nilai else None
+
+
+def _atau(*filters):
+    fs = [f for f in filters if f]
+    if not fs:
+        return None
+    return fs[0] if len(fs) == 1 else {"$or": fs}
+
+
+def cek_pemakaian_produk(*, model_id: str = None, variant_ids=(), skus=(), fg_ids=(), material_ids=()) -> list:
+    """(label staf, koleksi, filter) — di mana sebuah model / varian (SKU) / barang jadi & potongan miliknya dipakai.
+
+    Satu filter per koleksi (gabungan `$or`) supaya satu dokumen tidak terhitung dua kali. Pemetaan field dari
+    penulisnya: PO (`production_pos.create_po_internal`), job (`production_execution`), order produksi
+    (`rahaza_orders`), cutting (`cutting._resolve_identity`), katalog & pesanan marketing, peta SKU (`core.sku_bridge`),
+    gudang/stok (`core.stock_service`, `wms_*`, `sales_direct`), R&D (`master_sync`, promosi style).
+    """
+    mid = model_id or None
+    vin = {"$in": list(variant_ids)} if variant_ids else None
+    sin = {"$in": [s for s in skus if s]} if any(skus) else None   # baris lama yang hanya menyimpan teks SKU
+    fin = {"$in": list(fg_ids)} if fg_ids else None
+    semua = list(dict.fromkeys([*fg_ids, *material_ids]))
+    ain = {"$in": semua} if semua else None
+    return [
+        ("baris PO produksi", "po_items",
+         _atau(_isi("model_id", mid), _isi("rahaza_variant_id", vin), _isi("fg_material_id", fin), _isi("sku", sin))),
+        ("job produksi", "production_job_items", _atau(_isi("model_id", mid), _isi("rahaza_variant_id", vin))),
+        ("order produksi", "rahaza_orders", _isi("items.model_id", mid)),
+        ("order cutting", "cutting_orders",
+         _atau(_isi("model_id", mid), _isi("variant_id", vin), _isi("output_material_id", ain),
+               # 2026-11-10: order cutting banyak hasil menyimpan identitas per baris `outputs[]`
+               _isi("outputs.model_id", mid), _isi("outputs.variant_id", vin),
+               _isi("outputs.output_material_id", ain))),
+        ("catatan WIP", "rahaza_wip_events", _isi("model_id", mid)),
+        ("penugasan line", "rahaza_line_assignments", _isi("model_id", mid)),
+        ("pengeluaran material", "rahaza_material_issues", _isi("model_id", mid)),
+        ("item katalog marketing", "marketing_catalog_items",
+         _atau(_isi("model_id", mid), _isi("variant_id", vin), _isi("fg_material_id", fin), _isi("material_id", fin),
+               _isi("variant_sku", sin))),
+        ("pesanan marketing", "marketing_orders",
+         _atau(_isi("model_id", mid), _isi("items.model_id", mid), _isi("variant_id", vin),
+               _isi("items.variant_id", vin), _isi("fg_material_id", fin), _isi("items.fg_material_id", fin),
+               _isi("variant_sku", sin))),
+        ("pemetaan SKU marketplace", "marketing_sku_bridge",
+         _atau(_isi("model_id", mid), _isi("variant_id", vin), _isi("fg_material_id", fin))),
+        ("peluncuran produk", "marketing_product_launches", _atau(_isi("model_id", mid), _isi("fg_material_id", fin))),
+        ("permintaan komponen CMT", "dewi_cmt_component_requests", _isi("model_id", mid)),
+        ("permintaan kreator", "dewi_kreator_requests", _isi("model_id", mid)),
+        ("riwayat penerapan HPP", "product_cost_snapshots", _isi("model_id", mid)),
+        ("riwayat harga SKU", "rahaza_sku_price_history", _atau(_isi("model_id", mid), _isi("fg_id", fin))),
+        ("style R&D asal produk", "dewi_rnd_styles", _isi("promoted_to_model_id", mid)),
+        ("varian R&D asal SKU", "dewi_rnd_variants", _isi("sizes.variant_id", vin)),
+        ("retur gudang", "wh_returns", _atau(_isi("variant_id", vin), _isi("material_id", ain))),
+        ("kiriman ke buyer", "buyer_shipment_items", _isi("fg_material_id", fin)),
+        ("penerimaan dari CMT", "cmt_receipt_lines", _isi("fg_material_id", fin)),
+        # stok & mutasi barang jadi / potongan milik master ini
+        ("kartu stok", "rahaza_stock_ledger", _isi("material_id", ain)),
+        ("mutasi material", "rahaza_material_movements", _isi("material_id", ain)),
+        ("mutasi barang jadi", "rahaza_fg_movements", _isi("material_id", ain)),
+        ("penerimaan gudang tertunda", "wh_pending_movements", _isi("material_id", ain)),
+        ("reservasi barang jadi", "rahaza_fg_reservations", _isi("material_id", ain)),
+        ("pengeluaran barang jadi", "rahaza_fg_issues", _isi("material_id", ain)),
+        ("lapisan biaya barang jadi", "fg_cost_layers", _atau(_isi("model_id", mid), _isi("material_id", ain))),
+        ("posisi rak gudang", "wh_positions", _isi("material_id", ain)),
+        ("daftar ambil barang", "wh_picklists", _isi("items.material_id", ain)),
+        ("surat jalan gudang", "wh_delivery_notes", _isi("lines.material_id", ain)),
+        ("nota penjualan langsung", "sales_direct_notes", _isi("items.material_id", ain)),
+        # data lama (mesin sudah diarsip, dokumennya bisa masih ada)
+        ("job vendor lama", "vendor_jobs", _isi("model_id", mid)),
+        ("WO lama", "rahaza_work_orders", _atau(_isi("model_id", mid), _isi("variant_id", vin))),
+    ]
+
+
+async def _baris_stok_bersaldo(db, material_ids) -> int:
+    """Baris `rahaza_material_stock` yang saldonya bukan 0 (semua skema qty, `core.stock_schema.read_qty`)."""
+    if not material_ids:
+        return 0
+    from core.stock_schema import read_qty
+    rows = await db.rahaza_material_stock.find({"material_id": {"$in": list(material_ids)}}, {"_id": 0}).to_list(5000)
+    return sum(1 for r in rows if abs(read_qty(r)) > 1e-9)
+
+
+async def pemakaian_produk(db, *, model_id: str = None, variant_ids=(), skus=(), fg_ids=(), material_ids=()) -> dict:
+    """{label: jumlah} pemakaian model/varian + stok bersaldo barang jadi/potongan miliknya (kosong = boleh dihapus)."""
+    from core.hapus_master import hitung_pemakaian
+    pakai = await hitung_pemakaian(db, cek_pemakaian_produk(
+        model_id=model_id, variant_ids=variant_ids, skus=skus, fg_ids=fg_ids, material_ids=material_ids))
+    n = await _baris_stok_bersaldo(db, [*fg_ids, *material_ids])
+    return {"lokasi stok bersaldo": n, **pakai} if n else pakai
+
+
+async def hapus_barang_milik(db, material_ids) -> int:
+    """Hapus barang jadi/potongan milik master yang dihapus + baris stok bersaldo 0-nya. → jumlah barang terhapus."""
+    ids = list(material_ids or [])
+    if not ids:
+        return 0
+    await db.rahaza_material_stock.delete_many({"material_id": {"$in": ids}})
+    res = await db.rahaza_materials.delete_many({"id": {"$in": ids}})
+    return int(res.deleted_count or 0)
 
 
 # ══════════════════════════════ COLORS MASTER ══════════════════════════════
@@ -160,10 +286,52 @@ async def update_color(cid: str, request: Request):
     return serialize_doc(await db.rahaza_colors.find_one({"id": cid}, {"_id": 0}))
 
 
+async def pemakaian_warna(db, color: dict) -> dict:
+    """Di mana satu warna master dipakai. Rujukan ber-id selalu dihitung; rujukan lewat KODE/NAMA (BOM, baris PO,
+    katalog maklon) hanya bila tidak ada warna lain berkode/bernama sama — kalau ada, rujukan itu milik kembarannya."""
+    from core.hapus_master import hitung_pemakaian
+    cid = color.get("id")
+    code = (color.get("code") or "").strip()
+    name = (color.get("name") or "").strip()
+    if code and await db.rahaza_colors.count_documents({"code": code, "id": {"$ne": cid}}):
+        code = ""
+    if name and await db.rahaza_colors.count_documents({"name": name, "id": {"$ne": cid}}):
+        name = ""
+    return await hitung_pemakaian(db, [
+        ("varian produk", "rahaza_model_variants", {"color_id": cid}),
+        ("barang jadi", "rahaza_materials", {"color_id": cid}),
+        ("order cutting", "cutting_orders", {"$or": [{"color_id": cid}, {"outputs.color_id": cid}]}),
+        ("varian R&D", "dewi_rnd_variants", {"color_id": cid}),
+        ("tech pack", "dewi_rnd_tech_packs", {"$or": [{"colorways.color_id": cid}, {"fabrics.color_id": cid},
+                                                     {"bom_items.color_id": cid}]}),
+        ("riset material", "dewi_rnd_materials", {"colors.color_id": cid}),
+        ("warna lain (sebagai nama lain)", "rahaza_colors", {"alias_of_color_id": cid}),
+        ("BOM", "rahaza_boms", _isi("color_code", code)),
+        ("baris PO produksi", "po_items", _isi("color_code", code)),
+        ("artikel katalog maklon", "dewi_maklon_buyer_catalog",
+         _atau(_isi("variants.color_code", code), _isi("color_options", name))),
+    ])
+
+
 @router.delete("/colors/{cid}")
-async def deactivate_color(cid: str, request: Request):
+async def deactivate_color(cid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama; ditolak 400 bila masih dipakai varian aktif). `?hard=true`
+    (10 Nov 2026): hapus permanen bila warna belum dipakai varian/barang/cutting/R&D/BOM/PO/katalog maklon;
+    bila sudah → 409 dengan rinciannya."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        izinkan_hapus_permanen(user)
+        from core.hapus_master import tolak_bila_dipakai
+        color = await db.rahaza_colors.find_one({"id": cid}, {"_id": 0})
+        if not color:
+            raise HTTPException(404, "Warna tidak ditemukan.")
+        nama = f"{color.get('name') or ''} ({color.get('code') or ''})".replace(" ()", "").strip()
+        tolak_bila_dipakai("Warna", nama, await pemakaian_warna(db, color))
+        await db.rahaza_colors.delete_one({"id": cid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.color",
+                           f"id={cid} kode={color.get('code')}")
+        return {"status": "deleted", "deleted": True, "message": f"Warna {nama} dihapus."}
     # Guard: cegah nonaktif bila warna dipakai varian aktif (jaga integritas SKU)
     in_use = await db.rahaza_model_variants.count_documents({"color_id": cid, "active": True})
     if in_use > 0:
@@ -414,12 +582,37 @@ async def update_variant(vid: str, request: Request):
     return serialize_doc(await db.rahaza_model_variants.find_one({"id": vid}, {"_id": 0}))
 
 
+async def hapus_varian_permanen(db, vid: str, user: dict) -> dict:
+    """Hapus permanen satu varian (SKU) + barang jadi miliknya (`ensure_fg_material`, ditaut `variant_id`) bila
+    belum dipakai PO/job/cutting/katalog/pesanan/stok; bila sudah → 409. BOM & potongan per model-ukuran-warna
+    TIDAK ikut dihapus: kuncinya bukan varian (bisa dipakai varian lain/opsi lain dan dipakai lagi bila varian
+    dibuat ulang) — hapus lewat layar BOM bila memang tidak dipakai."""
+    from core.hapus_master import tolak_bila_dipakai
+    v = await db.rahaza_model_variants.find_one({"id": vid}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "Varian tidak ditemukan.")
+    fgs = await db.rahaza_materials.find({"type": "fg", "variant_id": vid}, {"_id": 0, "id": 1}).to_list(50)
+    fg_ids = [f["id"] for f in fgs if f.get("id")]
+    tolak_bila_dipakai("Varian", v.get("sku") or "", await pemakaian_produk(
+        db, variant_ids=[vid], skus=[v.get("sku")], fg_ids=fg_ids))
+    fg_deleted = await hapus_barang_milik(db, fg_ids)
+    await db.rahaza_model_variants.delete_one({"id": vid})
+    await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.variant",
+                       f"id={vid} sku={v.get('sku')} barang_jadi={fg_deleted}")
+    return {"status": "deleted", "deleted": True, "sku": v.get("sku", ""), "fg_deleted": fg_deleted,
+            "message": f"Varian {v.get('sku', '')} dihapus."}
+
+
 @router.delete("/variants/{vid}")
-async def deactivate_variant(vid: str, request: Request):
+async def deactivate_variant(vid: str, request: Request, hard: bool = False):
     """Nonaktifkan varian (SKU). **K-9a**: item katalog yang menawarkan SKU ini
-    ikut dinonaktifkan dan DAFTAR TERDAMPAK dikembalikan ke staf."""
+    ikut dinonaktifkan dan DAFTAR TERDAMPAK dikembalikan ke staf.
+    `?hard=true` (10 Nov 2026): hapus permanen bila belum dipakai (`hapus_varian_permanen`, 409 bila sudah)."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        izinkan_hapus_permanen(user)
+        return await hapus_varian_permanen(db, vid, user)
     v = await db.rahaza_model_variants.find_one({"id": vid}, {"_id": 0, "sku": 1})
     if not v:
         raise HTTPException(404, "Varian tidak ditemukan.")

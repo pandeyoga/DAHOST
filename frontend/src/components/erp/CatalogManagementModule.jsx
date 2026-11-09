@@ -9,9 +9,13 @@
  * TERSIMPAN (cache basi) → kartu "100% sehat" padahal 640 item stok habis. Kini angkanya dari
  * `/stock-dashboard` → `catalog_breakdown` (dihitung langsung, stok jual LIVE, item aktif), sumber yang sama
  * dengan kartu ringkasan di atas — tabel dan kartu tidak bisa lagi berbeda.
+ *
+ * 10 Nov 2026 (owner: "master data harus bisa diubah & dihapus"): Hapus katalog / Hapus item memakai `hapusMaster` —
+ * server menolak (409) bila katalog/item sudah dipakai pesanan, retur, sesi live, dst., lalu layar menawarkan
+ * Nonaktifkan (katalog: `PUT is_active=false`; item: Arsipkan).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { hapusMaster } from '@/lib/hapusMaster';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   Plus, RefreshCw, Search, Pencil, Trash2, MoreHorizontal, Eye, Layers, Loader2, ArrowRightLeft, Coins, Link2,
@@ -50,6 +54,17 @@ import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const cat = (path, opts = {}) => fetch(`${API}/api/marketing/catalogs${path}`, opts);
+// 10 Nov 2026 — jawaban gagal dilempar sebagai Error yang membawa `status` (409 = sudah dipakai → hapusMaster
+// menawarkan Nonaktifkan).
+const jawabanAtauGalat = async (r, cadangan) => {
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error((typeof d.detail === 'string' && d.detail) || cadangan);
+    e.status = r.status;
+    throw e;
+  }
+  return d;
+};
 
 // Nama platform untuk layar (data menyimpan kode huruf kecil: shopee, tiktok, …)
 const PLATFORM_LABEL = {
@@ -262,19 +277,22 @@ export default function CatalogManagementModule({ token, moduleId, initialTab, u
     reloadCatalogs();
   };
 
+  // 10 Nov 2026 — hapus permanen hanya bila belum ada item yang dipakai; bila sudah (409) tawarkan Nonaktifkan.
   const handleDeleteCatalog = async (catalog) => {
-    const ok = await confirmDialog({
-      title: `Hapus katalog "${catalog.name}"?`,
-      body: 'Katalog dan semua itemnya dihapus.',
-      confirmLabel: 'Hapus', danger: true,
+    const aktif = catalog.is_active !== false;
+    const hasil = await hapusMaster({
+      jenis: 'katalog', nama: catalog.name,
+      keterangan: 'Katalog dan semua itemnya dihapus permanen. Bila ada item yang sudah dipakai (pesanan, retur, sesi live, '
+        + 'sampel, pemetaan SKU), penghapusan ditolak' + (aktif ? ' dan Anda bisa menonaktifkan katalognya saja.' : '.'),
+      hapus: async () => jawabanAtauGalat(await cat(`/${catalog.id}`, { method: 'DELETE', headers }), 'Gagal menghapus katalog'),
+      nonaktifkan: aktif
+        ? async () => jawabanAtauGalat(await cat(`/${catalog.id}`, {
+          method: 'PUT', headers, body: JSON.stringify({ is_active: false }),
+        }), 'Gagal menonaktifkan katalog')
+        : null,
     });
-    if (!ok) return;
-    const r = await cat(`/${catalog.id}`, { method: 'DELETE', headers });
-    const d = await r.json();
-    if (!r.ok) { toast.error(d.detail || 'Gagal menghapus katalog'); return; }
-    toast.success(d.message || 'Katalog dihapus');
-    if (selectedCatalog?.id === catalog.id) setSelectedCatalog(null);
-    reloadCatalogs();
+    if (hasil === 'dihapus' && selectedCatalog?.id === catalog.id) setSelectedCatalog(null);
+    if (hasil) reloadCatalogs();
   };
 
   const handleSaveItem = async (form) => {
@@ -346,15 +364,23 @@ export default function CatalogManagementModule({ token, moduleId, initialTab, u
     reloadCatalogs();
   };
 
+  // 10 Nov 2026 — item yang sudah dipakai (pesanan, retur, sesi live, …) ditolak server (409); layar menawarkan
+  // Nonaktifkan = Arsipkan (item nonaktif, riwayat pesanannya tetap utuh).
   const handleDeleteItem = async (item) => {
-    const ok = await confirmDialog({
-      title: `Hapus item "${item.name}"?`, body: 'Item dihapus dari katalog ini.',
-      confirmLabel: 'Hapus', danger: true,
+    const base = `/${selectedCatalog.id}/items/${item.id}`;
+    const bisaArsip = item.publish_state !== 'archived' && item.is_active !== false;
+    const hasil = await hapusMaster({
+      jenis: 'item', nama: item.name || item.sku,
+      keterangan: 'Item dihapus permanen dari katalog ini. Bila item sudah dipakai (pesanan, retur, sesi live, sampel, '
+        + 'pemetaan SKU), penghapusan ditolak' + (bisaArsip ? ' dan Anda bisa menonaktifkannya (arsip) saja.' : '.'),
+      hapus: async () => jawabanAtauGalat(await cat(base, { method: 'DELETE', headers }), 'Gagal menghapus item'),
+      nonaktifkan: bisaArsip
+        ? async () => jawabanAtauGalat(await cat(`${base}/archive`, {
+          method: 'POST', headers, body: JSON.stringify({ reason: 'Tidak bisa dihapus karena sudah dipakai' }),
+        }), 'Gagal mengarsipkan item')
+        : null,
     });
-    if (!ok) return;
-    const r = await cat(`/${selectedCatalog.id}/items/${item.id}`, { method: 'DELETE', headers });
-    if (!r.ok) { toast.error('Gagal menghapus item'); return; }
-    toast.success('Item dihapus');
+    if (!hasil) return;
     loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
     reloadCatalogs();
   };
@@ -500,7 +526,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab, u
     { kunci: 'status', label: 'Status', isi: (c) => (c.is_active === false
       ? <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />
       : <StatusBadge status="aktif" label="Aktif" tone="success" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (c) => (
       <div className="flex items-center justify-end gap-1">
         <Button size="sm" variant="outline" onClick={() => pilihKatalog(c)} data-testid={`catalog-open-${c.id}`}>
           <Eye />Lihat item
@@ -512,9 +538,12 @@ export default function CatalogManagementModule({ token, moduleId, initialTab, u
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setCatalogDialog(c)}><Pencil className="mr-2 h-4 w-4" />Ubah katalog</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setCatalogDialog(c)} data-testid={`catalog-edit-${c.id}`}>
+              <Pencil className="mr-2 h-4 w-4" />Ubah katalog
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => handleDeleteCatalog(c)} className="text-[hsl(var(--danger-text))]">
+            <DropdownMenuItem onSelect={() => handleDeleteCatalog(c)} className="text-[hsl(var(--danger-text))]"
+              data-testid={`catalog-delete-${c.id}`}>
               <Trash2 className="mr-2 h-4 w-4" />Hapus katalog
             </DropdownMenuItem>
           </DropdownMenuContent>

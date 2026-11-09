@@ -14,7 +14,7 @@
  *   GET/POST/PUT/DELETE /api/dewi/maklon/bom-templates[/{tid}[/activate]]
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, Boxes, ClipboardCheck, FlaskConical, History, Pencil, Plus, Power, Save, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { Ban, BookOpen, Boxes, ClipboardCheck, FlaskConical, History, Pencil, Plus, Power, Save, Search, Sparkles, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +33,7 @@ import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { InlineMaterialPicker } from '../bom/InlineMaterialPicker';
 import RnDUnitSelect, { RND_UNITS } from '../RnDUnitSelect';
 import { ARTIKEL_STATUS } from './KatalogArtikelForm';
+import { hapusMaster } from '../../../lib/hapusMaster';
 
 const fmtRp = (v) => formatRupiah(v || 0);
 const fmtPct = (v) => `${v > 0 ? '+' : ''}${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
@@ -70,7 +71,7 @@ function Info({ label, value, className = '' }) {
 }
 
 // ── Sampel terkait ────────────────────────────────────────────────────────────
-function SamplesSection({ catalogId }) {
+export function SamplesSection({ catalogId }) {
   const [data, setData] = useState({ samples: [], summary: {} });
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -119,7 +120,7 @@ function SamplesSection({ catalogId }) {
 }
 
 // ── Varian SKU ────────────────────────────────────────────────────────────────
-function VariantsSection({ catalog }) {
+export function VariantsSection({ catalog, onTambah }) {
   const [variants, setVariants] = useState(catalog.variants || []);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -162,6 +163,15 @@ function VariantsSection({ catalog }) {
     catch (e) { toast.error(e.message || 'Gagal mengubah status'); }
     finally { setBusy(false); }
   };
+  // 10 Nov 2026 (owner): varian bisa dihapus bila belum dipakai PO / barang klien; bila sudah → tawarkan Nonaktifkan.
+  const remove = async (v) => {
+    setBusy(true);
+    const hasil = await hapusMaster({ jenis: 'varian', nama: v.sku,
+      hapus: () => apiDelete(`/dewi/maklon/buyer-catalog/${catalog.id}/variants/${v.id}`),
+      nonaktifkan: v.active !== false ? () => apiPut(`/dewi/maklon/buyer-catalog/${catalog.id}/variants/${v.id}`, { active: false }) : null });
+    if (hasil) await reload();
+    setBusy(false);
+  };
 
   return (
     <Section title={`Varian SKU (${variants.length})`} testId="bc-variants-tab"
@@ -171,7 +181,13 @@ function VariantsSection({ catalog }) {
           kolom={[{ label: 'SKU', nilai: (v) => v.sku }, { label: 'Warna', nilai: (v) => v.color || '' }, { label: 'Kode warna', nilai: (v) => v.color_code || '' },
             { label: 'Ukuran', nilai: (v) => v.size || '' }, { label: 'Kode buyer', nilai: (v) => v.buyer_ref_code || '' },
             { label: 'Status', nilai: (v) => (v.active === false ? 'Nonaktif' : 'Aktif') }]} />}
-        <Button size="sm" variant="outline" onClick={generate} disabled={!canGenerate || busy} data-testid="bc-variant-generate-btn">
+        {onTambah && catalog.status !== 'discontinued' && (
+          <Button size="sm" variant="outline" onClick={onTambah} disabled={busy} data-testid={`bc-variant-add-btn-${catalog.id}`}>
+            <Plus className="w-3.5 h-3.5" />Tambah varian
+          </Button>
+        )}
+        <Button size="sm" variant="outline" onClick={generate} disabled={!canGenerate || busy} data-testid="bc-variant-generate-btn"
+          title="Buat semua kombinasi warna × ukuran yang dipilih di artikel">
           <Sparkles className="w-3.5 h-3.5" />Buat varian
         </Button>
       </>}>
@@ -210,10 +226,12 @@ function VariantsSection({ catalog }) {
                 </TableCell>
                 <TableCell><StatusBadge status={v.active === false ? 'nonaktif' : 'aktif'} label={v.active === false ? 'Nonaktif' : 'Aktif'}
                   tone={v.active === false ? 'muted' : 'success'} /></TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right whitespace-nowrap">
                   <Button size="sm" variant="outline" onClick={() => toggle(v)} disabled={busy} data-testid={`bc-variant-toggle-${v.sku}`}>
                     {v.active === false ? 'Aktifkan' : 'Nonaktifkan'}
                   </Button>
+                  <Button size="icon-sm" variant="ghost" onClick={() => remove(v)} disabled={busy} title="Hapus varian" aria-label="Hapus varian"
+                    data-testid={`bc-variant-delete-${v.sku}`}><Trash2 className="w-3.5 h-3.5" /></Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -485,8 +503,72 @@ function BomTemplatesSection({ catalog }) {
   );
 }
 
+// ── Templat BOM aktif (baca saja; untuk baris yang dibuka di daftar) ──────────
+function BomAktifSection({ catalog, onOpenDetail }) {
+  const [tpl, setTpl] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    apiGet(`/dewi/maklon/bom-templates?buyer_catalog_id=${catalog.id}`)
+      .then((d) => { if (alive) setTpl((Array.isArray(d) ? d : []).find((t) => t.is_active) || null); })
+      .catch(() => { if (alive) setTpl(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [catalog.id]);
+  const mats = tpl?.materials || [];
+  return (
+    <Section title={tpl ? `BOM aktif v${tpl.version}${tpl.version_label ? ` · ${tpl.version_label}` : ''}` : 'BOM aktif'} testId={`bc-row-bom-${catalog.id}`}
+      hint={tpl ? `Biaya bahan per pcs ${fmtRp(tpl.total_cost_per_pcs)}. Versi lain & ubah BOM ada di rincian lengkap.` : 'Templat BOM dibuat dari rincian lengkap artikel.'}
+      actions={onOpenDetail && <Button size="sm" variant="outline" onClick={onOpenDetail} data-testid={`bc-row-bom-open-${catalog.id}`}><ClipboardCheck className="w-3.5 h-3.5" />Atur BOM</Button>}>
+      {loading ? <p className="text-sm text-muted-foreground">Memuat BOM…</p> : (
+        <Table>
+          <TableHeader><TableRow><TableHead>Material</TableHead><TableHead>Disediakan</TableHead>
+            <TableHead className="text-right">Qty/pcs</TableHead><TableHead>Satuan</TableHead><TableHead className="text-right">Biaya/satuan</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {!mats.length && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="p-0 [&>div]:py-6"><EmptyState icon={ClipboardCheck} title="Belum ada BOM aktif" description="Buat versi templat BOM dari rincian lengkap artikel." /></TableCell>
+              </TableRow>
+            )}
+            {mats.map((m, i) => (
+              <TableRow key={m.material_id || i}>
+                <TableCell className="text-sm">{m.material_code ? <span className="text-xs text-muted-foreground mr-1">{m.material_code}</span> : null}{m.material_name || '—'}</TableCell>
+                <TableCell className="text-sm">{OWNERSHIP_LABEL[m.ownership] || OWNERSHIP_LABEL.client_provided}</TableCell>
+                <TableCell className="text-right tabular-nums">{Number(m.qty_per_pcs || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</TableCell>
+                <TableCell className="text-sm">{m.unit || '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtRp(m.cost_per_unit)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Section>
+  );
+}
+
+/** Isi baris artikel yang dibuka di daftar Katalog (RowDetail) — 10 Nov 2026, permintaan owner "catalog bisa di-expand". */
+export function KatalogArtikelRingkas({ catalog, onTambahVarian, onOpenDetail }) {
+  return (
+    <div className="space-y-3" data-testid={`bc-row-detail-${catalog.id}`}>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Info label="Upah jahit CMT (bawaan)" value={fmtRp(catalog.default_cmt_price)} />
+        <Info label="Harga jasa ke klien (bawaan)" value={catalog.default_selling_price > 0 ? fmtRp(catalog.default_selling_price) : '—'} />
+        <Info label="Musim / gender" value={`${catalog.season || '—'} / ${catalog.gender || '—'}`} />
+        <Info label="Terakhir dipakai" value={catalog.last_used_at ? formatDateID(catalog.last_used_at) : 'Belum pernah'} />
+        <Info label="Pilihan warna" value={(catalog.color_options || []).join(', ')} className="col-span-2" />
+        <Info label="Pilihan ukuran" value={(catalog.size_options || []).join(', ')} className="col-span-2" />
+        {catalog.description && <Info label="Deskripsi" value={catalog.description} className="col-span-2 lg:col-span-4" />}
+      </div>
+      <VariantsSection key={String(catalog.updated_at || '')} catalog={catalog} onTambah={onTambahVarian} />
+      <BomAktifSection catalog={catalog} onOpenDetail={onOpenDetail} />
+      <SamplesSection catalogId={catalog.id} />
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
-export default function KatalogArtikelDetail({ catalog, onClose, onEdit, onSop, onChanged }) {
+export default function KatalogArtikelDetail({ catalog, onClose, onEdit, onSop, onChanged, onTambahVarian, onHapus }) {
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
     const off = catalog.status === 'active';
@@ -520,8 +602,12 @@ export default function KatalogArtikelDetail({ catalog, onClose, onEdit, onSop, 
           </Button>
         )}
         {catalog.status !== 'discontinued' && (
-          <Button variant="destructive" size="icon" onClick={discontinue} disabled={busy} title="Hentikan artikel" aria-label="Hentikan artikel"
-            data-testid={`buyer-catalog-discontinue-${catalog.id}`}><Trash2 className="w-4 h-4" /></Button>
+          <Button variant="outline" onClick={discontinue} disabled={busy} title="Artikel tidak bisa dipakai order baru; riwayat tetap ada"
+            data-testid={`buyer-catalog-discontinue-${catalog.id}`}><Ban className="w-4 h-4" />Hentikan</Button>
+        )}
+        {onHapus && (
+          <Button variant="destructive" size="icon" onClick={onHapus} disabled={busy} title="Hapus artikel" aria-label="Hapus artikel"
+            data-testid={`buyer-catalog-delete-${catalog.id}`}><Trash2 className="w-4 h-4" /></Button>
         )}
       </>}>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="bc-detail-summary">
@@ -537,7 +623,7 @@ export default function KatalogArtikelDetail({ catalog, onClose, onEdit, onSop, 
         <Info label="Deskripsi" value={catalog.description} className="col-span-2 lg:col-span-4" />
       </div>
       <SamplesSection catalogId={catalog.id} />
-      <VariantsSection catalog={catalog} />
+      <VariantsSection key={String(catalog.updated_at || '')} catalog={catalog} onTambah={onTambahVarian} />
       <PriceHistorySection catalogId={catalog.id} />
       <BomTemplatesSection catalog={catalog} />
     </DetailPanel>

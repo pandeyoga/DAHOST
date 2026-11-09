@@ -11,7 +11,7 @@
  */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Edit2, Ban, RotateCcw, Tags, Info, PackageSearch } from 'lucide-react';
+import { Plus, Pencil, Ban, RotateCcw, Tags, Info, PackageSearch, Trash2 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
@@ -20,6 +20,8 @@ import PageLayout from './layout/PageLayout';
 import FormPopup from '@/components/ui/form-popup';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { apiDelete } from '../../lib/api';
+import { hapusMaster } from '../../lib/hapusMaster';
 
 const EMPTY_FORM = { code: '', name: '', sku_prefix: '', order_seq: 500, description: '' };
 
@@ -96,6 +98,17 @@ export default function RahazaProductCategoriesModule({ token }) {
     else toast.error(d.detail || 'Gagal menonaktifkan');
   };
 
+  // 10 Nov 2026 (owner "master data bisa dihapus"): hapus permanen bila kategori belum dipakai produk/barang jadi/
+  // item katalog (aktif maupun nonaktif); bila sudah (409) dialog kedua menawarkan Nonaktifkan.
+  const handleHapus = async (row) => {
+    const hasil = await hapusMaster({
+      jenis: 'kategori', nama: row.name,
+      hapus: () => apiDelete(`/rahaza/product-categories/${row.id}?hard=true`),
+      nonaktifkan: row.active !== false ? () => apiDelete(`/rahaza/product-categories/${row.id}`) : null,
+    });
+    if (hasil) fetchRows();
+  };
+
   const handleReactivate = async (row) => {
     const r = await fetch(`/api/rahaza/product-categories/${row.id}`, {
       method: 'PUT', headers, body: JSON.stringify({ active: true }),
@@ -155,8 +168,8 @@ export default function RahazaProductCategoriesModule({ token }) {
       render: (row) => (
         <div className="flex items-center gap-1">
           <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }}
-            title="Ubah" aria-label="Ubah" data-testid={`cat-edit-${row.code}`}>
-            <Edit2 className="w-3.5 h-3.5" />
+            title="Ubah" aria-label={`Ubah kategori ${row.name}`} data-testid={`cat-edit-${row.code}`}>
+            <Pencil className="w-3.5 h-3.5" />
           </Button>
           {row.active === false ? (
             <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
@@ -169,6 +182,10 @@ export default function RahazaProductCategoriesModule({ token }) {
               <Ban className="w-3.5 h-3.5" />
             </Button>
           )}
+          <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleHapus(row); }}
+            title="Hapus" aria-label={`Hapus kategori ${row.name}`} data-testid={`cat-delete-${row.code}`}>
+            <Trash2 className="w-3.5 h-3.5" />
+          </Button>
         </div>
       ),
     },

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query
 from routes.shared import require_portal_dep
 from database import get_db
 from utils.counters import gen_prefixed_number
-from auth import require_auth, serialize_doc
+from auth import require_auth, serialize_doc, log_activity
 from utils.data_quality import SkipTracker
 from pymongo import ReturnDocument
 import uuid
@@ -286,10 +286,36 @@ async def update_cost_center(cid: str, request: Request):
     return serialize_doc(out)
 
 
+async def cost_center_usage(db, cid: str) -> dict:
+    """Di mana pusat biaya dipakai (label → jumlah). 10 Nov 2026 — hapus permanen master."""
+    from core.hapus_master import hitung_pemakaian
+    return await hitung_pemakaian(db, [
+        ("baris jurnal", "rahaza_journal_lines", {"cost_center_id": cid}),
+        ("jurnal", "rahaza_journal_entries", {"lines.cost_center_id": cid}),
+        ("pengeluaran", "rahaza_expenses", {"cost_center_id": cid}),
+        ("faktur pemasok", "rahaza_ap_invoices", {"cost_center_id": cid}),
+        ("klaim biaya", "rahaza_expense_claims", {"cost_center_id": cid}),
+        ("anggaran", "rahaza_budgets", {"cost_center_id": cid}),
+        ("baris anggaran", "rahaza_budget_items", {"cost_center_id": cid}),
+    ])
+
+
 @router.delete("/cost-centers/{cid}")
-async def delete_cost_center(cid: str, request: Request):
-    await _require_fin(request)
+async def delete_cost_center(cid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"):
+    hapus permanen bila belum dipakai jurnal, pengeluaran, faktur, klaim, atau anggaran; selain itu 409 dan layar
+    menawarkan Nonaktifkan."""
+    user = await _require_fin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        cc = await db.rahaza_cost_centers.find_one({"id": cid}, {"_id": 0})
+        if not cc:
+            raise HTTPException(404, "Pusat biaya tidak ditemukan.")
+        tolak_bila_dipakai("Pusat biaya", cc.get("name") or cc.get("code") or "", await cost_center_usage(db, cid))
+        await db.rahaza_cost_centers.delete_one({"id": cid})
+        await log_activity(user.get("id") or "", user.get("name") or "", "delete", "rahaza.cost_center", cc.get("code") or cid)
+        return {"status": "deleted", "deleted": True}
     res = await db.rahaza_cost_centers.update_one({"id": cid, "active": True}, {"$set": {"active": False, "updated_at": _now()}})
     if res.matched_count == 0:
         raise HTTPException(404, "Cost center tidak ditemukan.")
@@ -1336,10 +1362,51 @@ async def update_cash_account(aid: str, request: Request):
     return {"status": "ok"}
 
 
+async def cash_account_usage(db, acc: dict) -> dict:
+    """Di mana rekening kas/bank dipakai: mutasi kas, jurnal di akun buku besar rekening (termasuk jurnal saldo awal),
+    transfer, rekonsiliasi, dan dokumen yang memilih rekening ini sebagai sumber bayar. 10 Nov 2026."""
+    from core.hapus_master import hitung_pemakaian
+    aid, gl = acc["id"], acc.get("gl_account_code")
+    cek = [
+        ("mutasi kas", "rahaza_cash_movements", {"account_id": aid}),
+        ("sesi rekonsiliasi bank", "bank_recon_sessions", {"cash_account_id": aid}),
+        ("penyesuaian rekonsiliasi", "rahaza_bank_recon_adjustments", {"bank_account_id": aid}),
+        ("klaim biaya", "rahaza_expense_claims", {"bank_account_id": aid}),
+        ("penyelesaian perjalanan dinas", "employee_travel_settlements", {"bank_account_id": aid}),
+        ("pencairan kasbon", "dewi_kasbon_requests", {"disbursement_cash_account_id": aid}),
+    ]
+    if gl:
+        cek += [
+            ("baris jurnal", "rahaza_journal_lines", {"account_code": gl}),
+            ("transfer bank", "rahaza_bank_transfers", {"$or": [{"from_account_code": gl}, {"to_account_code": gl}]}),
+        ]
+    pakai = await hitung_pemakaian(db, cek)
+    # saldo awal yang belum sempat dijurnal tetap saldo — rekening bersaldo tidak dihapus
+    if abs(float(acc.get("opening_balance") or 0)) >= 0.005 and not pakai.get("baris jurnal"):
+        pakai["saldo awal"] = 1
+    return pakai
+
+
 @router.delete("/cash-accounts/{aid}")
-async def delete_cash_account(aid: str, request: Request):
-    await _require_fin(request)
+async def delete_cash_account(aid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"):
+    hapus permanen rekening yang belum pernah dipakai (tanpa mutasi, jurnal, saldo awal, transfer, rekonsiliasi);
+    akun buku besar yang DIBUAT OTOMATIS untuk rekening itu ikut dihapus (akun pilihan dari Bagan Akun tidak
+    disentuh). Selain itu 409 dan layar menawarkan Nonaktifkan."""
+    user = await _require_fin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        acc = await db.rahaza_cash_accounts.find_one({"id": aid}, {"_id": 0})
+        if not acc:
+            raise HTTPException(404, "Rekening tidak ditemukan.")
+        tolak_bila_dipakai("Rekening", acc.get("name") or acc.get("code") or "", await cash_account_usage(db, acc))
+        akun = await db.rahaza_coa_accounts.delete_many({"flags.subledger_entity_type": "bank",
+                                                         "flags.subledger_entity_id": aid})
+        await db.rahaza_cash_accounts.delete_one({"id": aid})
+        await log_activity(user.get("id") or "", user.get("name") or "", "delete", "rahaza.cash_account",
+                           f"{acc.get('code')} {acc.get('name')} akun_gl_otomatis={akun.deleted_count}")
+        return {"status": "deleted", "deleted": True}
     await db.rahaza_cash_accounts.update_one({"id": aid, "active": True}, {"$set": {"active": False}})
     return {"status": "deleted"}
 

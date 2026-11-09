@@ -7,16 +7,20 @@
  * input tanggal bawaan), form buat = FormPopup panjang, rincian = DetailPopup, label Indonesia (Terbitkan/Terbit/
  * Diterima; dulu Issue/Issued/Received). Tampilan "Kartu" di desktop dihapus (daftar > 6 = tabel); di HP tabel
  * otomatis jadi kartu ringkas. Urutan kolom lewat pilihan "Urutkan" (dulu klik judul kolom).
+ *
+ * 10 Nov 2026 (owner): surat jalan tidak bisa asal input. Form "Surat jalan baru" (hanya di tab SJ gudang) menawarkan
+ * dua jenis saja: pindah antar lokasi (barang master + lokasi) dan retur ke pemasok (pilih Retur Pembelian yang sudah
+ * dikirim; satu retur satu surat jalan). Surat jalan CMT, kirim hasil, dan toko online dibuat di menu asalnya; tab
+ * Semua sumber hanya rekap. Draf lama jenis lain tampil apa adanya tetapi tidak ditawari tombol Terbitkan.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  FileText, Plus, RefreshCw, Eye, Download, X, CheckCircle2, Loader2, Search, Package, Layers,
+  FileText, Plus, RefreshCw, Eye, Download, X, CheckCircle2, Search, Package,
   ChevronRight, MoreHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { Skeleton } from '@/components/ui/skeleton';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -47,6 +51,7 @@ const SOURCE_BADGE = {
 const fmtQty = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 const tgl = (d) => (d ? formatDateID(d) : '—');
 
+// Label semua jenis (dokumen lama tetap tampil apa adanya).
 const SJ_TYPES = {
   'SJ-CMT': { label: 'CMT' },
   'SJ-MAKLON': { label: 'Maklon' },
@@ -54,6 +59,21 @@ const SJ_TYPES = {
   'SJ-INTERNAL': { label: 'Pindah antar lokasi' },
   'SJ-ONLINE': { label: 'Toko online' },
 };
+// 10 Nov 2026 (owner): yang BOLEH DIBUAT di Gudang hanya dua jenis ini, keduanya wajib berreferensi
+// (barang master + lokasi; atau dokumen Retur Pembelian). Jenis lain dibuat dari menu asalnya.
+const JENIS_BUAT = ['SJ-INTERNAL', 'SJ-SUPPLIER'];
+const MENU_ASAL = {
+  'SJ-CMT': 'Produksi › Kirim ke CMT',
+  'SJ-MAKLON': 'Maklon/Produksi › Kirim hasil',
+  'SJ-ONLINE': 'Gudang › Scan Keluar Penjualan',
+};
+const LABEL_ACUAN = { purchase_return: 'Retur Pembelian', wo: 'WO', po: 'PO', maklon_order: 'Order maklon' };
+// Draf yang sah diterbitkan dari Gudang (draf lama CMT/Maklon/Toko online/retur tanpa acuan ditolak server).
+const drafSah = (n) => n.sj_type === 'SJ-INTERNAL'
+  || (n.sj_type === 'SJ-SUPPLIER' && n.reference_type === 'purchase_return' && !!n.reference_id);
+const pesanDrafLama = (n) => (MENU_ASAL[n.sj_type]
+  ? `Draf lama: tidak bisa diterbitkan dari Gudang. Surat jalan jenis ini dibuat dari menu ${MENU_ASAL[n.sj_type]}.`
+  : 'Draf lama: tidak menunjuk dokumen Retur Pembelian, jadi tidak bisa diterbitkan. Buat ulang dengan memilih returnya.');
 
 const STATUS_SJ = {
   draft: { label: 'Draf', tone: 'muted' },
@@ -98,7 +118,9 @@ function KotakCari({ value, onChange, placeholder, testId }) {
 // ─── Tab 1 · Semua sumber (FASE H-7, hanya baca) ────────────────────────────────────────────────────────
 // Satu daftar surat jalan lintas sumber: gudang, kirim material ke CMT, dispatch buyer. Tiap baris mencetak PDF
 // RESMI dari dokumen aslinya dan bisa dibuka di modul sumbernya — tidak ada nomor baru & tidak ada generator kedua.
-function TabSemuaSumber({ token, onNavigate, onBuat }) {
+// 10 Nov 2026: tab ini REKAP saja — tombol "Surat jalan baru" dilepas dari sini (dulu memberi kesan semua jenis
+// surat jalan dibuat di Gudang).
+function TabSemuaSumber({ token, onNavigate }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
   const [allRows, setAllRows] = useState([]);
   const [allMeta, setAllMeta] = useState({ total: 0, by_source: {}, total_qty: 0 });
@@ -208,8 +230,7 @@ function TabSemuaSumber({ token, onNavigate, onBuat }) {
 
   return (
     <PageLayout testId="sj-all-sources-panel" title="Semua sumber"
-      subtitle="Satu daftar surat jalan dari gudang, kirim material ke CMT, dan dispatch ke buyer."
-      actions={<Button onClick={onBuat} data-testid="create-sj-btn"><Plus /> Surat jalan baru</Button>}
+      subtitle="Rekap surat jalan dari semua alur; tiap surat jalan dibuat di menu asalnya dan di sini hanya dilihat dan dicetak."
       filters={<>
         <FilterChips className="w-full sm:w-auto" value={srcFilter} onChange={setSrcFilter} options={pil} hideWhenEmpty={false}
           testId="sj-src" ariaLabel="Sumber surat jalan" />
@@ -254,7 +275,7 @@ function TabSemuaSumber({ token, onNavigate, onBuat }) {
       ) : (
         <TabelData kolom={kolom} baris={allRows} kunci={(r) => r.key} testId="sj-all-sources-table"
           kosong={<EmptyState icon={FileText} title="Tidak ada surat jalan pada saringan ini"
-            description="Ubah sumber atau periode, atau buat surat jalan gudang baru." />} />
+            description="Ubah sumber atau periode." />} />
       )}
     </PageLayout>
   );
@@ -373,7 +394,7 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
     { kunci: 'dibuat', label: 'Dibuat', isi: (n) => <span className="text-sm md:whitespace-nowrap">{tgl(n.created_at)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (n) => (
       <div className="inline-flex flex-wrap justify-end gap-1">
-        {n.status === 'draft' && (
+        {n.status === 'draft' && drafSah(n) && (
           <Button size="sm" variant="outline" onClick={() => handleIssue(n.id)} data-testid={`issue-btn-${n.sj_number}`}>
             <CheckCircle2 /> Terbitkan
           </Button>
@@ -395,7 +416,7 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
 
   return (
     <PageLayout testId="sj-gudang-panel" title="Surat jalan gudang"
-      subtitle="Buat, terbitkan, dan konfirmasi terima surat jalan gudang; PDF untuk dibawa pengirim."
+      subtitle="Hanya untuk pindah barang antar lokasi dan retur ke pemasok; surat jalan CMT, kirim hasil, dan toko online dibuat dari menunya sendiri."
       actions={<Button onClick={onBuat} data-testid="create-sj-btn"><Plus /> Surat jalan baru</Button>}
       filters={<>
         <FilterChips className="w-full sm:w-auto" value={status} onChange={setStatus} hideWhenEmpty={false} testId="sj-status"
@@ -450,7 +471,7 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
       ) : (
         <TabelData kolom={kolom} baris={paged} kunci={(n) => n.id} onKlikBaris={setViewDialog} testId="sj-table"
           kosong={<EmptyState icon={FileText} title={notes.length ? 'Tidak ada surat jalan yang cocok' : 'Belum ada surat jalan'}
-            description={notes.length ? 'Ubah saringan status atau kata pencarian.' : 'Surat jalan muncul di sini setelah dibuat. Klik "Surat jalan baru" untuk memulai.'}
+            description={notes.length ? 'Ubah saringan status atau kata pencarian.' : 'Klik "Surat jalan baru" untuk pindah barang antar lokasi atau mengantar retur ke pemasok.'}
             testId="empty-sj" />} />
       )}
 
@@ -461,7 +482,7 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
           status={<StatusSJ status={viewDialog.status} />}
           keterangan={SJ_TYPES[viewDialog.sj_type]?.label || viewDialog.sj_type}
           aksi={<>
-            {viewDialog.status === 'draft' && (
+            {viewDialog.status === 'draft' && drafSah(viewDialog) && (
               <Button size="sm" onClick={() => { handleIssue(viewDialog.id); setViewDialog(null); }}><CheckCircle2 /> Terbitkan</Button>
             )}
             {viewDialog.status === 'issued' && (
@@ -471,8 +492,18 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
               <Button size="sm" variant="outline" onClick={() => handleDownloadPDF(viewDialog.id)}><Download /> PDF</Button>
             )}
           </>}>
+          {viewDialog.status === 'draft' && !drafSah(viewDialog) && (
+            <p className="text-sm text-[hsl(var(--warning-text))]" data-testid="view-sj-draf-lama">{pesanDrafLama(viewDialog)}</p>
+          )}
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Penerima">{viewDialog.recipient_name}</BarisDetail>
+            {viewDialog.reference_no && (
+              <BarisDetail label="Acuan">
+                <span data-testid="view-sj-acuan">
+                  {LABEL_ACUAN[viewDialog.reference_type] || 'Dokumen'} {viewDialog.reference_no}
+                </span>
+              </BarisDetail>
+            )}
             <BarisDetail label="Telepon">{viewDialog.recipient_phone || '—'}</BarisDetail>
             <BarisDetail label="Alamat">{viewDialog.recipient_address}</BarisDetail>
             <BarisDetail label="Pengirim">{viewDialog.shipper_name || '—'}</BarisDetail>
@@ -517,7 +548,15 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
 }
 
 // ─── Form buat surat jalan (FormPopup panjang) ─────────────────────────────────────────────────────────
-const BARIS_BARU = () => ({ line_no: 1, description: '', qty: 0, unit: 'pcs', remarks: '' });
+// 10 Nov 2026 (owner): "surat jalan tidak bisa asal input, harus ada referensinya, jangan sampai double".
+// Hanya dua jenis, keduanya tanpa isian bebas untuk penerima dan barang:
+//   · Pindah antar lokasi — lokasi asal/tujuan + barang dari master; server menolak qty di atas stok asal.
+//   · Retur ke pemasok — pilih Retur Pembelian yang sudah dikirim; pemasok & barang diambil dari dokumen itu.
+//     Retur yang sudah punya surat jalan tidak ditawarkan lagi (server menolak 409 bila ganda).
+// Dilepas: isian nama/alamat/telepon penerima, uraian barang ketikan, dan "Isi dari BOM (job internal)" — bahan ke
+// produksi keluar lewat Pengeluaran Material, bukan surat jalan gudang.
+const BARIS_BARU = () => ({ material_id: '', material_code: '', description: '', qty: 0, unit: '' });
+const PENGANTAR_KOSONG = { shipper_name: '', vehicle_no: '', notes: '' };
 
 function FormBuatSJ({ token, open, onClose, onTersimpan }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -528,20 +567,21 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
     // {TIPE} ikut menentukan nomor, jadi pratinjaunya harus memakai tipe yang BENAR-BENAR dipilih.
     useMemo(() => ({ TIPE: sjType }), [sjType]));
   const [sjNumber, setSjNumber] = useState('');
-  const [f, setF] = useState({ recipient_name: '', recipient_address: '', recipient_phone: '', shipper_name: '', vehicle_no: '', notes: '' });
+  const [f, setF] = useState(PENGANTAR_KOSONG);
   const [editingLines, setEditingLines] = useState([BARIS_BARU()]);
-  // FASE P4: auto-isi Surat Jalan Internal dari BOM aktif (yarn + aksesoris) x qty job
-  const [jobs, setJobs] = useState([]);
-  const [selectedJobId, setSelectedJobId] = useState('');
-  const [bomLoading, setBomLoading] = useState(false);
   // 2026-11-06 (Tahap 2): SJ internal = transfer antar lokasi — lokasi asal/tujuan + barang dari master.
   const [fromLoc, setFromLoc] = useState('');
   const [toLoc, setToLoc] = useState('');
   const [storageLocs, setStorageLocs] = useState([]);
   const [materials, setMaterials] = useState([]);
+  // 10 Nov 2026: retur ke pemasok = pilih dokumen Retur Pembelian yang sudah dikirim.
+  const [returs, setReturs] = useState([]);
+  const [returMuat, setReturMuat] = useState(false);
+  const [returId, setReturId] = useState('');
   const [menyimpan, setMenyimpan] = useState(false);
   const [galat, setGalat] = useState('');
   const isInternal = sjType === 'SJ-INTERNAL';
+  const isRetur = sjType === 'SJ-SUPPLIER';
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
 
   useEffect(() => {
@@ -562,45 +602,66 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
   }, [open, isInternal, storageLocs.length, headers]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !isRetur) return undefined;
+    let batal = false;
     (async () => {
+      setReturMuat(true);
       try {
-        const r = await fetch(`${API}/api/production-jobs?business_type=internal`, { headers });
-        const d = await r.json();
-        setJobs(Array.isArray(d) ? d : (d.items || []));
-      } catch { /* senyap — pilihan BOM opsional */ }
+        const r = await fetch(`${API}/api/wms/delivery-notes/supplier-returns`, { headers });
+        const d = await r.json().catch(() => ({}));
+        if (!batal) setReturs(r.ok ? (d.items || []) : []);
+      } catch {
+        if (!batal) setReturs([]);
+      } finally {
+        if (!batal) setReturMuat(false);
+      }
     })();
-  }, [open, headers]);
+    return () => { batal = true; };
+  }, [open, isRetur, headers]);
+
+  const returBisa = useMemo(() => returs.filter((x) => !x.sj_number), [returs]);
+  const returSudah = returs.length - returBisa.length;
+  const retur = returBisa.find((x) => x.id === returId) || null;
 
   const reset = () => {
-    setSjNumber(''); setSjType(''); setF({ recipient_name: '', recipient_address: '', recipient_phone: '', shipper_name: '', vehicle_no: '', notes: '' });
-    setEditingLines([BARIS_BARU()]); setSelectedJobId(''); setFromLoc(''); setToLoc(''); setGalat('');
+    setSjNumber(''); setSjType(''); setF(PENGANTAR_KOSONG); setEditingLines([BARIS_BARU()]);
+    setFromLoc(''); setToLoc(''); setReturId(''); setGalat('');
   };
-  const tutup = () => { setSelectedJobId(''); setGalat(''); onClose(); };
+  const tutup = () => { setGalat(''); onClose(); };
+  const gantiJenis = (v) => { setSjType(v); setReturId(''); setGalat(''); };
 
   const handleCreate = async () => {
     setGalat('');
-    if (!sjType) { setGalat('Pilih tipe surat jalan.'); return; }
-    if (!f.recipient_name.trim() || !f.recipient_address.trim()) { setGalat('Nama dan alamat penerima wajib diisi.'); return; }
-    const data = {
-      sj_type: sjType,
-      ...docNumberPayload(numPolicy, 'sj_number', sjNumber),
-      recipient_name: f.recipient_name,
-      recipient_address: f.recipient_address,
-      recipient_phone: f.recipient_phone || '',
-      shipper_name: f.shipper_name || '',
-      vehicle_no: f.vehicle_no || '',
-      notes: f.notes || '',
-      lines: editingLines.filter(l => l.description || l.material_id),
-      ...(isInternal ? { from_location_id: fromLoc, to_location_id: toLoc } : {}),
-    };
+    if (!JENIS_BUAT.includes(sjType)) { setGalat('Pilih jenis surat jalan.'); return; }
+    const pengantar = { shipper_name: f.shipper_name || '', vehicle_no: f.vehicle_no || '', notes: f.notes || '' };
+    let data;
+    if (isInternal) {
+      if (!fromLoc || !toLoc) { setGalat('Pilih lokasi asal dan lokasi tujuan.'); return; }
+      const lines = editingLines.filter((l) => l.material_id);
+      if (!lines.length) { setGalat('Pilih minimal satu barang dari master.'); return; }
+      if (lines.some((l) => !(Number(l.qty) > 0))) { setGalat('Qty setiap barang harus lebih dari 0.'); return; }
+      data = {
+        sj_type: sjType,
+        ...docNumberPayload(numPolicy, 'sj_number', sjNumber),
+        from_location_id: fromLoc,
+        to_location_id: toLoc,
+        lines: lines.map((l) => ({
+          material_id: l.material_id, material_code: l.material_code || '',
+          description: l.description || l.material_code || '-', qty: Number(l.qty), unit: l.unit || '',
+        })),
+        ...pengantar,
+      };
+    } else {
+      if (!retur) { setGalat('Pilih dokumen Retur Pembelian.'); return; }
+      data = { sj_type: sjType, ...docNumberPayload(numPolicy, 'sj_number', sjNumber), purchase_return_id: retur.id, ...pengantar };
+    }
     setMenyimpan(true);
     try {
       const r = await fetch(`${API}/api/wms/delivery-notes`, { method: 'POST', headers, body: JSON.stringify(data) });
       // SESI #19 — penolakan penomoran berisi jalan keluarnya (pola nomor yang benar) — tampilkan apa adanya.
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d?.detail || 'Gagal membuat surat jalan');
-      toast.success('Surat jalan berhasil dibuat');
+      if (!r.ok) throw new Error(typeof d?.detail === 'string' ? d.detail : 'Gagal membuat surat jalan');
+      toast.success('Surat jalan berhasil dibuat sebagai draf');
       reset();
       onClose();
       onTersimpan();
@@ -611,70 +672,27 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
     }
   };
 
-  const addLine = () => setEditingLines([...editingLines, { line_no: editingLines.length + 1, description: '', qty: 0, unit: 'pcs', remarks: '' }]);
-  const removeLine = (idx) => setEditingLines(editingLines.filter((_, i) => i !== idx));
-  const updateLine = (idx, field, value) => {
-    const updated = [...editingLines];
-    updated[idx][field] = value;
-    setEditingLines(updated);
-  };
-  // SJ internal: barang dipilih dari master → kode, uraian, satuan ikut master.
+  const addLine = () => setEditingLines((prev) => [...prev, BARIS_BARU()]);
+  const removeLine = (idx) => setEditingLines((prev) => prev.filter((_, i) => i !== idx));
+  const updateQty = (idx, value) => setEditingLines((prev) => prev.map((l, i) => (i === idx ? { ...l, qty: value } : l)));
+  // Barang dipilih dari master → kode, uraian, satuan ikut master (tidak bisa diketik).
   const pickMaterial = (idx, mid) => {
     const m = materials.find((x) => x.id === mid);
-    const updated = [...editingLines];
-    updated[idx] = { ...updated[idx], material_id: mid, material_code: m?.code || '',
-      description: m?.name || updated[idx].description, unit: m?.unit || updated[idx].unit };
-    setEditingLines(updated);
-  };
-
-  // FASE P4: ambil baris material dari BOM aktif job internal & append ke item pengiriman.
-  const handleFillFromBOM = async () => {
-    if (!selectedJobId) { toast.error('Pilih job produksi internal dulu'); return; }
-    setBomLoading(true);
-    try {
-      const r = await fetch(`${API}/api/production-jobs/${selectedJobId}/bom-material-lines`, { headers });
-      if (!r.ok) throw new Error();
-      const d = await r.json();
-      const bomLines = d.lines || [];
-      if (bomLines.length === 0) {
-        toast.warning('Tidak ada baris BOM untuk job ini (BOM belum aktif / item tanpa BOM)');
-        return;
-      }
-      setEditingLines((prev) => {
-        const existing = prev.filter((l) => l.description && l.description.trim());
-        const merged = [
-          ...existing,
-          ...bomLines.map((l) => ({ description: l.description, qty: l.qty, unit: l.unit, remarks: l.remarks || '' })),
-        ];
-        return merged.map((l, i) => ({ ...l, line_no: i + 1 }));
-      });
-      toast.success(`${bomLines.length} baris material BOM ditambahkan (Job ${d.job_number || ''})`);
-      if (Array.isArray(d.missing_bom) && d.missing_bom.length > 0) {
-        toast.warning(`${d.missing_bom.length} item job tidak punya BOM aktif dan dilewati`);
-      }
-    } catch {
-      toast.error('Gagal mengambil baris BOM job');
-    } finally {
-      setBomLoading(false);
-    }
+    setEditingLines((prev) => prev.map((l, i) => (i === idx
+      ? { ...l, material_id: mid, material_code: m?.code || '', description: m?.name || '', unit: m?.unit || '' } : l)));
   };
 
   return (
     <FormPopup open={open} onClose={tutup} ukuran="panjang" judul="Surat jalan baru" testId="create-sj-dialog"
-      keterangan="Surat jalan dibuat sebagai draf; stok bergerak saat diterbitkan."
-      onSimpan={handleCreate} menyimpan={menyimpan} galat={galat} labelSimpan="Simpan">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Isian label="Tipe surat jalan" wajib>
-          <SmartNativeSelect value={sjType} onChange={(e) => setSjType(e.target.value)} className="w-full" searchable={false}
-            aria-label="Tipe surat jalan" data-testid="input-sj-type">
-            <option value="">Pilih tipe</option>
-            {Object.entries(SJ_TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </SmartNativeSelect>
-        </Isian>
-        <Isian label="Nama penerima" wajib htmlFor="sj-recipient-name">
-          <Input id="sj-recipient-name" value={f.recipient_name} onChange={set('recipient_name')} data-testid="input-recipient-name" />
-        </Isian>
-      </div>
+      keterangan="Hanya untuk pindah antar lokasi dan retur ke pemasok. Surat jalan kirim ke CMT, kirim hasil, dan toko online dibuat dari menunya sendiri."
+      onSimpan={handleCreate} menyimpan={menyimpan} galat={galat} labelSimpan="Simpan draf">
+      <Isian label="Jenis surat jalan" wajib>
+        <SmartNativeSelect value={sjType} onChange={(e) => gantiJenis(e.target.value)} className="w-full" searchable={false}
+          aria-label="Jenis surat jalan" data-testid="input-sj-type">
+          <option value="">Pilih jenis</option>
+          {JENIS_BUAT.map((k) => <option key={k} value={k}>{SJ_TYPES[k].label}</option>)}
+        </SmartNativeSelect>
+      </Isian>
 
       {/* SESI #19 — kolom nomor mengikuti kebijakan Otomatis/Manual owner. Tanpa kolom ini, setelan MANUAL
           membuat surat jalan TIDAK BISA dibuat ("nomor wajib diisi"). */}
@@ -697,64 +715,23 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
             </SmartNativeSelect>
           </Isian>
           <p className="text-xs text-muted-foreground sm:col-span-2">
-            Saat diterbitkan, stok keluar dari lokasi asal dan tercatat dalam perjalanan. Stok masuk ke lokasi tujuan saat
-            surat jalan dikonfirmasi diterima. Barang setiap baris wajib dipilih dari master.
+            Penerima surat jalan adalah lokasi tujuan. Saat diterbitkan, stok keluar dari lokasi asal dan tercatat dalam
+            perjalanan; stok masuk ke lokasi tujuan saat surat jalan dikonfirmasi diterima. Qty tidak boleh melebihi stok
+            tersedia di lokasi asal.
           </p>
         </div>
       )}
 
-      <Isian label="Alamat penerima" wajib htmlFor="sj-recipient-address">
-        <Textarea id="sj-recipient-address" rows={2} value={f.recipient_address} onChange={set('recipient_address')} data-testid="input-recipient-address" />
-      </Isian>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Isian label="Telepon penerima" htmlFor="sj-recipient-phone">
-          <Input id="sj-recipient-phone" value={f.recipient_phone} onChange={set('recipient_phone')} inputMode="tel" data-testid="input-recipient-phone" />
-        </Isian>
-        <Isian label="Nama pengirim" htmlFor="sj-shipper-name">
-          <Input id="sj-shipper-name" value={f.shipper_name} onChange={set('shipper_name')} data-testid="input-shipper-name" />
-        </Isian>
-        <Isian label="Nomor kendaraan" htmlFor="sj-vehicle-no">
-          <Input id="sj-vehicle-no" value={f.vehicle_no} onChange={set('vehicle_no')} data-testid="input-vehicle-no" />
-        </Isian>
-        <Isian label="Catatan" htmlFor="sj-notes">
-          <Input id="sj-notes" value={f.notes} onChange={set('notes')} data-testid="input-sj-notes" />
-        </Isian>
-      </div>
-
-      {/* FASE P4: Auto-isi dari BOM (Job Produksi Internal) */}
-      <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
-        <p className="flex items-center gap-2 text-sm font-medium text-foreground"><Layers className="h-4 w-4 text-primary" /> Isi dari BOM (job internal)</p>
-        <p className="text-xs text-muted-foreground">
-          Pilih job produksi internal untuk menambahkan kebutuhan material (bahan + aksesoris) dari BOM aktif.
-          Kuantitas dihitung otomatis = qty BOM per unit × qty job.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-0 flex-1">
-            <SmartNativeSelect value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} className="w-full"
-              aria-label="Job produksi internal" data-testid="bom-job-select">
-              <option value="">{jobs.length ? 'Pilih job produksi internal' : 'Tidak ada job internal'}</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>{j.job_number} · {j.status}{j.total_available ? ` · ${j.total_available} pcs` : ''}</option>
-              ))}
-            </SmartNativeSelect>
+      {isInternal && (
+        <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-foreground">Barang dipindah</p>
+            <Button type="button" size="sm" variant="outline" onClick={addLine} data-testid="add-line-btn"><Plus /> Tambah barang</Button>
           </div>
-          <Button type="button" variant="outline" onClick={handleFillFromBOM} disabled={bomLoading || !selectedJobId} data-testid="fill-from-bom-btn">
-            {bomLoading ? <Loader2 className="animate-spin" /> : <Layers />} Isi dari BOM
-          </Button>
-        </div>
-      </div>
-
-      {/* Baris barang */}
-      <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-medium text-foreground">Barang dikirim</p>
-          <Button type="button" size="sm" variant="outline" onClick={addLine} data-testid="add-line-btn"><Plus /> Tambah barang</Button>
-        </div>
-        <div className="divide-y divide-[var(--glass-border)]">
-          {editingLines.map((line, idx) => (
-            <div key={idx} className="flex items-start gap-2 py-2">
-              <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
-                {isInternal ? (
+          <div className="divide-y divide-[var(--glass-border)]">
+            {editingLines.map((line, idx) => (
+              <div key={idx} className="flex items-start gap-2 py-2">
+                <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
                   <div className="col-span-2">
                     <SmartNativeSelect value={line.material_id || ''} onChange={(e) => pickMaterial(idx, e.target.value)} className="w-full"
                       aria-label="Barang" data-testid={`line-material-${idx}`}>
@@ -762,27 +739,71 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
                       {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
                     </SmartNativeSelect>
                   </div>
-                ) : (
-                  <Input placeholder="Uraian barang" value={line.description} aria-label="Uraian barang"
-                    onChange={(e) => updateLine(idx, 'description', e.target.value)} className="col-span-2" data-testid={`line-desc-${idx}`} />
-                )}
-                <Input type="number" placeholder="Qty" value={line.qty} aria-label="Qty" inputMode="decimal"
-                  onChange={(e) => updateLine(idx, 'qty', parseFloat(e.target.value) || 0)} data-testid={`line-qty-${idx}`} />
-                {/* 2026-11-07 (Tahap 5): barang dari master → satuan = satuan dasar barang (terkunci). Dulu bisa diketik
-                    bebas sehingga "12 lusin" tercatat sebagai 12 pcs saat stok dipindah. */}
-                <Input placeholder="Satuan" value={line.unit} aria-label="Satuan" onChange={(e) => updateLine(idx, 'unit', e.target.value)}
-                  disabled={isInternal && !!line.material_id}
-                  title={isInternal && line.material_id ? 'Satuan dasar barang dari master' : undefined}
-                  data-testid={`line-unit-${idx}`} />
+                  <Input type="number" placeholder="Qty" value={line.qty} aria-label="Qty" inputMode="decimal"
+                    onChange={(e) => updateQty(idx, parseFloat(e.target.value) || 0)} data-testid={`line-qty-${idx}`} />
+                  {/* 2026-11-07 (Tahap 5): satuan = satuan dasar barang di master (terkunci). */}
+                  <Input placeholder="Satuan" value={line.unit} aria-label="Satuan" disabled readOnly
+                    title="Satuan dasar barang dari master" data-testid={`line-unit-${idx}`} />
+                </div>
+                <Button type="button" size="icon-sm" variant="ghost" onClick={() => removeLine(idx)} title="Hapus baris" aria-label="Hapus baris"
+                  disabled={editingLines.length === 1} data-testid={`remove-line-${idx}`}>
+                  <X />
+                </Button>
               </div>
-              <Button type="button" size="icon-sm" variant="ghost" onClick={() => removeLine(idx)} title="Hapus baris" aria-label="Hapus baris"
-                data-testid={`remove-line-${idx}`}>
-                <X />
-              </Button>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {isRetur && (
+        <div className="space-y-3" data-testid="sj-retur-pemasok">
+          <Isian label="Retur Pembelian" wajib>
+            <SmartNativeSelect value={returId} onChange={(e) => setReturId(e.target.value)} className="w-full"
+              aria-label="Retur Pembelian" disabled={returMuat} data-testid="input-sj-retur">
+              <option value="">{returMuat ? 'Memuat daftar retur…'
+                : (returBisa.length ? 'Pilih retur yang sudah dikirim' : 'Belum ada retur yang bisa dipilih')}</option>
+              {returBisa.map((x) => (
+                <option key={x.id} value={x.id}>{x.rtp_number} · {x.supplier_name}{x.settlement_label ? ` · ${x.settlement_label}` : ''}</option>
+              ))}
+            </SmartNativeSelect>
+          </Isian>
+          <p className="text-xs text-muted-foreground" data-testid="sj-retur-keterangan">
+            Hanya retur yang sudah dikirim di menu Pengadaan › Retur Pembelian dan belum punya surat jalan. Pemasok dan
+            barang diambil dari dokumen returnya; stok sudah dikeluarkan oleh Retur Pembelian, surat jalan ini hanya
+            pengantar barang.{returSudah > 0 ? ` ${returSudah} retur lain sudah punya surat jalan.` : ''}
+          </p>
+          {retur && (
+            <>
+              <dl className="divide-y divide-[var(--glass-border)]">
+                <BarisDetail label="Pemasok">{retur.supplier_name || '—'}</BarisDetail>
+                <BarisDetail label="Penyelesaian">{retur.settlement_label || '—'}</BarisDetail>
+                {retur.gr_number && <BarisDetail label="Penerimaan asal">{retur.gr_number}</BarisDetail>}
+              </dl>
+              <TabelData baris={(retur.lines || []).map((l, i) => ({ ...l, _k: i }))} kunci={(l) => l._k} testId="sj-retur-lines"
+                kolom={[
+                  { kunci: 'uraian', label: 'Barang', hp: 'judul', isi: (l) => (
+                    <div><p>{l.description || l.material_code}</p>{l.remarks && <p className="text-xs text-muted-foreground">{l.remarks}</p>}</div>) },
+                  { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (l) => <span className="tabular-nums">{fmtQty(l.qty)} {l.unit}</span> },
+                ]}
+                kosong={<p className="text-sm text-muted-foreground">Retur ini tidak punya barang.</p>} />
+            </>
+          )}
+        </div>
+      )}
+
+      {sjType && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Nama pengirim" htmlFor="sj-shipper-name">
+            <Input id="sj-shipper-name" value={f.shipper_name} onChange={set('shipper_name')} data-testid="input-shipper-name" />
+          </Isian>
+          <Isian label="Nomor kendaraan" htmlFor="sj-vehicle-no">
+            <Input id="sj-vehicle-no" value={f.vehicle_no} onChange={set('vehicle_no')} data-testid="input-vehicle-no" />
+          </Isian>
+          <Isian label="Catatan" htmlFor="sj-notes">
+            <Input id="sj-notes" value={f.notes} onChange={set('notes')} data-testid="input-sj-notes" />
+          </Isian>
+        </div>
+      )}
     </FormPopup>
   );
 }
@@ -790,7 +811,7 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
 export default function WMSDeliveryNotesModule({ token, onNavigate }) {
   const [tab, setTab] = useState('sources');
   const [buatTerbuka, setBuatTerbuka] = useState(false);
-  // Tombol "Surat jalan baru" ada di kedua tab; form-nya milik tab SJ gudang.
+  // Tombol "Surat jalan baru" hanya di tab SJ gudang (10 Nov 2026: tab Semua sumber = rekap saja).
   const onBuat = useCallback(() => { setTab('gudang'); setBuatTerbuka(true); }, []);
   const tabs = useMemo(() => [
     // FASE H-7 — pintu utama: SATU daftar lintas sumber
@@ -800,7 +821,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
   return (
     <div data-testid="wms-delivery-notes-module">
       <HubTabs hubId="wms-delivery-notes" title="Surat Jalan"
-        subtitle="Surat jalan gudang, kirim material ke CMT, dan dispatch ke buyer dalam satu tempat."
+        subtitle="Surat jalan gudang hanya untuk pindah antar lokasi dan retur ke pemasok; surat jalan CMT dan kiriman ke buyer tampil di sini sebagai rekap dari alurnya."
         tabs={tabs} value={tab} onValueChange={setTab}
         token={token} onNavigate={onNavigate} onBuat={onBuat} buatTerbuka={buatTerbuka} setBuatTerbuka={setBuatTerbuka} />
     </div>

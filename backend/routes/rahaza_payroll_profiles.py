@@ -279,9 +279,26 @@ async def update_profile(pid: str, request: Request):
 
 
 @router.delete("/payroll-profiles/{pid}")
-async def delete_profile(pid: str, request: Request):
+async def delete_profile(pid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama — dulu layar menyebutnya "Hapus"). `?hard=true` (10 Nov 2026, owner
+    "master data bisa dihapus"): hapus permanen bila karyawannya belum pernah digaji (slip gaji) dan belum punya
+    penyesuaian gaji; selain itu 409 dan layar menawarkan Nonaktifkan."""
     user = await _require_hr(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        prof = await db.rahaza_payroll_profiles.find_one({"id": pid}, {"_id": 0})
+        if not prof:
+            raise HTTPException(404, "Profil gaji tidak ditemukan.")
+        eid = prof.get("employee_id")
+        emp = await db.rahaza_employees.find_one({"id": eid}, {"_id": 0, "name": 1, "employee_code": 1}) if eid else None
+        nama = (emp or {}).get("name") or (emp or {}).get("employee_code") or ""
+        cek = [("slip gaji", "rahaza_payslips", {"employee_id": eid}),
+               ("penyesuaian gaji", "rahaza_salary_adjustments", {"employee_id": eid})] if eid else []
+        tolak_bila_dipakai("Profil gaji", nama, await hitung_pemakaian(db, cek))
+        await db.rahaza_payroll_profiles.delete_one({"id": pid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.payroll_profile", f"{eid} {nama}")
+        return {"status": "deleted", "deleted": True}
     res = await db.rahaza_payroll_profiles.update_one({"id": pid, "active": True}, {"$set": {"active": False, "updated_at": _now(), "updated_by": user["id"]}})
     if res.matched_count == 0:
         raise HTTPException(404, "Profile tidak ditemukan atau sudah nonaktif.")

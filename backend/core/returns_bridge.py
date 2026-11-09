@@ -60,10 +60,24 @@ PRINSIP MODUL INI (sama seperti `core/sku_bridge`)
     ini hanya mengatur ALUR/WAKTU-nya, bukan cara menilai HPP.
   * K6: pembatalan pesanan SETELAH dikirim melahirkan pengajuan Retur Fisik "RTS"
     Pending (:func:`ensure_rts_returns`) — stok baru masuk saat gudang menerima.
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-11-10 — KEPUTUSAN OWNER "WAJIB REFERENSI + TAUTKAN" (retur fisik tanpa dobel)
+═══════════════════════════════════════════════════════════════════════════════
+  * "Catat retur" manual di gudang WAJIB memilih pesanan yang ADA di `marketing_orders`
+    (sumber yang sama dengan :func:`resolve_identity` & :func:`ensure_rts_returns`) lewat
+    no. pesanan / resi (:func:`order_lookup`, :func:`prepare_manual_return`); barang diambil
+    dari baris pesanan itu (cadangan: master produk jadi bila barisnya belum tertaut, W4).
+  * Retur gudang AKTIF (bukan Batal/Dibalik) untuk pesanan/barang yang sama ⇒ catat ulang
+    DITOLAK (:class:`ReturnDuplicateError` → 409) dengan nomor retur yang sudah ada.
+  * Jembatan Marketing → Gudang (:func:`ensure_wh_return`) MENAUTKAN retur Marketing ke
+    retur gudang aktif tanpa retur Marketing (dicatat manual / RTS) untuk pesanan & barang
+    yang sama (:func:`find_unlinked_match`) alih-alih membuat pekerjaan kedua.
 """
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -495,6 +509,345 @@ async def _stamp_skip(db, marketing_return_id: str, alasan: str) -> None:
                      marketing_return_id, e)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-11-10 (keputusan owner) — RETUR FISIK TANPA DOBEL: wajib pesanan + tautkan
+# ═════════════════════════════════════════════════════════════════════════════
+# Retur yang tidak lagi "hidup": dibatalkan, atau keputusannya dibalik (penggantinya — bila
+# dibuka ulang — adalah dokumen baru yang aktif).
+INACTIVE_STATUSES = (STATUS_CANCELLED, STATUS_REVERSED)
+STATUS_LABEL = {"Pending": "menunggu paket", "Received": "diterima", "Inspected": "diinspeksi",
+                "Resolved": "selesai", "Cancelled": "dibatalkan", "Reversed": "keputusan dibalik"}
+
+
+class ReturnDuplicateError(ReturnBridgeError):
+    """Sudah ada Retur Fisik aktif untuk pesanan/barang yang sama (route → 409)."""
+
+    def __init__(self, message: str, existing: list):
+        super().__init__(message)
+        self.existing = existing
+
+
+def order_lines(order: dict) -> list:
+    """Baris barang satu pesanan Marketing. Bentuk impor = ``items[]``; pesanan lama tanpa
+    ``items`` dibaca sebagai SATU baris dari kepala pesanan (sama dengan RTS K6)."""
+    o = order or {}
+    lines = [ln for ln in (o.get("items") or []) if isinstance(ln, dict)]
+    if lines:
+        return lines
+    return [{"fg_material_id": o.get("fg_material_id"), "quantity": o.get("quantity"),
+             "sku_code": o.get("sku_id"), "product_name": o.get("product_name")}]
+
+
+def _line_name(ln: dict) -> str:
+    return str(ln.get("product_name") or ln.get("product_name_raw") or "").strip()
+
+
+def _line_sku(ln: dict) -> str:
+    return str(ln.get("sku_code") or ln.get("seller_sku") or ln.get("sku") or "").strip()
+
+
+def _line_qty(ln: dict) -> int:
+    """Qty baris pesanan; 0 = tidak diketahui."""
+    raw = ln.get("quantity") if ln.get("quantity") is not None else ln.get("qty")
+    return max(0, _int(raw, 0))
+
+
+def _line_value(ln: dict) -> float:
+    try:
+        return float(ln.get("sku_subtotal_after_discount") or ln.get("price") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _line_no(v) -> int | None:
+    """`source_order_line` → nomor baris (pembukaan ulang K1 menambah akhiran '-ulang')."""
+    try:
+        return int(str(v).split("-")[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_wh(wh: dict) -> dict:
+    """Ringkasan satu retur gudang untuk pesan 409 / layar pemilih pesanan."""
+    wh = wh or {}
+    return {"id": wh.get("id"), "return_code": wh.get("return_code") or "",
+            "status": wh.get("status") or "",
+            "status_label": STATUS_LABEL.get(wh.get("status") or "", wh.get("status") or ""),
+            "product_name": wh.get("product_name") or wh.get("sku_code") or "",
+            "sku_code": wh.get("sku_code") or "",
+            "order_number": wh.get("order_number") or "",
+            "source_order_line": _line_no(wh.get("source_order_line")),
+            "from_marketing": bool(wh.get("source_marketing_return_id"))}
+
+
+async def active_returns_for_order(db, order_number: str, resi: str = "") -> list:
+    """Retur gudang AKTIF (bukan Batal/Dibalik) untuk satu pesanan (atau resi paketnya)."""
+    ors = [{"order_number": order_number}] if order_number else []
+    if resi:
+        ors.append({"resi_number": resi})
+    if not ors:
+        return []
+    return await db[WH].find({"$or": ors, "status": {"$nin": list(INACTIVE_STATUSES)}},
+                             {"_id": 0}).sort("created_at", 1).to_list(50)
+
+
+def same_item(wh: dict, *, line_no: int | None, material_id: str | None, n_lines: int,
+              strict: bool = False) -> bool:
+    """Apakah retur gudang ``wh`` menyangkut barang yang sama dengan (baris, barang) ini?
+
+    Pesanan satu baris ⇒ selalu sama. Multi-baris: baris pesanan dibandingkan dulu, lalu
+    master barangnya. Bila retur lama tidak menunjuk baris maupun barang:
+      · ``strict=False`` (catat manual) ⇒ dianggap SAMA — lebih aman ditolak lalu dibuka
+        daripada paket yang sama tercatat dua kali;
+      · ``strict=True`` (jembatan) ⇒ TIDAK sama — jangan menautkan tanpa bukti."""
+    if n_lines <= 1:
+        return True
+    wl = _line_no(wh.get("source_order_line"))
+    wm = wh.get("material_id") or wh.get("fg_material_id")
+    if line_no and wl:
+        return wl == line_no
+    if material_id and wm:
+        return wm == material_id
+    return not strict
+
+
+async def order_lookup(db, q: str, *, limit: int = 15) -> list:
+    """Cari pesanan Marketing (`marketing_orders`) lewat no. pesanan ATAU no. resi untuk form
+    "Catat retur". Tiap pesanan membawa baris barangnya (tertaut master atau belum) dan
+    retur gudang aktif yang sudah ada — baris yang sudah punya retur ditandai ``blocked_by``."""
+    q = (q or "").strip()
+    if len(q) < 3:
+        return []
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    orders = await db.marketing_orders.find(
+        {"$or": [{"order_id": rx}, {"tracking_number": rx}]}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    out = []
+    for o in orders:
+        order_no = str(o.get("order_id") or "")
+        resi = str(o.get("tracking_number") or "").strip()
+        lines = order_lines(o)
+        act = await active_returns_for_order(db, order_no, resi)
+        items = []
+        for i, ln in enumerate(lines, start=1):
+            mid = ln.get("fg_material_id") or ln.get("material_id")
+            snap = await _material_snapshot(db, mid) if mid else {}
+            blk = [w for w in act if w.get("order_number") != order_no or same_item(
+                w, line_no=i, material_id=snap.get("material_id"), n_lines=len(lines))]
+            items.append({
+                "line": i, "product_name": _line_name(ln), "variation": ln.get("variation_raw") or "",
+                "sku": _line_sku(ln), "quantity": _line_qty(ln), "value": _line_value(ln),
+                "material_id": snap.get("material_id"), "material_code": snap.get("material_code", ""),
+                "material_name": snap.get("material_name", ""),
+                "blocked_by": [summarize_wh(w) for w in blk]})
+        out.append({
+            "id": o.get("id"), "order_id": order_no, "tracking_number": resi,
+            "platform": o.get("platform") or "", "account_name": o.get("account_name") or "",
+            "customer_name": o.get("customer_name") or o.get("buyer_username") or "",
+            "status": o.get("status") or "",
+            "order_date": str(o.get("order_date") or o.get("created_at") or "")[:10],
+            "items": items, "active_returns": [summarize_wh(w) for w in act]})
+    return out
+
+
+async def find_order_for_manual(db, *, order_doc_id: str = "", order_number: str = "",
+                                resi: str = "") -> dict:
+    """Pesanan Marketing yang dirujuk "Catat retur". Tidak ditemukan ⇒ :class:`ReturnBridgeError`."""
+    if order_doc_id:
+        o = await db.marketing_orders.find_one({"id": order_doc_id}, {"_id": 0})
+        if not o:
+            raise ReturnBridgeError("Pesanan yang dipilih tidak ada lagi di data pesanan Marketing — "
+                                    "cari ulang pesanannya.")
+        return o
+    ors = []
+    if order_number:
+        ors.append({"order_id": order_number})
+    if resi:
+        ors.append({"tracking_number": resi})
+    if not ors:
+        raise ReturnBridgeError("Pilih pesanan yang dikembalikan — cari lewat no. pesanan atau no. resi.")
+    rows = await db.marketing_orders.find({"$or": ors}, {"_id": 0}).to_list(5)
+    if not rows:
+        raise ReturnBridgeError(
+            f"Pesanan atau resi {order_number or resi} tidak ada di data pesanan Marketing. Retur fisik hanya "
+            "bisa dicatat untuk pesanan yang ada — minta tim Marketing mengimpor pesanannya dulu, lalu cari lagi.")
+    if len(rows) > 1:
+        raise ReturnBridgeError(
+            f"No. pesanan/resi {order_number or resi} cocok dengan {len(rows)} pesanan — pilih pesanannya dari "
+            "daftar pencarian.")
+    return rows[0]
+
+
+async def prepare_manual_return(db, body: dict) -> dict:
+    """Validasi "Catat retur" manual (Tipe 1 ekspedisi / Tipe 2 pembeli) — fungsi murni-DB, diuji unit.
+
+    → ``{order, line_no, line, n_lines, identity, qty, order_value}``. Melempar
+    :class:`ReturnBridgeError` (400) bila pesanan/barang/qty tidak sah, dan
+    :class:`ReturnDuplicateError` (409) bila sudah ada retur gudang aktif untuk pesanan/barang itu."""
+    body = body if isinstance(body, dict) else {}
+    order = await find_order_for_manual(
+        db, order_doc_id=str(body.get("order_doc_id") or "").strip(),
+        order_number=str(body.get("order_number") or "").strip(),
+        resi=str(body.get("resi_number") or "").strip())
+    order_no = str(order.get("order_id") or "")
+    lines = order_lines(order)
+    n = len(lines)
+    raw_line = body.get("order_line")
+    if raw_line in (None, ""):
+        if n > 1:
+            raise ReturnBridgeError(f"Pesanan {order_no} berisi {n} barang — pilih barang yang kembali.")
+        line_no = 1
+    else:
+        line_no = _int(raw_line, 0)
+        if not 1 <= line_no <= n:
+            raise ReturnBridgeError("Barang yang dipilih tidak ada di pesanan ini — pilih ulang dari daftar "
+                                    "barang pesanan.")
+    line = lines[line_no - 1]
+
+    # ── barang: dari baris pesanan bila tertaut master; selain itu dari master produk jadi (W4) ──
+    ident = {"link_status": LINK_NONE, "source": "",
+             "reason": ("Baris pesanan ini belum tertaut master produk jadi — tekan 'Pilih barang' di "
+                        "detail retur sebelum memutuskan.")}
+    mid_line = line.get("fg_material_id") or line.get("material_id")
+    snap = await _material_snapshot(db, mid_line) if mid_line else {}
+    if snap:
+        ident.update(snap, link_status=LINK_OK, source="order_item", reason="")
+    else:
+        pick = str(body.get("material_id") or body.get("fg_material_id") or "").strip()
+        code = str(body.get("sku_code") or "").strip()
+        if pick:
+            snap = await _material_snapshot(db, pick)
+            if not snap:
+                raise ReturnBridgeError(f"Master barang '{pick}' tidak ditemukan")
+        elif code:
+            mat = await db.rahaza_materials.find_one({"$or": [{"code": code}, {"sku": code}]}, {"_id": 0})
+            snap = await _material_snapshot(db, mat["id"]) if mat else {}
+        if snap:
+            ident.update(snap, link_status=LINK_OK, source="manual_master_pick", reason="")
+    if ident.get("variant_id") is None and line.get("variant_id"):
+        ident["variant_id"] = line.get("variant_id")
+
+    # ── qty: bawaan = qty baris pesanan; tidak boleh melebihinya ──
+    lq = _line_qty(line)
+    raw_q = body.get("qty")
+    qty = (lq or 1) if raw_q in (None, "") else _int(raw_q, -1)
+    if qty < 1:
+        raise ReturnBridgeError("Qty retur minimal 1 pcs.")
+    if lq and qty > lq:
+        raise ReturnBridgeError(f"Qty retur {qty} melebihi qty barang ini di pesanan ({lq} pcs).")
+
+    # ── retur ganda: retur gudang aktif untuk pesanan/resi & barang yang sama ⇒ 409 ──
+    resi = str(order.get("tracking_number") or "").strip()
+    act = await active_returns_for_order(db, order_no, resi)
+    clash = [w for w in act if w.get("order_number") != order_no or same_item(
+        w, line_no=line_no, material_id=ident.get("material_id"), n_lines=n)]
+    if clash:
+        kode = ", ".join(f"{w.get('return_code')} ({STATUS_LABEL.get(w.get('status'), w.get('status'))})"
+                         for w in clash)
+        raise ReturnDuplicateError(
+            f"Pesanan {order_no} sudah punya retur gudang {kode}. Buka retur itu — paket yang sama tidak "
+            "boleh dicatat dua kali.", [summarize_wh(w) for w in clash])
+
+    value = _line_value(line)
+    if not value:
+        try:
+            value = float(body.get("order_value") or 0)
+        except (TypeError, ValueError):
+            value = 0.0
+    return {"order": order, "line_no": line_no, "line": line, "n_lines": n, "identity": ident,
+            "qty": qty, "order_value": value}
+
+
+def _line_of_return(lines: list, ret: dict, ident: dict) -> int | None:
+    """Baris pesanan yang dimaksud satu retur Marketing (tanpa menebak: penunjuk pasti dulu —
+    item katalog, master barang, SKU — lalu nama produk yang cocok TEPAT satu baris)."""
+    sku = str(ret.get("sku") or "").strip()
+    hits = set()
+    for i, ln in enumerate(lines, start=1):
+        if ret.get("catalog_item_id") and ln.get("catalog_item_id") == ret.get("catalog_item_id"):
+            hits.add(i)
+        elif ident.get("material_id") and ln.get("fg_material_id") == ident.get("material_id"):
+            hits.add(i)
+        elif sku and sku in (ln.get("seller_sku"), ln.get("platform_sku_id"), ln.get("sku_code"), ln.get("sku")):
+            hits.add(i)
+    if len(hits) == 1:
+        return hits.pop()
+    if not hits:
+        want = str(ret.get("product") or "").strip().lower()
+        names = [i for i, ln in enumerate(lines, start=1) if want and want in _line_name(ln).lower()]
+        if len(names) == 1:
+            return names[0]
+    return None
+
+
+async def find_unlinked_match(db, ret: dict, ident: dict) -> dict | None:
+    """Retur gudang AKTIF tanpa retur Marketing (dicatat manual lebih dulu / RTS) untuk pesanan
+    dan barang yang sama dengan retur Marketing ``ret``; ``None`` bila tidak ada yang PASTI cocok.
+
+    Pesanan multi-baris (atau pesanannya tidak ada di data Marketing) hanya ditautkan bila baris
+    atau master barangnya terbukti sama (``same_item(strict=True)``)."""
+    order_no = str((ret or {}).get("order_id") or "").strip()
+    if not order_no:
+        return None
+    rows = await db[WH].find({"order_number": order_no, "status": {"$nin": list(INACTIVE_STATUSES)},
+                              "source_marketing_return_id": {"$in": [None, ""]}},
+                             {"_id": 0}).sort("created_at", 1).to_list(50)
+    if not rows:
+        return None
+    order = await db.marketing_orders.find_one({"order_id": order_no}, {"_id": 0})
+    lines = order_lines(order) if order else []
+    n = len(lines) if order else 2          # pesanan tak dikenal ⇒ perlakukan seperti multi-baris
+    line_no = _line_of_return(lines, ret, ident or {}) if order else None
+    for wh in rows:
+        if same_item(wh, line_no=line_no, material_id=(ident or {}).get("material_id"), n_lines=n, strict=True):
+            return wh
+    return None
+
+
+async def _link_unlinked(db, wh: dict, ret: dict, ident: dict, *, actor=None, cond=None) -> dict | None:
+    """Tautkan retur Marketing ``ret`` ke retur gudang ``wh`` yang sudah ada (atomik: hanya bila
+    ``wh`` masih aktif & belum milik retur Marketing lain). ``None`` bila didahului proses lain."""
+    who = _actor_name(actor)
+    ident = ident or {}
+    reason_txt = " — ".join([x for x in [ret.get("reason_label"), ret.get("reason_detail")] if x])
+    patch = {"source_marketing_return_id": ret["id"],
+             "source_marketing_order_id": ret.get("order_id"),
+             "source_account_name": ret.get("account_name") or wh.get("source_account_name") or "",
+             "reported_condition": cond, "marketing_linked_at": _now_iso(),
+             "marketing_linked_by": who, "updated_at": _now_iso()}
+    if reason_txt and not wh.get("initial_reason"):
+        patch["initial_reason"] = reason_txt
+    notes = [f"Ditautkan ke retur Marketing (pesanan {ret.get('order_id') or '-'}) — paket ini sudah "
+             "dicatat gudang lebih dulu, jadi tidak dibuat pekerjaan kedua"]
+    wm = wh.get("material_id") or wh.get("fg_material_id")
+    if not wm and ident.get("link_status") == LINK_OK and wh.get("status") in OPEN_STATUSES \
+            and not wh.get("restocked"):
+        patch.update({
+            "material_id": ident.get("material_id"), "fg_material_id": ident.get("material_id"),
+            "variant_id": ident.get("variant_id"), "catalog_item_id": ident.get("catalog_item_id"),
+            "sku_code": ident.get("material_code") or wh.get("sku_code") or "",
+            "product_name": ident.get("material_name") or wh.get("product_name") or "",
+            "material_unit": ident.get("unit") or "pcs",
+            "material_category": ident.get("category_name") or "",
+            "material_color": ident.get("color_name") or "", "material_option": ident.get("option_name") or "",
+            "link_status": LINK_OK, "link_reason": "", "link_source": ident.get("source") or "marketing_return"})
+        notes.append(f"barang diisi dari retur Marketing: {ident.get('material_code') or '-'}")
+    elif wm and ident.get("material_id") and ident["material_id"] != wm:
+        notes.append(f"Marketing menyebut {ident.get('material_code') or 'barang lain'}, gudang mencatat "
+                     f"{wh.get('sku_code') or '-'} — keputusan mengikuti barang fisik")
+    mq = max(1, _int(ident.get("qty") or ret.get("qty") or ret.get("quantity"), 1))
+    if mq != _int(wh.get("qty"), 0):
+        notes.append(f"qty pengajuan Marketing {mq} pcs, dicatat gudang {wh.get('qty')} pcs")
+    res = await db[WH].update_one(
+        {"id": wh["id"], "source_marketing_return_id": {"$in": [None, ""]},
+         "status": {"$nin": list(INACTIVE_STATUSES)}},
+        {"$set": patch, "$push": {"timeline": {"status": wh.get("status"), "at": _now_iso(), "by": who,
+                                               "note": " · ".join(notes)}}})
+    if not res.matched_count:
+        return None
+    return await db[WH].find_one({"id": wh["id"]}, {"_id": 0})
+
+
 async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
                            auto_restock: bool = False) -> dict:
     """Pastikan retur Marketing punya SATU pekerjaan Retur Fisik di Gudang.
@@ -507,7 +860,12 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
     2026-11-09 — retur ``goods_returned=False`` ("Refund only") TIDAK dibuatkan pekerjaan baru
     (:func:`alasan_tanpa_retur_fisik`); pekerjaan yang SUDAH ada tidak disentuh.
 
-    Return: {created, restocked, wh_return, identity, message} (+ ``skipped``, ``reason``)
+    2026-11-10 (keputusan owner "wajib referensi + tautkan") — sebelum membuat pekerjaan baru,
+    retur gudang AKTIF tanpa retur Marketing untuk pesanan & barang yang sama (dicatat manual
+    lebih dulu / RTS) DITAUTKAN (:func:`find_unlinked_match`) ⇒ ``linked=True``, tetap SATU
+    pekerjaan dan stok sekali.
+
+    Return: {created, restocked, wh_return, identity, message} (+ ``skipped``, ``reason``, ``linked``)
     """
     actor = actor or {}
     cond = normalize_condition(condition if condition is not None
@@ -515,9 +873,30 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
 
     # ── idempoten: sudah pernah dijembatani? ──────────────────────────────────
     existing = await find_linked_wh(db, ret)
+    ident = None
+    linked_now = False
+    if not existing:
+        # ── 2026-11-09 — "Refund only": barang TIDAK kembali, jadi tidak ada paket yang ditunggu ──
+        alasan = alasan_tanpa_retur_fisik(ret)
+        if alasan:
+            await _stamp_skip(db, ret["id"], alasan)
+            logger.info("[retur-jembatan] retur %s tidak dibuatkan Retur Fisik: %s", ret.get("id"), alasan)
+            return {"created": False, "restocked": False, "skipped": True, "wh_return": None,
+                    "identity": None, "reason": alasan,
+                    "message": f"Retur fisik tidak dibuat: {alasan}"}
+        ident = await resolve_identity(db, ret)
+        # ── 2026-11-10 — paket sudah dicatat gudang lebih dulu ⇒ TAUTKAN, jangan buat yang kedua ──
+        cand = await find_unlinked_match(db, ret, ident)
+        if cand:
+            existing = await _link_unlinked(db, cand, ret, ident, actor=actor, cond=cond)
+            linked_now = bool(existing)
     if existing:
         res = {"created": False, "restocked": False, "wh_return": existing,
-               "identity": None, "message": f"Sudah terhubung ke {existing.get('return_code')}"}
+               "identity": ident, "message": f"Sudah terhubung ke {existing.get('return_code')}"}
+        if linked_now:
+            res["linked"] = True
+            res["message"] = (f"Retur Marketing ditautkan ke Retur Fisik {existing.get('return_code')} yang "
+                              "sudah dicatat gudang — tidak dibuat pekerjaan kedua.")
         if auto_restock and not existing.get("restocked") \
                 and existing.get("link_status") == LINK_OK:
             done = await auto_process(db, existing["id"], condition=cond, actor=actor)
@@ -525,18 +904,13 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
             res["wh_return"] = done.get("wh_return") or existing
             res["message"] = done.get("message") or res["message"]
         await _stamp_marketing(db, ret["id"], res["wh_return"])
+        if linked_now and is_decided(res["wh_return"]):
+            # Gudang SUDAH memutuskan paket ini sebelum retur Marketing-nya masuk ⇒ rekap omzet
+            # tanggal retur dihitung ulang sekarang (K36: retur mengurangi omzet setelah keputusan).
+            from core import marketing_returns as _mret
+            await _mret.refresh_rekap_for_return_ids(db, [ret["id"]], actor=_actor_name(actor))
         return res
 
-    # ── 2026-11-09 — "Refund only": barang TIDAK kembali, jadi tidak ada paket yang ditunggu ──
-    alasan = alasan_tanpa_retur_fisik(ret)
-    if alasan:
-        await _stamp_skip(db, ret["id"], alasan)
-        logger.info("[retur-jembatan] retur %s tidak dibuatkan Retur Fisik: %s", ret.get("id"), alasan)
-        return {"created": False, "restocked": False, "skipped": True, "wh_return": None,
-                "identity": None, "reason": alasan,
-                "message": f"Retur fisik tidak dibuat: {alasan}"}
-
-    ident = await resolve_identity(db, ret)
     code = await _next_code(db)
     actor_name = _actor_name(actor)
     reason_txt = " — ".join([x for x in [ret.get("reason_label"), ret.get("reason_detail")] if x])
@@ -1076,7 +1450,8 @@ async def sync_all(db, *, actor=None, dry_run: bool = False,
     """
     q = {"status": {"$nin": list(SKIP_STATUSES)}}
     rets = await db[MKT].find(q, {"_id": 0}).sort("date", -1).to_list(limit)
-    out = {"scanned": len(rets), "created": 0, "already": 0, "restocked": 0,
+    # `linked` (2026-11-10) = retur Marketing yang DITAUTKAN ke retur gudang yang sudah dicatat lebih dulu
+    out = {"scanned": len(rets), "created": 0, "already": 0, "linked": 0, "restocked": 0,
            "skipped": 0, "failed": 0, "dry_run": bool(dry_run), "details": []}
     for r in rets:
         wh_exists = await db[WH].find_one({"source_marketing_return_id": r["id"]},
@@ -1096,15 +1471,19 @@ async def sync_all(db, *, actor=None, dry_run: bool = False,
             continue
         if dry_run:
             ident = await resolve_identity(db, r)
+            cand = None if wh_exists else await find_unlinked_match(db, r, ident)
             out["details"].append({
                 "marketing_return_id": r["id"], "order_id": r.get("order_id"),
                 "product": r.get("product"), "link_status": ident["link_status"],
                 "material_code": ident.get("material_code"), "qty": ident.get("qty"),
                 "reason": ident.get("reason"),
                 "already": bool(wh_exists),
+                "would_link_to": (cand or {}).get("return_code"),
             })
             if wh_exists:
                 out["already"] += 1
+            elif cand:
+                out["linked"] += 1
             elif ident["link_status"] == LINK_OK:
                 out["created"] += 1
             else:
@@ -1115,6 +1494,8 @@ async def sync_all(db, *, actor=None, dry_run: bool = False,
                                         auto_restock=auto_restock)
             if res.get("created"):
                 out["created"] += 1
+            elif res.get("linked"):
+                out["linked"] += 1
             else:
                 out["already"] += 1
             if res.get("restocked"):
@@ -1420,15 +1801,16 @@ async def ensure_rts_returns(db, order: dict, *, actor=None, reason: str = "") -
     gudang Terima → Periksa → Putuskan (alur K1). Idempoten per (pesanan, baris)."""
     actor = actor or {}
     who = _actor_name(actor)
-    lines = [ln for ln in (order.get("items") or []) if isinstance(ln, dict)]
-    if not lines:
-        lines = [{"fg_material_id": order.get("fg_material_id"),
-                  "quantity": order.get("quantity"), "sku_code": order.get("sku_id"),
-                  "product_name": order.get("product_name")}]
+    lines = order_lines(order)
     created, existing = [], []
     for idx, ln in enumerate(lines, start=1):
+        # 2026-11-10 — retur yang DICATAT MANUAL gudang lebih dulu untuk baris ini memakai kunci yang
+        # sama (`prepare_manual_return`), jadi paket yang sama tidak menjadi dua pekerjaan; yang
+        # dibatalkan tidak dihitung.
         found = await db[WH].find_one({"source_order_doc_id": order.get("id"),
-                                       "source_order_line": idx}, {"_id": 0})
+                                       "source_order_line": idx,
+                                       "$or": [{"source": {"$ne": "manual"}},
+                                               {"status": {"$ne": STATUS_CANCELLED}}]}, {"_id": 0})
         if found:
             existing.append(found.get("return_code"))
             continue

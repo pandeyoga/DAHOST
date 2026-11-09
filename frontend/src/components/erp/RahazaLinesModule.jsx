@@ -26,6 +26,8 @@ export default function RahazaLinesModule({ token }) {
       endpoint="/api/rahaza/lines"
       token={token}
       testIdPrefix="rahaza-line"
+      hapusPermanen
+      jenis="lini produksi"
       ieKey="lines"
       columns={[
         { key: 'code', label: 'Kode' },

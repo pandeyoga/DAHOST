@@ -258,18 +258,27 @@ def test_sj_internal_terbit_keluar_ke_perjalanan_lalu_diterima_masuk_tujuan(monk
 def test_sj_internal_stok_kurang_ditolak_tanpa_stok_bergerak_dan_batal_kembali(monkeypatch):
     db = _base_db()
     dn = _dn_env(monkeypatch, db)
-    sj = run(dn.create_sj(_sj_in(dn, qty1=50.0), Req()))["sj"]
+    # 10 Nov 2026: qty melebihi stok asal sudah ditolak saat BUAT (draf tidak tercipta)
+    with pytest.raises(HTTPException) as e:
+        run(dn.create_sj(_sj_in(dn, qty1=50.0), Req()))
+    assert e.value.status_code == 400 and "tidak cukup" in e.value.detail and db.wh_delivery_notes.docs == []
+    # …dan dicek lagi saat TERBIT (stok bisa berkurang di antara buat dan terbit)
+    sj = run(dn.create_sj(_sj_in(dn), Req()))["sj"]
+    _row(db, "M1", "L1")["qty"] = 3.0
     with pytest.raises(HTTPException) as e:
         run(dn.issue_sj(sj["id"], dn.IssueIn(), Req()))
     assert e.value.status_code == 400 and "tidak cukup" in e.value.detail
     assert db.wh_delivery_notes.docs[0]["status"] == "draft"
+    assert _row(db, "M2", "L1")["qty"] == 100.0
+    run(dn.delete_sj(sj["id"], Req()))
+    _row(db, "M1", "L1")["qty"] = 20.0
     assert _row(db, "M1", "L1")["qty"] == 20.0 and _row(db, "M2", "L1")["qty"] == 100.0
     # SJ lain terbit lalu DIBATALKAN → stok kembali ke asal
     sj2 = run(dn.create_sj(_sj_in(dn), Req()))["sj"]
     run(dn.issue_sj(sj2["id"], dn.IssueIn(), Req()))
     run(dn.cancel_sj(sj2["id"], dn.CancelIn(reason="batal kirim"), Req()))
     assert _row(db, "M1", "L1")["qty"] == 20.0 and _row(db, "M2", "L1")["qty"] == 100.0
-    transit = db.wh_delivery_notes.docs[1]["transit_location_id"]
+    transit = db.wh_delivery_notes.docs[-1]["transit_location_id"]
     assert _row(db, "M1", transit)["qty"] == 0.0 and _row(db, "M1", transit)["reserved_quantity"] == 0.0
 
 
@@ -284,11 +293,12 @@ def test_sj_internal_validasi_lokasi_dan_barang_master(monkeypatch):
     with pytest.raises(HTTPException) as e:
         run(dn.create_sj(bad, Req()))
     assert "dari master" in e.value.detail and db.wh_delivery_notes.docs == []
-    # SJ jenis lain tetap dokumen saja (tidak memindah stok)
+    # 10 Nov 2026 (owner): SJ CMT tidak lagi dibuat di Gudang — ditolak dengan menu asalnya, stok diam
     cmt = dn.SJIn(sj_type="SJ-CMT", recipient_name="CMT A", lines=[dn.SJLine(description="kain", qty=3)])
-    sj = run(dn.create_sj(cmt, Req()))["sj"]
-    assert run(dn.issue_sj(sj["id"], dn.IssueIn(), Req()))["stock_moved"] is False
-    assert _row(db, "M1", "L1")["qty"] == 20.0
+    with pytest.raises(HTTPException) as e:
+        run(dn.create_sj(cmt, Req()))
+    assert e.value.status_code == 400 and "Produksi › Kirim ke CMT" in e.value.detail
+    assert db.wh_delivery_notes.docs == [] and _row(db, "M1", "L1")["qty"] == 20.0
 
 
 # ═════════════════════ GUDANG 3 · transfer tidak bisa memindah stok karantina ═════════════════════

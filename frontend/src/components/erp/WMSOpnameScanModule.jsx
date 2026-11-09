@@ -12,6 +12,12 @@
  * Standar UI/UX v2 (8 Nov 2026): daftar sesi = PageLayout + tabel + unduh, form sesi baru = FormPopup pendek (dulu panel
  * di atas daftar), status = StatusBadge, kartu = StatTile, konfirmasi tolak = confirmDialog (dulu window.prompt),
  * arsip mesin lama tidak lagi menampilkan JSON mentah. Layar kerja hitung tetap di halaman (pemindai & kamera, HP).
+ *
+ * 10 Nov 2026 (owner: "harus jelas mau pilih all gudang, atau hanya zona atau rak … bisa pilih beberapa rak"):
+ * form sesi baru mengikuti TINGKATAN. Langkah 1 = gudang (lokasi teratas saja; zona anaknya tidak lagi tampil
+ * sebagai lokasi sendiri). Langkah 2 = cakupan: Seluruh gudang · Zona tertentu · Rak tertentu · Bin tertentu.
+ * Zona/rak/bin dicentang (boleh banyak), dikelompokkan per induknya (rak per zona, bin per rak), dengan cari.
+ * Zona anak gudang = hitung stok + penempatan; rak/bin = penempatan saja (mesin `sub_ids`, `with_areas`).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -31,7 +37,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatDateTimeID } from '@/lib/format';
 import {
   ScanLine, Plus, X, ClipboardList, MapPin, AlertTriangle, PackageCheck, ArrowLeft,
-  RefreshCw, ShieldCheck, Boxes, Printer, EyeOff, Minus,
+  RefreshCw, ShieldCheck, Boxes, Printer, EyeOff, Minus, Search,
 } from 'lucide-react';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomConversionHint, baseUnitOf } from './uom/UomPicker';
@@ -56,6 +62,70 @@ const LINE_STATUS = {
   dihitung: ['Dihitung', 'success'],
   nol: ['Anggap 0', 'warning'],
 };
+// Cakupan sesi, dari tingkat teratas ke bawah (gudang → zona → rak → bin).
+const CAKUPAN = [['semua', 'Seluruh gudang'], ['zona', 'Zona tertentu'], ['rak', 'Rak tertentu'], ['bin', 'Bin tertentu']];
+const KATA_CAKUPAN = { zona: 'zona', rak: 'rak', bin: 'bin' };
+
+/**
+ * Daftar centang berkelompok (boleh pilih banyak) untuk zona/rak/bin di form sesi baru.
+ * grup = [{ kunci, label, item: [{ id, label, ket, nonaktif, alasan }] }]. Kotak cari muncul bila pilihannya banyak.
+ */
+function DaftarCentang({ grup, terpilih, onUbah, testId }) {
+  const [cari, setCari] = useState('');
+  const semuaItem = grup.flatMap((g) => g.item);
+  const q = cari.trim().toLowerCase();
+  const tampil = grup
+    .map((g) => ({ ...g, item: q ? g.item.filter((i) => `${i.label} ${i.ket || ''} ${g.label || ''}`.toLowerCase().includes(q)) : g.item }))
+    .filter((g) => g.item.length);
+  const dipilih = new Set(terpilih);
+  const ubahSatu = (id, on) => onUbah(on ? [...terpilih.filter((x) => x !== id), id] : terpilih.filter((x) => x !== id));
+  const ubahGrup = (ids, on) => onUbah(on ? [...terpilih, ...ids.filter((x) => !dipilih.has(x))] : terpilih.filter((x) => !ids.includes(x)));
+  return (
+    <div className="space-y-2" data-testid={testId}>
+      {semuaItem.length > 8 && (
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <GlassInput value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari kode atau nama"
+            aria-label="Cari pilihan" className="pl-9" data-testid={`${testId}-cari`} />
+        </div>
+      )}
+      <div className="max-h-72 divide-y divide-[var(--glass-border)] overflow-y-auto rounded-md border border-[var(--glass-border)]">
+        {tampil.length === 0 ? (
+          <EmptyState icon={Search} title="Tidak cocok" description="Ubah kata pencarian." className="py-6" testId={`${testId}-kosong`} />
+        ) : tampil.map((g) => {
+          const bisa = g.item.filter((i) => !i.nonaktif).map((i) => i.id);
+          const penuh = bisa.length > 0 && bisa.every((id) => dipilih.has(id));
+          return (
+            <div key={g.kunci} role="group" aria-label={g.label || 'Pilihan'} className="space-y-1.5 px-3 py-2">
+              {(g.label || bisa.length > 1) && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">{g.label || 'Semua pilihan'}</p>
+                  {bisa.length > 1 && (
+                    <Button type="button" variant="link" size="sm" onClick={() => ubahGrup(bisa, !penuh)}
+                      data-testid={`${testId}-grup-${g.kunci}`}>{penuh ? 'Lepas semua' : `Pilih semua (${bisa.length})`}</Button>
+                  )}
+                </div>
+              )}
+              <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                {g.item.map((i) => (
+                  <label key={i.id} htmlFor={`${testId}-${i.id}`}
+                    className={`flex items-start gap-2 text-sm text-foreground ${i.nonaktif ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
+                    <Checkbox id={`${testId}-${i.id}`} className="mt-0.5" checked={dipilih.has(i.id)} disabled={i.nonaktif}
+                      onCheckedChange={(c) => ubahSatu(i.id, c === true)} data-testid={`${testId}-item-${i.id}`} />
+                    <span className="min-w-0">
+                      {i.label}
+                      {(i.ket || i.alasan) && <span className="block text-xs text-muted-foreground">{i.alasan || i.ket}</span>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function WMSOpnameScanModule({ token, kind = '' }) {
   const [sessions, setSessions] = useState([]);
@@ -68,9 +138,9 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
 
   // form sesi baru
   const [showNew, setShowNew] = useState(false);
-  const [locId, setLocId] = useState('');
-  const [subType, setSubType] = useState('');
-  const [subId, setSubId] = useState('');
+  const [locId, setLocId] = useState('');           // gudang (lokasi teratas)
+  const [cakupan, setCakupan] = useState('semua');  // semua | zona | rak | bin
+  const [pilihan, setPilihan] = useState([]);       // id zona/rak/bin yang dicentang (boleh banyak)
   const [kinds, setKinds] = useState(kind ? [kind] : []);
   const [codes, setCodes] = useState('');
   // 2026-11-09: opname STOK AWAL — nilai stok dibukukan ke ekuitas saldo awal (disetujui Keuangan/owner)
@@ -113,10 +183,9 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
         // tampil sebagai lokasi opname. Sama dengan aturan owner No.18(a): kantor tidak ikut pemilih lokasi stok.
         const rows = (await r.json()).filter((l) => l.type !== 'kantor');
         setLocations(rows);
-        if (kind) { const pref = rows.find((l) => l.storage_role === kind && !l.quarantine); if (pref) setLocId(pref.id); }
       }
     } catch (e) { console.error(e); }
-  }, [authH, kind]);
+  }, [authH]);
 
   const loadDetail = useCallback(async (id) => {
     try {
@@ -132,19 +201,85 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     (async () => { setLoading(true); await Promise.all([loadSessions(), loadLocations()]); setLoading(false); })();
   }, [loadSessions, loadLocations]);
 
+  // ── Form sesi baru: gudang → cakupan → zona/rak/bin (centang banyak) ──
+  // Langkah 1 hanya lokasi TERATAS (gudang). Zona anak (mis. Ruang Aksesoris) dipilih di langkah cakupan.
+  const gudangList = useMemo(() => locations.filter((l) => l.top !== false), [locations]);
   const loc = locations.find((l) => l.id === locId);
-  const subChoices = !loc ? [] : subType === 'zone' ? loc.zones.map((z) => [z.id, `${z.code} - ${z.name}`])
-    : subType === 'rack' ? loc.racks.map((r) => [r.id, `${r.code} - ${r.name}`])
-      : subType === 'bin' ? loc.bins.map((b) => [b.id, b.label]) : [];
+  const areas = loc?.areas || [];
+  const adaZonaAnak = areas.length > 0;
+  const zonaStok = adaZonaAnak;   // zona anak = lokasi stok sendiri → hitung stok + penempatan
+  const namaZona = (id) => (id === loc?.id ? 'Di luar zona' : areas.find((a) => a.id === id)?.name || '');
+  const tersedia = {
+    semua: !!loc, zona: !!loc && (adaZonaAnak || loc.zones.length > 0),
+    rak: !!loc && loc.racks.length > 0, bin: !!loc && loc.bins.length > 0,
+  };
+  const grupPilihan = (() => {
+    if (!loc) return [];
+    const zonaRak = Object.fromEntries(loc.zones.map((z) => [z.id, z]));
+    const namaGrupZona = (z) => (adaZonaAnak && z.area_id
+      ? `${namaZona(z.area_id)} · ${z.code} ${z.name || ''}` : `Zona ${z.code} ${z.name || ''}`).trim();
+    if (cakupan === 'zona' && adaZonaAnak) {
+      return [{ kunci: 'zona', label: '', item: [
+        { id: loc.id, label: `Di luar zona (${loc.name})`, ket: 'Barang yang tercatat langsung di gudang, di luar zona mana pun' },
+        ...areas.map((a) => ({ id: a.id, label: a.name || a.code, ket: a.code, nonaktif: a.quarantine,
+          alasan: a.quarantine ? 'Karantina — dikelola dokumen karantina' : '' })),
+      ] }];
+    }
+    if (cakupan === 'zona') return [{ kunci: 'zona', label: '', item: loc.zones.map((z) => ({ id: z.id, label: z.code, ket: z.name })) }];
+    if (cakupan === 'rak') {
+      return loc.zones.map((z) => ({
+        kunci: z.id, label: namaGrupZona(z),
+        item: loc.racks.filter((r) => r.zone_id === z.id).map((r) => ({ id: r.id, label: r.code, ket: r.name !== r.code ? r.name : '' })),
+      })).filter((g) => g.item.length);
+    }
+    if (cakupan === 'bin') {
+      return loc.racks.map((r) => ({
+        kunci: r.id, label: `Rak ${r.code}${zonaRak[r.zone_id] ? ` · ${namaGrupZona(zonaRak[r.zone_id])}` : ''}`,
+        item: loc.bins.filter((b) => b.rack_id === r.id).map((b) => ({ id: b.id, label: b.barcode || b.label })),
+      })).filter((g) => g.item.length);
+    }
+    return [];
+  })();
+  const labelPilihan = grupPilihan.flatMap((g) => g.item).filter((i) => pilihan.includes(i.id)).map((i) => i.label);
+  const subType = cakupan === 'semua' ? '' : cakupan === 'zona' ? (zonaStok ? 'area' : 'zone') : cakupan === 'rak' ? 'rack' : 'bin';
+  const hitungStok = cakupan === 'semua' || (cakupan === 'zona' && zonaStok);
+  const zonaIkut = areas.filter((a) => !a.quarantine).map((a) => a.name || a.code);
+  const zonaKarantina = areas.filter((a) => a.quarantine).map((a) => a.name || a.code);
+  const efekCakupan = !loc ? 'Pilih gudang dulu.'
+    : cakupan === 'semua'
+      ? `Stok dan penempatan seluruh gudang dihitung ulang${zonaIkut.length ? `, termasuk zona ${zonaIkut.join(', ')}` : ''}.`
+        + (zonaKarantina.length ? ` Zona karantina (${zonaKarantina.join(', ')}) tidak ikut.` : '')
+      : hitungStok ? 'Stok dan penempatan zona yang dicentang dihitung ulang.'
+        : 'Penempatan bin saja — stok dan jurnal tidak berubah. Untuk memperbaiki stok, pilih seluruh gudang atau zona.';
+
+  const gantiGudang = (id) => { setLocId(id); setCakupan('semua'); setPilihan([]); };
+  const gantiCakupan = (c) => {
+    setCakupan(c); setPilihan([]);
+    if (!(c === 'semua' || (c === 'zona' && zonaStok))) setOpening(false);
+  };
+  // Portal Aksesoris: bawaan = gudang induk lokasi aksesoris → zona aksesoris itu (dulu lokasinya langsung).
+  const bukaBaru = () => {
+    setCakupan('semua'); setPilihan([]); setCodes(''); setOpening(false);
+    const pref = kind ? locations.find((l) => l.storage_role === kind && !l.quarantine) : null;
+    if (pref) {
+      const top = pref.top_id || pref.id;
+      setLocId(top);
+      if (top !== pref.id) { setCakupan('zona'); setPilihan([pref.id]); }
+    }
+    setShowNew(true);
+  };
 
   const sess = view?.session;
   const sessLoc = locations.find((l) => l.id === sess?.location_id);
   const isRak = sess?.level === 'rak';
+  const lantaiKode = sess?.floor_code || sess?.location_code;
   const ctxBins = useMemo(() => {
     if (!sessLoc) return [];
     const sub = sess?.sub_scope;
-    return sessLoc.bins.filter((b) => !sub || (sub.type === 'zone' && b.zone_id === sub.id)
-      || (sub.type === 'rack' && b.rack_id === sub.id) || (sub.type === 'bin' && b.id === sub.id));
+    const zonaSesi = sess?.zone_ids;
+    const kunci = { zone: 'zone_id', rack: 'rack_id', bin: 'id' }[sub?.type];
+    const ids = sub?.ids || (sub?.id ? [sub.id] : []);
+    return sessLoc.bins.filter((b) => (!zonaSesi || zonaSesi.includes(b.zone_id)) && (!kunci || ids.includes(b[kunci])));
   }, [sessLoc, sess]);
 
   const lastMatId = lastScan?.material_id;
@@ -169,17 +304,18 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const createSession = async () => {
     setBusy(true);
     try {
+      // Gudang beserta zona anaknya (`with_areas`); zona/rak/bin yang dicentang dikirim sekaligus (`sub_scope_ids`).
       const body = {
-        location_id: locId, sub_scope_type: subType, sub_scope_id: subType ? subId : '', kinds,
+        location_id: locId, with_areas: true, sub_scope_type: subType, sub_scope_ids: subType ? pilihan : [], kinds,
         material_codes: codes.split(/[\s,;]+/).map((c) => c.trim()).filter(Boolean), source: kind || 'gudang',
-        opening,
+        opening: opening && hitungStok,
       };
       const r = await fetch(`${API}/api/wms/opname3/sessions`, { method: 'POST', headers: jsonH, body: JSON.stringify(body) });
       const d = await r.json();
       if (r.ok) {
-        setShowNew(false); setCodes(''); setSubType(''); setSubId(''); setOpening(false);
+        setShowNew(false); setCodes(''); setCakupan('semua'); setPilihan([]); setOpening(false);
         await loadSessions(); await loadDetail(d.id); setCtxBin({ id: '', label: '' }); setLastScan(null); resetScanUi();
-        flash('success', `Sesi ${d.session_no} dibuat — ${d.lines} baris (${d.level === 'rak' ? 'hitung rak: penempatan saja' : 'hitung lokasi'}).`);
+        flash('success', `Sesi ${d.session_no} dibuat — ${d.scope_label} · ${d.lines} baris (${d.level === 'rak' ? 'penempatan saja' : 'stok dan penempatan'}).`);
       } else flash('error', errText(d, 'Gagal membuat sesi'));
     } catch (e) { flash('error', e.message); } finally { setBusy(false); }
   };
@@ -304,7 +440,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     return (
       <PageLayout testId="wms-opname-scan-module" title={kind === 'aksesoris' ? 'Stok opname aksesoris' : 'Sesi opname'}
         subtitle="Hitung stok fisik per lokasi; transaksi tetap jalan dan selisih dibukukan setelah disetujui."
-        actions={<Button onClick={() => setShowNew(true)} data-testid="opname-new-btn"><Plus /> Opname baru</Button>}
+        actions={<Button onClick={bukaBaru} data-testid="opname-new-btn"><Plus /> Opname baru</Button>}
         tools={<>
           <TombolUnduh namaBerkas={kind === 'aksesoris' ? 'sesi-opname-aksesoris' : 'sesi-opname'} namaLembar="Sesi opname"
             baris={sessions} testId="opname-unduh" kolom={[
@@ -324,36 +460,38 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
         <TabelData kolom={kolomSesi} baris={sessions} kunci={(s) => s.id} onKlikBaris={openSession} testId="opname-sesi-tabel"
           kosong={<EmptyState icon={ClipboardList} title="Belum ada sesi opname" description="Klik Opname baru untuk mulai menghitung." testId="opname-empty" />} />
 
-        <FormPopup open={showNew} onClose={() => setShowNew(false)} ukuran="pendek" judul="Sesi opname baru"
-          keterangan="Pilih lokasi yang dihitung. Jumlah sistem disembunyikan selama menghitung."
-          onSimpan={createSession} menyimpan={busy} bisaSimpan={!!locId && !(subType && !subId)} labelSimpan="Mulai hitung"
-          testId="opname-new-panel">
-          <Isian label="Lokasi" wajib htmlFor="opname-location-field">
+        <FormPopup open={showNew} onClose={() => setShowNew(false)} ukuran="panjang" judul="Sesi opname baru"
+          keterangan="Pilih gudang, lalu seberapa luas yang dihitung. Jumlah sistem disembunyikan selama menghitung."
+          onSimpan={createSession} menyimpan={busy} bisaSimpan={!!locId && (cakupan === 'semua' || pilihan.length > 0)}
+          labelSimpan="Mulai hitung" testId="opname-new-panel">
+          {/* 1 · Gudang: hanya tingkat teratas; zona di dalamnya dipilih di langkah 2. */}
+          <Isian label="Gudang" wajib htmlFor="opname-location-field">
             <div className="flex gap-2">
               <div className="min-w-0 flex-1">
-                <SmartNativeSelect id="opname-location-field" value={locId} onChange={(e) => { setLocId(e.target.value); setSubType(''); setSubId(''); }} className="w-full" data-testid="opname-location">
-                  <option value="">Pilih lokasi</option>
-                  {locations.map((l) => <option key={l.id} value={l.id} disabled={l.quarantine}>{l.code} - {l.name}{l.quarantine ? ' (karantina — dikelola dokumen karantina)' : ''}</option>)}
+                <SmartNativeSelect id="opname-location-field" value={locId} onChange={(e) => gantiGudang(e.target.value)} className="w-full" data-testid="opname-location">
+                  <option value="">Pilih gudang</option>
+                  {gudangList.map((l) => <option key={l.id} value={l.id} disabled={l.quarantine}>{l.code} - {l.name}{l.quarantine ? ' (karantina — dikelola dokumen karantina)' : ''}</option>)}
                 </SmartNativeSelect>
               </div>
               {locId && <IconButton label="Cetak label lokasi" onClick={() => printLocationLabel(locId)} data-testid="opname-print-location"><Printer className="w-4 h-4 text-muted-foreground" /></IconButton>}
             </div>
           </Isian>
-          <Isian label="Level" htmlFor="opname-sub-type-field">
-            <SmartNativeSelect id="opname-sub-type-field" value={subType} onChange={(e) => { setSubType(e.target.value); setSubId(''); }} className="w-full" searchable={false}
-              disabled={!loc || !(loc.zones.length || loc.bins.length)} data-testid="opname-sub-type">
-              <option value="">Seluruh lokasi (stok + penempatan)</option>
-              <option value="zone">Per zona (penempatan saja)</option>
-              <option value="rack">Per rak (penempatan saja)</option>
-              <option value="bin">Per bin (penempatan saja)</option>
-            </SmartNativeSelect>
+          {/* 2 · Cakupan: dari tingkat teratas ke bawah. */}
+          <Isian label="Yang dihitung" wajib petunjuk={efekCakupan}>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Yang dihitung" data-testid="opname-cakupan">
+              {CAKUPAN.map(([k, label]) => (
+                <Button key={k} type="button" size="sm" variant={cakupan === k ? 'default' : 'outline'} aria-pressed={cakupan === k}
+                  disabled={!tersedia[k]} onClick={() => gantiCakupan(k)} data-testid={`opname-cakupan-${k}`}>{label}</Button>
+              ))}
+            </div>
           </Isian>
-          {subType && (
-            <Isian label={`Pilih ${subType === 'zone' ? 'zona' : subType === 'rack' ? 'rak' : 'bin'}`} wajib htmlFor="opname-sub-id-field">
-              <SmartNativeSelect id="opname-sub-id-field" value={subId} onChange={(e) => setSubId(e.target.value)} className="w-full" data-testid="opname-sub-id">
-                <option value="">Pilih</option>
-                {subChoices.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-              </SmartNativeSelect>
+          {cakupan !== 'semua' && loc && (
+            <Isian label={`Pilih ${KATA_CAKUPAN[cakupan]}`} wajib
+              petunjuk={pilihan.length
+                ? `${pilihan.length} ${KATA_CAKUPAN[cakupan]} dipilih: ${labelPilihan.slice(0, 8).join(', ')}${labelPilihan.length > 8 ? ', …' : ''}`
+                : `Centang satu atau lebih ${KATA_CAKUPAN[cakupan]}.`}>
+              <DaftarCentang key={`${locId}-${cakupan}`} grup={grupPilihan} terpilih={pilihan} onUbah={setPilihan}
+                testId={`opname-pilih-${cakupan}`} />
             </Isian>
           )}
           <Isian label="Jenis barang" petunjuk="Tidak dicentang = semua jenis.">
@@ -367,11 +505,13 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               ))}
             </div>
           </Isian>
-          <Isian label="Jenis sesi" petunjuk={opening
-            ? 'Stok awal: nilai hasil hitung dibukukan ke ekuitas saldo awal (bukan selisih persediaan), disetujui Keuangan/owner. Barang tanpa harga ditolak; sekali per barang × lokasi.'
-            : 'Opname biasa: selisih dibukukan ke selisih persediaan.'}>
+          <Isian label="Jenis sesi" petunjuk={!hitungStok
+            ? 'Opname stok awal hanya bila stok ikut dihitung: seluruh gudang, atau zona yang menyimpan stok sendiri.'
+            : opening
+              ? 'Stok awal: nilai hasil hitung dibukukan ke ekuitas saldo awal (bukan selisih persediaan), disetujui Keuangan/owner. Barang tanpa harga ditolak; sekali per barang × lokasi.'
+              : 'Opname biasa: selisih dibukukan ke selisih persediaan.'}>
             <label htmlFor="opname-opening-cb" className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
-              <Checkbox id="opname-opening-cb" checked={opening} disabled={!!subType}
+              <Checkbox id="opname-opening-cb" checked={opening && hitungStok} disabled={!hitungStok}
                 onCheckedChange={(c) => setOpening(c === true)} data-testid="opname-opening" />
               Opname stok awal (go-live)
             </label>
@@ -514,11 +654,11 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="flex items-center gap-1 text-sm font-medium text-muted-foreground"><MapPin className="w-3 h-3" /> Lokasi hitung{isRak ? ' (wajib pilih bin)' : ''}</span>
                 <span className="min-w-0 truncate text-xs text-muted-foreground" data-testid="opname-active-bin">
-                  Sekarang: <span className="font-medium text-foreground">{ctxBin.id ? ctxBin.label : `${sess.location_code} · lantai / belum dirak`}</span>
+                  Sekarang: <span className="font-medium text-foreground">{ctxBin.id ? ctxBin.label : `${lantaiKode} · lantai / belum dirak`}</span>
                 </span>
               </div>
               <SmartNativeSelect value={ctxBin.id} onChange={(e) => { const b = ctxBins.find((x) => x.id === e.target.value); setCtxBin(b ? { id: b.id, label: b.label } : { id: '', label: '' }); setBinResult(null); focusItem(); }} className="w-full" aria-label="Lokasi hitung" data-testid="opname-bin-select">
-                {!isRak && <option value="">Lantai / belum dirak ({sess.location_code})</option>}
+                {!isRak && <option value="">Lantai / belum dirak ({lantaiKode})</option>}
                 {isRak && <option value="">Pilih bin</option>}
                 {ctxBins.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
               </SmartNativeSelect>

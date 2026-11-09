@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { materialOptionLabel } from '@/lib/materialFields';
+import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import ImportExportToolbar from '../ImportExportToolbar';
@@ -802,6 +803,27 @@ export default function SupplierMasterModule({ token }) {
     } catch (e) { toast.error(e.message); }
   };
 
+  // 10 Nov 2026 (permintaan owner): Hapus sungguhan. Server menolak (409) bila supplier sudah dipakai PO,
+  // penerimaan, faktur, retur, PR, aset, atau barang → dialog kedua menawarkan Nonaktifkan (lib/hapusMaster).
+  // Pemanggil sendiri (bukan procApi) supaya kode status 409 ikut terbawa.
+  const deleteReq = async (s, hard) => {
+    const res = await fetch(`${EP.supplier(s.id)}${hard ? '?hard=true' : ''}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      let msg = `Gagal (HTTP ${res.status})`;
+      try { const d = await res.clone().json(); if (d && typeof d.detail === 'string') msg = d.detail; } catch { /* body tak terbaca */ }
+      const e = new Error(msg); e.status = res.status; throw e;
+    }
+  };
+  const hapus = async (s) => {
+    const hasil = await hapusMaster({ jenis: 'supplier', nama: s.name,
+      keterangan: 'Supplier dan daftar harganya dihapus permanen. Bila sudah dipakai di PO, penerimaan, faktur, atau dokumen lain, penghapusan ditolak'
+        + (s.is_active === false ? '.' : ' dan Anda bisa menonaktifkannya saja.'),
+      hapus: () => deleteReq(s, true), nonaktifkan: s.is_active === false ? null : () => deleteReq(s, false) });
+    if (hasil) load(pagination.page);
+  };
+
   const activate = async (s) => {
     try {
       await apiPost(token, EP.supplierActivate(s.id), {});
@@ -841,7 +863,7 @@ export default function SupplierMasterModule({ token }) {
       ) : <span className="text-muted-foreground">—</span>;
     } },
     { kunci: 'status', label: 'Status', isi: (s) => <ActiveBadge active={s.is_active} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (s) => (
       <div className="flex items-center justify-end gap-1">
         <Button variant="outline" size="icon-sm" onClick={() => bukaUbah(s)} title="Ubah supplier"
           aria-label={`Ubah ${s.name}`} data-testid={`supplier-edit-${s.id}`}>
@@ -868,6 +890,10 @@ export default function SupplierMasterModule({ token }) {
                 <Ban className="mr-2 h-4 w-4" /> Nonaktifkan
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem onSelect={() => hapus(s)} data-testid={`supplier-delete-${s.id}`}
+              className="text-[hsl(var(--danger-text))]">
+              <Trash2 className="mr-2 h-4 w-4" /> Hapus
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>) },

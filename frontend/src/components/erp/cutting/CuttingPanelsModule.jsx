@@ -13,12 +13,21 @@
  * Standar UI/UX v2 (8 Nov 2026): PageLayout, tabel standar berhalaman (dulu 596 baris sekaligus) yang bisa
  * diunduh, Bersihkan = konfirmasi. Status nilai "standar" (biaya standar dari BOM, belum dari cutting nyata)
  * kini tampil apa adanya — dulu terbaca "belum bernilai" padahal kartu "Belum bernilai" = 0.
+ *
+ * 10 Nov 2026 (owner: "master data harus bisa diubah & dihapus"): kolom Aksi per baris —
+ *   · Ubah  = nama & catatan lewat Master Item (`PUT /api/rahaza/materials/{id}`); kode potongan tetap (identitas
+ *     model × warna × ukuran);
+ *   · Hapus = `DELETE /api/cutting/panels/{id}` — pemeriksaan sama dengan "Bersihkan yang aman"
+ *     (`core.cut_panel_health`); bila sudah dipakai (409) layar menawarkan Nonaktifkan (Master Item).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Package, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
+import { AlertTriangle, Package, Pencil, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TabelData from '@/components/ui/tabel-data';
@@ -37,6 +46,57 @@ const VALUE_BADGE = {
 const statusNilai = (m) => m.value_status || (Number(m.unit_cost || 0) > 0 ? 'valued' : 'unvalued');
 const nilaiBaris = (m) => Number(m.stock_value ?? (Number(m.stock_qty || 0) * Number(m.unit_cost || 0)));
 
+// 10 Nov 2026 — permintaan yang galatnya membawa `status` (409 = sudah dipakai → hapusMaster menawarkan Nonaktifkan).
+const BASE = process.env.REACT_APP_BACKEND_URL || '';
+async function kirim(method, path, token, body) {
+  const res = await fetch(`${BASE}/api${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = new Error((typeof d.detail === 'string' && d.detail) || `Gagal (HTTP ${res.status})`);
+    e.status = res.status;
+    throw e;
+  }
+  return d;
+}
+
+/** Ubah nama & catatan master potongan (kode = identitas model × warna × ukuran, tidak diubah di sini). */
+function UbahPotonganForm({ panel, token, onClose, onSaved }) {
+  const [form, setForm] = useState({ name: panel.name || '', notes: panel.notes || '' });
+  const [menyimpan, setMenyimpan] = useState(false);
+  const [galat, setGalat] = useState('');
+  const simpan = async () => {
+    if (!form.name.trim()) { setGalat('Nama wajib diisi.'); return; }
+    setMenyimpan(true);
+    setGalat('');
+    try {
+      await kirim('PUT', `/rahaza/materials/${panel.id}`, token, { name: form.name.trim(), notes: form.notes.trim() });
+      toast.success(`Master potongan ${panel.code} disimpan`);
+      onSaved();
+    } catch (e) {
+      setGalat(e.message);
+    } finally {
+      setMenyimpan(false);
+    }
+  };
+  return (
+    <FormPopup open onClose={onClose} judul="Ubah master potongan" keterangan={`Kode ${panel.code} tetap (model × warna × ukuran).`}
+      onSimpan={simpan} menyimpan={menyimpan} galat={galat} testId="cutting-panel-form">
+      <Isian label="Nama" wajib htmlFor="cp-nama">
+        <Input id="cp-nama" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          data-testid="cutting-panel-form-name" />
+      </Isian>
+      <Isian label="Catatan" htmlFor="cp-catatan">
+        <Textarea id="cp-catatan" rows={3} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+          data-testid="cutting-panel-form-notes" />
+      </Isian>
+    </FormPopup>
+  );
+}
+
 export default function CuttingPanelsModule({ token, onNavigate }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +104,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
   const [err, setErr] = useState('');
   const [health, setHealth] = useState(null);
   const [cleaning, setCleaning] = useState(false);
+  const [ubah, setUbah] = useState(null);
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -104,6 +165,17 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
     }
   };
 
+  const hapus = async (m) => {
+    const hasil = await hapusMaster({
+      jenis: 'master potongan', nama: m.code,
+      keterangan: 'Master potongan dihapus permanen. Bila masih berstok, punya kartu stok, dipakai order cutting, BOM, '
+        + 'atau dokumen material, penghapusan ditolak dan Anda bisa menonaktifkannya saja.',
+      hapus: () => kirim('DELETE', `/cutting/panels/${m.id}`, token),
+      nonaktifkan: () => kirim('DELETE', `/rahaza/materials/${m.id}`, token),
+    });
+    if (hasil) await load();
+  };
+
   const kolom = [
     { kunci: 'code', label: 'Kode potongan', hp: 'judul', isi: (m) => (
       <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -129,6 +201,13 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
       );
     } },
     { kunci: 'dibuat', label: 'Dibuat', hp: false, isi: (m) => <span className="whitespace-nowrap text-muted-foreground">{fmtDate(m.created_at)}</span> },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (m) => (
+      <div className="flex justify-end gap-1">
+        <Button size="icon-sm" variant="ghost" onClick={() => setUbah(m)} title="Ubah potongan" aria-label="Ubah potongan"
+          data-testid={`cutting-panel-row-edit-${m.id}`}><Pencil /></Button>
+        <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--danger-text))]" onClick={() => hapus(m)}
+          title="Hapus potongan" aria-label="Hapus potongan" data-testid={`cutting-panel-row-delete-${m.id}`}><Trash2 /></Button>
+      </div>) },
   ];
 
   return (
@@ -222,6 +301,10 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
           kosong={<EmptyState icon={Package} testId="cutting-panels-empty"
             title={rows.length ? 'Tidak ada potongan yang cocok' : 'Belum ada master potongan'}
             description={rows.length ? 'Ubah kata pencarian.' : 'Item potongan otomatis dibuat saat sebuah order cutting dimulai.'} />} />
+      )}
+      {ubah && (
+        <UbahPotonganForm panel={ubah} token={token} onClose={() => setUbah(null)}
+          onSaved={async () => { setUbah(null); await load(); }} />
       )}
     </PageLayout>
   );

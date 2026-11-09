@@ -13,11 +13,15 @@ Conventions:
   - All documents use UUID string `id`.
   - `active` flag (soft disable).
   - Timestamps in UTC.
+  - DELETE tanpa parameter = nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, permintaan owner "master data
+    bisa dihapus") = hapus permanen bila belum dipakai (`core.hapus_master` → 409 + rincian), hanya untuk pengelola
+    modulnya (lihat `_GERBANG_HAPUS`).
 """
 # ruff: noqa: E741
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, check_role
+from core.roles import HR_ROLES, PRODUCTION_ROLES, WAREHOUSE_ROLES
 from typing import Optional
 import uuid
 import logging
@@ -193,7 +197,136 @@ async def _require_admin(request: Request):
     return user
 
 
-# ─── LOCATIONS (Gedung & Zona) ───────────────────────────────────────────────
+# ─── Hapus permanen (10 Nov 2026, owner: "pastikan table table master data bisa dihapus") ─────────────────────
+# Menonaktifkan tetap boleh untuk semua staf internal (keputusan lama di atas). Menghapus permanen lebih berat →
+# hanya pengelola modul pemilik master itu (kode peran ATAU izin modulnya di data/module_catalog.py).
+_GERBANG_HAPUS = {
+    "lokasi": (("admin", *WAREHOUSE_ROLES), ("wh.bin.manage", "warehouse.manage"),
+               "Hanya pengelola gudang yang boleh menghapus lokasi."),
+    "lokasi_kerja": (("admin", *HR_ROLES), ("hr.employee.manage", "hr.manage"),
+                     "Hanya HR dan manajemen yang boleh menghapus lokasi kerja."),
+    "produksi": (("admin", *PRODUCTION_ROLES), ("prod.master.manage", "prod.line.manage"),
+                 "Hanya pengelola master produksi yang boleh menghapus lini atau mesin."),
+    "shift": (("admin", *HR_ROLES), ("hr.attendance.manage", "hr.manage"),
+              "Hanya HR dan manajemen yang boleh menghapus shift."),
+    "karyawan": (("admin", *HR_ROLES), ("hr.employee.manage", "hr.manage"),
+                 "Hanya HR dan manajemen yang boleh menghapus data karyawan."),
+}
+
+
+def _wajib_pengelola(user: dict, kunci: str) -> None:
+    roles, perms, pesan = _GERBANG_HAPUS[kunci]
+    if not check_role(user, list(roles), perms):
+        raise HTTPException(403, pesan)
+
+
+def _ids(v) -> dict:
+    """Filter id yang tahan beda tipe (shift lama ber-id angka, master baru ber-id teks)."""
+    return {"$in": list(dict.fromkeys([v, str(v)]))}
+
+
+async def pemakaian_lokasi(db, lid: str) -> dict:
+    """Di mana lokasi gudang dipakai: stok & mutasi per lokasi, zona/rak anak, dan master lain yang menunjuknya."""
+    from core.hapus_master import hitung_pemakaian
+    dari_ke = {"$or": [{"location_id": lid}, {"from_location_id": lid}, {"to_location_id": lid}]}
+    return await hitung_pemakaian(db, [
+        ("zona/lokasi anak", "rahaza_locations", {"parent_id": lid}),
+        ("baris stok bahan", "rahaza_material_stock", {"location_id": lid}),
+        ("mutasi stok", "rahaza_material_movements", dari_ke),
+        ("kartu stok", "rahaza_stock_ledger", {"location_id": lid}),
+        ("mutasi barang jadi", "rahaza_fg_movements", dari_ke),
+        ("pengeluaran barang jadi", "rahaza_fg_issues", {"location_id": lid}),
+        ("permintaan bahan", "rahaza_material_issues", {"$or": [{"location_id": lid}, {"items.location_id": lid}]}),
+        ("penerimaan barang", "warehouse_receiving", {"location_id": lid}),
+        ("surat jalan", "wh_delivery_notes", {"$or": [{"from_location_id": lid}, {"to_location_id": lid}]}),
+        ("zona gudang", "wh_zones", {"location_id": lid}),
+        ("mesin", "rahaza_machines", {"location_id": lid}),
+        ("lini produksi", "rahaza_lines", {"location_id": lid}),
+        # lokasi KANTOR = lokasi kerja karyawan (SDM › Lokasi kerja) dan lingkup jadwal shift
+        ("karyawan", "rahaza_employees", {"location_id": lid}),
+        ("jadwal shift", "rahaza_schedules", {"location_id": lid}),
+    ])
+
+
+async def pemakaian_lini(db, lid: str) -> dict:
+    from core.hapus_master import hitung_pemakaian
+    return await hitung_pemakaian(db, [
+        ("penugasan lini", "rahaza_line_assignments", {"line_id": lid}),
+        ("catatan produksi", "rahaza_wip_events", {"line_id": lid}),
+        ("catatan mesin berhenti", "rahaza_machine_downtime", {"line_id": lid}),
+    ])
+
+
+async def pemakaian_mesin(db, mid: str) -> dict:
+    from core.hapus_master import hitung_pemakaian
+    return await hitung_pemakaian(db, [
+        ("catatan mesin berhenti", "rahaza_machine_downtime", {"machine_id": mid}),
+        ("catatan perawatan", "rahaza_maintenance_logs", {"machine_id": mid}),
+        ("penugasan lini", "rahaza_line_assignments", {"machine_id": mid}),
+        ("catatan produksi", "rahaza_wip_events", {"machine_id": mid}),
+    ])
+
+
+async def pemakaian_shift(db, sid) -> dict:
+    """Satu master shift (`rahaza_shifts`) dipakai layar Produksi (/rahaza/shifts) dan SDM (/hr/shifts)."""
+    from core.hapus_master import hitung_pemakaian
+    ids = _ids(sid)
+    return await hitung_pemakaian(db, [
+        ("karyawan (shift utama)", "rahaza_employees", {"shift_id": ids}),
+        ("penugasan shift", "hr_shift_assignments", {"shift_id": ids}),
+        ("jadwal shift", "rahaza_schedules", {"shifts.shift_id": ids}),
+        ("pola rotasi", "hr_shift_pola", {"urutan": ids}),
+        ("absensi", "rahaza_attendance_events", {"shift_id": ids}),
+        ("penugasan lini", "rahaza_line_assignments", {"shift_id": ids}),
+        ("serah terima shift", "rahaza_shift_handovers", {"shift_id": ids}),
+        ("permintaan tukar/ganti shift", "hr_shift_requests",
+         {"$or": [{"shift_asal.id": ids}, {"shift_diminta.id": ids}, {"rekan_shift_asal.id": ids}]}),
+    ])
+
+
+async def pemakaian_karyawan(db, emp: dict) -> dict:
+    """Riwayat apa pun milik karyawan. Hapus permanen hanya untuk data yang salah input (belum punya riwayat)."""
+    from core.hapus_master import hitung_pemakaian
+    eid = emp["id"]
+    akun = {"$or": [{"employee_id": eid}, {"id": emp["user_id"]}]} if emp.get("user_id") else {"employee_id": eid}
+    return await hitung_pemakaian(db, [
+        ("absensi", "rahaza_attendance_events", {"employee_id": eid}),
+        ("absensi lama", "rahaza_attendance", {"employee_id": eid}),
+        ("koreksi absensi", "rahaza_attendance_corrections", {"employee_id": eid}),
+        ("slip gaji", "rahaza_payslips", {"employee_id": eid}),
+        ("kasbon", "rahaza_employee_loans", {"employee_id": eid}),
+        ("pengajuan kasbon", "dewi_kasbon_requests", {"employee_id": eid}),
+        ("klaim biaya", "rahaza_expense_claims", {"employee_id": eid}),
+        ("perjalanan dinas", "employee_travel_requests", {"employee_id": eid}),
+        ("pengajuan cuti", "rahaza_leave_requests", {"employee_id": eid}),
+        ("saldo cuti terpakai", "rahaza_leave_balances", {"employee_id": eid, "used": {"$gt": 0}}),
+        ("lembur", "rahaza_overtime_requests", {"employee_id": eid}),
+        ("penyesuaian gaji", "rahaza_salary_adjustments", {"employee_id": eid}),
+        ("perubahan data karyawan", "rahaza_employee_data_changes", {"employee_id": eid}),
+        ("jadwal shift", "rahaza_schedules", {"shifts.employee_id": eid}),
+        ("permintaan tukar/ganti shift", "hr_shift_requests", {"$or": [{"employee_id": eid}, {"rekan_employee_id": eid}]}),
+        ("penugasan lini", "rahaza_line_assignments", {"$or": [{"operator_id": eid}, {"employee_id": eid}]}),
+        ("catatan produksi", "rahaza_wip_events", {"operator_id": eid}),
+        ("tunjangan khusus", "da_payroll_allowances", {"employee_ids": eid}),
+        ("karyawan bawahan", "rahaza_employees", {"manager_id": eid}),
+        ("kepala unit organisasi", "dewi_org_units", {"head_employee_id": eid}),
+        ("akun login tertaut", "users", akun),
+        ("dokumen karyawan", "attachments", {"entity_type": "employee", "entity_id": eid, "is_deleted": {"$ne": True}}),
+    ])
+
+
+# ─── LOCATIONS (Gedung & Zona; Kantor = lokasi kerja karyawan) ───────────────
+# 10 Nov 2026 (keputusan owner): lokasi KANTOR (KTR-PST/ADM/HRD/MKT, dipakai karyawan sebagai lokasi kerja) memakai
+# master yang sama tetapi dikelola di SDM › Lokasi kerja; Gudang › Lokasi gudang hanya menampilkan gedung & zona.
+LOCATION_TYPES = ("gedung", "zona", "kantor")
+
+
+def _tolak_peran_gudang_kantor(type_: str, storage_role: str) -> None:
+    if type_ == "kantor" and storage_role:
+        raise HTTPException(400, "Lokasi kantor tidak menyimpan stok, jadi tidak boleh punya peran gudang. "
+                                 "Kosongkan peran gudang, atau pilih jenis gedung/zona.")
+
+
 @router.get("/locations")
 async def list_locations(request: Request, include_inactive: bool = False):
     await require_auth(request)
@@ -219,16 +352,19 @@ async def create_location(request: Request):
     type_ = (body.get("type") or "zona").lower()
     if not code or not name:
         raise HTTPException(400, "code & name required")
-    if type_ not in ("gedung", "zona"):
-        raise HTTPException(400, "type must be 'gedung' or 'zona'")
+    if type_ not in LOCATION_TYPES:
+        raise HTTPException(400, "Jenis lokasi harus gedung, zona, atau kantor.")
     if await db.rahaza_locations.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai (aktif). Gunakan kode lain.")
+    # 10 Nov 2026 (owner): zona di bawah gedung; KANTOR (lokasi kerja karyawan, layar SDM › Lokasi kerja) boleh di
+    # bawah kantor induk (mis. Ruang Admin di bawah Kantor Pusat). Gedung selalu teratas.
+    parent_id = (body.get("parent_id") or None) if type_ in ("zona", "kantor") else None
     # 2026-11-06 (pola P8): nama setara di induk yang sama ditolak (kode beda, tempat sama = stok terbelah)
     from core.reference_dedup import assert_unique_ref
-    await assert_unique_ref(db, "rahaza_locations", name=name, label="Lokasi",
-                            scope={"parent_id": body.get("parent_id") if type_ == "zona" else None})
+    await assert_unique_ref(db, "rahaza_locations", name=name, label="Lokasi", scope={"parent_id": parent_id})
     from core.location_resolver import STORAGE_ROLES, EXEMPT_ROLES
     storage_role = (body.get("storage_role") or "").strip().lower()
+    _tolak_peran_gudang_kantor(type_, storage_role)
     if storage_role and storage_role not in STORAGE_ROLES + EXEMPT_ROLES:
         raise HTTPException(400, f"Peran gudang '{storage_role}' tidak dikenal. Pilihan: "
                                  f"{', '.join(STORAGE_ROLES + EXEMPT_ROLES)}")
@@ -237,7 +373,7 @@ async def create_location(request: Request):
         "code": code,
         "name": name,
         "type": type_,
-        "parent_id": body.get("parent_id") if type_ == "zona" else None,
+        "parent_id": parent_id,
         "storage_role": storage_role or None,
         "active": True,
         "created_at": _now(),
@@ -259,6 +395,15 @@ async def update_location(loc_id: str, request: Request):
     body["updated_at"] = _now()
     if "code" in body:
         body["code"] = body["code"].strip().upper()
+    if "type" in body or "storage_role" in body:   # 10 Nov 2026: kantor = lokasi kerja, bukan tempat stok
+        cur = await db.rahaza_locations.find_one({"id": loc_id}, {"_id": 0, "type": 1, "storage_role": 1}) or {}
+        type_ = str(body.get("type") or cur.get("type") or "").lower()
+        if "type" in body and type_ not in LOCATION_TYPES:
+            raise HTTPException(400, "Jenis lokasi harus gedung, zona, atau kantor.")
+        # peran lama hanya diperiksa bila jenisnya BARU diganti ke kantor (data kantor lama tetap bisa diubah)
+        jadi_kantor = type_ == "kantor" and str(cur.get("type") or "").lower() != "kantor"
+        peran = body["storage_role"] if "storage_role" in body else (cur.get("storage_role") if jadi_kantor else None)
+        _tolak_peran_gudang_kantor(type_, str(peran or "").strip())
     res = await db.rahaza_locations.update_one({"id": loc_id}, {"$set": body})
     if res.matched_count == 0:
         raise HTTPException(404, "Not found")
@@ -267,9 +412,22 @@ async def update_location(loc_id: str, request: Request):
 
 
 @router.delete("/locations/{loc_id}")
-async def deactivate_location(loc_id: str, request: Request):
+async def deactivate_location(loc_id: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true`: hapus permanen bila lokasi belum punya stok/mutasi,
+    zona anak, atau dipakai master lain; selain itu 409 (layar menawarkan Nonaktifkan)."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        loc = await db.rahaza_locations.find_one({"id": loc_id}, {"_id": 0})
+        if not loc:
+            raise HTTPException(404, "Lokasi tidak ditemukan.")
+        # lokasi kantor (lokasi kerja) dikelola SDM; gedung/zona dikelola gudang
+        _wajib_pengelola(user, "lokasi_kerja" if str(loc.get("type") or "").lower() == "kantor" else "lokasi")
+        tolak_bila_dipakai("Lokasi", loc.get("name") or loc.get("code") or "", await pemakaian_lokasi(db, loc_id))
+        await db.rahaza_locations.delete_one({"id": loc_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.location", f"{loc.get('code')} {loc.get('name')}")
+        return {"status": "deleted", "deleted": True}
     await db.rahaza_locations.update_one({"id": loc_id}, {"$set": {"active": False, "updated_at": _now()}})
     await log_activity(user["id"], user.get("name", ""), "deactivate", "rahaza.location", loc_id)
     return {"status": "deactivated"}
@@ -300,6 +458,20 @@ async def update_process(pid: str, request: Request):
     await db.rahaza_processes.update_one({"id": pid}, {"$set": allowed})
     await log_activity(user["id"], user.get("name", ""), "update", "rahaza.process", pid)
     return serialize_doc(await db.rahaza_processes.find_one({"id": pid}, {"_id": 0}))
+
+
+@router.delete("/processes/{pid}")
+async def deactivate_process(pid: str, request: Request):
+    """Nonaktifkan proses (10 Nov 2026). Tombol Nonaktifkan layar Proses Produksi (MasterDataCRUD) sudah memanggil
+    DELETE ini, tetapi rutenya tidak ada (405). Proses = daftar tetap yang dibuat ulang saat server mulai bila
+    hilang, jadi TIDAK ada hapus permanen — cukup nonaktif (sama dengan PUT {active:false})."""
+    user = await _require_admin(request)
+    db = get_db()
+    res = await db.rahaza_processes.update_one({"id": pid}, {"$set": {"active": False, "updated_at": _now()}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Proses tidak ditemukan.")
+    await log_activity(user["id"], user.get("name", ""), "deactivate", "rahaza.process", pid)
+    return {"status": "deactivated"}
 
 
 # ─── SHIFTS ──────────────────────────────────────────────────────────────────
@@ -358,9 +530,21 @@ async def update_shift(sid: str, request: Request):
 
 
 @router.delete("/shifts/{sid}")
-async def deactivate_shift(sid: str, request: Request):
+async def deactivate_shift(sid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan. `?hard=true`: hapus permanen bila shift belum dipakai karyawan, penugasan,
+    jadwal, pola, absensi, lini, atau serah terima; selain itu 409."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        _wajib_pengelola(user, "shift")
+        sh = await db.rahaza_shifts.find_one({"id": sid}, {"_id": 0})
+        if not sh:
+            raise HTTPException(404, "Shift tidak ditemukan.")
+        tolak_bila_dipakai("Shift", sh.get("name") or sh.get("code") or "", await pemakaian_shift(db, sid))
+        await db.rahaza_shifts.delete_one({"id": sid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.shift", f"{sh.get('code')} {sh.get('name')}")
+        return {"status": "deleted", "deleted": True}
     res = await db.rahaza_shifts.update_one({"id": sid}, {"$set": {"active": False, "updated_at": _now()}})
     if res.matched_count == 0:
         raise HTTPException(404, "Not found")
@@ -435,9 +619,20 @@ async def update_machine(mid: str, request: Request):
 
 
 @router.delete("/machines/{mid}")
-async def deactivate_machine(mid: str, request: Request):
+async def deactivate_machine(mid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan. `?hard=true`: hapus permanen bila mesin belum punya catatan; selain itu 409."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        _wajib_pengelola(user, "produksi")
+        m = await db.rahaza_machines.find_one({"id": mid}, {"_id": 0})
+        if not m:
+            raise HTTPException(404, "Mesin tidak ditemukan.")
+        tolak_bila_dipakai("Mesin", m.get("name") or m.get("code") or "", await pemakaian_mesin(db, mid))
+        await db.rahaza_machines.delete_one({"id": mid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.machine", m.get("code") or mid)
+        return {"status": "deleted", "deleted": True}
     await db.rahaza_machines.update_one({"id": mid}, {"$set": {"active": False, "updated_at": _now()}})
     await log_activity(user["id"], user.get("name", ""), "deactivate", "rahaza.machine", mid)
     return {"status": "deactivated"}
@@ -511,9 +706,20 @@ async def update_line(lid: str, request: Request):
 
 
 @router.delete("/lines/{lid}")
-async def deactivate_line(lid: str, request: Request):
+async def deactivate_line(lid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan. `?hard=true`: hapus permanen bila lini belum punya penugasan/catatan; selain itu 409."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        _wajib_pengelola(user, "produksi")
+        ln = await db.rahaza_lines.find_one({"id": lid}, {"_id": 0})
+        if not ln:
+            raise HTTPException(404, "Lini produksi tidak ditemukan.")
+        tolak_bila_dipakai("Lini produksi", ln.get("name") or ln.get("code") or "", await pemakaian_lini(db, lid))
+        await db.rahaza_lines.delete_one({"id": lid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.line", ln.get("code") or lid)
+        return {"status": "deleted", "deleted": True}
     await db.rahaza_lines.update_one({"id": lid}, {"$set": {"active": False, "updated_at": _now()}})
     await log_activity(user["id"], user.get("name", ""), "deactivate", "rahaza.line", lid)
     return {"status": "deactivated"}
@@ -785,9 +991,29 @@ async def update_employee(eid: str, request: Request):
 
 
 @router.delete("/employees/{eid}")
-async def deactivate_employee(eid: str, request: Request):
+async def deactivate_employee(eid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true`: hapus permanen HANYA bila karyawan belum punya
+    riwayat apa pun (absensi, gaji, kasbon, klaim, cuti, lembur, jadwal, produksi, akun login, dokumen, bawahan…) —
+    untuk data yang salah input. Selain itu 409 dan layar menawarkan Nonaktifkan. Ikut terhapus: konfigurasi
+    miliknya sendiri yang belum pernah dipakai (profil gaji, penugasan shift, saldo cuti yang belum terpakai)."""
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        _wajib_pengelola(user, "karyawan")
+        emp = await db.rahaza_employees.find_one({"id": eid}, {"_id": 0})
+        if not emp:
+            raise HTTPException(404, "Karyawan tidak ditemukan.")
+        tolak_bila_dipakai("Karyawan", emp.get("name") or emp.get("employee_code") or "", await pemakaian_karyawan(db, emp))
+        anak = {
+            "profil_gaji": (await db.rahaza_payroll_profiles.delete_many({"employee_id": eid})).deleted_count,
+            "penugasan_shift": (await db.hr_shift_assignments.delete_many({"employee_id": eid})).deleted_count,
+            "saldo_cuti": (await db.rahaza_leave_balances.delete_many({"employee_id": eid})).deleted_count,
+        }
+        await db.rahaza_employees.delete_one({"id": eid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.employee",
+                           f"{emp.get('employee_code')} {emp.get('name')} " + ", ".join(f"{k}={v}" for k, v in anak.items()))
+        return {"status": "deleted", "deleted": True}
     await db.rahaza_employees.update_one({"id": eid}, {"$set": {"active": False, "updated_at": _now()}})
     await log_activity(user["id"], user.get("name", ""), "deactivate", "rahaza.employee", eid)
     return {"status": "deactivated"}

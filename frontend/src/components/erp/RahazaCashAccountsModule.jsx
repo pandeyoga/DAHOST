@@ -10,6 +10,8 @@ import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayo
 import JournalLinesInline from './finance/JournalLinesInline';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { JOURNAL_SOURCE_LABELS, journalSourceLabel } from '@/lib/financeLabels';
 
 // Jenis mutasi: label Indonesia dari peta sumber jurnal bila kodenya dikenal (server kadang mengirim label Inggris,
@@ -111,6 +113,19 @@ export default function RahazaCashAccountsModule({ token }) {
     const r = await fetch(`/api/rahaza/cash-accounts/${a.id}`, { method: 'DELETE', headers });
     if (!r.ok) { const d = await r.json().catch(() => ({})); toast.error(d.detail || `Gagal menonaktifkan rekening (HTTP ${r.status})`); }
     fetchAccounts();
+  };
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen hanya rekening yang belum pernah dipakai (tanpa
+  // mutasi, jurnal, saldo awal, transfer, rekonsiliasi); bila sudah, server menjawab 409 dan dialog kedua
+  // menawarkan Nonaktifkan.
+  const hapus = async (a) => {
+    const hasil = await hapusMaster({
+      jenis: 'rekening', nama: a.name,
+      keterangan: 'Rekening dihapus permanen beserta akun buku besar yang dibuat otomatis untuknya. Rekening yang sudah '
+        + 'punya saldo, mutasi, atau jurnal tidak bisa dihapus dan Anda bisa menonaktifkannya saja.',
+      hapus: () => apiDelete(`/api/rahaza/cash-accounts/${a.id}?hard=true`),
+      nonaktifkan: a.active === false ? null : () => apiDelete(`/api/rahaza/cash-accounts/${a.id}`),
+    });
+    if (hasil) { if (selected?.id === a.id) setSelected(null); fetchAccounts(); }
   };
 
   const total = accounts.reduce((s, a) => s + (Number(a.balance) || 0), 0);
@@ -237,7 +252,7 @@ export default function RahazaCashAccountsModule({ token }) {
           <div className="overflow-x-auto">
             <Table className="w-full md:min-w-0" data-testid="ca-table">
               <TableHeader>
-                <TableRow><TableHead className="text-left">Rekening</TableHead><TableHead className="text-left hidden md:table-cell">No. rekening</TableHead><TableHead className="text-left hidden md:table-cell">Milik</TableHead><TableHead className="text-right">Saldo</TableHead><TableHead className="text-right hidden sm:table-cell">Mutasi</TableHead><TableHead className="w-12" /></TableRow>
+                <TableRow><TableHead className="text-left">Rekening</TableHead><TableHead className="text-left hidden md:table-cell">No. rekening</TableHead><TableHead className="text-left hidden md:table-cell">Milik</TableHead><TableHead className="text-right">Saldo</TableHead><TableHead className="text-right hidden sm:table-cell">Mutasi</TableHead><TableHead className="w-12 text-right">Aksi</TableHead></TableRow>
               </TableHeader>
               <TableBody>
                 {accounts.length === 0 && !loading && (
@@ -281,6 +296,7 @@ export default function RahazaCashAccountsModule({ token }) {
                               <DropdownMenuItem onClick={() => openAccount(a)}>Lihat mutasi</DropdownMenuItem>
                               <DropdownMenuItem onClick={() => setEditing({ ...a })}>Ubah rekening</DropdownMenuItem>
                               <DropdownMenuItem className="text-[hsl(var(--destructive))]" onClick={() => del(a)}>Nonaktifkan</DropdownMenuItem>
+                              <DropdownMenuItem className="text-[hsl(var(--destructive))]" onClick={() => hapus(a)} data-testid={`ca-delete-${a.code}`}>Hapus rekening</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>

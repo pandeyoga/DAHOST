@@ -154,12 +154,21 @@ async def update_per_diem_rate(rate_id: str, body: PerDiemUpdate, user: dict = D
 
 
 @router.delete('/per-diem-rates/{rate_id}')
-async def delete_per_diem_rate(rate_id: str, user: dict = Depends(require_auth)):
-    """Hapus per diem rate (soft delete — set is_active=False)."""
+async def delete_per_diem_rate(rate_id: str, hard: bool = False, user: dict = Depends(require_auth)):
+    """Tanpa `hard`: nonaktifkan (perilaku lama, set is_active=False).
+
+    `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"): hapus baris tarif permanen. Tidak ada dokumen yang
+    menunjuk baris tarif ini — perjalanan dinas MENYALIN nilai tarif saat diajukan (`per_diem_daily`), jadi riwayat
+    tidak berubah. Bila jenis perjalanan itu tidak punya tarif aktif lagi, perjalanan baru memakai tarif bawaan."""
     _admin_only(user)
     db = get_db()
     existing = await db.employee_per_diem_rates.find_one({'id': rate_id})
     if not existing:
-        raise HTTPException(404, 'Rate tidak ditemukan')
+        raise HTTPException(404, 'Tarif tidak ditemukan')
+    if hard:
+        await db.employee_per_diem_rates.delete_one({'id': rate_id})
+        await log_activity(user.get('id'), user.get('name'), 'delete', 'per_diem_rate',
+                           f"Hapus tarif {existing.get('destination_type')}: Rp {float(existing.get('daily_rate') or 0):,.0f}/hari")
+        return {'ok': True, 'deleted': rate_id, 'hard': True}
     await db.employee_per_diem_rates.update_one({'id': rate_id}, {'$set': {'is_active': False, 'updated_at': _now()}})
     return {'ok': True, 'deleted': rate_id}

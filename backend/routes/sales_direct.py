@@ -11,7 +11,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pymongo import ReturnDocument
 
@@ -124,12 +124,52 @@ async def update_customer(cid: str, request: Request):
     return serialize_doc(await db.rahaza_customers.find_one({"id": cid}, {"_id": 0}))
 
 
+async def customer_usage(db, cid: str) -> dict:
+    """Di mana pelanggan dipakai (label → jumlah) — hapus permanen (10 Nov 2026, permintaan owner)."""
+    from core.hapus_master import hitung_pemakaian
+    cek = [
+        ("pesanan penjualan", "rahaza_orders", {"customer_id": cid}),
+        ("nota penjualan langsung", COLL, {"customer_id": cid}),
+        ("retur penjualan langsung", RET, {"customer_id": cid}),
+        ("pengiriman", "rahaza_shipments", {"customer_id": cid}),
+        ("pengeluaran barang jadi", "rahaza_fg_issues", {"customer_id": cid}),
+        ("faktur piutang", "rahaza_ar_invoices", {"customer_id": cid}),
+        ("pembayaran piutang", "rahaza_ar_payments", {"customer_id": cid}),
+        ("nota kredit", "rahaza_credit_notes", {"customer_id": cid}),
+    ]
+    codes = [a.get("code") async for a in db.rahaza_coa_accounts.find(
+        {"flags.subledger_entity_id": cid}, {"_id": 0, "code": 1}) if a.get("code")]
+    if codes:
+        cek.append(("baris jurnal", "rahaza_journal_lines", {"account_code": {"$in": codes}}))
+    return await hitung_pemakaian(db, cek)
+
+
+async def delete_customer_master(db, cid: str, user: dict, *, hard: bool = False) -> dict:
+    """SATU aturan hapus Master Pelanggan untuk Portal Penjualan (`DELETE /api/sales/customers/{id}`) dan rute
+    kembarnya `DELETE /api/rahaza/customers/{id}` (routes.rahaza_orders). Tanpa `hard`: nonaktifkan (perilaku
+    lama). `hard` (10 Nov 2026, permintaan owner "master data bisa dihapus"): hapus permanen bila pelanggan
+    BELUM dipakai pesanan/nota/pengiriman/piutang/jurnal; bila sudah → 409 dan layar menawarkan Nonaktifkan.
+    Akun piutang otomatis pelanggan itu ikut terhapus (dipastikan belum pernah dijurnal)."""
+    if not hard:
+        await db.rahaza_customers.update_one({"id": cid}, {"$set": {"active": False, "updated_at": _now()}})
+        return {"status": "deactivated"}
+    from core.hapus_master import tolak_bila_dipakai
+    cust = await db.rahaza_customers.find_one({"id": cid}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Pelanggan tidak ditemukan.")
+    tolak_bila_dipakai("Pelanggan", cust.get("name") or cust.get("code") or "", await customer_usage(db, cid))
+    akun = await db.rahaza_coa_accounts.delete_many({"flags.subledger_entity_id": cid,
+                                                     "flags.subledger_entity_type": "customer"})
+    await db.rahaza_customers.delete_one({"id": cid})
+    await log_activity(user.get("id") or "", user.get("name") or "", "delete", "sales.customer",
+                       f"id={cid} kode={cust.get('code')} akun_piutang={akun.deleted_count}")
+    return {"status": "deleted", "deleted": True}
+
+
 @router.delete("/customers/{cid}")
-async def deactivate_customer(cid: str, request: Request):
-    await _require_write(request)
-    db = get_db()
-    await db.rahaza_customers.update_one({"id": cid}, {"$set": {"active": False, "updated_at": _now()}})
-    return {"status": "deactivated"}
+async def deactivate_customer(cid: str, request: Request, hard: bool = Query(False)):
+    user = await _require_write(request)
+    return await delete_customer_master(get_db(), cid, user, hard=hard)
 
 
 # ── STOK FG YANG BISA DIJUAL ──────────────────────────────────────────────────

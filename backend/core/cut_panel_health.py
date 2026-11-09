@@ -110,7 +110,9 @@ async def inspect(db, panel: dict, *, onhand: float | None = None) -> dict:
 
     # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
     from core.cutting_material_issue import ORDERS
-    orders_ref = await db[ORDERS].count_documents({"output_material_id": pid})
+    # 2026-11-10: order banyak hasil menyebut potongan di `outputs[]` (core.cutting_lines)
+    orders_ref = await db[ORDERS].count_documents(
+        {"$or": [{"output_material_id": pid}, {"outputs.output_material_id": pid}]})
     order_id = (panel.get("cutting_order_id") or "").strip()
     maker = None
     if order_id:
@@ -256,7 +258,8 @@ async def remove_if_unused(db, *, panel_id: str, order_id: str,
     # order ini sendiri masih menunjuk master → jangan hitung sebagai penahan
     from core.cutting_material_issue import ORDERS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
     others = await db[ORDERS].count_documents(
-        {"output_material_id": panel_id, "id": {"$ne": order_id}})
+        {"$or": [{"output_material_id": panel_id}, {"outputs.output_material_id": panel_id}],
+         "id": {"$ne": order_id}})
     if others:
         return None
     if row["stock_qty"] > 0 or row["ledger_rows"] or row["card_rows"] or row["references"]:

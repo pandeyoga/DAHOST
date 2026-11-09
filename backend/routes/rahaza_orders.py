@@ -7,7 +7,7 @@ Endpoints (prefix /api/rahaza):
   - /orders/{id}/items    : Manage order items
   - /orders/{id}/status   : Transition lifecycle
 """
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_audit import log_audit
@@ -175,11 +175,12 @@ async def update_customer(cid: str, request: Request):
 
 
 @router.delete("/customers/{cid}")
-async def deactivate_customer(cid: str, request: Request):
-    await _require_admin(request)
-    db = get_db()
-    await db.rahaza_customers.update_one({"id": cid}, {"$set": {"active": False, "updated_at": _now()}})
-    return {"status": "deactivated"}
+async def deactivate_customer(cid: str, request: Request, hard: bool = Query(False)):
+    """Satu aturan dengan Portal Penjualan (`routes.sales_direct.delete_customer_master`): tanpa `hard`
+    nonaktifkan, `?hard=true` hapus permanen bila belum dipakai (409 bila sudah). Gerbang tetap `_require_admin`."""
+    user = await _require_admin(request)
+    from routes.sales_direct import delete_customer_master
+    return await delete_customer_master(get_db(), cid, user, hard=hard)
 
 
 # ── ORDERS ──────────────────────────────────────────────────────────────────

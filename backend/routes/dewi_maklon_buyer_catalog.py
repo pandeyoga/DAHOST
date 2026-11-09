@@ -397,13 +397,42 @@ async def toggle_buyer_catalog(catalog_id: str, user: dict = Depends(require_aut
     return {'message': f"Status diubah menjadi {new_status}", 'status': new_status}
 
 
+async def catalog_usage(db, catalog_id: str, variant_id: Optional[str] = None) -> dict:
+    """Di mana artikel (atau satu variannya) dipakai: PO maklon, baris PO produksi, sampel, catatan barang klien.
+    Templat BOM artikel itu sendiri BUKAN pemakaian (ikut terhapus bersama artikelnya)."""
+    from core.hapus_master import hitung_pemakaian
+    if variant_id:
+        return await hitung_pemakaian(db, [
+            ('PO maklon', 'dewi_maklon_pos', {'items.maklon_variant_id': variant_id}),
+            ('baris PO produksi', 'po_items', {'maklon_variant_id': variant_id}),
+            ('catatan barang milik klien', 'dewi_maklon_inventory', {'maklon_variant_id': variant_id}),
+        ])
+    return await hitung_pemakaian(db, [
+        ('PO maklon', 'dewi_maklon_pos', {'items.buyer_catalog_id': catalog_id}),
+        ('baris PO produksi', 'po_items', {'catalog_item_id': catalog_id}),
+        ('sampel', 'dewi_maklon_samples', {'buyer_catalog_id': catalog_id}),
+        ('catatan barang milik klien', 'dewi_maklon_inventory', {'buyer_catalog_id': catalog_id}),
+    ])
+
+
 @router.delete('/buyer-catalog/{catalog_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))  # T-01 2.3
-async def delete_buyer_catalog(catalog_id: str, user: dict = Depends(require_auth)):
-    """Soft-delete: ubah status ke 'discontinued'. (Hard delete dihindari untuk audit trail.)"""
+async def delete_buyer_catalog(catalog_id: str, hard: bool = Query(False), user: dict = Depends(require_auth)):
+    """Tanpa `hard`: hentikan (status 'discontinued', perilaku lama). `?hard=true` (10 Nov 2026, permintaan owner
+    "master data bisa dihapus"): hapus permanen beserta templat BOM-nya bila artikel BELUM dipakai PO/sampel/
+    barang klien; bila sudah dipakai → 409 dengan rincian (layar menawarkan Nonaktifkan)."""
     db = get_db()
     doc = await db.dewi_maklon_buyer_catalog.find_one({'id': catalog_id})
     if not doc:
         raise HTTPException(404, 'Entry Buyer Catalog tidak ditemukan')
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        nama = f"{doc.get('artikel_code') or ''} {doc.get('product_name') or ''}".strip()
+        tolak_bila_dipakai('Artikel', nama, await catalog_usage(db, catalog_id))
+        bom = await db.dewi_maklon_bom_templates.delete_many({'buyer_catalog_id': catalog_id})
+        await db.dewi_maklon_buyer_catalog.delete_one({'id': catalog_id})
+        await log_activity(user.get('id') or '', user.get('name') or user.get('email') or 'system',
+                           'buyer_catalog.delete', 'dewi-maklon', f"id={catalog_id} templat_bom={bom.deleted_count}")
+        return {'message': f'Artikel {nama} dihapus', 'id': catalog_id, 'deleted': True}
 
     await db.dewi_maklon_buyer_catalog.update_one(
         {'id': catalog_id},
@@ -509,6 +538,88 @@ async def update_maklon_variant(catalog_id: str, variant_id: str,
     await log_activity(user.get('id') or '', user.get('name') or user.get('email') or 'system',
                        'buyer_catalog.update_variant', 'dewi-maklon', f"id={catalog_id} variant={variant_id}")
     return {'message': 'Varian diperbarui', 'variants': variants}
+
+
+class MaklonVariantAddIn(BaseModel):
+    """Tambah varian dari daftar Katalog (10 Nov 2026, permintaan owner "di list ada tambah variannya")."""
+    colors: List[str] = Field(default_factory=list, description='Nama warna dari master warna')
+    sizes: List[str] = Field(default_factory=list, description='Kode ukuran dari master ukuran')
+    buyer_ref_code: Optional[str] = Field(default=None, max_length=128)
+
+
+@router.post('/buyer-catalog/{catalog_id}/variants', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))
+async def add_maklon_variants(catalog_id: str, payload: MaklonVariantAddIn, user: dict = Depends(require_auth)):
+    """Tambah varian warna × ukuran yang dipilih. Warna/ukuran wajib dari master (aturan Tahap 6 PR5) dan ikut
+    ditambahkan ke pilihan warna/ukuran artikel; kombinasi yang sudah ada dilewati (varian nonaktif diaktifkan lagi).
+    Format SKU sama dengan "Buat varian": {artikel}-{kode warna}-{kode ukuran}."""
+    db = get_db()
+    doc = await db.dewi_maklon_buyer_catalog.find_one({'id': catalog_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Entry Buyer Catalog tidak ditemukan')
+    if doc.get('status') == 'discontinued':
+        raise HTTPException(400, 'Artikel sudah dihentikan — aktifkan lagi dulu sebelum menambah varian.')
+    opts = await resolve_options_from_master(db, payload.colors or [], payload.sizes or [], existing=doc)
+    colors, sizes = opts['color_options'], opts['size_options']
+    if not colors or not sizes:
+        raise HTTPException(400, 'Pilih minimal 1 warna dan 1 ukuran.')
+
+    artikel_code = (doc.get('artikel_code') or '').strip().upper()
+    variants = list(doc.get('variants') or [])
+    by_combo = {(str(v.get('color', '')).strip().lower(), str(v.get('size', '')).strip().lower()): v for v in variants}
+    skus = {v.get('sku') for v in variants}
+    ref = (payload.buyer_ref_code if payload.buyer_ref_code is not None else doc.get('buyer_ref_code') or '').strip()
+    created, reactivated, skipped = [], [], []
+    for color in colors:
+        ccode = await _color_code_for(db, color)
+        for size in sizes:
+            prev = by_combo.get((color.lower(), size.lower()))
+            if prev:
+                if prev.get('active') is False:
+                    prev['active'] = True
+                    reactivated.append(prev.get('sku'))
+                else:
+                    skipped.append(prev.get('sku'))
+                continue
+            sku = '-'.join(p for p in [artikel_code, ccode, _mk_size_code(size)] if p)
+            if sku in skus:
+                skipped.append(sku)
+                continue
+            v = {'id': _uid(), 'sku': sku, 'color': color, 'color_code': ccode, 'size': size,
+                 'buyer_ref_code': ref, 'active': True}
+            variants.append(v)
+            skus.add(sku)
+            by_combo[(color.lower(), size.lower())] = v
+            created.append(sku)
+
+    color_opts = list(doc.get('color_options') or []) + [c for c in colors if c not in (doc.get('color_options') or [])]
+    size_opts = list(doc.get('size_options') or []) + [s for s in sizes if s not in (doc.get('size_options') or [])]
+    await db.dewi_maklon_buyer_catalog.update_one({'id': catalog_id}, {'$set': {
+        'variants': variants, 'color_options': color_opts, 'size_options': size_opts, 'updated_at': _now()}})
+    await log_activity(user.get('id') or '', user.get('name') or user.get('email') or 'system',
+                       'buyer_catalog.add_variants', 'dewi-maklon',
+                       f"id={catalog_id} baru={len(created)} aktif_lagi={len(reactivated)} lewati={len(skipped)}")
+    return {'message': f'{len(created)} varian baru', 'created': created, 'reactivated': reactivated,
+            'skipped': skipped, 'variants': variants, 'color_options': color_opts, 'size_options': size_opts}
+
+
+@router.delete('/buyer-catalog/{catalog_id}/variants/{variant_id}', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))
+async def delete_maklon_variant(catalog_id: str, variant_id: str, user: dict = Depends(require_auth)):
+    """Hapus satu varian bila belum dipakai PO / barang klien; bila sudah → 409 (layar menawarkan Nonaktifkan)."""
+    from core.hapus_master import tolak_bila_dipakai
+    db = get_db()
+    doc = await db.dewi_maklon_buyer_catalog.find_one({'id': catalog_id}, {'_id': 0})
+    if not doc:
+        raise HTTPException(404, 'Entry Buyer Catalog tidak ditemukan')
+    variants = doc.get('variants') or []
+    target = next((v for v in variants if v.get('id') == variant_id), None)
+    if not target:
+        raise HTTPException(404, 'Varian tidak ditemukan')
+    tolak_bila_dipakai('Varian', target.get('sku') or '', await catalog_usage(db, catalog_id, variant_id=variant_id))
+    rest = [v for v in variants if v.get('id') != variant_id]
+    await db.dewi_maklon_buyer_catalog.update_one({'id': catalog_id}, {'$set': {'variants': rest, 'updated_at': _now()}})
+    await log_activity(user.get('id') or '', user.get('name') or user.get('email') or 'system',
+                       'buyer_catalog.delete_variant', 'dewi-maklon', f"id={catalog_id} sku={target.get('sku')}")
+    return {'message': f"Varian {target.get('sku')} dihapus", 'variants': rest}
 
 
 

@@ -122,7 +122,10 @@ export async function apiDelete(path) {
   const res = await apiFetch(path, { method: 'DELETE' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `DELETE ${path} failed (${res.status})`);
+    // 2026-11-10: `status` ikut dibawa — 409 = data sudah dipakai (lib/hapusMaster menawarkan Nonaktifkan).
+    const e = new Error(err.detail || `DELETE ${path} failed (${res.status})`);
+    e.status = res.status;
+    throw e;
   }
   return res.json().catch(() => ({}));
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Pencil, Ban } from 'lucide-react';
+import { Plus, Pencil, Ban, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import DataTable from './DataTable';
 import ImportExportToolbar from './ImportExportToolbar';
@@ -10,6 +10,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout from './layout/PageLayout';
 import { StatusBadge } from './moduleAtoms';
+import { hapusMaster } from '../../lib/hapusMaster';
 
 // Reusable master-data CRUD page (Gudang › Lokasi gudang; Produksi/RnD › master lini, mesin, proses, shift, ukuran, karyawan).
 // Props (tidak berubah):
@@ -23,6 +24,13 @@ import { StatusBadge } from './moduleAtoms';
 //   testIdPrefix
 //   canEdit     : boolean (default true)
 //   ieKey       : kunci registri impor/unduh data master (opsional)
+//   hapusPermanen: (10 Nov 2026, owner "master data bisa dihapus") tombol Hapus per baris → lib/hapusMaster:
+//                  DELETE `${endpoint}/{id}?hard=true`; 409 (sudah dipakai) → tawarkan Nonaktifkan. Hanya
+//                  dinyalakan untuk endpoint yang SUDAH mendukung `?hard=true` (tanpa itu server menonaktifkan).
+//   jenis       : kata benda untuk dialog hapus (mis. 'ukuran'); bawaan = judul huruf kecil
+//   saringBaris : (10 Nov 2026) fungsi baris → boolean; hanya baris yang lolos yang tampil. Dipakai bila satu master
+//                 tampil di dua menu (Lokasi: Gudang menampilkan gedung/zona, SDM › Lokasi kerja menampilkan kantor).
+//   itemTetap   : isian yang selalu dikirim saat simpan (mis. { type: 'kantor' }) — tidak tampil di formulir.
 //
 // Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (di dalam hub judulnya tersembunyi), form = FormPopup
 // (pendek ≤ 6 isian, panjang bila lebih), nonaktifkan lewat confirmDialog, status = StatusBadge, unduhan tabel
@@ -35,6 +43,10 @@ export default function MasterDataCRUD({
   testIdPrefix = 'md',
   canEdit = true,
   ieKey = null,
+  hapusPermanen = false,
+  jenis = '',
+  saringBaris = null,
+  itemTetap = null,
 }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,7 +88,7 @@ export default function MasterDataCRUD({
     try {
       const url = editing ? `${endpoint}/${editing.id}` : endpoint;
       const method = editing ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers, body: JSON.stringify(form) });
+      const res = await fetch(url, { method, headers, body: JSON.stringify(itemTetap ? { ...form, ...itemTetap } : form) });
       if (!res.ok) {
         // Status-based friendly message (body stream may be consumed by
         // third-party scripts like analytics wrappers — don't rely on it).
@@ -117,6 +129,20 @@ export default function MasterDataCRUD({
     fetchRows();
   };
 
+  const deleteReq = async (row, hard) => {
+    const res = await fetch(`${endpoint}/${row.id}${hard ? '?hard=true' : ''}`, { method: 'DELETE', headers });
+    if (!res.ok) {
+      let msg = `Gagal (HTTP ${res.status})`;
+      try { const d = await res.clone().json(); if (d && typeof d.detail === 'string') msg = d.detail; } catch (_) { /* body tak terbaca */ }
+      const e = new Error(msg); e.status = res.status; throw e;
+    }
+  };
+  const handleDelete = async (row) => {
+    const hasil = await hapusMaster({ jenis: jenis || String(title || 'data').toLowerCase(), nama: row.name || row.code,
+      hapus: () => deleteReq(row, true), nonaktifkan: row.active ? () => deleteReq(row, false) : null });
+    if (hasil) fetchRows();
+  };
+
   // Kolom pemanggil: tampilan tetap lewat render(value,row); unduhan & urutan memakai teks yang tampil.
   const tableColumns = useMemo(() => columns.map((c) => {
     if (typeof c.render !== 'function') return c;
@@ -136,7 +162,7 @@ export default function MasterDataCRUD({
   };
 
   const actionsCol = canEdit ? {
-    key: '_actions', label: '',
+    key: '_actions', label: 'Aksi', align: 'right',
     render: (_, row) => (
       <div className="flex items-center justify-end gap-1">
         <Button variant="ghost" size="icon-sm" onClick={() => openEdit(row)} title="Ubah" aria-label={`Ubah ${row.name || row.code || ''}`}
@@ -145,6 +171,10 @@ export default function MasterDataCRUD({
           <Button variant="ghost" size="icon-sm" onClick={() => handleDeactivate(row)} title="Nonaktifkan"
             aria-label={`Nonaktifkan ${row.name || row.code || ''}`}
             data-testid={`${testIdPrefix}-deactivate-${row.id}`}><Ban /></Button>
+        )}
+        {hapusPermanen && (
+          <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(row)} title="Hapus"
+            aria-label={`Hapus ${row.name || row.code || ''}`} data-testid={`${testIdPrefix}-delete-${row.id}`}><Trash2 /></Button>
         )}
       </div>
     ),
@@ -169,7 +199,7 @@ export default function MasterDataCRUD({
         <div className="overflow-x-auto">
           <DataTable
             columns={fullColumns}
-            data={rows}
+            data={saringBaris ? rows.filter(saringBaris) : rows}
             searchKeys={columns.map(c => c.key)}
             pageSize={25}
           />

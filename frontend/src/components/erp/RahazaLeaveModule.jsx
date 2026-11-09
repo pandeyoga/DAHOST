@@ -11,8 +11,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { bolehSetujuiHR, labelTahap } from '@/lib/tahapPersetujuan';
 import {
-  Plus, CheckCircle2, XCircle, RefreshCw, CheckCheck, FileText, Upload, Paperclip, X, Pencil, CalendarDays,
+  Plus, CheckCircle2, XCircle, RefreshCw, CheckCheck, FileText, Upload, Paperclip, X, Pencil, CalendarDays, Trash2,
 } from 'lucide-react';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -377,6 +379,17 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
     finally { setSaving(false); }
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen bila jenis ini belum pernah diajukan; bila sudah,
+  // server menjawab 409 dan dialog kedua menawarkan Nonaktifkan (yang tetap ditolak selama ada pengajuan menunggu).
+  const hapusJenis = async (lt) => {
+    const hasil = await hapusMaster({
+      jenis: 'jenis cuti', nama: lt.name,
+      hapus: () => apiDelete(`/api/rahaza/leave-types/${lt.id}?hard=true`),
+      nonaktifkan: lt.active === false ? null : () => apiDelete(`/api/rahaza/leave-types/${lt.id}`),
+    });
+    if (hasil) load();
+  };
+
   const tambahJenis = () => {
     setTypeForm({ code: '', name: '', paid: true, quota_default: 12, description: '',
       request_type: 'cuti', requires_document: false, max_days_without_doc: 0, doc_note: '' });
@@ -475,7 +488,7 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
     { kunci: 'status', label: 'Status', isi: (lt) => (lt.active === false
       ? <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />
       : <StatusBadge status="aktif" label="Aktif" tone="success" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (lt) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (lt) => (
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="outline" data-testid={`leave-type-edit-${lt.code}`}
           onClick={() => { setTypeForm({ ...lt, paid: !lt.unpaid }); setTypeModal(true); }}>
@@ -487,6 +500,10 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
             <XCircle />Nonaktifkan
           </Button>
         )}
+        <Button size="icon-sm" variant="ghost" title="Hapus" aria-label={`Hapus jenis cuti ${lt.name}`}
+          data-testid={`leave-type-delete-${lt.code}`} disabled={saving} onClick={() => hapusJenis(lt)}>
+          <Trash2 />
+        </Button>
       </div>) },
   ];
 

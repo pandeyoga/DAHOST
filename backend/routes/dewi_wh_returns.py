@@ -13,7 +13,8 @@ Collections: wh_returns
 Endpoints:
   GET    /api/wh/returns              — list (filter: type, status, search)
   GET    /api/wh/returns/summary      — stats dashboard
-  POST   /api/wh/returns              — buat record return baru
+  GET    /api/wh/returns/order-lookup — cari pesanan Marketing (no. pesanan / resi) untuk "Catat retur"
+  POST   /api/wh/returns              — catat retur manual: WAJIB pesanan yang ada (400), tolak ganda (409)
   GET    /api/wh/returns/{id}         — detail
   PUT    /api/wh/returns/{id}         — update info dasar
   POST   /api/wh/returns/{id}/receive — terima fisik (unboxing notes, foto notes)
@@ -177,6 +178,16 @@ async def marketing_gap(request: Request):
     }
 
 
+@router.get("/returns/order-lookup")
+async def cari_pesanan_retur(request: Request):
+    """2026-11-10 — pemilih pesanan form "Catat retur": cari `marketing_orders` lewat no. pesanan / resi
+    (min. 3 huruf). Tiap pesanan membawa baris barangnya dan retur gudang aktif yang sudah ada."""
+    await require_auth(request)
+    db = get_db()
+    q = (request.query_params.get("q") or "").strip()
+    return {"data": serialize_doc(await _rb.order_lookup(db, q)), "q": q}
+
+
 @router.post("/returns/sync-marketing")
 async def sync_from_marketing(request: Request):
     """Tarik retur pembeli dari Marketing ke antrean Retur Fisik (idempoten).
@@ -212,77 +223,67 @@ async def create_return(request: Request):
 
     rt = body.get("return_type", "expedition_return")
     if rt not in RETURN_TYPES:
-        raise HTTPException(400, f"return_type harus salah satu dari: {RETURN_TYPES}")
-    if not body.get("order_number") and not body.get("resi_number"):
-        raise HTTPException(400, "order_number atau resi_number wajib diisi")
+        raise HTTPException(400, "Tipe retur harus Tipe 1 (paket kembali dari ekspedisi) atau Tipe 2 "
+                                 "(pembeli minta refund).")
+    # ── 2026-11-10 (keputusan owner "wajib referensi + tautkan") ─────────────────
+    # Dulu cukup `order_number` ATAU `resi_number` diketik bebas: server tidak memeriksa pesanannya ada
+    # maupun retur ganda, dan jembatan Marketing tidak mengenali retur manual ⇒ dua pekerjaan, stok bisa
+    # masuk dua kali. Sekarang pesanan WAJIB ada di `marketing_orders` (sumber yang sama dengan
+    # jembatan), barang diambil dari baris pesanannya (cadangan master produk jadi — W4), dan retur
+    # aktif untuk pesanan/barang yang sama ditolak 409. SSOT: `returns_bridge.prepare_manual_return`.
+    try:
+        prep = await _rb.prepare_manual_return(db, body)
+    except _rb.ReturnDuplicateError as e:
+        raise HTTPException(409, {"message": str(e), "code": "RETUR_SUDAH_ADA", "existing": e.existing})
+    except _rb.ReturnBridgeError as e:
+        raise HTTPException(400, str(e))
+    order, line, ident = prep["order"], prep["line"], prep["identity"]
+    line_label = " · ".join(x for x in (_rb._line_name(line), line.get("variation_raw") or "") if x)
 
     code = await _next_code(db, (body.get("return_code") or "").strip())
-    # ── W4 (sesi #29) — TAUTKAN KE MASTER BARANG SAAT DICATAT ────────────────
-    # Retur yang dicatat manual gudang DULU hanya menyimpan `sku_code` sebagai
-    # teks bebas, jadi restock-nya mustahil menemukan barangnya (dan itulah salah
-    # satu sebab menu ini terasa "usang"). Sekarang layar mengirim `material_id`
-    # dari master FG (gate INV-F14); `sku_code` tetap diterima sebagai cadangan
-    # dan dicocokkan ke master — bukan ditebak.
-    ident = {"material_id": None, "material_code": (body.get("sku_code") or "").strip(),
-             "material_name": body.get("product_name", ""), "unit": "pcs",
-             "link_status": _rb.LINK_NONE,
-             "reason": "Barang retur belum dipilih dari master produk jadi."}
-    mid = (body.get("material_id") or body.get("fg_material_id") or "").strip()
-    mat = None
-    if mid:
-        mat = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0})
-        if not mat:
-            raise HTTPException(400, f"Master barang '{mid}' tidak ditemukan")
-    elif ident["material_code"]:
-        mat = await db.rahaza_materials.find_one(
-            {"$or": [{"code": ident["material_code"]}, {"sku": ident["material_code"]}]},
-            {"_id": 0})
-    if mat:
-        ident = {
-            "material_id": mat["id"],
-            "material_code": mat.get("code") or mat.get("sku") or "",
-            "material_name": mat.get("name") or body.get("product_name", ""),
-            "unit": mat.get("unit") or "pcs",
-            "category_name": mat.get("category_name") or mat.get("category") or "",
-            "color_name": mat.get("color_name") or mat.get("color") or "",
-            "option_name": mat.get("option_name") or "",
-            "variant_id": mat.get("variant_id"),
-            "link_status": _rb.LINK_OK,
-            "reason": "",
-        }
     doc = {
         "id": _id(),
         "return_code": code,
         "return_type": rt,
-        # Order info
-        "order_number": body.get("order_number", ""),
-        "resi_number": body.get("resi_number", ""),
-        "channel": body.get("channel", ""),
-        "customer_name": body.get("customer_name", ""),
+        # Info pesanan — DARI pesanan Marketing yang dipilih, bukan ketikan
+        "order_number": order.get("order_id") or "",
+        "resi_number": (order.get("tracking_number") or "").strip(),
+        "channel": order.get("platform") or "",
+        "customer_name": order.get("customer_name") or order.get("buyer_username") or "",
         "customer_contact": body.get("customer_contact", ""),
-        "sku_code": ident.get("material_code") or body.get("sku_code", ""),
-        "product_name": ident.get("material_name") or body.get("product_name", ""),
-        "qty": int(body.get("qty", 1)),
-        "order_value": float(body.get("order_value", 0)),
+        "sku_code": ident.get("material_code") or _rb._line_sku(line),
+        "product_name": ident.get("material_name") or _rb._line_name(line),
+        "qty": prep["qty"],
+        "order_value": prep["order_value"],
         "initial_reason": body.get("initial_reason", ""),  # alasan awal customer/ekspedisi
         "notes": body.get("notes", ""),
+        # Rujukan baris pesanan — kunci yang sama dengan RTS (K6) supaya paket ini tidak menjadi
+        # pengajuan kedua bila pesanannya kemudian dibatalkan setelah kirim.
+        "source_order_doc_id": order.get("id"),
+        "source_order_line": prep["line_no"],
+        "order_line_label": line_label,
+        "account_id": order.get("account_id"),
+        "source_account_name": order.get("account_name") or "",
         # Tautan master barang (kunci agar restock bisa tepat sasaran)
         "material_id": ident.get("material_id"),
         "fg_material_id": ident.get("material_id"),
         "variant_id": ident.get("variant_id"),
+        "catalog_item_id": line.get("catalog_item_id"),
         "material_unit": ident.get("unit") or "pcs",
         "material_category": ident.get("category_name") or "",
         "material_color": ident.get("color_name") or "",
         "material_option": ident.get("option_name") or "",
         "link_status": ident.get("link_status"),
         "link_reason": ident.get("reason") or "",
-        "link_source": "manual_master_pick" if ident.get("material_id") else "",
+        "link_source": ident.get("source") or "",
         "source": "manual",
         # Workflow
         "status": "Pending",
         "timeline": [
             {"status": "Pending", "at": _now(), "by": user["name"],
-             "note": "Return dibuat"}
+             "note": (f"Retur dicatat gudang untuk pesanan {order.get('order_id') or '-'}"
+                      + (f" ({line_label})" if line_label else "")
+                      + " — otomatis tertaut saat retur Marketing-nya masuk")}
         ],
         # Receive step
         "received_at": "", "received_by": "",

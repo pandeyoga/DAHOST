@@ -35,6 +35,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import DatePicker from '@/components/ui/date-picker';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { hapusMaster } from '@/lib/hapusMaster';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -102,7 +103,9 @@ async function api(method, path, token, body) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     const d = data.detail;
-    throw new Error(typeof d === 'string' ? d : (d?.message || `Server menolak permintaan ini (kode ${r.status}).`));
+    const e = new Error(typeof d === 'string' ? d : (d?.message || `Server menolak permintaan ini (kode ${r.status}).`));
+    e.status = r.status; // 10 Nov 2026: 409 = data sudah dipakai (lib/hapusMaster menawarkan Nonaktifkan)
+    throw e;
   }
   return data;
 }
@@ -277,22 +280,18 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
     finally { setSaving(false); }
   };
 
-  // FASE 10: konfirmasi hapus memakai dialog aplikasi (bukan window.confirm native)
+  // 10 Nov 2026 (permintaan owner): "Hapus" kini hapus permanen sungguhan (dulu hanya menonaktifkan, padahal
+  // kalimatnya menjanjikan penolakan bila berstok/di BOM — server tidak memeriksa apa pun). Server menolak (409)
+  // bila aksesoris sudah dipakai stok, BOM, PR/PO/penerimaan, opname, dll. → dialog kedua menawarkan Nonaktifkan.
   const del = async it => {
     setErr(''); setMsg('');
-    const ok = await confirmDialog({
-      title: `Hapus aksesoris ${it.code || ''} ${it.name}?`.replace(/\s+/g, ' '),
-      body: 'Item dihapus dari master. Riwayat mutasi & jurnal yang sudah terbentuk tetap tersimpan. Item yang masih berstok atau terpakai di BOM akan ditolak sistem.',
-      confirmLabel: 'Hapus', danger: true,
-    });
-    if (!ok) return;
     setSaving(true);
     try {
-      await api('DELETE', `/api/acc/items/${it.id}`, token);
-      setMsg(`Aksesoris ${it.code || ''} ${it.name} dihapus.`);
-      load(); onRefreshDash();
+      const hasil = await hapusMaster({ jenis: 'aksesoris', nama: [it.code, it.name].filter(Boolean).join(' '),
+        hapus: () => api('DELETE', `/api/acc/items/${it.id}?hard=true`, token),
+        nonaktifkan: () => api('DELETE', `/api/acc/items/${it.id}`, token) });
+      if (hasil) { load(); onRefreshDash(); }
     }
-    catch(e) { setErr(e.message); }
     finally { setSaving(false); }
   };
 
@@ -381,7 +380,7 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
     { kunci: 'nilai', label: 'Nilai stok', rata: 'kanan', isi: (it) => (
       <span className="tabular-nums text-muted-foreground">{(it.stock_value || 0) > 0 ? fmtRp(it.stock_value) : '—'}</span>) },
     { kunci: 'status', label: 'Status', isi: (it) => <Lencana peta={STOCK_STATUS} status={it.stock_status} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (it) => (
       <div className="flex items-center justify-end gap-1">
         <Button variant="outline" size="icon-sm" onClick={() => openMove(it, 'in')} title="Terima stok"
           aria-label={`Terima stok ${it.name}`} data-testid={`acc-in-${it.id}`}>

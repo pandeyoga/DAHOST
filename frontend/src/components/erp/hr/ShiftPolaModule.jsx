@@ -7,7 +7,7 @@
  * Dipakai Roster › Susun jadwal › "Dari pola rotasi". Server: `/api/hr/shift-scheduler/pola`.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pencil, Plus, Power, RefreshCw } from 'lucide-react';
+import { Pencil, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { checkPerm } from '@/lib/rbac';
+import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState } from '../moduleAtoms';
 import { HARI_KODE, HARI_PENDEK, TitikShift, jamShift, pesanGalat, shiftApi } from './shiftShared';
@@ -147,6 +148,17 @@ export default function ShiftPolaModule({ user }) {
     try { await shiftApi('delete', `${P}/pola/${p.id}`); toast.success('Pola dinonaktifkan.'); muat(); } catch (e) { toast.error(pesanGalat(e)); }
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen bila belum ada jadwal yang disusun dari pola ini;
+  // bila sudah, server menjawab 409 dan dialog kedua menawarkan Nonaktifkan.
+  const hapus = async (p) => {
+    const hasil = await hapusMaster({
+      jenis: 'pola rotasi', nama: p.nama,
+      hapus: () => shiftApi('delete', `${P}/pola/${p.id}?hard=true`),
+      nonaktifkan: p.aktif === false ? null : () => shiftApi('delete', `${P}/pola/${p.id}`),
+    });
+    if (hasil) muat();
+  };
+
   const kolom = [
     { kunci: 'nama', label: 'Nama pola', hp: 'judul', isi: (p) => <span className="font-medium text-foreground">{p.nama}</span> },
     { kunci: 'lama', label: 'Satu putaran', isi: (p) => `${p.minggu} minggu` },
@@ -156,10 +168,13 @@ export default function ShiftPolaModule({ user }) {
         <span className="text-xs text-muted-foreground">{ringkasPola(p.urutan, kodeById)}</span>
       </div>) },
     { kunci: 'ket', label: 'Keterangan', isi: (p) => p.keterangan || '—' },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (bolehTulis ? (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (p) => (bolehTulis ? (
       <div className="flex justify-end gap-1">
-        <Button size="sm" variant="outline" onClick={() => setForm(p)}><Pencil />Ubah</Button>
-        <Button size="icon-sm" variant="ghost" onClick={() => nonaktif(p)} title="Nonaktifkan" aria-label="Nonaktifkan"><Power /></Button>
+        <Button size="sm" variant="outline" onClick={() => setForm(p)} data-testid={`pola-edit-${p.id}`}><Pencil />Ubah</Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => nonaktif(p)} title="Nonaktifkan" aria-label={`Nonaktifkan pola ${p.nama}`}
+          data-testid={`pola-deactivate-${p.id}`}><Power /></Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => hapus(p)} title="Hapus" aria-label={`Hapus pola ${p.nama}`}
+          data-testid={`pola-delete-${p.id}`}><Trash2 /></Button>
       </div>) : null) },
   ];
 
