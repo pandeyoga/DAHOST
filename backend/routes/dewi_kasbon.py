@@ -1021,8 +1021,9 @@ async def apply_payroll_deductions(
     deductions = [{"kasbon_id": d.get("kasbon_id"), "amount": d.get("amount"), "employee_id": s.get("employee_id")}
                   for s in slips for d in (s.get("deductions") or [])
                   if (d.get("type") or "").lower() == "kasbon" and d.get("kasbon_id")]
+    from routes.rahaza_payroll_rules import payroll_month   # 2026-11-09 (M2): bulan gaji = bulan akhir periode
     return await apply_payroll_deductions_core(
-        db, (run.get("period_from") or "")[:7], deductions, user,
+        db, payroll_month(run.get("period_from"), run.get("period_to")), deductions, user,
         run_id=run_id, run_number=run.get("run_number") or "", je_date=run.get("period_to"))
 
 

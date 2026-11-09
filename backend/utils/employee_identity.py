@@ -35,7 +35,7 @@ JANGAN menulis ulang query penerima/identitas di modul lain. Sentinel
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
@@ -197,9 +197,93 @@ async def resolve_employee_for(db, user: dict, requested_id: Optional[str] = Non
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# KETERLAMBATAN — dasar "POTONGAN TERLAMBAT" & "BONUS KEHADIRAN"
+# KETERLAMBATAN & PULANG CEPAT — dasar "POTONGAN TERLAMBAT" & "BONUS KEHADIRAN"
 # ═════════════════════════════════════════════════════════════════════════════
+# Toleransi bawaan (setelan global lama). 2026-11-09 (Q4, keputusan owner): toleransi BISA diatur per shift
+# (`rahaza_shifts.toleransi_menit`, dibaca `core.attendance_rules._shape`); shift tanpa isian memakai nilai ini.
+# Perilaku dipertahankan: menit terlambat = selisih − toleransi (masuk 08:20, toleransi 5 → 15 menit).
 DEFAULT_GRACE_MINUTES = 5
+
+# Alasan menit terlambat/pulang cepat = 0 (disimpan di `late_reason` / `early_leave_reason`, tampil di rekap).
+REASON_OFF_DAY = "hari libur"
+REASON_LEAVE = "cuti/izin sehari penuh"
+REASON_DUTY = "tugas luar"
+REASON_SCHEDULE_OFF = "libur menurut jadwal shift"
+
+
+def _hm(txt) -> Optional[int]:
+    try:
+        hh, mm = (int(x) for x in str(txt).split(":")[:2])
+        return hh * 60 + mm
+    except (TypeError, ValueError):
+        return None
+
+
+def half_day_points(shift: dict) -> tuple:
+    """(akhir paruh pagi, awal paruh siang) dalam MENIT sejak jam masuk shift — 2026-11-09 (Q5).
+
+    Jam mulai istirahat diatur (`istirahat_mulai` di master shift → `break_start`) → pagi berakhir saat istirahat
+    mulai, siang mulai sesudah istirahat (mulai + lama istirahat). Tidak diatur → istirahat diletakkan di tengah jam
+    kerja: kerja = rentang shift − istirahat; paruh pagi = kerja ÷ 2; paruh siang mulai sesudah istirahat.
+    Istirahat tidak diatur (0) → keduanya = jam masuk + separuh rentang shift.
+    Contoh 08:00–16:00 istirahat 60 menit → pagi s.d. 11:30, siang mulai 12:30; istirahat 12:00 → 12:00 / 13:00."""
+    st, en = _hm(shift.get("start_time")), _hm(shift.get("end_time"))
+    span = 8 * 60 if st is None or en is None else ((en - st) % (24 * 60) or 24 * 60)
+    brk = max(0, min(int(shift.get("break_minutes") or 0), span))
+    bs = _hm(shift.get("break_start"))
+    if bs is not None and st is not None:
+        off = (bs - st) % (24 * 60)
+        if 0 < off < span:
+            return off, min(span, off + brk)
+    work = span - brk
+    return work // 2, work // 2 + brk
+
+
+async def attendance_day_context(db, emp: dict, day: str) -> dict:
+    """Keadaan satu hari kerja karyawan untuk terlambat / pulang cepat (2026-11-09, H5 + Q5 + Q11).
+
+    Return {workday, leave: None|'full'|'AM'|'PM', duty: bool}. Cuti/izin/sakit DISETUJUI dibaca dari catatan absen
+    hari itu (`leave_request_id`) atau pengajuan disetujui yang menutup tanggalnya; tugas luar dari tanda
+    `tugas_luar` di catatan absen (ditulis saat dinas disetujui, `core.tugas_luar`)."""
+    from core.workdays import get_work_calendar, holiday_set, is_working_day
+    day = str(day)[:10]
+    emp_id = (emp or {}).get("id")
+    out = {"workday": True, "leave": None, "duty": False}
+    cal = await get_work_calendar(db)
+    out["workday"] = is_working_day(day, cal["off_weekdays"], await holiday_set(db, day, day))
+    if not emp_id:
+        return out
+    rec = await db.rahaza_attendance_events.find_one(
+        {"employee_id": emp_id, "date": day},
+        {"_id": 0, "leave_request_id": 1, "half_day": 1, "half_day_period": 1, "tugas_luar": 1}) or {}
+    out["duty"] = bool(rec.get("tugas_luar"))
+    if rec.get("leave_request_id"):
+        lv = await db.rahaza_leave_requests.find_one(
+            {"id": rec["leave_request_id"], "status": "approved"},
+            {"_id": 0, "is_half_day": 1, "half_day": 1, "half_day_period": 1})
+        lv = lv or {"is_half_day": rec.get("half_day"), "half_day_period": rec.get("half_day_period")}
+    else:
+        lv = await db.rahaza_leave_requests.find_one(
+            {"employee_id": emp_id, "status": "approved", "from_date": {"$lte": day}, "to_date": {"$gte": day}},
+            {"_id": 0, "is_half_day": 1, "half_day": 1, "half_day_period": 1})
+    if lv:
+        if lv.get("is_half_day") or lv.get("half_day"):
+            period = str(lv.get("half_day_period") or rec.get("half_day_period") or "AM").upper()
+            out["leave"] = "PM" if period == "PM" else "AM"
+        else:
+            out["leave"] = "full"
+    return out
+
+
+def _zero_reason(ctx: dict, shift: Optional[dict]) -> Optional[str]:
+    if ctx.get("duty"):
+        return REASON_DUTY
+    if ctx.get("leave") == "full":
+        return REASON_LEAVE
+    # Hari libur/Minggu: masuk = lembur, bukan terlambat — kecuali Jadwal Shift TERBIT memang menjadwalkannya.
+    if not ctx.get("workday") and (shift or {}).get("source") != "jadwal":
+        return REASON_OFF_DAY
+    return None
 
 
 async def compute_late_minutes(db, emp: dict, clock_in_utc: datetime,
@@ -209,39 +293,91 @@ async def compute_late_minutes(db, emp: dict, clock_in_utc: datetime,
     Sebelumnya sistem TIDAK PERNAH membandingkan `clock_in` dengan jam shift,
     sehingga kolom "POTONGAN TERLAMBAT" di sheet THP user mustahil diisi.
 
+    2026-11-09 (H5, audit HR — bug pasti): dulu hanya membandingkan jam masuk dengan jam masuk shift tanggal itu.
+    Akibatnya cuti setengah hari pagi + masuk 12:30 tercatat 265 menit terlambat, dan lembur hari Minggu masuk 10:00
+    tercatat 115 menit (potongan + bonus hangus). Sekarang: hari libur/Minggu (tanpa jadwal terbit), cuti sehari
+    penuh, dan tugas luar → 0; cuti setengah hari PAGI → acuan = awal paruh siang (sesudah istirahat, Q5).
+
     Mengembalikan dict siap-simpan (selalu ada kuncinya, supaya laporan tidak
-    perlu menebak): `{late_minutes, is_late, shift_code, shift_start, grace_minutes}`
+    perlu menebak): `{late_minutes, is_late, shift_code, shift_start, grace_minutes, late_reason}`
     """
     out = {"late_minutes": 0, "is_late": False, "shift_code": None,
-           "shift_start": None, "grace_minutes": DEFAULT_GRACE_MINUTES}
+           "shift_start": None, "grace_minutes": DEFAULT_GRACE_MINUTES, "late_reason": None}
     if not clock_in_utc:
         return out
 
     if clock_in_utc.tzinfo is None:
         clock_in_utc = clock_in_utc.replace(tzinfo=timezone.utc)
     local = clock_in_utc.astimezone(WIB)
+    day = local.date().isoformat()
 
     # Tahap 2 (2026-11-06): shift yang BERLAKU hari itu — shift record → Jadwal Shift terbit → penugasan shift
     # → shift bawaan karyawan (core.attendance_rules.resolve_day_shift). Dulu selalu shift bawaan karyawan,
     # sehingga jadwal di menu Shift tidak berpengaruh pada keterlambatan.
     from core.attendance_rules import resolve_day_shift
-    shift = await resolve_day_shift(db, emp, local.date().isoformat(), shift_id)
+    shift = await resolve_day_shift(db, emp, day, shift_id)
     if not shift:
-        # Tanpa shift → tidak bisa menyimpulkan terlambat. Jangan mengarang.
+        # Tanpa shift → tidak bisa menyimpulkan terlambat. Jangan mengarang. Libur menurut Jadwal Shift terbit
+        # (entri `libur: true`) diberi alasan supaya rekap & saran koreksi AI tahu sebabnya.
+        from core.attendance_rules import scheduled_day_off
+        if not shift_id and await scheduled_day_off(db, emp, day):
+            out["late_reason"] = REASON_SCHEDULE_OFF
         return out
 
     start_txt = shift["start_time"]
+    grace_raw = shift.get("grace_minutes")
+    grace = DEFAULT_GRACE_MINUTES if grace_raw in (None, "") else int(grace_raw)   # 0 = tanpa toleransi (Q4)
+    out.update({"shift_code": shift.get("code"), "shift_start": start_txt, "shift_source": shift.get("source"),
+                "grace_minutes": grace})
+    ctx = await attendance_day_context(db, emp, day)
+    reason = _zero_reason(ctx, shift)
+    if reason:
+        out["late_reason"] = reason
+        return out
+
     hh, mm = (int(x) for x in start_txt.split(":")[:2])
     scheduled = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if ctx.get("leave") == "AM":
+        scheduled += timedelta(minutes=half_day_points(shift)[1])
+        out["shift_start"] = scheduled.strftime("%H:%M")
+        out["late_reason"] = "cuti setengah hari pagi: acuan sesudah istirahat"
     diff = int((local - scheduled).total_seconds() // 60)
-    grace = int(shift.get("grace_minutes") or DEFAULT_GRACE_MINUTES)
-
-    out.update({
-        "shift_code": shift.get("code"),
-        "shift_start": start_txt,
-        "shift_source": shift.get("source"),
-        "grace_minutes": grace,
-        "late_minutes": max(0, diff - grace) if diff > grace else 0,
-    })
+    out["late_minutes"] = max(0, diff - grace) if diff > grace else 0
     out["is_late"] = out["late_minutes"] > 0
+    return out
+
+
+async def compute_early_leave_minutes(db, emp: dict, clock_out_utc, day: Optional[str] = None,
+                                      shift_id: Optional[str] = None) -> dict:
+    """Menit PULANG CEPAT terhadap jam pulang shift — 2026-11-09 (Q3, keputusan owner: DICATAT & tampil di rekap,
+    TIDAK memotong gaji/bonus). `day` = tanggal kerja catatan absen (shift malam pulang besoknya).
+
+    Hari libur (tanpa jadwal terbit), cuti sehari penuh, dan tugas luar → 0; cuti setengah hari SIANG → acuan =
+    akhir paruh pagi. Tanpa toleransi. Return {early_leave_minutes, shift_end, early_leave_reason}."""
+    out = {"early_leave_minutes": 0, "shift_end": None, "early_leave_reason": None}
+    from core.attendance_rules import _aware, resolve_day_shift, shift_end_utc
+    cout = _aware(clock_out_utc)
+    if not cout:
+        return out
+    day = str(day or cout.astimezone(WIB).date().isoformat())[:10]
+    shift = await resolve_day_shift(db, emp, day, shift_id)
+    if not shift or not shift.get("end_time"):
+        from core.attendance_rules import scheduled_day_off
+        if not shift and not shift_id and await scheduled_day_off(db, emp, day):
+            out["early_leave_reason"] = REASON_SCHEDULE_OFF
+        return out
+    end = shift_end_utc(day, shift)
+    out["shift_end"] = shift["end_time"]
+    ctx = await attendance_day_context(db, emp, day)
+    reason = _zero_reason(ctx, shift)
+    if reason:
+        out["early_leave_reason"] = reason
+        return out
+    if ctx.get("leave") == "PM":
+        start = datetime.combine(date.fromisoformat(day), time(0, 0), tzinfo=WIB) + \
+            timedelta(minutes=_hm(shift["start_time"]) or 0)
+        end = (start + timedelta(minutes=half_day_points(shift)[0])).astimezone(timezone.utc)
+        out["shift_end"] = end.astimezone(WIB).strftime("%H:%M")
+        out["early_leave_reason"] = "cuti setengah hari siang: acuan akhir paruh pagi"
+    out["early_leave_minutes"] = max(0, int((end - cout).total_seconds() // 60))
     return out

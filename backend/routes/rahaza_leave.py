@@ -94,15 +94,25 @@ async def _require_hr_admin(request: Request):
 
 
 async def _require_leave_approver(request: Request):
-    """Require manager, HR, or owner for approval."""
+    """Penyetuju cuti tahap HR (layar Cuti & Lembur SDM, persetujuan massal). 2026-11-09 (Q6): tahap ATASAN
+    diputus atasan langsung dari Portal Saya › Persetujuan tim (`/api/portal/team-approvals`); tingkat yang boleh
+    diputus diperiksa per pengajuan oleh `core.leave_engine.leave_decision_stage`."""
+    from core.leave_engine import is_leave_hr_approver
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role in ("superadmin", "owner", "manager", "hr", "production_manager"):
+    if is_leave_hr_approver(user):
         return user
-    perms = user.get("_permissions") or []
-    if "*" in perms or "hr.approve" in perms:
-        return user
-    raise HTTPException(403, "Forbidden: hanya Manager/HR yang boleh approve cuti.")
+    raise HTTPException(403, "Hanya HR yang boleh memutus cuti di layar ini. Atasan langsung memutus lewat "
+                             "Portal Saya › Cuti & Lembur › Persetujuan tim.")
+
+
+async def _require_leave_decider(db, leave_id: str, user: dict, action: str) -> str:
+    """Gerbang endpoint setuju/tolak cuti (Q6): pengajuan ada + `user` berhak memutus tingkat yang sedang ditunggu
+    (atasan langsung atau HR — `core.leave_engine.leave_decision_stage`). Mesin cuti memeriksa ulang saat menulis."""
+    leave = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
+    if not leave:
+        raise HTTPException(404, "Pengajuan cuti tidak ditemukan.")
+    from core.leave_engine import leave_decision_stage
+    return await leave_decision_stage(db, leave, user, action)
 
 
 async def _ensure_own_or_hr(db, user: dict, employee_id: str, message: str):
@@ -538,9 +548,11 @@ async def create_leave_request(db, user: dict, body: dict) -> dict:
         if request_type not in LEAVE_KINDS:
             request_type = "cuti"
 
-    # Tentukan berapa level approval yang dibutuhkan
-    # > 7 hari kerja → butuh 2 level (supervisor → HR)
-    approval_level_required = 2 if (not is_half_day and duration_working > 7) else 1
+    # 2026-11-09 (Q6, keputusan owner): tingkat 1 = ATASAN LANGSUNG karyawan (manager_id → akun tertaut), lalu HR;
+    # atasan kosong / tanpa akun → langsung HR. Dulu: > 7 hari kerja = 2 tingkat, siapa pun penyetujunya.
+    from core.approval_route import manager_route
+    route = await manager_route(db, emp)
+    approval_level_required = route["levels"]
 
     doc = {
         "id":                 _uid(),
@@ -562,6 +574,7 @@ async def create_leave_request(db, user: dict, body: dict) -> dict:
         "status":             "pending_approval",
         "approval_level_required": approval_level_required,
         "current_approval_level":  1,
+        "approval_route":     {k: route.get(k) for k in ("level_1", "manager_employee_id", "manager_name")},
         "approval_step_1":    None,  # filled when supervisor approves
         "approval_step_2":    None,  # filled when HR approves (if needed)
         "submitted_at":       _now(),
@@ -575,68 +588,36 @@ async def create_leave_request(db, user: dict, body: dict) -> dict:
     await log_activity(user["id"], user.get("name", ""), "request", "rahaza.leave",
                        f"{emp.get('name', employee_id)} - {request_type} {duration} hari")
 
-    # ── Task 2.4: Auto-create multi-level approval_request (non-blocking) ─────────
-    try:
-        from services.approval_chain_service import create_approval_request as _car
-        await _car(
-            db,
-            req_type="leave",
-            ref_id=doc["id"],
-            ref_code=doc["id"],
-            requester={
-                "id": user["id"],
-                "name": emp.get("name") or user.get("name", ""),
-                "full_name": emp.get("name", ""),
-                "email": user.get("email", ""),
-            },
-            meta={
-                "employee_id": employee_id,
-                "employee_name": emp.get("name", ""),
-                "leave_type": lt.get("name", ""),
-                "from_date": from_date,
-                "to_date": to_date,
-                "duration_days": duration,
-                "reason": reason,
-                "link_module": "hr-leave",
-            },
-            subject=f"Cuti {lt.get('name', '')} — {emp.get('name', '')} ({from_date} s/d {to_date})",
-        )
-    except Exception as _e:
-        # Non-blocking: jika belum ada chain 'leave', gunakan legacy flow
-        log.warning(f"[leave] auto approval_request skipped (chain belum ada?): {_e}")
+    # 2026-11-09 (Q6): mesin "Persetujuan Bertingkat" (approval_chain_service) TIDAK lagi diberi pengajuan cuti —
+    # dulu menyetujui di sana tidak mengubah status cuti (mesin kedua yang tidak tersambung).
 
-    # ── Notifikasi ke manager langsung + HR ──────────────────────────────────────
+    # ── Notifikasi: atasan langsung (tahap 1) atau HR (bila langsung HR) ─────────
     try:
         from routes.rahaza_notifications import publish_notification
-        notify_ids = []
-
-        # Manager langsung dari employee record
-        manager_id = emp.get("manager_id") or emp.get("supervisor_id")
-        if manager_id:
-            notify_ids.append(manager_id)
-
-        # HR users sebagai fallback/tambahan
-        hr_users = await db.users.find(
-            {"role": {"$in": ["hr", "superadmin", "admin", "owner"]}},
-            {"_id": 0, "id": 1}
-        ).to_list(10)
-        for u2 in hr_users:
-            if u2["id"] not in notify_ids:
-                notify_ids.append(u2["id"])
+        # H6/P4 (bug pasti): dulu `manager_id` = ID KARYAWAN dikirim sebagai penerima (butuh ID AKUN) → atasan
+        # tidak pernah menerima kabar. Sekarang akun atasan dari `employee_user_ids` (rute di atas).
+        notify_ids = [u for u in route.get("manager_user_ids") or [] if u != user.get("id")]
+        if not notify_ids:
+            hr_users = await db.users.find(
+                {"role": {"$in": ["hr", "superadmin", "admin", "owner"]}},
+                {"_id": 0, "id": 1}
+            ).to_list(10)
+            notify_ids = [u2["id"] for u2 in hr_users if u2.get("id") and u2["id"] != user.get("id")]
 
         if notify_ids:
-            level_label = " (butuh 2 level persetujuan)" if approval_level_required == 2 else ""
+            level_label = (" — menunggu persetujuan Anda sebagai atasan, lalu HR" if route["levels"] == 2
+                           else "")
             await publish_notification(
                 db,
                 type_="leave_request_submitted",
                 severity="info",
-                title=f"Request Cuti: {emp.get('name','')} — {lt.get('name','')}",
+                title=f"Pengajuan cuti: {emp.get('name','')} — {lt.get('name','')}",
                 message=(
                     f"{emp.get('name','')} mengajukan {lt.get('name','')} "
                     f"selama {duration} hari "
                     f"({doc['from_date']} s/d {doc['to_date']}){level_label}."
                 ),
-                link_module="hr-leave",
+                link_module="portal-cuti" if route["levels"] == 2 else "hr-leave",
                 link_id=doc["id"],
                 target_user_ids=notify_ids,
                 dedup_key=f"leave_submitted_{doc['id']}",
@@ -651,11 +632,13 @@ async def create_leave_request(db, user: dict, body: dict) -> dict:
 async def leave_approval_preview(leave_id: str, request: Request):
     """Isi dialog persetujuan (Tahap 2, 2026-11-06): alasan, lampiran, hari kerja yang akan ditulis,
     saldo, dan usulan dibayar/tidak. HR memilih keputusan pembayaran sendiri."""
-    await _require_leave_approver(request)
+    user = await require_auth(request)
     db = get_db()
     leave = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     if not leave:
         raise HTTPException(404, "Leave request tidak ditemukan.")
+    from core.leave_engine import leave_decision_stage
+    stage = await leave_decision_stage(db, leave, user, "approve")   # Q6: atasan / HR
     from core.leave_engine import is_half_day, leave_kind, leave_period_info, suggest_pay_decision
     from routes.rahaza_leave_balances import balance_snapshot
     lt = await db.rahaza_leave_types.find_one({"id": leave.get("leave_type_id")}, {"_id": 0})
@@ -681,6 +664,7 @@ async def leave_approval_preview(leave_id: str, request: Request):
         "balance": bal, "balance_by_year": balance_by_year, "type_unpaid": _lt_is_unpaid(lt),
         "suggestion": suggest_pay_decision(leave, lt),
         "final_step": not (level_required > 1 and current == 1),
+        "stage": stage, "approval_route": leave.get("approval_route") or {},
     })
 
 
@@ -689,9 +673,11 @@ async def approve_leave(leave_id: str, request: Request):
     """Setujui pengajuan cuti/izin/sakit — lewat SATU mesin `core.leave_engine` (Tahap 2, 2026-11-06).
 
     Body (opsional): {pay_decision: 'paid'|'unpaid', notes}. Persetujuan akhir memeriksa & memotong saldo dalam
-    hari kerja, menulis absensi per hari kerja (status = jenis pengajuan), dan menyimpan keputusan bayar HR."""
-    user = await _require_leave_approver(request)
+    hari kerja, menulis absensi per hari kerja (status = jenis pengajuan), dan menyimpan keputusan bayar HR.
+    2026-11-09 (Q6): siapa yang boleh memutus tingkat ini diperiksa mesin cuti (atasan langsung → HR)."""
+    user = await require_auth(request)
     db = get_db()
+    await _require_leave_decider(db, leave_id, user, "approve")
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 — tombol lama mengirim tanpa body
@@ -755,9 +741,10 @@ async def notify_leave_decision(db, leave: dict, *, approved: bool, reason: str 
 
 @router.post("/leaves/{leave_id}/reject")
 async def reject_leave(leave_id: str, request: Request):
-    """Tolak pengajuan — lewat mesin yang sama dengan Kotak Masuk SDM (Tahap 2)."""
-    user = await _require_leave_approver(request)
+    """Tolak pengajuan — lewat mesin yang sama dengan Kotak Masuk SDM (Tahap 2). Q6: atasan (tingkat 1) atau HR."""
+    user = await require_auth(request)
     db = get_db()
+    await _require_leave_decider(db, leave_id, user, "reject")
     body = await request.json()
     reason = (body.get("reason") or "").strip() or "Tidak ada alasan"
     from core.leave_engine import reject_leave_request

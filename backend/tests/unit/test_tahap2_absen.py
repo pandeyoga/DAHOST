@@ -76,6 +76,14 @@ def _val(doc, expr):
     if isinstance(expr, dict) and "$cond" in expr:
         cond, yes, no = expr["$cond"]
         return yes if _val(doc, cond) else no
+    # 2026-11-09: rekap menit terlambat/pulang cepat memakai $ifNull & $gt (Q3)
+    if isinstance(expr, dict) and "$ifNull" in expr:
+        v, alt = expr["$ifNull"]
+        got = _val(doc, v)
+        return alt if got is None else got
+    if isinstance(expr, dict) and "$gt" in expr:
+        a, b = (_val(doc, x) for x in expr["$gt"])
+        return (a or 0) > (b or 0)
     return expr
 
 
@@ -296,7 +304,9 @@ class TestHariCuti:
         run(leave_mod.approve_leave("lv1", FakeRequest({})))
         assert [(r["date"], r["status"], r["leave_request_id"]) for r in _rows(db)] == [
             ("2026-11-06", "sakit", "lv1"), ("2026-11-07", "sakit", "lv1")]
-        assert db.rahaza_leave_balances.docs[0]["used"] == 2
+        # 2026-11-09 (Q7, UU 13/2003 Ps 93): sakit DENGAN surat dokter dibayar tanpa kuota — saldo tidak dipakai.
+        assert db.rahaza_leave_balances.docs == []
+        assert db.rahaza_leave_requests.docs[0]["quota_rule"] == "sakit_bersurat"
 
     def test_setengah_hari(self, db, monkeypatch):
         as_user(monkeypatch, HR)
@@ -321,7 +331,7 @@ class TestHariCuti:
         assert [r["date"] for r in rows] == ["2026-11-06"]       # record buatan cuti (7 & 9 Nov) dihapus lagi
         assert rows[0]["status"] == "hadir" and rows[0]["clock_in"] == cin and rows[0]["leave_request_id"] is None
         assert rows[0]["notes"] == "pulang sakit jam 9"
-        assert db.rahaza_leave_balances.docs[0]["used"] == 0
+        assert db.rahaza_leave_balances.docs == []   # Q7: sakit bersurat tidak memakai saldo
         assert db.rahaza_leave_requests.docs[0]["status"] == "cancelled"
 
     def test_absen_masuk_di_hari_cuti(self):

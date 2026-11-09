@@ -8,9 +8,11 @@
  * Logika simpan (hanya kolom yang diubah HR, validasi Hadir, Tandai hadir & simpan) tidak berubah.
  */
 import { Fragment, useState, useEffect, useCallback } from 'react';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
-  Save, RefreshCw, Clock as ClockIcon, ChevronLeft, ChevronRight, Copy, CheckCircle2, Lock, ListChecks,
+  Save, RefreshCw, Clock as ClockIcon, ChevronLeft, ChevronRight, Copy, CheckCircle2, Lock, ListChecks, Timer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,10 +44,12 @@ const normRow = (row) => ({ ...row, status: row.status === 'alfa' ? 'alpa' : row
 const AUDIT_SOURCE = {
   grid: 'Grid HR', manual: 'Input HR', persetujuan_selfie: 'Pemeriksaan selfie', lembur_dibayar: 'Tanda lembur',
   koreksi: 'Koreksi absen', cuti: 'Cuti disetujui', batal_cuti: 'Cuti dibatalkan', impor_mesin: 'Mesin sidik jari',
+  hitung_ulang: 'Hitung ulang terlambat', tugas_luar: 'Tugas luar disetujui', batal_tugas_luar: 'Tugas luar dibatalkan',
 };
 const AUDIT_FIELD = {
   status: 'Status', clock_in: 'Masuk', clock_out: 'Pulang', hours_worked: 'Jam kerja', overtime_hours: 'Lembur',
   overtime_paid: 'Lembur dibayar', shift_id: 'Shift', notes: 'Catatan', late_minutes: 'Terlambat',
+  early_leave_minutes: 'Pulang cepat', tugas_luar: 'Tugas luar',
   leave_request_id: 'Pengajuan cuti', half_day: 'Setengah hari', paid_leave: 'Cuti dibayar', approval_status: 'Pemeriksaan',
 };
 const auditVal = (k, v) => {
@@ -60,7 +64,7 @@ const auditVal = (k, v) => {
 };
 const jam = (n) => (Math.round((Number(n) || 0) * 10) / 10).toLocaleString('id-ID');
 
-export default function RahazaAttendanceModule({ token }) {
+export default function RahazaAttendanceModule({ token, onNavigate }) {
   const today = todayWIB();
   const [date, setDate] = useState(today);
   const [rows, setRows] = useState([]);
@@ -75,6 +79,10 @@ export default function RahazaAttendanceModule({ token }) {
   const [auditRows, setAuditRows] = useState([]);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  // 2026-11-09 (M13): hitung ulang menit terlambat & pulang cepat satu periode (tanggal gaji final dilewati).
+  const [recalcOpen, setRecalcOpen] = useState(false);
+  const [recalcPeriod, setRecalcPeriod] = useState(() => periodFromPreset('month'));
+  const [recalcBusy, setRecalcBusy] = useState(false);
 
   const fetchGrid = useCallback(async (d = date) => {
     setLoading(true);
@@ -200,7 +208,11 @@ export default function RahazaAttendanceModule({ token }) {
         method: 'POST', headers, body: JSON.stringify({ date, entries }),
       });
       if (res.ok) {
+        const out = await res.json().catch(() => ({}));
         toast.success(`Absensi ${formatTanggalID(date)} disimpan (${entries.length} karyawan).`);
+        if ((out.warnings || []).length) {
+          toast.warning(`${out.warnings.length} karyawan berstatus izin/sakit/cuti tanpa pengajuan — hari itu dipotong dari gaji. Buat pengajuan atas nama karyawan bila dibayar.`);
+        }
         fetchGrid();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -234,6 +246,26 @@ export default function RahazaAttendanceModule({ token }) {
       const err = await res.json().catch(() => ({}));
       toast.error(err.detail || 'Gagal menandai lembur.');
     }
+  };
+
+  /* 2026-11-09 (Q2, keputusan owner): izin/sakit/cuti DIBAYAR hanya lewat pengajuan — satu jalur dengan Portal Saya. */
+  const buatPengajuan = (r) => {
+    if (!onNavigate) return;
+    onNavigate('hr-leave-hub', { tab: 'leave', buat_pengajuan: { employee_id: r.employee_id, from_date: date, kind: r.status } });
+  };
+
+  const hitungUlang = async () => {
+    setRecalcBusy(true);
+    try {
+      const res = await fetch('/api/rahaza/attendance/recompute-timing', {
+        method: 'POST', headers, body: JSON.stringify({ from: recalcPeriod.from, to: recalcPeriod.to }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(out.detail || 'Gagal menghitung ulang.'); return; }
+      toast.success(out.message || 'Selesai dihitung ulang.');
+      setRecalcOpen(false);
+      fetchGrid();
+    } finally { setRecalcBusy(false); }
   };
 
   const toggleAudit = async (r) => {
@@ -334,6 +366,10 @@ export default function RahazaAttendanceModule({ token }) {
                 { label: 'Catatan', nilai: (r) => r.notes || '' },
                 { label: 'Terkunci gaji final', nilai: (r) => (r.locked ? 'Ya' : '') },
               ]} />
+            <Button variant="outline" onClick={() => setRecalcOpen(true)} data-testid="att-recompute"
+              title="Hitung ulang menit terlambat dan pulang cepat satu periode dari jadwal, cuti, dan hari libur terbaru">
+              <Timer />Hitung ulang terlambat
+            </Button>
             <Button variant="outline" size="icon" onClick={() => fetchGrid()} title="Muat ulang" aria-label="Muat ulang" data-testid="att-refresh">
               <RefreshCw className={loading ? 'animate-spin' : ''} />
             </Button>
@@ -396,10 +432,14 @@ export default function RahazaAttendanceModule({ token }) {
                 <TableCell className="min-w-[11rem]">
                   <p className="font-medium text-foreground">{r.employee_name}</p>
                   <p className="text-xs text-muted-foreground tabular-nums">{r.employee_code}{!r.existing_id && ' · belum dicatat'}</p>
-                  {(r.locked || r.leave_request_id) && (
+                  {(r.locked || r.leave_request_id || r.tugas_luar || r.jadwal_libur || Number(r.late_minutes) > 0 || Number(r.early_leave_minutes) > 0) && (
                     <div className="mt-0.5 flex flex-wrap gap-1">
                       {r.locked && <StatusBadge status="locked" label="Terkunci gaji final" tone="muted" testId={`att-locked-${r.employee_code}`} />}
                       {r.leave_request_id && <StatusBadge status="cuti" label={r.half_day ? 'Cuti ½ hari disetujui' : 'Cuti disetujui'} tone="info" />}
+                      {r.tugas_luar && <StatusBadge status="tugas_luar" label="Tugas luar" tone="info" testId={`att-duty-${r.employee_code}`} />}
+                      {r.jadwal_libur && <StatusBadge status="libur" label="Libur menurut jadwal" tone="muted" testId={`att-sched-off-${r.employee_code}`} />}
+                      {Number(r.late_minutes) > 0 && <StatusBadge status="late" label={`Terlambat ${r.late_minutes} menit`} tone="warning" />}
+                      {Number(r.early_leave_minutes) > 0 && <StatusBadge status="early" label={`Pulang cepat ${r.early_leave_minutes} menit`} tone="warning" />}
                     </div>
                   )}
                 </TableCell>
@@ -408,6 +448,17 @@ export default function RahazaAttendanceModule({ token }) {
                     data-testid={`att-status-${r.employee_code}`} aria-label={`Status ${r.employee_name}`} className="h-8 w-28">
                     {STATUS_OPTS.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
                   </SmartNativeSelect>
+                  {['izin', 'sakit', 'cuti'].includes(r.status) && !r.leave_request_id && !r.locked && (
+                    <div className="mt-0.5 space-y-0.5" data-testid={`att-needs-request-${r.employee_code}`}>
+                      <p className="text-xs text-[hsl(var(--warning-text))]">Tanpa pengajuan: dipotong dari gaji</p>
+                      {onNavigate && (
+                        <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => buatPengajuan(r)}
+                          data-testid={`att-make-request-${r.employee_code}`}>
+                          Buat pengajuan atas nama karyawan
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell>
                   <SmartNativeSelect disabled={r.locked} value={r.shift_id || ''} onChange={e => update(r.employee_id, { shift_id: e.target.value })}
@@ -471,6 +522,13 @@ export default function RahazaAttendanceModule({ token }) {
           </TableBody>
         </Table>
       )}
+      <FormPopup open={recalcOpen} onClose={() => setRecalcOpen(false)} ukuran="pendek" testId="att-recompute-dialog"
+        judul="Hitung ulang terlambat" onSimpan={hitungUlang} menyimpan={recalcBusy} labelSimpan="Hitung ulang"
+        keterangan="Menit terlambat dan pulang cepat dihitung lagi dari jadwal shift, cuti yang disetujui, tugas luar, dan hari libur terbaru. Tanggal yang sudah masuk gaji final tidak diubah.">
+        <Isian label="Periode" wajib>
+          <PeriodPicker value={recalcPeriod} onChange={setRecalcPeriod} testId="att-recompute-period" />
+        </Isian>
+      </FormPopup>
     </PageLayout>
   );
 }

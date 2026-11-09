@@ -153,7 +153,8 @@ async def self_payslips(
     run_map = {r["id"]: r for r in runs}
     for s in slips:
         run = run_map.get(s.get("run_id"), {})
-        s["run_period_label"] = f"{run.get('period_from', '')[:7]}" if run else ""
+        # 2026-11-09 (M2): bulan gaji = bulan tanggal akhir periode
+        s["run_period_label"] = str(run.get("period_to") or run.get("period_from") or "")[:7] if run else ""
         s["run_status"] = run.get("status", "")
 
     return {

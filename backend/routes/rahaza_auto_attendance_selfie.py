@@ -93,7 +93,8 @@ async def selfie_clock_in(request: Request):
     # Tahap 2: hari cuti sehari penuh → ditolak; setengah hari → status cutinya tetap.
     day_status = leave_status_for_clock_in(existing)
     pol = await enforce_attendance_policy(db, photo_b64=photo_b64, lat=lat,
-                                          lng=lng, action="masuk", fix=gps_fix_from_body(body))
+                                          lng=lng, action="masuk", fix=gps_fix_from_body(body),
+                                          duty_day=bool((existing or {}).get("tugas_luar")))
     geo = pol["geo"]
 
     # ── Verifikasi wajah AI DIMATIKAN (No.59a) — foto tidak dikirim ke LLM ─
@@ -194,7 +195,8 @@ async def selfie_clock_out(request: Request):
     # ── KEBIJAKAN WAJIB (FASE 16) — dulu clock-out MEMBUANG photo_base64 ──
     from utils.attendance_policy import enforce_attendance_policy, gps_fix_from_body, save_selfie
     pol = await enforce_attendance_policy(db, photo_b64=photo_b64, lat=lat,
-                                          lng=lng, action="pulang", fix=gps_fix_from_body(body))
+                                          lng=lng, action="pulang", fix=gps_fix_from_body(body),
+                                          duty_day=bool(existing.get("tugas_luar")))
     geo = pol["geo"]
 
     # ── Sesi istirahat/izin yang masih terbuka harus ditutup dulu ─────────
@@ -233,6 +235,8 @@ async def selfie_clock_out(request: Request):
     # diam-diam; payroll memakai `net_hours_worked`.
     from routes.rahaza_attendance_sessions import recompute_session_totals
     totals = recompute_session_totals({**existing, "hours_worked": max(0.0, hours)})
+    from core.attendance_rules import early_leave_fields
+    totals.update(await early_leave_fields(db, emp, existing, now))   # 2026-11-09 (Q3): pulang cepat dicatat
 
     # 2026-11-07 (Tahap 7): absen pulang ganda bersamaan tidak menimpa jam pulang pertama.
     res = await db.rahaza_attendance_events.update_one({"id": existing["id"], "clock_out": {"$in": [None, ""]}}, {"$set": {

@@ -11,6 +11,14 @@ Keputusan owner 6 Nov 2026:
   · Masuk/keluar di tengah periode = prorata hari kerja.
   · Lembur tanpa pengajuan tidak dibayar otomatis; HR menandai `overtime_paid` di hari itu. Pengali dan
     tingkatan lembur dari Pengaturan Payroll per HARI (PP 35/2021), bukan pilihan pemohon.
+
+Keputusan owner 9 Nov 2026 ("ikuti rekomendasi audit HR"):
+  · Q1 hari kerja tanpa catatan absen juga TIDAK menghanguskan bonus kehadiran (dianggap hadir, sama dengan aturan
+    gaji); hangus hanya karena alpa/izin tanpa surat/terlambat yang TERCATAT. Tetap diperingatkan.
+  · Q9 lembur dibayar dari jam NYATA (absen) paling banyak sebesar pengajuan, dibulatkan ke bawah per 30 menit;
+    > 4 jam/hari atau > 18 jam/minggu (lembur hari kerja, PP 35/2021 Ps 26) → peringatan, tidak ditolak;
+    pengajuan disetujui tanpa absen → tidak dibayar + peringatan.
+  · M2 satu "bulan gaji" = bulan TANGGAL AKHIR periode (`payroll_month`) untuk pajak, BPJS, kasbon, dan kabar slip.
   · Absensi tanggal yang sudah masuk run FINAL terkunci (`is_attendance_locked`) — koreksi sesudahnya masuk
     run berikutnya sebagai baris penyesuaian.
 
@@ -51,6 +59,14 @@ def norm_status(s) -> str:
     if v in OFF:
         return "libur"
     return v
+
+
+def payroll_month(period_from=None, period_to=None) -> str:
+    """'YYYY-MM' bulan gaji sebuah run/slip = bulan tanggal AKHIR periode (2026-11-09, M2 audit HR).
+
+    Dulu pajak/BPJS memakai bulan akhir, sedangkan kasbon & kabar slip memakai bulan AWAL: run 26 Okt–25 Nov
+    (gaji November) tidak memotong kasbon yang mulai dipotong "2026-11" dan kabar slipnya tertulis "2026-10"."""
+    return str(period_to or period_from or "")[:7]
 
 
 # ═══ Masa kerja (prorata) ═════════════════════════════════════════════════════
@@ -203,6 +219,27 @@ def summarize_days(classified: dict, *, until: date | None = None) -> dict:
     return s
 
 
+# ═══ Terlambat / pulang cepat yang DIHITUNG (2026-11-09, H5 audit HR) ═══════════
+def timing_counts(rec: dict, *, off_days=None, counts=None) -> bool:
+    """Apakah menit terlambat/pulang cepat catatan ini ikut potongan terlambat, hangus bonus, dan rekap?
+
+    Hanya hari HADIR (atau cuti/izin/sakit SETENGAH hari). Catatan cuti/izin/sakit sehari penuh, tugas luar,
+    selfie ditolak, dan hari bukan hari kerja (`off_days` = tanggal ISO; kecuali jadwal shift terbit
+    menjadwalkannya) diabaikan — pengaman untuk menit lama yang tersimpan sebelum aturan H5 (dulu lembur hari
+    Minggu masuk 10:00 terhitung 115 menit terlambat)."""
+    r = rec or {}
+    if counts is not None and not counts(r):
+        return False
+    if r.get("tugas_luar"):
+        return False
+    st = norm_status(r.get("status"))
+    if not (st == "hadir" or (st in LEAVE and r.get("half_day"))):
+        return False
+    if off_days is not None and str(r.get("date") or "")[:10] in off_days and r.get("shift_source") != "jadwal":
+        return False
+    return True
+
+
 # ═══ Lembur per hari (PP 35/2021) ═════════════════════════════════════════════
 def tier_factor(hours: float, tiers: list) -> float:
     """Faktor pengali untuk `hours` jam lembur dengan tingkatan [[sampai_jam_ke, pengali], …, [None, pengali]]."""
@@ -231,12 +268,51 @@ def overtime_tiers(cfg: dict, *, rest_day: bool, work_days_per_week: int) -> lis
             [None, float(cfg.get("rest_day_after_multiplier") or 4.0)]]
 
 
+OVERTIME_RULE = "aktual_30m"          # penanda slip: lembur dihitung aturan Q9 (dipakai koreksi sesudah kunci)
+OT_ROUND_MINUTES = 30
+OT_MAX_HOURS_DAY = 4                  # PP 35/2021 Ps 26 ayat 1 (lembur hari kerja)
+OT_MAX_HOURS_WEEK = 18
+
+
+def floor_overtime(hours: float, step_minutes: int = OT_ROUND_MINUTES) -> float:
+    """Jam lembur dibulatkan KE BAWAH per `step_minutes` (Q9: 1 jam 50 menit → 1,5 jam)."""
+    h = max(0.0, float(hours or 0))
+    step = max(1, int(step_minutes)) / 60.0
+    return round(int(h / step + 1e-9) * step, 2)
+
+
+def overtime_limit_warnings(ot_days: list) -> list:
+    """Peringatan batas lembur hari kerja (PP 35/2021): > 4 jam/hari, > 18 jam/minggu (Senin–Minggu). Tidak menolak."""
+    out, weeks = [], {}
+    for o in ot_days or []:
+        if o.get("day_type") != "hari kerja" or not o.get("paid_hours"):
+            continue
+        if o["paid_hours"] > OT_MAX_HOURS_DAY:
+            out.append(f"{o['date']}: lembur {o['paid_hours']:g} jam (batas {OT_MAX_HOURS_DAY} jam/hari)")
+        d = _d(o["date"])
+        wk = d.isocalendar()[:2]
+        weeks[wk] = weeks.get(wk, 0.0) + float(o["paid_hours"])
+    for (y, w), h in sorted(weeks.items()):
+        if h > OT_MAX_HOURS_WEEK:
+            out.append(f"minggu ke-{w} {y}: lembur {h:g} jam (batas {OT_MAX_HOURS_WEEK} jam/minggu)")
+    return out
+
+
 def overtime_days(events: list[dict], requests: list[dict], classified: dict, *, off_weekdays, holidays: set,
-                  cfg: dict, work_days_per_week: int, counts=None) -> list[dict]:
+                  cfg: dict, work_days_per_week: int, counts=None, clock_hours: dict | None = None,
+                  rule: str = OVERTIME_RULE) -> list[dict]:
     """Lembur per tanggal: dibayar HANYA bila ada pengajuan DISETUJUI yang menutupnya, atau HR menandai
     `overtime_paid: true` di absensi hari itu. `overtime_paid: false` eksplisit = HR memutuskan tidak dibayar.
-    Pengali dari pengaturan (per hari), `rate_multiplier` pengajuan diabaikan."""
+    Pengali dari pengaturan (per hari), `rate_multiplier` pengajuan diabaikan.
+
+    2026-11-09 (Q9): jam nyata = `overtime_hours` yang dicatat HR di absensi, atau (bila kosong) jam dari jam absen
+    (`clock_hours`: pulang − jam pulang shift di hari kerja; jam kerja bersih di hari istirahat). Dibayar
+    min(jam nyata, pengajuan) dibulatkan ke bawah per 30 menit; pengajuan tanpa absen → 0 (basis
+    'pengajuan tanpa absen'). `rule='legacy'` = aturan lama (bayar jam pengajuan bila absen kosong) — dipakai
+    koreksi slip final yang dihitung sebelum aturan ini, supaya tidak muncul selisih palsu."""
     counts = counts or (lambda r: True)
+    clock_hours = clock_hours or {}
+    legacy = rule == "legacy"
     att: dict = {}
     for ev in events or []:
         if not counts(ev):
@@ -255,37 +331,60 @@ def overtime_days(events: list[dict], requests: list[dict], classified: dict, *,
             continue
         iso = str(r.get("date") or "")[:10]
         req[iso] = req.get(iso, 0.0) + max(0.0, float(r.get("hours") or 0))
+    flagged = set()
+    for ev in events or []:
+        if counts(ev) and ev.get("overtime_paid") is True and float(ev.get("overtime_hours") or 0) <= 0:
+            flagged.add(str(ev.get("date") or "")[:10])   # HR menandai dibayar tanpa mengetik jam → jam nyata absen
     out = []
-    for iso in sorted(set(att) | set(req)):
+    for iso in sorted(set(att) | set(req) | (set() if legacy else flagged)):
         a = att.get(iso) or {"hours": 0.0, "paid_flag": None}
+        if iso in flagged and a["paid_flag"] is None:
+            a = {**a, "paid_flag": True}
         r_hours = req.get(iso, 0.0)
         day = _d(iso)
         rest = day.weekday() in off_weekdays or iso in holidays
+        actual = a["hours"] if (legacy or a["hours"] > 0) else float(clock_hours.get(iso) or 0.0)
+        payable = actual if legacy else floor_overtime(actual)
+        extra = {}
         if (classified.get(iso) or {}).get("kind") == "alpa":
-            paid, hours, src = 0.0, a["hours"] or r_hours, "hari alpa"
+            paid, hours, src = 0.0, actual or r_hours, "hari alpa"
         elif a["paid_flag"] is False:
-            paid, hours, src = 0.0, a["hours"], "ditandai HR tidak dibayar"
+            paid, hours, src = 0.0, actual, "ditandai HR tidak dibayar"
         elif a["paid_flag"] is True:
-            paid, hours, src = a["hours"], a["hours"], "ditandai HR dibayar"
-        elif r_hours > 0:
+            paid, hours, src = payable, actual, "ditandai HR dibayar"
+        elif r_hours > 0 and legacy:
             paid = r_hours if a["hours"] <= 0 else min(a["hours"], r_hours)
             hours, src = max(a["hours"], r_hours), "pengajuan disetujui"
+        elif r_hours > 0 and actual <= 0:
+            paid, hours, src = 0.0, 0.0, "pengajuan tanpa absen"
+        elif r_hours > 0:
+            paid, hours, src = floor_overtime(min(actual, r_hours)), actual, "pengajuan disetujui"
         else:
-            paid, hours, src = 0.0, a["hours"], "tanpa pengajuan"
+            paid, hours, src = 0.0, actual, "tanpa pengajuan"
+        if r_hours > 0:
+            extra["requested_hours"] = round(r_hours, 2)
+        if not legacy and actual > 0 and (a["hours"] <= 0) and iso in clock_hours:
+            extra["actual_source"] = "jam absen"
         tiers = overtime_tiers(cfg, rest_day=rest, work_days_per_week=work_days_per_week)
         out.append({"date": iso, "hours": round(hours, 2), "paid_hours": round(paid, 2), "basis": src,
                     "day_type": "hari istirahat/libur" if rest else "hari kerja",
-                    "factor": round(tier_factor(paid, tiers), 4)})
+                    "factor": round(tier_factor(paid, tiers), 4), **extra})
     return out
 
 
 # ═══ Bonus kehadiran: kapan hangus ════════════════════════════════════════════
-def bonus_forfeit_reasons(cfg: dict, summary: dict, *, days_present: int, days_late: int, late_minutes: int) -> list:
-    """Alasan bonus kehadiran hangus menurut Pengaturan Payroll (key `attendance_bonus`). [] = tetap dibayar."""
+def bonus_forfeit_reasons(cfg: dict, summary: dict, *, days_present: int, days_late: int, late_minutes: int,
+                          presumed_days: int = 0) -> list:
+    """Alasan bonus kehadiran hangus menurut Pengaturan Payroll (key `attendance_bonus`). [] = tetap dibayar.
+
+    2026-11-09 (Q1): `presumed_days` = hari kerja TANPA catatan absen — dianggap hadir (sama dengan aturan gaji:
+    tidak dipotong). Dulu run tanpa sumber absen menghanguskan 15/15 bonus "tidak ada hari hadir" padahal gaji
+    pokoknya dibayar penuh."""
     if cfg.get("enabled") is False:
         return []
     out = []
-    if days_present <= 0:
+    present = int(days_present or 0) + int(presumed_days or 0)
+    if present <= 0:
         out.append("tidak ada hari hadir")
     alpa = float(summary.get("alpa") or 0)
     if cfg.get("forfeit_if_alpa", cfg.get("require_full_attendance", True)) and alpa > float(cfg.get("max_alpa_days") or 0):
@@ -299,8 +398,8 @@ def bonus_forfeit_reasons(cfg: dict, summary: dict, *, days_present: int, days_l
     if lim > 0 and late_minutes > lim:
         out.append(f"terlambat {late_minutes} menit (batas {lim})")
     mn = int(cfg.get("min_days_present") or 0)
-    if mn > 0 and days_present < mn:
-        out.append(f"hadir {days_present} hari (minimal {mn})")
+    if mn > 0 and present < mn:
+        out.append(f"hadir {present} hari (minimal {mn})")
     return out
 
 

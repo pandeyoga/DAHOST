@@ -27,6 +27,7 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect } from './hr/hrPickers';
 import { checkPerm } from '@/lib/rbac';
+import { bolehSetujuiHR, labelTahap } from '@/lib/tahapPersetujuan';
 
 // 2026-11-08: sama dengan server routes/rahaza_overtime.py (OT_APPROVER_ROLES ATAU izin hr.approve).
 const OT_APPROVER_ROLES = ['superadmin', 'admin', 'owner', 'hr', 'manager'];
@@ -131,7 +132,10 @@ export default function RahazaOvertimeModule({ token, user }) {
     { kunci: 'alasan', label: 'Alasan', isi: (it) => <span className="block max-w-[18rem] truncate" title={it.reason || ''}>{it.reason || '—'}</span> },
     { kunci: 'status', label: 'Status', isi: (it) => (
       <div>
-        <StatusBadge status={it.status} label={statusCfg(it.status).label} tone={statusCfg(it.status).tone} />
+        <StatusBadge status={it.status} label={labelTahap(it) || statusCfg(it.status).label} tone={statusCfg(it.status).tone} />
+        {(it.limit_warnings || []).length > 0 && (
+          <p className="mt-0.5 text-xs text-[hsl(var(--warning-text))]" title={(it.limit_warnings || []).join(' ')}>Melebihi batas lembur PP 35/2021</p>
+        )}
         {it.status === 'rejected' && it.rejected_reason && (
           <p className="mt-0.5 text-xs text-[hsl(var(--danger-text))]">{it.rejected_reason}</p>
         )}
@@ -139,9 +143,12 @@ export default function RahazaOvertimeModule({ token, user }) {
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (it.status !== 'pending' ? null : (
       <div className="flex items-center justify-end gap-1">
         {isApprover ? (<>
-          <Button size="sm" variant="success" onClick={() => handleApprove(it.id)} data-testid={`overtime-approve-${it.id}`}>
-            <Check />Setujui
-          </Button>
+          {/* 2026-11-09 (Q6): selama menunggu atasan langsung, HR belum bisa menyetujui (boleh menolak). */}
+          {bolehSetujuiHR(it, user) && (
+            <Button size="sm" variant="success" onClick={() => handleApprove(it.id)} data-testid={`overtime-approve-${it.id}`}>
+              <Check />Setujui
+            </Button>
+          )}
           <Button size="sm" variant="destructive" onClick={() => tolak(it)} data-testid={`overtime-reject-${it.id}`}>
             <X />Tolak
           </Button>

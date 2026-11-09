@@ -176,12 +176,21 @@ def _status(coro):
 
 
 # ── Butir 1: daftar & detail slip ────────────────────────────────────────────
-@pytest.mark.parametrize("role", ["superadmin", "owner", "hr", "manager", "accounting", "staff_keuangan",
-                                  "manager_keuangan", "hr_manager", "manager_produksi"])
-def test_hr_keuangan_manajemen_super_melihat_semua_slip(env, role):
+# 2026-11-09 (Q8, keputusan owner): slip SEMUA karyawan hanya peran penggajian (aturan `_require_hr`); Keuangan,
+# HR Manager/Staf HR, dan manajer produksi tidak lagi lolos lewat portal (Keuangan: total & nilai transfer di run).
+@pytest.mark.parametrize("role", ["superadmin", "owner", "hr", "manager", "admin"])
+def test_peran_penggajian_melihat_semua_slip(env, role):
     rows = _run(payslips.list_payslips(env(role)))
     assert len(rows) == len(SLIPS)
     assert _run(payslips.get_payslip("s-tutut-okt", env(role)))["id"] == "s-tutut-okt"
+
+
+@pytest.mark.parametrize("role", ["accounting", "staff_keuangan", "manager_keuangan", "hr_manager", "staff_hr",
+                                  "manager_produksi"])
+def test_keuangan_dan_staf_sdm_tidak_lagi_melihat_slip_orang_lain_q8(env, role):
+    # akun tanpa karyawan tertaut → 403 (bukan daftar 19 slip seperti dulu)
+    assert _status(payslips.list_payslips(env(role))) == 403
+    assert _status(payslips.get_payslip("s-tutut-okt", env(role))) == 403
 
 
 def test_karyawan_biasa_hanya_slip_sendiri_dari_run_final(env):
@@ -236,9 +245,14 @@ def test_pdf_slip_sendiri_run_draft_404_untuk_karyawan(env, pdf_stub):
     assert _status(payslips.export_payslip_pdf("s-tutut-sep", env("tim_packing"))) == 403    # milik orang lain
 
 
-@pytest.mark.parametrize("role", ["hr", "accounting", "staff_keuangan", "owner"])
-def test_pdf_slip_draft_tetap_bisa_untuk_hr_keuangan(env, pdf_stub, role):
+@pytest.mark.parametrize("role", ["hr", "owner", "manager"])
+def test_pdf_slip_draft_tetap_bisa_untuk_peran_penggajian(env, pdf_stub, role):
     assert _status(payslips.export_payslip_pdf("s-totti-okt", env(role))) == 200
+
+
+@pytest.mark.parametrize("role", ["accounting", "staff_keuangan", "hr_manager"])
+def test_pdf_slip_orang_lain_ditolak_untuk_keuangan_q8(env, pdf_stub, role):
+    assert _status(payslips.export_payslip_pdf("s-totti-okt", env(role))) == 403
 
 
 # ── Butir 2: Portal Saya hanya slip run final/dibayar ────────────────────────
@@ -288,7 +302,12 @@ def test_pdf_bundel_run_ditolak_untuk_karyawan_biasa(env, role):
     assert _status(payslips.export_run_pdf("run-sep", env(role))) == 403
 
 
-@pytest.mark.parametrize("role", ["superadmin", "hr", "manager", "accounting", "hr_manager", "manager_produksi"])
-def test_pdf_bundel_run_lolos_gerbang_untuk_hr_keuangan_manajemen(env, role):
+@pytest.mark.parametrize("role", ["superadmin", "hr", "manager", "owner"])
+def test_pdf_bundel_run_lolos_gerbang_untuk_peran_penggajian(env, role):
     # Run tidak ada → 404 SETELAH gerbang (membuktikan gerbang tidak menolak peran ini).
     assert _status(payslips.export_run_pdf("run-tidak-ada", env(role))) == 404
+
+
+@pytest.mark.parametrize("role", ["accounting", "hr_manager", "manager_produksi"])
+def test_pdf_bundel_run_ditolak_untuk_keuangan_dan_staf_sdm_q8(env, role):
+    assert _status(payslips.export_run_pdf("run-tidak-ada", env(role))) == 403

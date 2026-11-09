@@ -247,10 +247,16 @@ class TestBonusKehadiran:
     def _bonus(self, s):
         return next(a for a in s["allowances"] if a["allowance_id"] == "al-bonus")
 
-    def test_nol_hari_hadir_hangus(self, db):
+    def test_tanpa_catatan_tidak_hangus_tapi_semua_alpa_hangus(self, db):
+        # 2026-11-09 (Q1, keputusan owner): hari kerja TANPA catatan = dianggap hadir (gaji tidak dipotong DAN bonus
+        # tidak hangus) — dulu 0 catatan menghanguskan bonus "tidak ada hari hadir". Tetap diperingatkan.
         self._seed(db)
+        s = _slip(db)
+        assert self._bonus(s)["amount"] == 200_000 and not self._bonus(s).get("forfeited")
+        assert any(w["type"] == "attendance_missing" and "bonus" in w["message"] for w in s["warnings"])
+        db.rahaza_attendance_events.docs = [_ev(d, "alpa") for d in OCT_WD]
         b = self._bonus(_slip(db))
-        assert b["amount"] == 0 and b["forfeited"] and "tidak ada hari hadir" in b["forfeit_reasons"]
+        assert b["amount"] == 0 and "tidak ada hari hadir" in b["forfeit_reasons"]
 
     def test_hadir_penuh_dibayar_alpa_hangus(self, db):
         self._seed(db)
@@ -277,6 +283,7 @@ class TestBonusKehadiran:
         self._seed(db, enabled=False)
         assert self._bonus(_slip(db))["amount"] == 200_000
         self._seed(db, allowance_ids=["al-trans"])
+        db.rahaza_attendance_events.docs = [_ev("2026-10-05", "alpa")]   # 1 alpa tercatat → tunjangan pilihan hangus
         s = _slip(db)
         assert self._bonus(s)["amount"] == 200_000
         assert next(a for a in s["allowances"] if a["allowance_id"] == "al-trans")["amount"] == 0
@@ -388,6 +395,8 @@ class TestLembur:
             # Minggu: 7 × 2 + 1 × 3 + 1 × 4 = 21 (pengali pilihan pemohon 1,5 diabaikan)
             {"employee_id": "emp-a", "date": "2026-10-11", "status": "approved", "hours": 9, "rate_multiplier": 1.5},
             {"employee_id": "emp-a", "date": "2026-10-12", "status": "pending", "hours": 5}]
+        # 2026-11-09 (Q9): lembur dibayar dari jam NYATA — Minggu 11 Okt punya absen 9 jam kerja bersih.
+        db.rahaza_attendance_events.docs.append(_ev("2026-10-11", hours_worked=9, net_hours_worked=9))
         s = _slip(db, prof=_prof(base_rate=3_460_000))
         by = {o["date"]: o for o in s["overtime_entries"]}
         assert by["2026-10-05"]["paid_hours"] == 0 and by["2026-10-08"]["paid_hours"] == 0
@@ -402,6 +411,7 @@ class TestLembur:
         db.rahaza_production_calendar.docs = [{"date": "2026-10-20", "type": "holiday"}]   # Selasa libur
         db.rahaza_overtime_requests.docs = [{"employee_id": "emp-a", "date": "2026-10-20", "status": "approved",
                                              "hours": 6}]
+        db.rahaza_attendance_events.docs = [_ev("2026-10-20", hours_worked=6, net_hours_worked=6)]   # Q9: jam nyata
         s = _slip(db, prof=_prof(base_rate=3_460_000))
         assert s["overtime_entries"][0]["factor"] == 5 * 3 + 1 * 3
 

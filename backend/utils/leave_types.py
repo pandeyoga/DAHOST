@@ -49,6 +49,44 @@ from fastapi import HTTPException
 
 VALID_REQUEST_TYPES = ("cuti", "sakit", "izin")
 
+# 2026-11-09 (Q7, keputusan owner "kuota mengikuti UU 13/2003"): cara menghitung kuota per jenis.
+#   tahunan        Cuti tahunan Ps 79 — `quota_default` hari/tahun, BERHAK setelah `min_service_months` (12) bulan
+#                  bekerja terus-menerus, TANPA prorata; sisa dibawa ke tahun berikut maks `max_carry_days` (bawaan 0).
+#   per_tahun      Jatah per tahun biasa (perilaku lama, mis. izin pribadi).
+#   per_bulan      Maks `quota_default` hari per BULAN kalender (haid Ps 81: hari ke-1 dan ke-2).
+#   per_kejadian   Maks `quota_default` hari per pengajuan (Ps 93 ayat 4: menikah 3, duka 2, dsb.; melahirkan).
+#   sakit_bersurat Sakit DENGAN surat dokter dibayar tanpa kuota (Ps 93); tanpa surat memakai jatah per tahun.
+QUOTA_RULES = ("tahunan", "per_tahun", "per_bulan", "per_kejadian", "sakit_bersurat")
+QUOTA_RULE_LABELS = {"tahunan": "per tahun, berhak setelah masa kerja", "per_tahun": "per tahun",
+                     "per_bulan": "per bulan", "per_kejadian": "per kejadian",
+                     "sakit_bersurat": "tanpa batas dengan surat dokter"}
+_PER_EVENT_CODES = {"MARRIAGE", "CHILD_MARRY", "CHILD_BIRTH", "CIRCUMCISION", "BEREAVEMENT", "MATERNITY"}
+_PER_EVENT_WORDS = ("nikah", "menikah", "duka", "meninggal", "khitan", "baptis", "kelahiran", "melahirkan",
+                    "keguguran", "istri melahirkan")
+
+
+def quota_rule_of(lt: Optional[dict]) -> str:
+    """Aturan kuota jenis cuti. Isian `quota_rule` dipakai bila ada; jenis lama (tanpa isian) ditebak dari kode/nama/
+    dasar hukum bawaan — ANNUAL/"tahunan" → tahunan, haid → per_bulan, sakit → sakit_bersurat, izin Ps 93 ayat 4 &
+    melahirkan → per_kejadian, selain itu per_tahun (perilaku lama)."""
+    d = lt or {}
+    r = str(d.get("quota_rule") or "").strip().lower()
+    if r in QUOTA_RULES:
+        return r
+    code = str(d.get("code") or "").upper()
+    name = str(d.get("name") or "").lower()
+    basis = str(d.get("legal_basis") or "").lower()
+    if code == "ANNUAL" or "tahunan" in name:
+        return "tahunan"
+    if code == "MENSTRUAL" or "haid" in name:
+        return "per_bulan"
+    if code in _PER_EVENT_CODES or any(w in name for w in _PER_EVENT_WORDS) or "93 ayat 4" in basis \
+            or "pasal 82" in basis:
+        return "per_kejadian"
+    if str(d.get("request_type") or "").lower() == "sakit":
+        return "sakit_bersurat"
+    return "per_tahun"
+
 DEFAULT_COLOR = "#3b82f6"
 MAX_QUOTA_DAYS = 365
 
@@ -128,10 +166,18 @@ def build_leave_type_doc(body: dict, existing: Optional[dict] = None) -> dict:
                                "Maks. hari tanpa dokumen", 0, MAX_QUOTA_DAYS,
                                int(existing.get("max_days_without_doc") or 0))
 
+    rule_in = str(pick("quota_rule", "") or "").strip().lower()
+    if rule_in and rule_in not in QUOTA_RULES:
+        raise HTTPException(400, f"Aturan kuota harus salah satu: {list(QUOTA_RULES)}")
     doc = {
         "code": code,
         "name": name,
         "request_type": request_type,
+        "quota_rule": rule_in or quota_rule_of({**existing, "code": code, "name": name,
+                                                "request_type": request_type,
+                                                "legal_basis": pick("legal_basis", "")}),
+        "min_service_months": _int_in_range(pick("min_service_months", None), "Masa kerja minimal (bulan)", 0, 120,
+                                            int(existing.get("min_service_months") or 12)),
         # ── dibayar / tidak: DUA field ditulis bersamaan (kanonik + cermin) ──
         "unpaid": unpaid,
         "paid": not unpaid,
@@ -162,4 +208,8 @@ def public_leave_type(lt: dict) -> dict:
     d.setdefault("max_days_without_doc", 0)
     d.setdefault("quota_default", 12)
     d.setdefault("color", DEFAULT_COLOR)
+    d["quota_rule"] = quota_rule_of(lt)
+    d["quota_rule_label"] = QUOTA_RULE_LABELS[d["quota_rule"]]
+    d.setdefault("min_service_months", 12)
+    d.setdefault("max_carry_days", 0)
     return d

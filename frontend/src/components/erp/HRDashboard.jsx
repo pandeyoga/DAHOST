@@ -210,7 +210,10 @@ export default function HRDashboard({ token }) {
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Total gaji bersih</p>
-              <p className="text-sm font-semibold tabular-nums text-foreground">{formatRupiah(run.total_net ?? run.total_payout)}</p>
+              {/* 2026-11-09 (Q8): total gaji hanya untuk peran penggajian/Keuangan — server tidak mengirimnya ke peran lain. */}
+              <p className="text-sm font-semibold tabular-nums text-foreground">
+                {run.total_net == null && run.total_payout == null ? 'Khusus penggajian' : formatRupiah(run.total_net ?? run.total_payout)}
+              </p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Jumlah karyawan</p>

@@ -280,6 +280,8 @@ def _ot_env(db, ot_rate=0, scheme="monthly", base=3_460_000):
     db.rahaza_attendance_events.docs = [
         {"employee_id": "emp-a", "date": "2026-10-05", "status": "hadir", "overtime_hours": 3},   # sama dgn pengajuan
         {"employee_id": "emp-a", "date": "2026-10-06", "status": "hadir", "overtime_hours": 2},
+        # 2026-11-09 (Q9): lembur dibayar dari jam NYATA — Minggu 11 Okt ada absen 4 jam kerja bersih.
+        {"employee_id": "emp-a", "date": "2026-10-11", "status": "hadir", "hours_worked": 4, "net_hours_worked": 4},
     ]
     db.rahaza_overtime_requests.docs = [
         {"employee_id": "emp-a", "date": "2026-10-05", "status": "approved", "hours": 3, "rate_multiplier": 1.5},

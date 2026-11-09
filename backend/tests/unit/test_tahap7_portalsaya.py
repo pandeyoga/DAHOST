@@ -380,7 +380,8 @@ def test_kartu_saldo_jenis_tak_dibayar_tanpa_sisa_di_layar():
     if not os.path.exists(p):
         pytest.skip("sumber frontend tidak tersedia")
     s = open(p, encoding="utf-8").read()
-    assert "b.unpaid ? b.used : b.remaining" in s and "tidak dibayar" in s
+    # 2026-11-09 (Q7): jenis per bulan / per kejadian / sakit bersurat juga tanpa "sisa" (remaining = null)
+    assert "b.unpaid || b.remaining == null ? b.used : b.remaining" in s and "tidak dibayar" in s
 
 
 # ═══ 7 · Kasbon Portal Saya ═════════════════════════════════════════════════════

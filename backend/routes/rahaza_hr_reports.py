@@ -73,15 +73,23 @@ async def _attendance_counts(db, emp_ids: list, from_date: str, to_date: str) ->
     by_emp: dict = {}
     async for g in db.rahaza_attendance_events.aggregate([match, {"$group": {
             "_id": {"employee_id": "$employee_id", "status": "$status"},
-            "n": {"$sum": 1}, "late": {"$sum": {"$cond": ["$is_late", 1, 0]}}}}]):
+            "n": {"$sum": 1}, "late": {"$sum": {"$cond": ["$is_late", 1, 0]}},
+            # 2026-11-09 (Q3): menit terlambat & PULANG CEPAT (dicatat, tidak memotong) ikut rekap
+            "late_min": {"$sum": {"$ifNull": ["$late_minutes", 0]}},
+            "early": {"$sum": {"$cond": [{"$gt": [{"$ifNull": ["$early_leave_minutes", 0]}, 0]}, 1, 0]}},
+            "early_min": {"$sum": {"$ifNull": ["$early_leave_minutes", 0]}}}}]):
         key, n = g.get("_id") or {}, int(g.get("n") or 0)
-        row = by_emp.setdefault(key.get("employee_id"), {"recorded": 0, "late": 0})
+        row = by_emp.setdefault(key.get("employee_id"), {"recorded": 0, "late": 0, "late_min": 0, "early": 0,
+                                                         "early_min": 0})
         row["recorded"] += n
         col = _status_key(key.get("status"))
         if col:
             row[col] = row.get(col, 0) + n
             if col == "hadir":
                 row["late"] += int(g.get("late") or 0)
+                row["late_min"] += int(g.get("late_min") or 0)
+                row["early"] += int(g.get("early") or 0)
+                row["early_min"] += int(g.get("early_min") or 0)
     by_date: dict = {}
     async for g in db.rahaza_attendance_events.aggregate([match, {"$group": {
             "_id": {"date": "$date", "status": "$status"}, "n": {"$sum": 1}}}]):
@@ -198,6 +206,9 @@ async def get_attendance_summary(
         # FIX lama tetap: kolom "alfa" (bukan "alpha"), semua varian status alfa ikut dihitung.
         stats = {k: int(c.get(k, 0)) for k in ("hadir", "izin", "sakit", "cuti", "alfa")}
         stats["terlambat"] = int(c.get("late", 0))
+        stats["terlambat_menit"] = int(c.get("late_min", 0))
+        stats["pulang_cepat"] = int(c.get("early", 0))          # Q3: hari pulang cepat
+        stats["pulang_cepat_menit"] = int(c.get("early_min", 0))
 
         recorded_days = int(c.get("recorded", 0))
         missing_days = total_days - recorded_days
@@ -228,6 +239,7 @@ async def get_attendance_summary(
     total_cuti = sum(s["cuti"] for s in summary)
     total_alfa = sum(s["alfa"] for s in summary)
     total_terlambat = sum(s["terlambat"] for s in summary)
+    total_pulang_cepat = sum(s["pulang_cepat"] for s in summary)
     avg_attendance_rate = round(sum(s["attendance_rate"] for s in summary) / total_employees, 1) if total_employees > 0 else 0
 
     # Chart data: daily attendance trend
@@ -259,6 +271,7 @@ async def get_attendance_summary(
             "total_alfa": total_alfa,
             "alfa_count": total_alfa,
             "total_terlambat": total_terlambat,
+            "total_pulang_cepat": total_pulang_cepat,
             "avg_attendance_rate": avg_attendance_rate,
             "present_pct": avg_attendance_rate,
             "working_days": working_days_n,
@@ -416,8 +429,14 @@ async def get_payroll_summary(
       - Per employee payslip summary
       - Aggregates (total gross, deductions, net)
       - Chart data (breakdown by component)
+
+    2026-11-09 (Q8, keputusan owner): baris gaji PER KARYAWAN hanya untuk peran penggajian
+    (`can_view_payroll_detail`); peran laporan lain (staf HR, manajer produksi, izin hr.view_reports) hanya
+    menerima total run (`detail_hidden=True`). Dulu daftar bruto/potongan/bersih per orang terbaca semuanya.
     """
-    await _require_hr_admin(request)
+    user = await _require_hr_admin(request)
+    from routes.rahaza_payroll_shared import can_view_payroll_detail
+    show_detail = can_view_payroll_detail(user)
     db = get_db()
     
     # If no period_code, use latest payroll run
@@ -505,7 +524,8 @@ async def get_payroll_summary(
     }
     
     return serialize_doc({
-        "summary": summary,
+        "summary": summary if show_detail else [],
+        "detail_hidden": not show_detail,
         "aggregates": {
             "total_employees": total_employees,
             "total_gross": total_gross,

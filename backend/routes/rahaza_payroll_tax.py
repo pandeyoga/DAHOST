@@ -29,7 +29,7 @@ Reference (year 2024/2025 tarif):
 
   BPJS Ketenagakerjaan:
     JHT (Hari Tua): 5.7% = 2% employee + 3.7% employer (no ceiling)
-    JP  (Pensiun):  3%   = 1% employee + 2%   employer (ceiling 10,042,300)
+    JP  (Pensiun):  3%   = 1% employee + 2%   employer (plafon upah berjadwal, lihat BPJS_JP_CEILING_SCHEDULE)
     JKK (Kecelakaan Kerja): 0.24% - 1.74% employer only (risk tier; bawaan very_low = 0.24%)
     JKM (Kematian): 0.30% employer only
 
@@ -66,7 +66,41 @@ BPJS_KES_COMP_RATE = 0.04
 BPJS_JHT_EMP_RATE = 0.02
 BPJS_JHT_COMP_RATE = 0.037
 
-BPJS_JP_CEILING = 10_042_300
+# 2026-11-09 (M4, audit HR): plafon upah Jaminan Pensiun naik tiap 1 Maret (PP 45/2015 Ps 5: disesuaikan dengan
+# pertumbuhan PDB). Dulu satu angka 2024 (10.042.300) selamanya → JP gaji > Rp10 juta kurang dipotong.
+#   · 1 Mar 2024 Rp10.042.300 · 1 Mar 2025 Rp10.547.400 (surat informasi BPJS TK batas upah JP 2025)
+#   · 1 Mar 2026 Rp11.086.300 (sosialisasi BPJS TK, KEPDIR difinalkan — KONFIRMASI ke surat resmi; bisa diganti di
+#     Pengaturan Payroll › BPJS, nilai isian yang bukan angka jadwal ini selalu dipakai apa adanya).
+BPJS_JP_CEILING_SCHEDULE = (("2024-03-01", 10_042_300), ("2025-03-01", 10_547_400), ("2026-03-01", 11_086_300))
+BPJS_JP_CEILING = BPJS_JP_CEILING_SCHEDULE[-1][1]   # bawaan layar setelan = plafon terbaru
+
+
+def jp_ceiling_on(day=None) -> int:
+    """Plafon upah JP yang berlaku pada tanggal `day` (date/teks ISO; None = plafon terbaru)."""
+    if day is None:
+        return BPJS_JP_CEILING
+    iso = str(day)[:10]
+    cur = BPJS_JP_CEILING_SCHEDULE[0][1]
+    for start, cap in BPJS_JP_CEILING_SCHEDULE:
+        if iso >= start:
+            cur = cap
+    return cur
+
+
+def apply_jp_ceiling_schedule(cfg: Dict, day) -> Dict:
+    """Setelan BPJS untuk periode bertanggal `day`: plafon JP ikut jadwal resmi bila setelan memakai angka jadwal
+    (bawaan lama yang tersimpan saat formulir disimpan); angka lain (diisi HR sendiri) tetap dipakai."""
+    out = {**cfg, "ceilings": dict(cfg.get("ceilings") or {})}
+    official = {cap for _, cap in BPJS_JP_CEILING_SCHEDULE}
+    try:
+        cur = float(out["ceilings"].get("jp"))
+    except (TypeError, ValueError):
+        cur = None
+    if cur is None or round(cur) in official:
+        out["ceilings"]["jp"] = jp_ceiling_on(day)
+    return out
+
+
 BPJS_JP_EMP_RATE = 0.01
 BPJS_JP_COMP_RATE = 0.02
 

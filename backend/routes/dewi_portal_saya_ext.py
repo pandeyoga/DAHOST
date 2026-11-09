@@ -310,6 +310,15 @@ async def get_my_leaves(
 
     items = await db.rahaza_leave_requests.find(q, {"_id": 0})\
         .sort("created_at", -1).limit(limit).to_list(limit)
+    # 2026-11-09 (pola Portal Saya): nama & warna jenis cuti — dulu tidak dikirim sehingga kolom "Jenis" di
+    # Portal Saya › Cuti & Lembur kosong (layar membaca `leave_type_name`).
+    lt_ids = list({r.get("leave_type_id") for r in items if r.get("leave_type_id")})
+    lts = {t["id"]: t for t in await db.rahaza_leave_types.find(
+        {"id": {"$in": lt_ids}}, {"_id": 0, "id": 1, "name": 1, "color": 1}).to_list(len(lt_ids) or 1)} if lt_ids else {}
+    for r in items:
+        lt = lts.get(r.get("leave_type_id")) or {}
+        r.setdefault("leave_type_name", lt.get("name") or "Cuti")
+        r.setdefault("leave_type_color", lt.get("color") or "#6366f1")
 
     return {"items": serialize(items), "total": len(items)}
 
