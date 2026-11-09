@@ -324,18 +324,46 @@ async def get_return(return_id: str, request: Request):
     return serialize_doc(doc)
 
 
-@router.put("/returns/{return_id}")
+# 2026-11-09 (audit gudang G6) — PUT hanya untuk INFO DASAR (catatan, resi, kontak). Dulu body apa pun
+# diterima (`qty`, `received_qty`, `restocked`, `material_id`, `link_status` …): uji T4b menaikkan qty
+# retur ke 50 lewat API lalu "Terima cepat" menambah stok +50 — batas "qty ≤ diterima" dan tautan
+# master terlewati. Qty lewat langkah Terima, barang lewat "Pilih barang", keputusan lewat Putuskan.
+EDITABLE_INFO_FIELDS = ("notes", "resi_number", "customer_name", "customer_contact", "channel",
+                        "initial_reason")
+
+
+def editable_info_patch(doc: dict, body: dict) -> dict:
+    """Patch PUT retur yang sah (fungsi murni, diuji unit). Melempar HTTPException bila tidak sah."""
+    if (doc or {}).get("status") != "Pending":
+        raise HTTPException(400, f"Retur berstatus '{(doc or {}).get('status')}' — info dasar hanya bisa diubah "
+                                 "selama retur masih Menunggu paket.")
+    body = body if isinstance(body, dict) else {}
+    bad = sorted(k for k in body if k not in EDITABLE_INFO_FIELDS)
+    if bad:
+        raise HTTPException(400, (
+            f"Isian berikut tidak bisa diubah lewat ubah info retur: {', '.join(bad)}. Qty diterima diisi di "
+            "langkah Terima, barang dipilih lewat 'Pilih barang', dan stok hanya bergerak lewat keputusan gudang."))
+    return {k: ("" if body[k] is None else str(body[k]).strip()) for k in EDITABLE_INFO_FIELDS if k in body}
+
+
+@router.put("/returns/{return_id}", dependencies=only(*WAREHOUSE_ROLES, "tim_packing", perm="warehouse.manage"))
 async def update_return(return_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     body = await request.json()
-    doc = await db.wh_returns.find_one({"id": return_id})
+    doc = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Return tidak ditemukan")
-    upd = {k: v for k, v in body.items()
-           if k not in ("_id", "id", "return_code", "status", "timeline", "created_at", "created_by")}
+    upd = editable_info_patch(doc, body)
+    if not upd:
+        return serialize_doc(doc)
     upd["updated_at"] = _now()
-    await db.wh_returns.update_one({"id": return_id}, {"$set": upd})
+    res = await db.wh_returns.update_one({"id": return_id, "status": "Pending"}, {
+        "$set": upd,
+        "$push": {"timeline": {"status": "Pending", "at": _now(), "by": user.get("name") or "gudang",
+                               "note": "Info dasar diubah: " + ", ".join(sorted(k for k in upd if k != "updated_at"))}}})
+    if not res.matched_count:
+        raise HTTPException(409, "Retur ini baru saja diproses pengguna lain — muat ulang.")
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
     return serialize_doc(result)
 
@@ -382,6 +410,16 @@ async def receive_return(return_id: str, request: Request):
         raise HTTPException(400, "Qty diterima harus berupa angka bulat.")
     if received_qty < 0:
         raise HTTPException(400, "Qty diterima tidak boleh negatif.")
+    # 2026-11-09 (audit gudang G16): lokasi FG pilihan saat Terima (bawaan = lokasi berperan FG).
+    # Dipakai keputusan "Masuk stok" nanti; barang rusak tetap ke lokasi karantina.
+    loc_patch = {}
+    if body.get("location_id"):
+        try:
+            loc = await _rb.sellable_location(db, body["location_id"])
+        except _rb.ReturnBridgeError as e:
+            raise HTTPException(400, str(e))
+        loc_patch = {"receive_location_id": loc["id"], "receive_location_code": loc["code"],
+                     "receive_location_name": loc["name"]}
 
     timeline_entry = {
         "status": "Received", "at": _now(), "by": user["name"],
@@ -395,8 +433,11 @@ async def receive_return(return_id: str, request: Request):
         "unboxing_condition_notes": body.get("unboxing_condition_notes", ""),
         "unboxing_photo_notes": body.get("unboxing_photo_notes", ""),
         "package_condition": body.get("package_condition", ""),
+        **loc_patch,
         "updated_at": _now()
     }
+    if loc_patch:
+        timeline_entry["note"] += f" · lokasi simpan {loc_patch['receive_location_code']}"
     await db.wh_returns.update_one({"id": return_id}, {
         "$set": upd, "$push": {"timeline": timeline_entry}
     })
@@ -495,6 +536,12 @@ async def resolve_return(return_id: str, request: Request):
             restock_qty = _rb.decision_qty(doc, body.get("restock_qty"))
         except _rb.ReturnBridgeError as e:
             raise HTTPException(400, str(e))
+    # 2026-11-09 (audit gudang G5): keputusan yang MENAMBAH stok ditolak selama barangnya belum tertaut
+    # master. Dulu retur tetap "Selesai" dengan `restocked=false` — barang fisik ada, stok tidak pernah
+    # naik, dan retur tampak beres (uji T4c WH-RET-00008).
+    if action in (_rb.ACTION_RESTOCK, _rb.ACTION_QUARANTINE) and not (doc.get("material_id")
+                                                                       or doc.get("fg_material_id")):
+        raise HTTPException(400, _rb.UNLINKED_DECISION_MSG)
 
     # ── W4 (sesi #29) — RESTOCK LEWAT SATU PINTU STOK ─────────────────────────
     # SEBELUM ini blok inilah yang membuat pemilik merasa menu ini "usang":
@@ -514,14 +561,16 @@ async def resolve_return(return_id: str, request: Request):
         try:
             restock_result = await _rb.restock(
                 db, doc, condition=cond, qty=restock_qty, actor=user,
-                note=body.get("action_notes", ""))
+                note=body.get("action_notes", ""),
+                location_id=body.get("location_id") or doc.get("receive_location_id"))
             doc = await db.wh_returns.find_one({"id": return_id})
         except _rb.ReturnBridgeError as e:
-            # Barang fisik SUDAH di gudang: jangan batalkan resolusinya, tetapi
-            # jangan pula berpura-pura stok bertambah. Alasannya disimpan supaya
-            # bisa ditindak (petakan SKU / pilih produk) lalu di-restock ulang.
-            restock_error = str(e)
+            # 2026-11-09 (audit gudang G5): dulu galat ini disimpan sebagai `restock_error` lalu retur
+            # tetap "Selesai" tanpa stok. Sekarang keputusan DITOLAK — retur tetap Diinspeksi (stok
+            # belum bergerak: klaim `restocked` sudah dilepas `restock`), bisa diputuskan ulang
+            # setelah penyebabnya dibereskan (pilih barang / tandai lokasi).
             logger.error("[retur-gudang] restock %s gagal: %s", return_id, e)
+            raise HTTPException(400, str(e))
 
     # ── 2026-11-02 (K40) — keputusan "Dibuang": dicatat sebagai BEBAN ────────────
     # Barang tidak masuk stok; nilai HPP-nya (qty × WAC saat keputusan) direklas Dr 6-1300 /
@@ -664,11 +713,7 @@ async def quick_restock(return_id: str, request: Request):
             f"({doc.get('restock_qty', 0)} pcs → {doc.get('restock_location_code') or '-'}). "
             "Tidak digandakan."))
     if not (doc.get("material_id") or doc.get("fg_material_id")):
-        raise HTTPException(400, (
-            "Retur ini belum tertaut master barang jadi, jadi stok tidak bisa "
-            "ditambah. " + (doc.get("link_reason") or
-                            "Pilih produknya dari katalog di retur Marketing, atau "
-                            "petakan SKU-nya lewat Jembatan SKU.")))
+        raise HTTPException(400, _rb.UNLINKED_DECISION_MSG)
 
     try:
         res = await _rb.auto_process(
@@ -676,7 +721,8 @@ async def quick_restock(return_id: str, request: Request):
             condition=body.get("condition") or doc.get("item_condition") or _rb.COND_GOOD,
             qty=body.get("qty"),
             actor=user,
-            note=body.get("note", ""))
+            note=body.get("note", ""),
+            location_id=body.get("location_id") or doc.get("receive_location_id"))
     except _rb.ReturnBridgeError as e:
         raise HTTPException(400, str(e))
     await _refresh_mkt_rekap(db, doc.get("source_marketing_return_id"), user)   # 2026-11-02 (K36)
@@ -735,6 +781,29 @@ async def relink_return(return_id: str, request: Request):
     fresh = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
     return {"success": True, "link_status": ident.get("link_status"),
             "reason": ident.get("reason", ""), "data": serialize_doc(fresh)}
+
+
+@router.post("/returns/{return_id}/set-material",
+             dependencies=only(*WAREHOUSE_ROLES, "tim_packing", perm="warehouse.manage"))
+async def set_return_material(return_id: str, request: Request):
+    """2026-11-09 (audit gudang G5) — "Pilih barang": gudang menautkan retur ke master barang jadi.
+
+    Untuk retur/RTS yang tak tertaut (baris pesanan tanpa SKU, retur manual lama, pesanan multi-produk).
+    Hanya selama retur BELUM diputuskan; barang harus FG aktif milik DA (bukan barang klien maklon).
+    Body: {material_id, note?}.
+    """
+    user = await require_auth(request)
+    db = get_db()
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    try:
+        res = await _rb.set_material(db, return_id, str(body.get("material_id") or "").strip(),
+                                     actor=user, note=str(body.get("note") or ""))
+    except _rb.ReturnBridgeError as e:
+        raise HTTPException(400, str(e))
+    return {"success": True, "message": res["message"], "data": serialize_doc(res["wh_return"])}
 
 
 @router.post("/returns/{return_id}/cancel")

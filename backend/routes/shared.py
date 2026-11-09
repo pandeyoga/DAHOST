@@ -171,14 +171,22 @@ def check_portal_access(user, portal_id):
     return role in PORTAL_ACCESS.get(portal_id, [])
 
 def get_user_portals(user):
-    """Get list of portal IDs the user can access (bawaan atau konfigurasi owner)."""
+    """Get list of portal IDs the user can access (bawaan ∪ konfigurasi owner).
+
+    2026-11-09 (audit gudang G1): aturannya SAMA dengan :func:`check_portal_access` dan gerbang modul
+    (`middleware/module_permission_gate`): portal yang dicentang owner DITAMBAHKAN ke bawaan peran,
+    bukan menggantikannya. Dulu daftar ini memakai konfigurasi saja, sehingga peran yang owner beri
+    portal lain (mis. spv_packing/tim_packing dicentang Produksi/Maklon) kehilangan Portal Gudang di
+    layar padahal backend tetap mengizinkan scan keluar & retur fisik.
+    """
     role = (user.get("role", "") or "").lower()
     if role in SUPER_ROLES:
         return list(PORTAL_ACCESS.keys())
+    default = {pid for pid in PORTAL_ACCESS if pid in ALL_ROLE_PORTALS or role in PORTAL_ACCESS[pid]}
     custom = user.get("_portals")
     if isinstance(custom, list) and custom:
-        return sorted(set(custom) | set(ALL_ROLE_PORTALS))
-    return [pid for pid in PORTAL_ACCESS if pid in ALL_ROLE_PORTALS or role in PORTAL_ACCESS[pid]]
+        return sorted(set(custom) | set(ALL_ROLE_PORTALS) | default)
+    return [pid for pid in PORTAL_ACCESS if pid in default]
 
 
 async def resolve_role_access(db, user: dict) -> dict:
