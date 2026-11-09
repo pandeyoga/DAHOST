@@ -199,6 +199,21 @@ async def daftar_paket(request: Request, limit: int = 20):
     return {"ok": True, "paket": _ser(rows)}
 
 
+@router.get("/pilihan")
+async def pilihan(request: Request):
+    """Toko yang boleh dipilih pengguna ini (berlingkup) + jenis data yang bisa lewat paket."""
+    user = await require_auth(request)
+    toko = await _toko(get_db(), user)
+    jenis = [{"key": k, "label": st.label, "kelompok": st.group, "butuh_periode": k == "tiktok_gmv_max"}
+             for k, st in SOURCE_TYPES.items()
+             if k not in DEPRECATED_SOURCE_TYPES and k not in pk.BUTUH_KONTEKS and st.account_scope == "required"]
+    jenis.sort(key=lambda j: (j["kelompok"], j["label"]))
+    return {"ok": True,
+            "toko": [{"id": a["id"], "nama": a.get("account_name") or a["id"], "kode": a.get("account_code") or "",
+                      "platform": a.get("platform") or ""} for a in toko],
+            "jenis": jenis, "status_label": pk.STATUS_LABEL}
+
+
 @router.get("/{paket_id}")
 async def ambil_paket(paket_id: str, request: Request):
     user = await require_auth(request)
@@ -304,20 +319,31 @@ async def _periksa_satu(db, request: Request, user: dict, b: dict) -> None:
     st = get_source_type(b["source_type"])
     raw = _baca_berkas(b)
     fname = _nama_unggah(b)
-    uf = _UploadFile(file=io.BytesIO(raw), filename=fname)
-    try:
-        res = await md.upload(request, file=uf, source_type=st.key, account_id=b["account_id"],
-                              host_id=None, creator_id=None, catalog_id=None, live_session_id=None)
-    except HTTPException as e:
-        b.update({"status": "ditolak", "galat": _detail(e), "sesi_id": None, "periksa": None})
-        return
-    s = res["session"]
+    terisi: List[str] = []
+    lama = None
+    if b.get("sesi_id"):
+        # Sesi berkas ini masih sah (pemetaan mungkin baru diubah staf/AI) → evaluasi ULANG, tidak membuat sesi baru.
+        lama = await db[SESI].find_one({"id": b["sesi_id"]}, {"_id": 0, "status": 1})
+        if not lama or lama.get("status") not in ("mapping", "ready"):
+            lama = None
+    if lama:
+        g = await md.get_session(b["sesi_id"], request, page=1, page_size=1, only=None)
+        s = g["session"]
+        summary, dup, value_report = g.get("summary") or {}, {}, g.get("value_report") or []
+    else:
+        uf = _UploadFile(file=io.BytesIO(raw), filename=fname)
+        try:
+            res = await md.upload(request, file=uf, source_type=st.key, account_id=b["account_id"],
+                                  host_id=None, creator_id=None, catalog_id=None, live_session_id=None)
+        except HTTPException as e:
+            b.update({"status": "ditolak", "galat": _detail(e), "sesi_id": None, "periksa": None})
+            return
+        s = res["session"]
+        summary, dup, value_report = res.get("summary") or {}, res.get("duplicates") or {}, res.get("value_report") or []
     sid = s["id"]
     mapping = s.get("mapping") or []
-    terisi: List[str] = []
-    summary, dup, value_report = res.get("summary") or {}, res.get("duplicates") or {}, res.get("value_report") or []
     report = s.get("mapping_report") or {}
-    tersimpan = await ap.ambil_pemetaan(db, b["account_id"], st, s.get("headers") or [])
+    tersimpan = None if lama else await ap.ambil_pemetaan(db, b["account_id"], st, s.get("headers") or [])
     if tersimpan:
         mapping2, terisi = ap.gabung_tersimpan(mapping, tersimpan, st)
         if terisi:
@@ -398,10 +424,8 @@ async def periksa_paket(paket_id: str, request: Request):
             b["status"] = "perlu_isian"
             continue
         await scope.assert_account_visible(db, user, b["account_id"])
-        if b.get("sesi_id") and b.get("status") in ("diperiksa", "perlu_pemetaan"):
-            # sesi sudah ada: segarkan dengan pemetaan terakhir (staf mungkin sudah memetakan)
-            b["sesi_lama"] = (b.get("sesi_lama") or []) + [b["sesi_id"]]
-            b["sesi_id"] = None
+        if b.get("status") in ("disimpan", "gagal", "dibatalkan"):
+            continue
         await _periksa_satu(db, request, user, b)
     doc["status"] = "diperiksa" if any(b.get("status") == "diperiksa" for b in doc["berkas"]) else "pratinjau"
     await _simpan_doc(db, doc)

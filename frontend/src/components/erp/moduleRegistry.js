@@ -398,6 +398,9 @@ const MarketingReportsHub   = lazyRetry(() => import('./MarketingReportsHub')); 
 const MarketingSettlementsView = lazyRetry(() => import('./marketing/MarketingSettlementsView')); // sesi #34: pencairan marketplace (lihat saja)
 const HRPerformanceHub      = lazyRetry(() => import('./HRPerformanceHub'));      // KPI + Annual Review + 360° Feedback
 const ImportCenterModule = lazyRetry(() => import('./ImportCenterModule'));
+// 9 Nov 2026 (agen MKT-AI) — impor banyak berkas satu langkah + Laporan Marketing mode AI
+const ImporPaketModule = lazyRetry(() => import('./marketing/ImporPaketModule'));
+const LaporanAIModule = lazyRetry(() => import('./marketing/LaporanAIModule'));
 const CatalogManagementModule = lazyRetry(() => import('./CatalogManagementModule'));
 // ── Sesi #20 — Sinkronisasi Marketing ⇄ Gudang ──────────────────────────────
 // `sku-bridge`  : master pemetaan SKU platform (TikTok/Shopee) ⇄ master gudang.
@@ -1160,6 +1163,8 @@ export const MODULE_REGISTRY = {
   'marketing-account-review': AccountBulkReviewModule,  // BD-5 koreksi massal data toko
   'marketing-sales':        SalesDataEntryModule,      // NEW Phase 2
   'marketing-import':       ImportCenterModule,        // Phase 1 Universal Smart Import Engine
+  'marketing-impor-paket':  ImporPaketModule,          // 9 Nov 2026 — banyak berkas, satu langkah
+  'marketing-laporan-ai':   LaporanAIModule,           // 9 Nov 2026 — laporan mingguan/bulanan mode AI
   // sesi #34 — pintu PENCAIRAN marketplace di portal Marketing (backend F9 sudah
   // ada sejak 2026-08-14 tetapi tanpa layar; pemilik: "di mana menu pencairan?").
   'marketing-settlements':  MarketingSettlementsView,
