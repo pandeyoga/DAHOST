@@ -48,13 +48,13 @@ const KUNCI_SESI_UMUM = KUNCI_SESI_AKTIF;
 const TEKS_RUANG = {
   umum: { judul: 'Asisten AI', sub: 'Tanya data penjualan, keuangan, stok, dan produksi; dijawab dengan grafik, tabel, dan sumber.',
     sambut: 'Tanyakan omzet per toko, produk terlaris, piutang jatuh tempo, atau stok menipis. Jawaban mengikuti CV dan periode yang dipilih.',
-    hp: 'Tanya soal penjualan, stok…' },
+    hp: 'Tanya soal penjualan, stok…', kotak: 'Tanya soal penjualan, keuangan, stok, atau produksi…' },
   sdm: { judul: 'Asisten AI SDM', sub: 'Tanya absensi, cuti, lembur, shift, dan penggajian; koreksi dan draf shift lewat kartu persetujuan.',
     sambut: 'Tanyakan siapa yang terlambat atau lupa absen pulang, cek gaji sebelum finalisasi, atau minta draf shift minggu depan. Perubahan data selalu lewat kartu yang Anda setujui.',
-    hp: 'Tanya soal absensi, shift…' },
+    hp: 'Tanya soal absensi, shift…', kotak: 'Tanya soal absensi, cuti, lembur, shift, atau penggajian…' },
   saya: { judul: 'Tanya asisten', sub: 'Tanya absen, cuti, slip gaji, dan shift Anda sendiri.',
     sambut: 'Tanyakan sisa cuti, rekap absen, rincian slip gaji, atau shift Anda minggu depan. Asisten hanya membaca data milik Anda.',
-    hp: 'Tanya soal absen, cuti, gaji…' },
+    hp: 'Tanya soal absen, cuti, gaji…', kotak: 'Tanya soal absen, cuti, slip gaji, atau shift Anda…' },
 };
 const CATATAN_TINDAKAN_MATI = 'Tindakan AI sedang dimatikan admin; AI hanya menjawab.';
 const CATATAN_ADA_MENUNGGU = 'Ada usulan perubahan yang menunggu keputusan Anda. Pertanyaan baru membuat usulan itu kedaluwarsa.';
@@ -568,7 +568,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
             <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : []} saranRingkas={pesan.length > 0}
               onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap} catatan={catatanKomposer} lampiranAktif
               placeholder={!siap ? (PLACEHOLDER_BELUM_SIAP[status.data?.alasan] || 'Asisten AI belum siap')
-                : (sempit ? teksRuang.hp : undefined)} />
+                : (sempit ? teksRuang.hp : teksRuang.kotak)} />
           </section>
         </GlassCard>
       </div>
