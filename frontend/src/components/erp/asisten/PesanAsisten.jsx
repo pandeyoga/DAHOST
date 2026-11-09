@@ -83,12 +83,42 @@ function LangkahAnalisis({ langkah, pikir, mengalir, statusTeks, adaIsi }) {
   );
 }
 
+/** Sumber web yang tampil sebelum "+N sumber lain" (owner 9 Nov 2026: daftar sumber terlalu panjang). */
+export const BATAS_SUMBER_WEB = 3;
+
+/**
+ * Urutan tampil sumber: data internal dulu (selalu tampil), lalu web tanpa duplikat (alamat sama = satu).
+ * `tampil` = yang terlihat saat ringkas; `sisa` = jumlah yang disembunyikan di balik "+N sumber lain".
+ */
+export function ringkasSumber(item, batasWeb = BATAS_SUMBER_WEB) {
+  const data = [];
+  const web = [];
+  const lihat = new Set();
+  for (const s of item || []) {
+    if (!s) continue;
+    if (s.jenis === 'web') {
+      const kunci = String(s.url || s.label || '').trim().replace(/\/+$/, '').toLowerCase();
+      if (kunci && lihat.has(kunci)) continue;
+      if (kunci) lihat.add(kunci);
+      web.push(s);
+    } else {
+      data.push(s);
+    }
+  }
+  const semua = [...data, ...web];
+  const tampil = [...data, ...web.slice(0, batasWeb)];
+  return { semua, tampil, sisa: semua.length - tampil.length };
+}
+
 function SumberChips({ item }) {
-  if (!item.length) return null;
+  const [semuaTerbuka, setSemuaTerbuka] = useState(false);
+  const { semua, tampil, sisa } = useMemo(() => ringkasSumber(item), [item]);
+  if (!semua.length) return null;
+  const daftar = semuaTerbuka ? semua : tampil;
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="asisten-sumber">
       <span className="text-xs text-muted-foreground">Sumber:</span>
-      {item.map((s, i) => {
+      {daftar.map((s, i) => {
         const web = s.jenis === 'web' && isSafeUrl(s.url);
         const Ikon = s.jenis === 'web' ? Globe : Database;
         const label = s.label || (web ? hostOf(s.url) : 'Data internal');
@@ -106,6 +136,12 @@ function SumberChips({ item }) {
           </span>
         );
       })}
+      {sisa > 0 && (
+        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" aria-expanded={semuaTerbuka}
+          onClick={() => setSemuaTerbuka((b) => !b)} data-testid="asisten-sumber-lainnya">
+          {semuaTerbuka ? 'Ringkas' : `+${sisa} sumber lain`}
+        </Button>
+      )}
     </div>
   );
 }
