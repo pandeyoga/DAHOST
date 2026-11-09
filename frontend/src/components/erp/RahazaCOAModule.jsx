@@ -18,6 +18,7 @@ import {
 } from './RahazaCOATreeNode';
 import ImportExportToolbar from './ImportExportToolbar';
 import { Notice, EmptyState } from './moduleAtoms';
+import { CV_ALL, cvLabel, useCv } from '@/lib/entitas';
 
 // 2026-11-02 (S2-H) — permintaan owner: "untuk Chart of akun itu tolong tandai mana yang terhubung atau
 // tidak karena takutnya salah hapus … cek ui uxnya". Sumber keterikatan = backend core/coa_bindings
@@ -91,6 +92,12 @@ export const entitiesKey = (list) => {
 };
 export const entitiesLabel = (list) => (ENTITY_CHOICES.find((c) => c.key === entitiesKey(list)) || {}).label || '—';
 const entitiesFromKey = (k) => (k === 'BOTH' ? ['DA', 'SMU'] : k ? [k] : null);
+/**
+ * Owner 9 Nov 2026 ("DA dan Sukma kenapa identik? beda lini bisnis"): layar Bagan Akun mengikuti CV yang dipilih di
+ * Portal Keuangan — CV Dewi Aditya / CV Sukma hanya menampilkan akun yang berlaku untuk CV itu (`entities`, diisi backend
+ * dari "berlaku untuk" atau aturan kode); Gabungan dan di luar Portal Keuangan menampilkan semua akun.
+ */
+export const berlakuUntukCv = (acc, cv) => !cv || cv === CV_ALL || (Array.isArray(acc?.entities) && acc.entities.includes(cv));
 
 const FILTERS = [
   { key: 'aktif', label: 'Semua aktif' },
@@ -711,6 +718,9 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
 // ───────────────────────────── Modul utama ───────────────────────────────────
 export default function RahazaCOAModule({ token, onNavigate }) {
   const api = useApi(token);
+  const cvCtx = useCv();
+  const cv = cvCtx ? cvCtx.cv : CV_ALL;
+  const perCv = cv !== CV_ALL;
   const [accounts, setAccounts] = useState([]);
   const [integrity, setIntegrity] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -755,13 +765,15 @@ export default function RahazaCOAModule({ token, onNavigate }) {
 
   const q = search.trim();
   const ql = q.toLowerCase();
-  const matched = useMemo(() => new Set(accounts.filter((a) => {
+  // Akun milik CV terpilih (semua akun di Gabungan). Pohon tetap utuh: leluhur akun yang tampil ikut ditampilkan.
+  const accountsCv = useMemo(() => accounts.filter((a) => berlakuUntukCv(a, cv)), [accounts, cv]);
+  const matched = useMemo(() => new Set(accountsCv.filter((a) => {
     if (!passFilter(a, filter)) return false;
     if (typeFilter && a.type !== typeFilter) return false;
     if (!ql) return true;
     const hay = [a.code, a.name, TYPE_LABELS[a.type], entitiesLabel(a.entities), ...flagLabels(a.flags), ...((a.usage && a.usage.labels) || [])];
     return hay.some((s) => (s || '').toLowerCase().includes(ql));
-  }).map((a) => a.code)), [accounts, filter, typeFilter, ql]);
+  }).map((a) => a.code)), [accountsCv, filter, typeFilter, ql]);
   // pencarian/filter TETAP dalam pohon: tampilkan yang cocok + leluhurnya
   const visible = useMemo(() => {
     const s = new Set(matched);
@@ -781,7 +793,7 @@ export default function RahazaCOAModule({ token, onNavigate }) {
     prevFiltering.current = filtering;
   }, [filtering, visible, defaultOpen]);
 
-  const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.key, accounts.filter((a) => passFilter(a, f.key)).length])), [accounts]);
+  const counts = useMemo(() => Object.fromEntries(FILTERS.map((f) => [f.key, accountsCv.filter((a) => passFilter(a, f.key)).length])), [accountsCv]);
   const flatList = useMemo(() => accounts.filter((a) => matched.has(a.code)), [accounts, matched]);
 
   const openScreen = useCallback((scr, refId) => {
@@ -822,9 +834,10 @@ export default function RahazaCOAModule({ token, onNavigate }) {
     } catch (e) { toast.error(e.message); }
   };
 
-  const sys = accounts.filter((a) => a.active !== false && a.usage?.level === 'SISTEM').length;
-  const free = accounts.filter((a) => a.active !== false && a.usage?.level === 'BEBAS').length;
-  const inactive = accounts.filter((a) => a.active === false).length;
+  const sys = accountsCv.filter((a) => a.active !== false && a.usage?.level === 'SISTEM').length;
+  const free = accountsCv.filter((a) => a.active !== false && a.usage?.level === 'BEBAS').length;
+  const inactive = accountsCv.filter((a) => a.active === false).length;
+  const totalAktif = accounts.filter((a) => a.active !== false).length;
 
   // PANDUAN_UI G1/G6 (2026-11-04): cetakan PageLayout — cari, tipe, dan pil keterikatan di toolbar kiri; pohon/tabel,
   // buka/tutup semua, muat ulang, impor/unduh di kanan; ringkasan satu baris. Dulu semuanya bertumpuk di dalam kartu.
@@ -876,8 +889,14 @@ export default function RahazaCOAModule({ token, onNavigate }) {
       </>}
       summary={<>
         <IntegrityBanner data={integrity} openScreen={openScreen} />
+        {perCv && (
+          <p className="text-sm text-muted-foreground" data-testid="coa-cv-note">
+            Menampilkan akun yang berlaku untuk <span className="font-medium text-foreground">{cvLabel(cv, cvCtx?.options)}</span>{' '}
+            ({accountsCv.length - inactive} dari {totalAktif} akun aktif). Pilih Gabungan di atas untuk melihat semua akun.
+          </p>
+        )}
         <p className="text-sm text-muted-foreground" data-testid="coa-summary">
-          <span className="font-semibold text-foreground">{accounts.length - inactive}</span> aktif ·{' '}
+          <span className="font-semibold text-foreground">{accountsCv.length - inactive}</span> aktif ·{' '}
           <span className="text-[hsl(var(--danger-text))] font-medium">{sys} dipakai sistem</span> · {free} bebas · {inactive} nonaktif
           {filtering && <> · <span className="text-foreground">{matched.size} cocok</span></>}
           <span className="ml-2 inline-flex items-center gap-1 text-xs" title="Dipakai sistem = tidak bisa dihapus · Struktur = induk/penanda laporan · Bawaan = akun sistem (bisa dinonaktifkan) · Bebas = aman dihapus">
