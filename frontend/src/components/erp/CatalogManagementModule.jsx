@@ -15,6 +15,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   Plus, RefreshCw, Search, Pencil, Trash2, MoreHorizontal, Eye, Layers, Loader2, ArrowRightLeft, Coins, Link2,
+  Sparkles, History,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,6 +40,10 @@ import { FGProductPickerDialog } from './FGProductPickerDialog';
 // menemukan katalog kosong harus bisa mengisinya DI TEMPAT, bukan mencari menu lain.
 import CatalogFromMasterModule from './marketing/CatalogFromMasterModule';
 import CatalogItemsView from './marketing/CatalogItemsView';
+// 2026-11-09 (klarifikasi §D) — rapikan item tersembunyi + riwayat/batalkan aksi massal
+import CatalogTidyDialog from './marketing/CatalogTidyDialog';
+import CatalogRunsDialog from './marketing/CatalogRunsDialog';
+import { batalkanAksi } from './marketing/catalogToolsApi';
 import PageLayout, { Toolbar } from './layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
@@ -69,7 +74,10 @@ const persen = (a, b) => (b ? `${(Math.round((a / b) * 1000) / 10).toLocaleStrin
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function CatalogManagementModule({ token, moduleId, initialTab }) {
+// Rapikan item tersembunyi menyentuh semua toko → hanya pimpinan (server juga menjaga)
+const PERAN_RAPIKAN = ['manager_marketing', 'spv_marketing', 'manager', 'owner', 'admin', 'superadmin'];
+
+export default function CatalogManagementModule({ token, moduleId, initialTab, userRole }) {
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
     [token]
@@ -123,8 +131,11 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   // turunan (dihitung dari publish_state + stok jual), jadi menyaringnya di layar
   // hanya akan benar untuk baris yang kebetulan sedang tampil.
   const [f4, setF4] = useState({
-    catalogStatus: [], publishState: '', hasPhoto: '', sort: 'name', order: 'asc',
+    catalogStatus: [], publishState: '', hasPhoto: '', sort: 'name', order: 'asc', productStatus: '',
   });
+  const [rapikanBuka, setRapikanBuka] = useState(false);
+  const [riwayatBuka, setRiwayatBuka] = useState(false);
+  const bolehRapikan = PERAN_RAPIKAN.includes(String(userRole || '').toLowerCase());
   const [statusOptions, setStatusOptions] = useState([]);
 
   // ── Load functions ────────────────────────────────────────────────
@@ -172,6 +183,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       const o = f4opts || {};
       if ((o.catalogStatus || []).length) params.set('catalog_status', o.catalogStatus.join(','));
       if (o.publishState) params.set('publish_state', o.publishState);
+      if (o.productStatus) params.set('product_status', o.productStatus);   // D5
       if (o.hasPhoto) params.set('has_photo', o.hasPhoto);
       if (o.sort) params.set('sort', o.sort);
       if (o.order) params.set('order', o.order);
@@ -330,7 +342,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       toast.success(isEdit ? 'Item disimpan' : 'Item ditambahkan');
     }
     setItemDialog(null);
-    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
     reloadCatalogs();
   };
 
@@ -343,7 +355,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     const r = await cat(`/${selectedCatalog.id}/items/${item.id}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal menghapus item'); return; }
     toast.success('Item dihapus');
-    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
     reloadCatalogs();
   };
 
@@ -355,7 +367,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     if (!r.ok) { throw new Error(d.detail || 'Gagal mengubah stok'); }
     toast.success(`Stok diubah: ${d.old_stock} → ${d.new_stock}`);
     setStockDialog(null);
-    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
     reloadCatalogs();
     loadHistory(selectedCatalog.id);
   };
@@ -374,7 +386,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     toast.success(`${d.saved} item stok diperbarui`);
     setBulkStockDialog(false);
     setBulkStockData({});
-    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+    loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
     reloadCatalogs();
     loadHistory(selectedCatalog.id);
   };
@@ -387,7 +399,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       const d = await r.json();
       if (!r.ok) { toast.error(d.detail || 'Gagal sinkron stok'); return; }
       toast.success(d.message);
-      loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+      loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
       reloadCatalogs();
     } finally { setSyncing(false); }
   };
@@ -404,7 +416,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       toast.success(
         `HPP diperbarui: ${d.updated} item${skipped ? ` · ${skipped} item tanpa sumber RnD dilewati` : ''}`
       );
-      loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+      loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
     } catch (e) {
       toast.error('Gagal menarik ulang HPP');
     } finally { setRefreshingHpp(false); }
@@ -420,7 +432,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       const d = await r.json();
       if (!r.ok) { toast.error(d.detail || 'Gagal menyegarkan dari master'); return; }
       toast.success(d.message || `${d.updated} item disegarkan dari master`);
-      loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
+      loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention, f4);
       reloadCatalogs();
     } catch (e) {
       toast.error('Gagal menyegarkan dari master');
@@ -564,6 +576,17 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
           title="Segarkan nama, kategori, berat, info varian, HPP & harga resmi dari Master Produk">
           <Link2 className="mr-2 h-4 w-4" />Segarkan dari master
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => setRiwayatBuka(true)} data-testid="catalog-runs-open"
+          title="Aksi massal yang sudah dijalankan — bisa dibatalkan">
+          <History className="mr-2 h-4 w-4" />Riwayat aksi massal
+        </DropdownMenuItem>
+        {bolehRapikan && (
+          <DropdownMenuItem onSelect={() => setRapikanBuka(true)} data-testid="catalog-tidy-open"
+            title="Item impor lama tanpa katalog: salin harga/URL ke item tampil lalu arsipkan kembarannya">
+            <Sparkles className="mr-2 h-4 w-4" />Rapikan item tersembunyi
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -605,6 +628,12 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
             tools={<>
               <TombolUnduh namaBerkas="katalog-toko" namaLembar="Katalog" baris={catalogs} kolom={unduhKatalog}
                 testId="catalog-unduh" />
+              {bolehRapikan && (
+                <Button variant="outline" onClick={() => setRapikanBuka(true)} data-testid="catalog-tidy-open-tab"
+                  title="Item impor lama tanpa katalog: salin harga/URL ke item tampil lalu arsipkan kembarannya">
+                  <Sparkles />Rapikan item tersembunyi
+                </Button>
+              )}
               {tombolMuat(reloadCatalogs, loading, 'catalog-refresh')}
             </>} />
 
@@ -714,6 +743,27 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
           onSave={handleUpdateStock}
           onClose={() => setStockDialog(null)}
         />
+      )}
+
+      {rapikanBuka && (
+        <CatalogTidyDialog open token={token} onClose={() => setRapikanBuka(false)}
+          onDone={(b) => {
+            setRapikanBuka(false);
+            toast.success(b.message, {
+              duration: 15000,
+              action: b.run_id ? {
+                label: 'Batalkan',
+                onClick: () => batalkanAksi(token, b.run_id)
+                  .then((u) => { toast.success(u.message); reloadItems(); reloadCatalogs(); })
+                  .catch((e) => toast.error(e.message)),
+              } : undefined,
+            });
+            reloadItems(); reloadCatalogs();
+          }} />
+      )}
+      {riwayatBuka && (
+        <CatalogRunsDialog open token={token} catalog={tab === 'items' ? selectedCatalog : null}
+          onClose={() => setRiwayatBuka(false)} onUndone={() => { reloadItems(); reloadCatalogs(); }} />
       )}
 
       {bulkStockDialog && selectedCatalog && (

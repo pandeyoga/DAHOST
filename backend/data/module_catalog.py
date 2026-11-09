@@ -516,6 +516,8 @@ ALSO_PORTALS = {
     "wh_sku_bridge": ["toko"], "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
     "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
     "fin_exec_report": ["management"],
+    # 2026-11-09 (audit HR Tahap D): Asisten AI juga dibuka di Portal SDM (ruang `sdm`, tab AI SDM).
+    "mgmt_asisten_ai": ["hr"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
     "wh_master": ["production", "rnd"],
     # 2026-11-02: tagihan CMT (posting/bayar) juga ditulis dari Portal Maklon (layar Tagihan CMT maklon) —
@@ -546,6 +548,22 @@ for _mod in MODULES:
         if _p not in _mod["paths"]:
             _mod["paths"].append(_p)
 # ── akhir Asisten AI (data) ──
+
+# ── MKT-AI (9 Nov 2026) — layar baru Portal Marketing ikut modul yang sudah ada (tidak ada modul baru):
+# impor banyak berkas = bagian "Input Sales & Impor Data"; Laporan AI = bagian "Dashboard & Laporan".
+_MKT_AI = {
+    "mkt_sales": (("marketing-impor-paket",), ("/api/marketing/impor-paket",)),
+    "mkt_dashboard": (("marketing-laporan-ai",), ("/api/marketing/laporan-ai",)),
+}
+for _mod in MODULES:
+    _menus, _paths = _MKT_AI.get(_mod["id"], ((), ()))
+    for _m_id in _menus:
+        if _m_id not in _mod["menus"]:
+            _mod["menus"].append(_m_id)
+    for _p in _paths:
+        if _p not in _mod["paths"]:
+            _mod["paths"].append(_p)
+# ── akhir MKT-AI ──
 
 # prefix API -> modul, urut dari prefix terpanjang (longest-prefix-match)
 _PATH_INDEX = sorted(((p.rstrip("/"), m) for m in MODULES for p in m["paths"]), key=lambda x: -len(x[0]))

@@ -56,6 +56,7 @@ def week_window(week_end: str | None = None) -> dict:
 async def _order_revenue(db, creator_ids: list[str], win: dict) -> dict:
     """Omzet pesanan nyata per kreator pada jendela pekan (pembaca defensif F2)."""
     from core import marketing_daily_rollup as _rollup
+    from core import ukuran_penjualan as _uk
     lo, hi = win["start"], win["end"]
     lo_dt = datetime.fromisoformat(lo).replace(tzinfo=timezone.utc)
     hi_dt = datetime.fromisoformat(hi).replace(hour=23, minute=59, second=59,
@@ -66,8 +67,11 @@ async def _order_revenue(db, creator_ids: list[str], win: dict) -> dict:
     out: dict = {}
     for o in await db.marketing_orders.find(
             q, {"_id": 0, "creator_id": 1, "status": 1, "revenue_product": 1,
-                "order_amount": 1, "items": 1, "total_payment": 1}).to_list(30000):
-        if (o.get("status") or "") == "cancelled":
+                "order_amount": 1, "items": 1, "total_payment": 1,
+                **_uk.PROYEKSI_STATUS}).to_list(30000):
+        # 9 Nov 2026 (pola audit Marketing §8) — definisi omzet baku: batal (ejaan apa pun),
+        # belum dibayar, dan data contoh tidak dihitung (dulu hanya "cancelled").
+        if not _uk.dihitung_omzet(o):
             continue
         d = out.setdefault(o.get("creator_id"), {"orders": 0, "revenue": 0.0})
         d["orders"] += 1

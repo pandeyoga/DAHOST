@@ -519,58 +519,95 @@ async def fulfillment_monitor(
     })
 
 
+PICKING_DEFAULT_STATUSES = "paid,packed"
+PICKING_MAX_ORDERS = 5000
+
+
+def picking_lines(order: dict) -> list:
+    """Baris barang satu pesanan untuk daftar ambil (fungsi murni). Pesanan impor membawa barangnya di
+    `items[]` (satu pesanan bisa banyak SKU); pesanan lama tanpa `items` memakai field tingkat pesanan."""
+    items = [i for i in (order.get("items") or []) if isinstance(i, dict)]
+    if not items:
+        return [{"fg_material_id": order.get("fg_material_id"), "sku": order.get("sku_id") or "",
+                 "variation": order.get("variation") or "", "product_name": order.get("product_name") or "",
+                 "qty": int(float(order.get("quantity") or 1))}]
+    out = []
+    for i in items:
+        sku = (i.get("seller_sku") or i.get("variant_sku") or i.get("sku_code") or i.get("sku")
+               or i.get("platform_sku_id") or "")
+        out.append({"fg_material_id": i.get("fg_material_id"), "sku": str(sku).strip(),
+                    "variation": str(i.get("variation_raw") or i.get("variation") or "").strip(),
+                    "product_name": str(i.get("product_name_raw") or i.get("product_name") or "").strip(),
+                    "qty": int(float(i.get("quantity") if i.get("quantity") is not None else (i.get("qty") or 1)))})
+    return out
+
+
+def group_picking(orders: list, master_codes: dict) -> list:
+    """Kelompokkan per SKU master (tertaut) atau per (SKU/nama + variasi) bila belum tertaut (fungsi murni)."""
+    picking: dict = {}
+    for o in orders:
+        for ln in picking_lines(o):
+            mid = ln.get("fg_material_id")
+            if mid:
+                key = f"m:{mid}"
+            else:
+                key = f"u:{(ln['sku'] or ln['product_name']).lower()}|{ln['variation'].lower()}"
+            g = picking.setdefault(key, {
+                "fg_material_id": mid, "sku_id": master_codes.get(mid) or ln["sku"],
+                "variation": ln["variation"], "product_name": ln["product_name"], "linked": bool(mid),
+                "total_qty": 0, "order_ids": [], "platforms": set()})
+            g["total_qty"] += max(0, ln["qty"])
+            if o.get("order_id") not in g["order_ids"]:
+                g["order_ids"].append(o.get("order_id", ""))
+            g["platforms"].add(o.get("platform", ""))
+    rows = []
+    for g in sorted(picking.values(), key=lambda x: (not x["linked"], -x["total_qty"], x["sku_id"] or "")):
+        rows.append({"fg_material_id": g["fg_material_id"], "sku_id": g["sku_id"], "variation": g["variation"],
+                     "product_name": g["product_name"], "linked": g["linked"], "total_qty": g["total_qty"],
+                     "order_count": len(g["order_ids"]), "platforms": sorted(p for p in g["platforms"] if p),
+                     "order_ids": g["order_ids"][:10]})
+    return rows
+
+
 @router.get("/picking-list")
 async def generate_picking_list(
     request: Request,
-    statuses: Optional[str] = Query("new,packed"),
-    platform: Optional[str] = Query(None)
+    statuses: Optional[str] = Query(PICKING_DEFAULT_STATUSES),
+    platform: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
 ):
-    """Generate a picking list grouped by SKU."""
+    """Daftar ambil barang per SKU dari pesanan yang perlu dikirim.
+
+    2026-11-09 (audit gudang G10): dikelompokkan per baris `items[]` (pesanan impor menyimpan barangnya di
+    sana; dulu dibaca `sku_id` tingkat pesanan sehingga daftar kosong / semua pesanan satu baris tanpa SKU),
+    bawaan status "Perlu Dikirim" + "Dikemas" (`paid,packed`), dan menghormati toko yang dipilih layar.
+    Barang tertaut memakai kode SKU master; yang belum tertaut dikelompokkan per SKU/nama + variasi."""
     user = await require_auth(request)
     db = get_db()
 
-    status_list = [s.strip() for s in statuses.split(",")]
+    status_list = [s.strip() for s in (statuses or PICKING_DEFAULT_STATUSES).split(",") if s.strip()]
     # F6 (sesi #10) — daftar ambil barang ikut lingkup toko: staf toko A tidak
     # boleh mengambil (atau melihat) pesanan toko B.
     q: dict = await _scope.scope_filter(db, user, {"status": {"$in": status_list}})
     if platform:
         q["platform"] = platform
+    if account_id:
+        q = {"$and": [q, {"account_id": account_id}]}
 
-    orders = await db.marketing_orders.find(q, {"_id": 0}).to_list(500)
-
-    # Group by SKU + Variation
-    picking: dict = {}
-    for o in orders:
-        key = f"{o.get('sku_id','')} | {o.get('variation','')}"
-        if key not in picking:
-            picking[key] = {
-                "sku_id":       o.get("sku_id", ""),
-                "variation":    o.get("variation", ""),
-                "product_name": o.get("product_name", ""),
-                "total_qty":    0,
-                "order_ids":    [],
-                "platforms":    set()
-            }
-        picking[key]["total_qty"]  += o.get("quantity", 1)
-        picking[key]["order_ids"].append(o.get("order_id", ""))
-        picking[key]["platforms"].add(o.get("platform", ""))
-
-    result = []
-    for k, v in sorted(picking.items(), key=lambda x: -x[1]["total_qty"]):
-        result.append({
-            "sku_id":       v["sku_id"],
-            "variation":    v["variation"],
-            "product_name": v["product_name"],
-            "total_qty":    v["total_qty"],
-            "order_count":  len(v["order_ids"]),
-            "platforms":    list(v["platforms"]),
-            "order_ids":    v["order_ids"][:10]
-        })
+    orders = await db.marketing_orders.find(q, {"_id": 0, "order_id": 1, "platform": 1, "items": 1, "sku_id": 1,
+                                                "variation": 1, "product_name": 1, "quantity": 1,
+                                                "fg_material_id": 1}).to_list(PICKING_MAX_ORDERS)
+    mids = sorted({ln["fg_material_id"] for o in orders for ln in picking_lines(o) if ln.get("fg_material_id")})
+    codes = {m["id"]: m.get("code") or m.get("sku") or "" for m in await db.rahaza_materials.find(
+        {"id": {"$in": mids}}, {"_id": 0, "id": 1, "code": 1, "sku": 1}).to_list(len(mids) or 1)} if mids else {}
+    result = group_picking(orders, codes)
 
     return {
         "picking_list": result,
         "total_items": len(result),
         "total_orders": len(orders),
+        "unlinked_items": sum(1 for r in result if not r["linked"]),
+        "truncated": len(orders) >= PICKING_MAX_ORDERS,
         "generated_at": _now().isoformat(),
         "status_filter": status_list
     }
@@ -621,6 +658,9 @@ class OrderCreateBody(BaseModel):
     customer_name: str
     # Identification
     order_id: Optional[str] = None  # marketplace reference (auto-gen if blank)
+    # Q-4 (9 Nov 2026) — tanggal pesanan dibuat (YYYY-MM-DD atau YYYY-MM-DD HH:MM). WAJIB
+    # untuk toko marketplace; toko non-marketplace boleh kosong (= sekarang).
+    order_date: Optional[str] = None
     account_name: Optional[str] = None
     # ── K-8a — TAUTAN KE MASTER (wajib salah satu) ────────────────────────────
     catalog_item_id: Optional[str] = None   # item katalog yang dijual
@@ -757,6 +797,56 @@ async def _resolve_order_link(db, *, catalog_item_id=None, variant_id=None,
 # 2026-11-02 (K6) — reservasi stok order manual DIMATIKAN (lihat docstring create_order).
 RESERVE_MANUAL_ORDERS = False
 
+# Q-4 (keputusan owner 9 Nov 2026) — platform yang punya ekspor pesanan Seller Center.
+MARKETPLACE_FAMILIES = ("shopee", "tiktok", "tokopedia", "lazada", "blibli")
+
+
+def _parse_order_wall(raw: Optional[str]) -> Optional[datetime]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+                "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s[:19], fmt)
+        except ValueError:
+            continue
+    raise HTTPException(400, f"Tanggal pesanan '{raw}' tidak dikenali (format TTTT-BB-HH atau "
+                             "TTTT-BB-HH JJ:MM).")
+
+
+async def _manual_order_identity(db, account: dict, body) -> tuple:
+    """Q-4 — pesanan manual untuk toko MARKETPLACE wajib nomor pesanan platform + tanggal
+    pesanan, dan nomor itu belum boleh tercatat. Dulu nomor `MAN-…` bertanggal hari ini
+    akan terhitung DUA KALI saat ekspor Seller Center hari itu diimpor (nomor tidak cocok).
+    Toko non-marketplace (WA/offline/website) tetap boleh tanpa nomor (`MAN-…`).
+    → ``(order_wall | None, order_ref | None)``.
+    """
+    from core import marketing_account_scope as _scope
+    from core import marketing_cycle as _cycle
+    fam = _scope.platform_family(account.get("platform"))
+    ref = str(body.order_id or "").strip()
+    wall = _parse_order_wall(body.order_date)
+    if fam in MARKETPLACE_FAMILIES:
+        if not ref or ref.upper().startswith("MAN-"):
+            raise HTTPException(400, (
+                f"Toko '{account.get('account_name')}' adalah toko {fam.capitalize()}: isi No. "
+                "Pesanan dari Seller Center. Pesanan marketplace sebaiknya masuk lewat impor "
+                "pesanan; input manual hanya untuk melengkapi pesanan yang belum ada di ekspor."))
+        if wall is None:
+            raise HTTPException(400, "Isi tanggal pesanan dibuat (sesuai Seller Center) untuk "
+                                     "pesanan toko marketplace.")
+    if ref:
+        dup = await db.marketing_orders.find_one({"order_id": ref}, {"_id": 0, "account_name": 1})
+        if dup:
+            raise HTTPException(409, f"No. Pesanan '{ref}' sudah tercatat (toko "
+                                     f"'{dup.get('account_name') or '-'}'). Buka pesanan itu — "
+                                     "jangan membuat pesanan kedua.")
+    if wall is not None:
+        await _cycle.assert_period_open(db, account.get("id"), wall.strftime("%Y-%m-%d"),
+                                        action="mencatat pesanan manual")
+    return wall, (ref or None)
+
 
 @router.post("", status_code=201)
 async def create_order(body: OrderCreateBody, request: Request):
@@ -792,6 +882,10 @@ async def create_order(body: OrderCreateBody, request: Request):
         platform=body.platform)
     if not _acc:
         raise HTTPException(400, f"Toko/akun tidak sah: {_why}")
+    # Lingkup toko: pesanan hanya untuk toko yang dipegang pemakai (account_name di body
+    # tidak terlihat middleware lingkup).
+    await _scope.assert_account_visible(db, user, _acc.get("id"))
+    order_wall_in, ref_in = await _manual_order_identity(db, _acc, body)
 
     # ── K-8b — SETIAP baris order ditautkan & direservasi, bukan hanya yang pertama
     # Dulu hanya `items[0]` yang ditautkan ke master dan hanya stok baris itu yang
@@ -857,9 +951,9 @@ async def create_order(body: OrderCreateBody, request: Request):
 
     now = _now()
     # tanggal bisnis pesanan = jam dinding WIB (lihat catatan `_now_wib_wall`)
-    order_wall = _now_wib_wall()
+    order_wall = order_wall_in or _now_wib_wall()
     new_id = str(uuid.uuid4())
-    order_ref = body.order_id or f"MAN-{order_wall.strftime('%Y%m%d')}-{new_id[:6].upper()}"
+    order_ref = ref_in or f"MAN-{order_wall.strftime('%Y%m%d')}-{new_id[:6].upper()}"
 
     # ── M10: reservasi stok saat order dibuat — PER BARIS (K-8b) ──────────────
     items_list: list = []
@@ -986,7 +1080,11 @@ async def create_order(body: OrderCreateBody, request: Request):
         "order_channel":          "other",
         "payment_method":  body.payment_method or "",
         "status":          "new",
-        "fulfillment_status": "pending_fulfillment",
+        # 2026-11-09 (audit gudang G11, keputusan ★ = K15): pesanan manual juga keluar lewat Gudang → Scan
+        # Keluar Penjualan, BUKAN antrean Fulfillment (dulu `pending_fulfillment` ⇒ bila dialokasikan &
+        # di-dispatch, stok & HPP terpotong dua kali bersama scan keluar).
+        "fulfillment_status": "not_required",
+        "fulfillment_note": "Keluar lewat Scan Keluar Penjualan (K15)",
         "courier":         body.courier or "",
         "tracking_number": body.tracking_number,
         "customer_name":   body.customer_name,

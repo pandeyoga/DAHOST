@@ -119,6 +119,28 @@ def days_per_year(days: list, half_day: bool = False) -> dict:
     return dict(sorted(out.items()))
 
 
+# ── Penyetuju (Q6, 9 Nov 2026) ──────────────────────────────────────────────
+# Tahap HR: peran yang dulu lolos gerbang `/leaves/{id}/approve` (+ HR Manager) atau izin hr.approve.
+LEAVE_HR_APPROVER_ROLES = ("superadmin", "owner", "admin", "manager", "hr", "hr_manager", "manager_hr",
+                           "production_manager")
+LEAVE_HR_APPROVER_PERMS = ("*", "hr.approve")
+
+
+def is_leave_hr_approver(user: Optional[dict]) -> bool:
+    u = user or {}
+    if (u.get("role") or "").lower() in LEAVE_HR_APPROVER_ROLES:
+        return True
+    perms = u.get("_permissions") or []
+    return any(p in perms for p in LEAVE_HR_APPROVER_PERMS)
+
+
+async def leave_decision_stage(db, leave: dict, user: dict, action: str = "approve") -> str:
+    """'atasan' | 'hr' — tahap yang diputus `user` atas cuti ini (403 bila tidak berhak). Lihat core.approval_route."""
+    from core.approval_route import decision_stage
+    return await decision_stage(db, leave, user, is_hr_approver=is_leave_hr_approver(user), action=action,
+                                what="pengajuan cuti/izin")
+
+
 # ── Pemisahan tugas ─────────────────────────────────────────────────────────
 async def ensure_not_own_leave(db, leave: dict, user: dict) -> None:
     """Penyetuju tidak boleh memutus cuti/izin miliknya sendiri (sejalan K25)."""
@@ -132,6 +154,7 @@ async def ensure_not_own_leave(db, leave: dict, user: dict) -> None:
 # ── Hari absensi cuti ───────────────────────────────────────────────────────
 SNAPSHOT_FIELDS = ("status", "notes", "half_day", "paid_leave", "leave_kind")
 CLEAR_LEAVE_FIELDS = {"leave_request_id": None, "leave_kind": None, "paid_leave": None, "half_day": False,
+                      "half_day_period": None,
                       "leave_type_id": None, "leave_type_name": None, "pre_leave": None, "leave_note": None}
 
 
@@ -148,9 +171,12 @@ async def write_leave_days(db, leave: dict, days: list, *, kind: str, paid: bool
     lt_name = (lt or {}).get("name") or KIND_LABEL[kind]
     note = f"{KIND_LABEL[kind]}: {lt_name}" + (f" ({leave.get('reason')})" if leave.get("reason") else "")
     out = {"created": 0, "updated": 0, "skipped": []}
+    emp = await db.rahaza_employees.find_one({"id": emp_id}, {"_id": 0}) or {"id": emp_id}
     for d in days:
         fields = {"status": kind, "leave_request_id": leave_id, "leave_kind": kind, "paid_leave": bool(paid),
                   "half_day": bool(half_day), "leave_type_id": leave.get("leave_type_id"),
+                  # 2026-11-09 (Q5): pagi (AM) / siang (PM) — acuan terlambat & pulang cepat hari setengah cuti
+                  "half_day_period": (str(leave.get("half_day_period") or "AM").upper() if half_day else None),
                   "leave_type_name": lt_name, "leave_note": note,
                   "updated_at": now, "updated_by": user.get("id"), "updated_by_name": user.get("name", "")}
         existing = await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": d}, {"_id": 0})
@@ -161,6 +187,11 @@ async def write_leave_days(db, leave: dict, days: list, *, kind: str, paid: bool
                 continue
             if other != leave_id:   # persetujuan ulang tidak menimpa keadaan sebelum cuti
                 fields["pre_leave"] = {k: existing.get(k) for k in SNAPSHOT_FIELDS}
+            if existing.get("clock_in") or existing.get("clock_out"):
+                # 2026-11-09 (H5): sudah absen sebelum cuti disetujui (mis. cuti ½ hari pagi, masuk 12:30) →
+                # menit terlambat/pulang cepat dihitung ulang dengan cutinya (dulu tetap 265 menit "terlambat").
+                await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": fields})
+                fields.update(await ar.timing_fields(db, emp, {**existing, **fields}))
             await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": fields})
             await ar.write_attendance_audit(db, before=existing, after={**existing, **fields}, user=user,
                                             source="cuti", note=f"Pengajuan {leave_id} disetujui")
@@ -182,6 +213,7 @@ async def restore_leave_days(db, leave: dict, user: dict) -> dict:
     rows = await db.rahaza_attendance_events.find(
         {"employee_id": leave["employee_id"], "leave_request_id": leave["id"]}, {"_id": 0}).to_list(400)
     out = {"restored": 0, "deleted": 0}
+    emp = await db.rahaza_employees.find_one({"id": leave["employee_id"]}, {"_id": 0}) or {"id": leave["employee_id"]}
     for r in rows:
         snap = r.get("pre_leave")
         if not snap and not _own_attendance_data(r):
@@ -199,6 +231,10 @@ async def restore_leave_days(db, leave: dict, user: dict) -> dict:
             upd["status"] = "hadir" if r.get("clock_in") else "alpa"
         upd.update({"updated_at": now, "updated_by": user.get("id"), "updated_by_name": user.get("name", "")})
         await db.rahaza_attendance_events.update_one({"id": r["id"]}, {"$set": upd})
+        if r.get("clock_in") or r.get("clock_out"):   # 2026-11-09 (H5): cuti batal → terlambat dinilai biasa lagi
+            timing = await ar.timing_fields(db, emp, {**r, **upd})
+            await db.rahaza_attendance_events.update_one({"id": r["id"]}, {"$set": timing})
+            upd.update(timing)
         await ar.write_attendance_audit(db, before=r, after={**r, **upd}, user=user, source="batal_cuti",
                                         note=f"Pengajuan {leave['id']} dibatalkan")
         out["restored"] += 1
@@ -224,7 +260,7 @@ async def _close_approval_requests(db, leave_id: str, status: str) -> None:
         log.warning("[leave] antrean persetujuan %s gagal ditutup: %s", leave_id, e)
 
 
-async def _notify_hr_step2(db, leave: dict) -> None:
+async def _notify_hr_step2(db, leave: dict, approver_name: str = "") -> None:
     try:
         from routes.rahaza_notifications import publish_notification
         hr_users = await db.users.find({"role": {"$in": ["hr", "superadmin", "admin"]}},
@@ -232,11 +268,12 @@ async def _notify_hr_step2(db, leave: dict) -> None:
         hr_ids = [u["id"] for u in hr_users if u.get("id")]
         emp = await db.rahaza_employees.find_one({"id": leave["employee_id"]}, {"_id": 0, "name": 1})
         if hr_ids:
+            by = f" ({approver_name})" if approver_name else ""
             await publish_notification(
                 db, type_="leave_hr_approval_needed", severity="info",
                 title=f"Persetujuan HR dibutuhkan: {(emp or {}).get('name', '')}",
                 message=(f"Pengajuan {leave.get('duration_working_days', leave.get('duration_days'))} hari kerja "
-                         "sudah disetujui atasan. Butuh persetujuan HR."),
+                         f"sudah disetujui atasan{by}. Butuh persetujuan HR."),
                 link_module="hr-leave", link_id=leave["id"], target_user_ids=hr_ids,
                 dedup_key=f"leave_hr_{leave['id']}")
     except Exception as ne:  # noqa: BLE001
@@ -255,12 +292,14 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
         raise HTTPException(400, f"Hanya pengajuan yang menunggu persetujuan yang bisa disetujui "
                                  f"(status sekarang: {leave.get('status')}).")
     await ensure_not_own_leave(db, leave, user)
+    # 2026-11-09 (Q6): tingkat 1 = atasan langsung (bila ada), tingkat akhir = HR.
+    stage = await leave_decision_stage(db, leave, user, "approve")
 
     level_required = int(leave.get("approval_level_required") or 1)
     current = int(leave.get("current_approval_level") or 1)
     now = _now()
     step = {"step": current, "approver_id": user.get("id"), "approver_name": user.get("name", ""),
-            "action": "approved", "notes": notes or "", "via": via, "at": now}
+            "action": "approved", "notes": notes or "", "via": via, "at": now, "stage": stage}
 
     if level_required > 1 and current == 1:
         # Tingkat 1 (atasan) selesai → menunggu HR. Saldo & absensi baru disentuh di persetujuan akhir.
@@ -273,7 +312,7 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
             # "berhasil" dan HR dikabari "persetujuan HR dibutuhkan" untuk pengajuan yang sudah ditolak.
             raise HTTPException(409, "Pengajuan ini baru saja diputuskan orang lain. Muat ulang halaman.")
         fresh = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
-        await _notify_hr_step2(db, fresh or leave)
+        await _notify_hr_step2(db, fresh or leave, user.get("name", ""))
         return {"final": False, "leave": fresh}
 
     if level_required > 1 and current >= 2:
@@ -299,15 +338,18 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
 
     duration = float(info["working_days"])
     type_unpaid = _is_unpaid(lt)
+    # 2026-11-09 (Q7): aturan kuota per jenis (UU 13/2003) — lihat utils.leave_types.QUOTA_RULES.
+    rule = await check_quota_rule(db, leave, lt, info["days"], half, decision)
     # Saldo = jatah hari kerja DIBAYAR. Jenis tak dibayar (mis. LWOP) tetap dicatat pemakaiannya;
-    # keputusan "tidak dibayar" untuk jenis yang dibayar tidak memakai jatah.
-    deduct = type_unpaid or decision == "paid"
+    # keputusan "tidak dibayar" untuk jenis yang dibayar tidak memakai jatah. Jenis per bulan / per kejadian /
+    # sakit bersurat tidak memakai jatah tahunan.
+    deduct = type_unpaid or (decision == "paid" and rule in ("tahunan", "per_tahun", "sakit_tanpa_surat"))
     # 2026-11-07 (Tahap 7, keputusan owner): cuti yang melewati akhir tahun memakai saldo MASING-MASING tahun
     # (hari kerja Desember dari saldo tahun itu, Januari dari saldo tahun berikutnya). Dulu semua dipotong dari
     # saldo tahun tanggal mulai.
     per_year = days_per_year(info["days"], half)
     from routes.rahaza_leave_balances import balance_snapshot, consume_balance
-    if decision == "paid" and not type_unpaid:
+    if decision == "paid" and not type_unpaid and deduct:
         short = []
         for y, need in per_year.items():
             bal = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], y, lt=lt)
@@ -331,7 +373,7 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
                   "balance_deducted_days": duration if deduct else 0,
                   "balance_deducted_by_year": ({str(y): v for y, v in per_year.items()} if deduct else {}),
                   "approved_at": now, "approved_by": user.get("id"), "approved_by_name": user.get("name", ""),
-                  "approval_note": notes or "", "approved_via": via, "updated_at": now}})
+                  "approval_note": notes or "", "approved_via": via, "quota_rule": rule, "updated_at": now}})
     if getattr(res, "matched_count", 1) == 0:
         raise HTTPException(409, "Pengajuan ini baru saja diputuskan orang lain. Muat ulang halaman.")
     if deduct:
@@ -357,6 +399,48 @@ async def approve_leave_request(db, leave_id: str, user: dict, *, pay_decision: 
     return {"final": True, "leave": fresh, "attendance": written}
 
 
+async def check_quota_rule(db, leave: dict, lt: Optional[dict], days: list, half: bool, decision: str) -> str:
+    """Periksa aturan kuota jenis cuti untuk keputusan DIBAYAR (Q7). Return aturan efektif:
+    tahunan · per_tahun · per_bulan · per_kejadian · sakit_bersurat · sakit_tanpa_surat. 400 bila melanggar.
+    Keputusan 'tidak dibayar' selalu boleh (HR tetap bisa menyetujui sebagai cuti tidak dibayar)."""
+    from utils.leave_types import quota_rule_of
+    rule = quota_rule_of(lt)
+    if rule == "sakit_bersurat" and not (leave or {}).get("attachment_url"):
+        rule = "sakit_tanpa_surat"   # tanpa surat dokter → jatah per tahun (perilaku lama)
+    if decision != "paid" or _is_unpaid(lt):
+        return rule
+    name = (lt or {}).get("name") or "cuti"
+    quota = float((lt or {}).get("quota_default") or 0)
+    w = 0.5 if half else 1.0
+    if rule == "tahunan":
+        from routes.rahaza_leave_balances import annual_eligible_from
+        emp = await db.rahaza_employees.find_one({"id": leave["employee_id"]}, {"_id": 0, "join_date": 1}) or {}
+        elig = annual_eligible_from(emp, lt)
+        early = [d for d in days if elig and date.fromisoformat(d) < elig]
+        if early:
+            raise HTTPException(400, f"{name} baru berhak setelah 12 bulan bekerja (mulai {elig.strftime('%d/%m/%Y')}); "
+                                     f"{len(early)} hari jatuh sebelum itu. Pilih 'tidak dibayar' bila tetap disetujui.")
+    elif rule == "per_kejadian" and quota and len(days) * w > quota:
+        raise HTTPException(400, f"{name} paling banyak {quota:g} hari per kejadian (diminta {len(days) * w:g} hari). "
+                                 "Pilih 'tidak dibayar' untuk kelebihannya atau ajukan jenis lain.")
+    elif rule == "per_bulan" and quota:
+        months: dict = {}
+        for d in days:
+            months[d[:7]] = months.get(d[:7], 0.0) + w
+        for ym, need in months.items():
+            prev = await db.rahaza_leave_requests.find(
+                {"employee_id": leave["employee_id"], "leave_type_id": leave.get("leave_type_id"),
+                 "status": "approved", "id": {"$ne": leave.get("id")},
+                 "from_date": {"$lte": f"{ym}-31"}, "to_date": {"$gte": f"{ym}-01"}},
+                {"_id": 0, "leave_days": 1, "is_half_day": 1}).to_list(50)
+            used = sum((0.5 if p.get("is_half_day") else 1.0) * sum(1 for x in p.get("leave_days") or [] if x[:7] == ym)
+                       for p in prev)
+            if used + need > quota:
+                raise HTTPException(400, f"{name} paling banyak {quota:g} hari per bulan; bulan {ym} sudah {used:g} hari, "
+                                         f"diminta {need:g} hari. Pilih 'tidak dibayar' bila tetap disetujui.")
+    return rule
+
+
 async def reject_leave_request(db, leave_id: str, user: dict, reason: str, *, via: str = "utama") -> dict:
     leave = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     if not leave:
@@ -365,6 +449,7 @@ async def reject_leave_request(db, leave_id: str, user: dict, reason: str, *, vi
         raise HTTPException(400, f"Hanya pengajuan yang menunggu persetujuan yang bisa ditolak "
                                  f"(status sekarang: {leave.get('status')}).")
     await ensure_not_own_leave(db, leave, user)
+    await leave_decision_stage(db, leave, user, "reject")   # Q6: atasan (tingkat 1) atau HR
     now = _now()
     # 2026-11-06 (pola P9): status lama di filter — dulu "tolak" bisa menimpa cuti yang baru saja disetujui
     # (hari cuti sudah tertulis di absensi & saldo terpotong, status tampak ditolak).

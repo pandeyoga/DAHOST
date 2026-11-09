@@ -219,6 +219,9 @@ async def create_overtime_request(db, user: dict, body: dict) -> dict:
     if hours > MAX_OVERTIME_HOURS:
         raise HTTPException(400, f"Jumlah jam lembur maksimal {MAX_OVERTIME_HOURS} jam per hari.")
 
+    # 2026-11-09 (Q9): batas PP 35/2021 (lembur hari kerja 4 jam/hari, 18 jam/minggu) → PERINGATAN, tidak ditolak.
+    limit_warnings = await overtime_limit_warnings_for(db, employee_id, date_str, hours)
+
     # Duplicate check: same employee + date + start_time
     existing = await db.rahaza_overtime_requests.find_one({
         "employee_id": employee_id, "date": date_str,
@@ -228,6 +231,10 @@ async def create_overtime_request(db, user: dict, body: dict) -> dict:
     if existing:
         raise HTTPException(409, "Pengajuan lembur untuk tanggal (dan jam mulai) yang sama sudah ada.")
 
+    # 2026-11-09 (Q6): tingkat 1 = atasan langsung (manager_id → akun tertaut), lalu HR; tanpa atasan → langsung HR.
+    from core.approval_route import manager_route
+    emp_doc = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0}) or {"id": employee_id}
+    route = await manager_route(db, emp_doc)
     doc = {
         "id": _uid(),
         "employee_id": employee_id,
@@ -235,6 +242,11 @@ async def create_overtime_request(db, user: dict, body: dict) -> dict:
         "start_time": start_time,
         "end_time": end_time,
         "hours": hours,
+        "approval_level_required": route["levels"],
+        "current_approval_level": 1,
+        "approval_route": {k: route.get(k) for k in ("level_1", "manager_employee_id", "manager_name")},
+        "approval_step_1": None,
+        "limit_warnings": limit_warnings,
         "rate_multiplier": await overtime_multiplier(db),
         "rate_multiplier_source": "pengaturan_payroll",
         "reason": reason,
@@ -246,8 +258,61 @@ async def create_overtime_request(db, user: dict, body: dict) -> dict:
         "updated_at": _now(),
     }
     await db.rahaza_overtime_requests.insert_one(doc)
-    await notify_overtime_submitted(db, doc, actor=user)   # 2026-11-02 (K30)
-    return {"ok": True, "overtime": _s(doc)}
+    if route["levels"] == 2:
+        await notify_manager_overtime(db, doc, route, actor=user)   # Q6: atasan lebih dulu
+    else:
+        await notify_overtime_submitted(db, doc, actor=user)   # 2026-11-02 (K30)
+    return {"ok": True, "overtime": _s(doc), "warnings": limit_warnings}
+
+
+async def overtime_limit_warnings_for(db, employee_id: str, date_str: str, hours: float) -> list:
+    """Peringatan batas lembur hari kerja untuk pengajuan baru (hari kerja saja; hari istirahat tidak dibatasi
+    Pasal 26 PP 35/2021). Minggu = Senin–Minggu tanggal itu, menjumlahkan pengajuan menunggu & disetujui."""
+    from datetime import date as _date, timedelta
+    from core.workdays import get_work_calendar, holiday_set, is_working_day
+    from routes.rahaza_payroll_rules import OT_MAX_HOURS_DAY, OT_MAX_HOURS_WEEK
+    try:
+        d = _date.fromisoformat(date_str)
+    except ValueError:
+        return []
+    cal = await get_work_calendar(db)
+    if not is_working_day(d, cal["off_weekdays"], await holiday_set(db, d, d)):
+        return []
+    out = []
+    if hours > OT_MAX_HOURS_DAY:
+        out.append(f"Lembur {hours:g} jam melebihi batas {OT_MAX_HOURS_DAY} jam per hari kerja (PP 35/2021).")
+    mon = d - timedelta(days=d.weekday())
+    sun = mon + timedelta(days=6)
+    rows = await db.rahaza_overtime_requests.find(
+        {"employee_id": employee_id, "status": {"$in": ["pending", "approved"]},
+         "date": {"$gte": mon.isoformat(), "$lte": sun.isoformat()}}, {"_id": 0, "date": 1, "hours": 1}).to_list(50)
+    hol = await holiday_set(db, mon, sun)
+    week = sum(float(r.get("hours") or 0) for r in rows if is_working_day(r.get("date"), cal["off_weekdays"], hol))
+    if week + hours > OT_MAX_HOURS_WEEK:
+        out.append(f"Total lembur minggu ini {week + hours:g} jam melebihi batas {OT_MAX_HOURS_WEEK} jam per minggu "
+                   "(PP 35/2021).")
+    return out
+
+
+async def notify_manager_overtime(db, ot: dict, route: dict, *, actor: dict | None = None):
+    """Q6/H6 (9 Nov 2026): kabar ke AKUN atasan langsung (bukan id karyawan) — tautan Portal Saya › Cuti & Lembur."""
+    try:
+        from routes.rahaza_notifications import publish_notification
+        emp = await db.rahaza_employees.find_one({"id": ot.get("employee_id")}, {"_id": 0, "name": 1}) or {}
+        uids = [u for u in route.get("manager_user_ids") or [] if u != (actor or {}).get("id")]
+        if not uids:
+            return None
+        return await publish_notification(
+            db, type_="overtime_request_submitted", severity="info",
+            title=f"Pengajuan lembur tim: {emp.get('name') or 'Karyawan'}",
+            message=(f"{emp.get('name') or 'Karyawan'} mengajukan lembur {ot.get('date')} ({ot.get('hours')} jam) — "
+                     "menunggu persetujuan Anda sebagai atasan, lalu HR."),
+            link_module="portal-cuti", link_id=ot.get("id"), target_user_ids=uids,
+            dedup_key=f"overtime_manager_{ot.get('id')}")
+    except Exception as ne:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("[overtime] notif atasan gagal: %s", ne)
+        return None
 
 
 # ── 2026-11-02 (K30) — "PERLU TINDAKAN" UNTUK HR: PENGAJUAN LEMBUR ─────────────
@@ -356,6 +421,23 @@ async def approve_overtime_request(db, ot_id: str, user: dict, note: str = "") -
     if doc.get("status") != "pending":
         raise HTTPException(400, f"Hanya request pending yang bisa di-approve (current: {doc.get('status')}).")
     await ensure_not_own_overtime(db, doc, user)
+    # 2026-11-09 (Q6): tingkat 1 = atasan langsung, lalu HR (core.approval_route).
+    from core.approval_route import STAGE_MANAGER, decision_stage, waiting_manager
+    stage = await decision_stage(db, doc, user, is_hr_approver=is_ot_approver(user), what="pengajuan lembur")
+    if stage == STAGE_MANAGER and waiting_manager(doc):
+        step = {"step": 1, "approver_id": user["id"], "approver_name": user.get("name", ""), "stage": stage,
+                "notes": note or "", "at": _now()}
+        res = await db.rahaza_overtime_requests.update_one(
+            {"id": ot_id, "status": "pending", "current_approval_level": 1},
+            {"$set": {"approval_step_1": step, "current_approval_level": 2, "updated_at": _now()}})
+        if not res.matched_count:
+            raise HTTPException(409, "Pengajuan lembur ini baru saja diputuskan orang lain — muat ulang halaman.")
+        out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
+        await notify_overtime_submitted(db, out or doc, actor=user)   # sekarang giliran HR
+        return out or doc
+    step1 = doc.get("approval_step_1") or {}
+    if step1.get("approver_id") and step1.get("approver_id") == user.get("id"):
+        raise HTTPException(409, "Persetujuan tahap HR harus oleh orang lain: Anda sudah menyetujui sebagai atasan.")
 
     # 2026-11-06 (pola P9): hanya yang MASIH pending — setuju/tolak bersamaan tidak saling menimpa
     # (lembur disetujui masuk upah lembur payroll) dan yang kalah tidak mengirim kabar palsu.
@@ -384,6 +466,9 @@ async def reject_overtime_request(db, ot_id: str, user: dict, reason: str) -> di
     if doc.get("status") != "pending":
         raise HTTPException(400, "Hanya request pending yang bisa di-reject.")
     await ensure_not_own_overtime(db, doc, user)
+    from core.approval_route import decision_stage   # Q6: atasan (tingkat 1) atau HR
+    await decision_stage(db, doc, user, is_hr_approver=is_ot_approver(user), action="reject",
+                         what="pengajuan lembur")
     res = await db.rahaza_overtime_requests.update_one(
         {"id": ot_id, "status": "pending"},   # 2026-11-06 (pola P9)
         {"$set": {

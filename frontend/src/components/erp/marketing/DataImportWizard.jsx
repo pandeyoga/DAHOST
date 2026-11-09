@@ -48,6 +48,9 @@ import DetailPopup from '@/components/ui/detail-popup';
 import SkuMappingPanel from './SkuMappingPanel';
 import ImportValueMapPanel from './ImportValueMapPanel';
 import ImportPlanPanel from './ImportPlanPanel';
+import PopupAIPemeta from './PopupAIPemeta';
+import DatePicker from '@/components/ui/date-picker';
+import { cekPeriodeLaporan, labelPeriode } from './imporPaketAturan';
 import {
   MarketingAccountSelect, MarketingCreatorSelect, MarketingHostSelect,
 } from './pickers/MarketingPickers';
@@ -119,6 +122,10 @@ export default function DataImportWizard({ token }) {
   // di sesi yang salah).
   const [liveSessionId, setLiveSessionId] = useState('');
   const [liveSessions, setLiveSessions] = useState([]);
+  // 2026-11-09 — periode laporan untuk jenis yang berkasnya tanpa tanggal (GMV Max TikTok).
+  const [periodStart, setPeriodStart] = useState('');
+  const [periodEnd, setPeriodEnd] = useState('');
+  const [aiOpen, setAiOpen] = useState(false);
   const [file, setFile] = useState(null);
   const [session, setSession] = useState(null);
   const [mapping, setMapping] = useState([]);
@@ -348,13 +355,16 @@ export default function DataImportWizard({ token }) {
   const needCreator = selectedType?.context?.includes('creator');
   const needCatalog = selectedType?.context?.includes('catalog');
   const needLiveSession = selectedType?.context?.includes('live_session');
+  const needPeriod = !!selectedType?.period_input;
+  const periodError = needPeriod ? cekPeriodeLaporan(periodStart, periodEnd) : '';
 
   const contextReady = !!typeKey
     && (!needAccount || !!accountId)
     && (!needHost || !!hostId)
     && (!needCreator || !!creatorId)
     && (!needCatalog || !!catalogId)
-    && (!needLiveSession || !!liveSessionId);
+    && (!needLiveSession || !!liveSessionId)
+    && !periodError;
 
   /* ── F3.E — PENOLONG PEMETAAN KOLOM ────────────────────────────────────────
      Tiga pertanyaan yang PASTI muncul di langkah 4 dan tidak punya jawaban di
@@ -439,7 +449,7 @@ export default function DataImportWizard({ token }) {
 
   const resetAll = () => {
     setStep(1); setTypeKey(''); setAccountId(''); setHostId(''); setCreatorId('');
-    setCatalogId(''); setLiveSessionId(''); setFile(null); setSession(null);
+    setCatalogId(''); setLiveSessionId(''); setPeriodStart(''); setPeriodEnd(''); setFile(null); setSession(null);
     setMapping([]); setReport(null); setRows([]); setSummary(null); setResult(null);
     setBlockError(null); setWarehouseSaved(null); setForgotten(false); setDups(null);
     setValueReport([]);
@@ -506,6 +516,7 @@ export default function DataImportWizard({ token }) {
       if (creatorId) fd.append('creator_id', creatorId);
       if (catalogId) fd.append('catalog_id', catalogId);
       if (liveSessionId) fd.append('live_session_id', liveSessionId);
+      if (needPeriod) { fd.append('period_start', periodStart); fd.append('period_end', periodEnd); }
       const r = await axios.post(`${BASE}/upload`, fd, { headers: authH });
       setSession(r.data.session);
       setMapping(r.data.session.mapping || []);
@@ -593,29 +604,18 @@ export default function DataImportWizard({ token }) {
     saveMapping(next);
   };
 
-  const askAI = async () => {
-    setBusy('ai');
-    try {
-      const r = await axios.post(`${BASE}/sessions/${session.id}/ai-assist`, {}, { headers: authH });
-      const sug = r.data?.suggestion || [];
-      if (!sug.length) { toast({ title: 'AI tidak punya usulan tambahan' }); return; }
-      const next = mapping.map((m) => {
-        const s = sug.find((x) => x.column === m.column);
-        return s && s.field && !m.field ? withField(m, s.field) : m;
-      });
-      setMapping(next);
-      await saveMapping(next);
-      toast({
-        title: `AI mengusulkan ${sug.filter((s) => s.field).length} pemetaan`,
-        description: 'Periksa dulu — usulan AI tidak menimpa pemetaan yang sudah pasti.',
-      });
-    } catch (e) {
-      toast({
-        title: 'Bantuan AI tidak tersedia',
-        description: `${e.response?.data?.detail || e.message} — pemetaan manual tetap bisa dipakai.`,
-        variant: 'destructive',
-      });
-    } finally { setBusy(''); }
+  /* 2026-11-09 — AI pemeta memakai pintu yang sama dengan "Impor banyak berkas"
+     (`/api/marketing/impor-paket/sesi/{id}/ai-pemeta`): hanya usulan untuk kolom yang belum
+     terpetakan, kolom uang wajib lolos uji rumus, dan baru dipakai setelah staf mencentangnya. */
+  const applyAIMapping = (d) => {
+    setAiOpen(false);
+    if (!d) return;
+    setMapping(d.mapping || mapping);
+    setReport(d.mapping_report || report);
+    setRows(d.preview || []);
+    setSummary(d.summary || null);
+    setDups(d.duplicates || null);
+    setValueReport(d.value_report || []);
   };
 
   /* ── UNDUHAN YANG BENAR-BENAR TERUNDUH (diperbaiki Fase 4, sesi #11) ───────
@@ -827,7 +827,7 @@ export default function DataImportWizard({ token }) {
           )}
           {session?.filename && (
             <span className="text-xs text-muted-foreground">
-              Berkas: <b className="text-foreground">{session.filename}</b>
+              Berkas: <b className="text-foreground">{session.original_filename || session.filename}</b>
             </span>
           )}
           {/* Gudang platform toko tujuan — inilah yang dipakai penjaga toko untuk
@@ -1240,6 +1240,32 @@ export default function DataImportWizard({ token }) {
                   )}
                 </div>
               )}
+              {/* 2026-11-09 — ekspor GMV Max tidak memuat tanggal: periodenya diisi di sini,
+                  staf tidak perlu mengganti nama berkas. */}
+              {needPeriod && (
+                <>
+                  <div>
+                    <label htmlFor="import-period-start" className="text-xs font-medium text-foreground/80 mb-1 block">
+                      Periode mulai <span className="text-[hsl(var(--danger-text))]">*</span>
+                    </label>
+                    <DatePicker id="import-period-start" value={periodStart} max={periodEnd || undefined}
+                      onChange={setPeriodStart} testId="import-period-start" />
+                  </div>
+                  <div>
+                    <label htmlFor="import-period-end" className="text-xs font-medium text-foreground/80 mb-1 block">
+                      Periode selesai <span className="text-[hsl(var(--danger-text))]">*</span>
+                    </label>
+                    <DatePicker id="import-period-end" value={periodEnd} min={periodStart || undefined}
+                      onChange={setPeriodEnd} testId="import-period-end" />
+                  </div>
+                  <p className={`text-xs sm:col-span-2 ${periodStart && periodEnd && periodError
+                    ? 'text-[hsl(var(--danger-text))]' : 'text-muted-foreground'}`} data-testid="import-period-hint">
+                    {periodStart && periodEnd && periodError
+                      ? periodError
+                      : 'Isi rentang tanggal yang sama dengan saat mengekspor laporan (dalam satu bulan). Berkasnya sendiri tidak memuat tanggal.'}
+                  </p>
+                </>
+              )}
             </div>
             <div className="rounded-[var(--radius-sm)] border border-border bg-muted/40 p-3">
               <p className="text-xs flex items-start gap-1.5">
@@ -1388,13 +1414,17 @@ export default function DataImportWizard({ token }) {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base flex items-center gap-2">
                 <ListChecks className="w-4 h-4" /> Pemetaan kolom
-                <Badge variant="outline" className="text-xs">{session.filename}</Badge>
+                <Badge variant="outline" className="text-xs">{session.original_filename || session.filename}</Badge>
+                {session.period_start && (
+                  <Badge variant="outline" className="text-xs" data-testid="import-period-badge">
+                    Periode {labelPeriode(session.period_start, session.period_end)}
+                  </Badge>
+                )}
                 <Badge variant="outline" className="text-xs">{session.total_rows} baris</Badge>
               </CardTitle>
-              <Button variant="outline" size="sm" onClick={askAI} disabled={busy === 'ai'}
+              <Button variant="outline" size="sm" onClick={() => setAiOpen(true)}
                 data-testid="import-ai-assist">
-                {busy === 'ai' ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                <Sparkles className="w-3.5 h-3.5 mr-1.5" />
                 Bantu petakan dengan AI (opsional)
               </Button>
             </div>
@@ -2106,7 +2136,7 @@ export default function DataImportWizard({ token }) {
               { label: 'Jenis', nilai: (h) => h.source_label || h.source_type }, { label: 'Toko', nilai: (h) => h.account_name || '' },
               { label: 'Berkas', nilai: (h) => h.filename || '' }, { label: 'Masuk', nilai: (h) => Number(h.committed_count || 0) },
               { label: 'Diperbarui', nilai: (h) => Number(h.updated_count || 0) }, { label: 'Oleh', nilai: (h) => h.committed_by || h.created_by || '' },
-              { label: 'Status', nilai: (h) => (h.status === 'committed' ? 'Tersimpan' : 'Dibatalkan') },
+              { label: 'Status', nilai: (h) => (h.status === 'committed' ? 'Tersimpan' : h.status === 'partial' ? 'Terhenti di tengah' : 'Dibatalkan') },
             ]} />
         </div>
           <p className="text-sm text-muted-foreground">
@@ -2160,6 +2190,9 @@ export default function DataImportWizard({ token }) {
                         <td className="px-3 py-1.5">
                           {h.status === 'committed'
                             ? <Badge className="bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] text-xs">tersimpan</Badge>
+                            : h.status === 'partial'
+                            ? <Badge className="bg-[hsl(var(--warning)/0.14)] text-[hsl(var(--warning-text))] text-xs"
+                                title={h.commit_error || 'Penyimpanan terhenti di tengah — batalkan lalu ulangi'}>terhenti di tengah</Badge>
                             : (
                               <div className="space-y-0.5">
                                 <Badge variant="outline" className="text-xs">dibatalkan</Badge>
@@ -2172,7 +2205,7 @@ export default function DataImportWizard({ token }) {
                             )}
                         </td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                          {h.status === 'committed' ? (
+                          {(h.status === 'committed' || h.status === 'partial') ? (
                             /* F3.F — LABEL YANG JUJUR. "Batalkan impor" pada Ekspor
                                B/C tidak menghapus baris apa pun; yang terjadi adalah
                                keadaan pesanan dipulihkan. Memakai label yang sama
@@ -2426,6 +2459,9 @@ export default function DataImportWizard({ token }) {
                 )}
               </div>
       </DetailPopup>
+      {aiOpen && session && (
+        <PopupAIPemeta sesiId={session.id} onClose={() => setAiOpen(false)} onSelesai={applyAIMapping} />
+      )}
     </PageLayout>
   );
 }

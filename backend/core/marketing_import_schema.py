@@ -51,6 +51,8 @@ from typing import Dict, List, Optional, Tuple
 # bool     : ya/tidak
 # enum     : harus salah satu `choices` (dicocokkan longgar: huruf kecil, tanpa spasi)
 # list     : dipisah koma / titik-koma
+# kg       : berat dalam kilogram; menerima "0.6", "1,2 kg", "200 gr", "500 gram"
+#            (2026-11-09, riset G13 — dulu "200 gr" tersimpan sebagai 200 kg)
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,16 @@ class Field:
     # Label Indonesia untuk tiap nilai kanonik — layar pemetaan nilai tidak boleh
     # menampilkan kode program (`delivered`, `jnt`) ke staf.
     choice_labels: Tuple[Tuple[str, str], ...] = ()
+    # 2026-11-09 (riset G20) — NOMOR yang wajib tetap TEKS (nomor pesanan 18–19 digit).
+    # Berkas ekspor yang dibuka lalu disimpan ulang di Excel mengubah nomor itu menjadi
+    # angka ilmiah ("5.85319535278917E+17"): digit terakhirnya hilang, dan pesanan
+    # berbeda bisa jatuh ke nomor yang sama. Nilai seperti itu DITOLAK, bukan ditebak.
+    id_teks: bool = False
+    # 2026-11-09 (riset G5) — field yang DIHITUNG SISTEM dari kolom lain. Tidak dipetakan
+    # otomatis (juga tidak lewat kemiripan dengan nama field-nya sendiri: nama
+    # `sku_subtotal_after_discount` persis sama dengan header TikTok "SKU Subtotal After
+    # Discount", padahal artinya beda); staf tetap boleh memetakannya manual.
+    dihitung: bool = False
 
     @property
     def value_map_pairs(self) -> Tuple[Tuple[str, str], ...]:
@@ -125,6 +137,11 @@ class SourceType:
     group_by: Tuple[str, ...] = ()
     item_fields: Tuple[str, ...] = ()
     per_order_money: Tuple[str, ...] = ()
+    # 2026-11-09 (riset G6) — uang PER SKU yang juga dibutuhkan sebagai total pesanan.
+    # Nilainya disimpan per baris di `items[]` DAN dijumlah ke kepala dokumen.
+    # Contoh: TikTok "Buyer Service Fee" — rumus Order Amount hanya cocok 559/559
+    # pesanan bila kolom ini DIJUMLAH (dulu diambil baris pertama saja).
+    item_sum_fields: Tuple[str, ...] = ()
     platform_guard: str = ""
     shop_guard: str = ""
     # ── F12 (2026-08-14, sesi #11) — TANDA PENGENAL GLOBAL SATU BARIS ────────
@@ -353,6 +370,18 @@ _ORDER_STATUS_MAP = (
     # "Sedang Dikirim" = masih di jalan; "Telah Dikirim" = paket sudah sampai di
     # pembeli tetapi pesanan belum diselesaikan ⇒ `delivered`, bukan `shipped`.
     ("Telah Dikirim", "delivered"),
+    # ── 2026-11-09 (riset G19) — akun Seller Center ber-UI bahasa Inggris & nama status
+    # API TikTok. Huruf besar/garis bawah disamakan kamus ("AWAITING_SHIPMENT" =
+    # "Awaiting shipment"). "On hold" = pesanan ditahan platform (belum boleh dikirim).
+    ("On hold", "new"), ("Partially shipping", "shipped"),
+)
+# 2026-11-09 (riset G16, keputusan owner "sesuai rekomendasi") — ekspor TikTok menulis
+# status "Dikirim" dengan sub-status "Terkirim" untuk paket yang SUDAH sampai di pembeli.
+# Status tunggal tertinggal satu langkah (`shipped`); pasangan ini berarti `delivered`.
+# (status kanonik, sub-status dinormalkan) → status kanonik baru.
+ORDER_SUBSTATUS_MAP: Tuple[Tuple[str, str, str], ...] = (
+    ("shipped", "terkirim", "delivered"),
+    ("shipped", "delivered", "delivered"),
 )
 # Status yang memuat tanggal di dalam teksnya (dicocokkan lewat awalan).
 _ORDER_STATUS_PREFIX = (
@@ -409,6 +438,10 @@ _RETURN_REASON_MAP = (
     ("Berubah pikiran", "berubah_pikiran"), ("Tidak ingin lagi", "berubah_pikiran"),
     ("Changed mind", "berubah_pikiran"), ("Buyer changed mind", "berubah_pikiran"),
     ("Lainnya", "lainnya"), ("Others", "lainnya"), ("Other", "lainnya"),
+    # 2026-11-09 (riset §7.3) — nilai bahasa Inggris pada ekspor retur TikTok (berkas asli)
+    ("Wrong product sent", "salah_kirim"), ("Change of mind", "berubah_pikiran"),
+    ("Received parcel, but some items were missing", "barang_kurang"),
+    ("Missing items", "barang_kurang"), ("Barang kurang", "barang_kurang"),
 )
 
 _REFUND_TYPE_MAP = (
@@ -432,7 +465,30 @@ _RETURN_STATUS_MAP = (
     ("Selesai", "completed"), ("Completed", "completed"),
     ("Refund Selesai", "completed"), ("Pengembalian Selesai", "completed"),
     ("Success", "completed"), ("Berhasil", "completed"),
+    # ── 2026-11-09 (riset G10) — nilai NYATA di ekspor platform. Dulu semuanya jatuh ke
+    # `pending` lewat nilai cadangan: retur yang ditolak/sudah dibayar tampak menunggu.
+    # TikTok (nilai bahasa Inggris walau akun berbahasa Indonesia):
+    ("To Process", "pending"), ("In Process", "pending"),
+    ("Refund rejected", "rejected"), ("Request Canceled", "rejected"),
+    ("Request Cancelled", "rejected"),
+    # Shopee (status resmi Pusat Pengembalian):
+    ("Sedang Ditinjau", "pending"), ("Sedang Dikembalikan", "pending"),
+    ("Banding Diajukan", "pending"),
+    ("Dana Dikembalikan ke Pembeli", "completed"),
+    ("Ditolak/Dibatalkan", "rejected"),
 )
+# Sub-status retur TikTok yang MEMUTUSKAN status (dicek sesudah status utama):
+# permintaan yang dibatalkan pembeli bukan retur yang menunggu.
+RETURN_SUBSTATUS_MAP: Tuple[Tuple[str, str], ...] = (
+    ("request canceled", "rejected"), ("request cancelled", "rejected"),
+)
+# 2026-11-09 (keputusan owner) — "Refund only" = dana kembali TANPA barang kembali.
+# Dibedakan dari "Return and refund" supaya gudang tidak menunggu barang (tidak restock).
+REFUND_ONLY_VALUES = ("refund only", "hanya pengembalian dana", "pengembalian dana",
+                      "refund", "dana saja")
+GOODS_RETURN_VALUES = ("return and refund", "return refund", "pengembalian barang dan dana",
+                       "pengembalian barang dana", "tukar barang", "penggantian barang",
+                       "replacement")
 
 # Kanal pesanan (dasar pecahan trafik di rekap harian F2).
 _ORDER_CHANNEL_MAP = (
@@ -452,8 +508,10 @@ MARKETPLACE_ORDERS = SourceType(
     describe="Ekspor pesanan dari Seller Center (mis. TikTok 'Untuk Dikirim'). "
              "Satu baris berkas = satu SKU; sistem MENGELOMPOKKAN per No. Pesanan "
              "menjadi satu dokumen ber-items[] supaya jumlah pesanan & omzet tidak "
-             "terhitung dobel. Omzet yang dihasilkan adalah angka SEBELUM potongan "
-             "platform (komisi tidak ada di ekspor ini — hanya datang dari Pencairan).",
+             "terhitung dobel. Omzet produk = harga sebelum diskon dikurangi diskon "
+             "PENJUAL saja; diskon yang dibiayai platform ikut omzet dan dicatat "
+             "terpisah sebagai subsidi platform. Komisi tidak ada di ekspor ini — "
+             "hanya datang dari Pencairan.",
     module_hint="marketing-orders",
     account_scope="required",
     dedupe=("account_id", "platform", "order_id"),
@@ -464,31 +522,41 @@ MARKETPLACE_ORDERS = SourceType(
     platform_guard="purchase_channel",
     shop_guard="warehouse_name_raw",
     item_fields=(
-        "platform_sku_id", "seller_sku", "product_name_raw", "variation_raw",
+        "platform_sku_id", "seller_sku", "parent_sku", "product_name_raw", "variation_raw",
         "product_category_raw", "quantity", "qty_returned", "sku_unit_original_price",
         "sku_subtotal_before_discount", "sku_platform_discount", "sku_seller_discount",
         "sku_subtotal_after_discount", "is_preorder",
         # 2026-11-06 (Tahap 2) — ekspor Shopee Order.all: "Harga Setelah Diskon"
         # adalah harga SATUAN dan "Total Diskon" adalah diskon PER BARIS SKU.
         "sku_unit_deal_price", "total_discount",
+        # 2026-11-09 (riset G5) — subtotal versi PLATFORM (sesudah SEMUA diskon, termasuk
+        # yang dibiayai platform); `sku_subtotal_after_discount` = dasar omzet (sesudah
+        # diskon PENJUAL saja) diturunkan mesin dari kolom-kolom ini.
+        "sku_subtotal_after_all_discount", "omzet_basis_source",
+        # 2026-11-09 (riset G6) — per SKU, dijumlah ke kepala pesanan (item_sum_fields).
+        "buyer_service_fee",
     ),
+    item_sum_fields=("buyer_service_fee",),
     per_order_money=(
         "order_amount", "shipping_fee_after_discount", "original_shipping_fee",
         "shipping_fee_seller_discount", "shipping_fee_platform_discount",
         "distance_shipping_fee", "distance_fee", "order_refund_amount",
-        "payment_platform_discount", "buyer_service_fee", "handling_fee",
+        "payment_platform_discount", "handling_fee",
         "shipping_insurance", "item_insurance",
         # ekspor Shopee (sesi #34). `total_discount` DIPINDAH ke item_fields
         # (2026-11-06): nilainya berbeda per baris SKU, jadi bukan uang per pesanan.
         "total_payment", "voucher_seller", "voucher_platform",
+        "bundle_discount_seller", "bundle_discount_platform",
         "coin_cashback", "buyer_paid_shipping", "shipping_fee_estimate",
         "shipping_rebate_estimate", "return_shipping_fee",
+        # 2026-11-09 (riset G14 · §3.1) — terbukti sama di semua baris pesanan multi-SKU
+        "coin_platform", "credit_card_discount",
     ),
     fields=(
         # ── identitas & status ────────────────────────────────────────────────
         Field("order_id", "No. Pesanan", "str", True,
               ("order id", "order sn", "no pesanan", "nomor pesanan", "kode pesanan"),
-              example="585055055923938626"),
+              example="585055055923938626", id_teks=True),
         Field("status", "Status Pesanan", "enum", True,
               ("order status", "status pesanan", "status"),
               ("new", "paid", "packed", "shipped", "delivered", "completed",
@@ -496,19 +564,27 @@ MARKETPLACE_ORDERS = SourceType(
               example="Perlu dikirim", value_map=_ORDER_STATUS_MAP, keep_raw=True,
               value_prefix_map=_ORDER_STATUS_PREFIX, choice_labels=_ORDER_STATUS_LABELS,
               note="Kamus status tertulis; nilai tak dikenal menolak baris — "
-                   "artinya bisa dipilih sendiri di langkah pemetaan"),
+                   "artinya bisa dipilih sendiri di langkah pemetaan. Status 'Dikirim' "
+                   "bersub-status 'Terkirim' dicatat sudah diterima pembeli"),
         Field("substatus_raw", "Sub-status", "str", False, ("order substatus",)),
         Field("return_type_raw", "Jenis Pembatalan/Pengembalian", "str", False,
               ("cancelation return type", "cancellation return type",
                "status pembatalan pengembalian", "status pembatalan/ pengembalian")),
         # ── item (masuk items[]) ──────────────────────────────────────────────
+        # G2 (audit Gudang 9 Nov 2026) — "Nomor Referensi SKU" Shopee = SKU VARIASI yang
+        # diisi penjual (= SKU internal) ⇒ SKU Penjual. "SKU Induk" = SKU produk induk
+        # (tanpa varian) ⇒ disimpan terpisah, TIDAK lagi dipetakan ke SKU ID Platform
+        # (dulu "SKU Induk" merebut SKU ID Platform lalu "Nomor Referensi SKU" ditinggal
+        # tak terpetakan ⇒ 0 pesanan Shopee tertaut).
         Field("platform_sku_id", "SKU ID Platform", "str", False,
-              ("sku id", "id sku", "sku", "sku induk", "nomor referensi sku"),
+              ("sku id", "id sku", "sku"),
               example="1731234567890123456",
               note="Ekspor Shopee tidak punya kolom ini — sistem memakai SKU Penjual"),
         Field("seller_sku", "SKU Penjual", "str", False,
-              ("seller sku", "kode sku penjual", "nomor referensi sku", "sku induk",
-               "kode variasi")),
+              ("seller sku", "nomor referensi sku", "kode sku penjual", "kode variasi"),
+              note="Shopee: 'Nomor Referensi SKU' (SKU variasi) — dasar tautan ke barang"),
+        Field("parent_sku", "SKU Induk (produk)", "str", False, ("sku induk",),
+              note="SKU produk induk tanpa varian — hanya dicatat, tidak dipakai menautkan"),
         Field("product_name_raw", "Nama Produk (platform)", "str", False,
               ("product name", "nama produk")),
         Field("variation_raw", "Variasi (platform)", "str", False,
@@ -535,9 +611,21 @@ MARKETPLACE_ORDERS = SourceType(
         Field("sku_unit_deal_price", "Harga Satuan Setelah Diskon", "money", False,
               ("harga setelah diskon", "sku unit deal price"),
               note="Harga SATUAN — bukan subtotal baris"),
-        Field("sku_subtotal_after_discount", "Subtotal Setelah Diskon", "money", False,
-              ("sku subtotal after discount", "subtotal pesanan"),
-              note="Dasar OMZET PRODUK — dijumlah per pesanan"),
+        # 2026-11-09 (riset G5, keputusan owner K1/K5 "sesuai rekomendasi") — kolom
+        # platform "SKU Subtotal After Discount" (TikTok) dan "Subtotal Pesanan" (Shopee)
+        # SUDAH dipotong diskon yang DIBIAYAI PLATFORM (terbukti 674/674 & 154/154 baris).
+        # Omzet perusahaan = sesudah diskon PENJUAL saja. Kolom platform kini dipetakan ke
+        # field sendiri; dasar omzet diturunkan mesin (`marketing_import_engine.omzet_basis_item`).
+        Field("sku_subtotal_after_all_discount", "Subtotal Setelah Semua Diskon (platform)",
+              "money", False, ("sku subtotal after discount", "subtotal pesanan"),
+              note="Angka platform: sudah dipotong diskon penjual DAN diskon yang dibiayai "
+                   "platform. Bukan dasar omzet — dipakai untuk menurunkan & memeriksanya"),
+        Field("sku_subtotal_after_discount", "Subtotal Setelah Diskon Penjual (dasar omzet)",
+              "money", False, (), dihitung=True,
+              note="Dasar OMZET PRODUK — dihitung sistem: subtotal sebelum diskon dikurangi "
+                   "diskon penjual (diskon yang dibiayai platform ikut omzet). Biasanya "
+                   "tidak perlu dipetakan"),
+        Field("omzet_basis_source", "Cara Menghitung Omzet", "str", False, derived=True),
         Field("is_preorder", "Normal / Pre-order", "bool", False,
               ("normal or pre order", "normal or pre-order"),
               example="Pre-order",
@@ -559,7 +647,8 @@ MARKETPLACE_ORDERS = SourceType(
         Field("order_refund_amount", "Nilai Refund", "money", False, ("order refund amount",)),
         Field("payment_platform_discount", "Diskon Pembayaran Platform", "money", False,
               ("payment platform discount",)),
-        Field("buyer_service_fee", "Biaya Layanan Pembeli", "money", False, ("buyer service fee",)),
+        Field("buyer_service_fee", "Biaya Layanan Pembeli", "money", False, ("buyer service fee",),
+              note="Per baris SKU — dijumlah menjadi total pesanan"),
         Field("handling_fee", "Biaya Penanganan", "money", False, ("handling fee",)),
         Field("shipping_insurance", "Asuransi Kirim", "money", False, ("shipping insurance",)),
         Field("item_insurance", "Asuransi Barang", "money", False, ("item insurance",)),
@@ -568,10 +657,22 @@ MARKETPLACE_ORDERS = SourceType(
               note="Diskon penjual + diskon platform untuk baris SKU ini"),
         Field("voucher_seller", "Voucher Ditanggung Penjual", "money", False,
               ("voucher ditanggung penjual",)),
+        # Q-1 (keputusan owner 9 Nov 2026) — biaya diskon marketing = voucher toko +
+        # paket diskon penjual + subsidi ongkir penjual; selisih harga coret BUKAN biaya.
+        Field("bundle_discount_seller", "Paket Diskon (ditanggung penjual)", "money", False,
+              ("paket diskon diskon dari penjual",)),
+        Field("bundle_discount_platform", "Paket Diskon (ditanggung platform)", "money", False,
+              ("paket diskon diskon dari shopee", "paket diskon diskon dari platform")),
         Field("voucher_platform", "Voucher Ditanggung Platform", "money", False,
               ("voucher ditanggung shopee", "voucher ditanggung platform")),
-        Field("coin_cashback", "Cashback Koin", "money", False,
-              ("cashback koin", "potongan koin shopee")),
+        # 2026-11-09 (riset G14) — "Potongan Koin Shopee" = koin Shopee yang dipakai
+        # PEMBELI (dibayar Shopee), artinya beda dengan cashback koin dari penjual.
+        Field("coin_cashback", "Cashback Koin", "money", False, ("cashback koin",)),
+        Field("coin_platform", "Koin Platform Dipakai Pembeli", "money", False,
+              ("potongan koin shopee",),
+              note="Dibayar platform — bukan biaya penjual"),
+        Field("credit_card_discount", "Diskon Kartu Kredit", "money", False,
+              ("diskon kartu kredit",)),
         Field("buyer_paid_shipping", "Ongkir Dibayar Pembeli", "money", False,
               ("ongkos kirim dibayar oleh pembeli",)),
         Field("shipping_fee_estimate", "Perkiraan Ongkir", "money", False,
@@ -589,8 +690,11 @@ MARKETPLACE_ORDERS = SourceType(
         Field("rts_at", "Waktu Siap Kirim", "datetime", False,
               ("rts time", "waktu pengiriman diatur")),
         Field("shipped_at", "Waktu Dikirim", "datetime", False, ("shipped time",)),
-        Field("delivered_at", "Waktu Diterima", "datetime", False,
-              ("delivered time", "waktu pesanan selesai")),
+        # 2026-11-09 (riset G14) — "Waktu Pesanan Selesai" (Shopee) = pesanan DISELESAIKAN,
+        # bukan paket diterima; dulu keduanya tercampur di `delivered_at`.
+        Field("delivered_at", "Waktu Diterima", "datetime", False, ("delivered time",)),
+        Field("completed_at", "Waktu Selesai", "datetime", False,
+              ("waktu pesanan selesai", "completed time")),
         Field("cancelled_at", "Waktu Dibatalkan", "datetime", False, ("cancelled time",)),
         Field("cancel_by", "Dibatalkan Oleh", "str", False, ("cancel by",)),
         Field("cancel_reason", "Alasan Pembatalan", "str", False,
@@ -608,15 +712,20 @@ MARKETPLACE_ORDERS = SourceType(
               example="J&T Express", value_map=_COURIER_MAP, keep_raw=True,
               value_map_fallback="lainnya", choice_labels=_COURIER_LABELS),
         Field("package_id", "ID Paket", "str", False, ("package id",)),
-        Field("weight_kg", "Berat (kg)", "num", False,
-              ("weight kg", "weight(kg)", "berat", "total berat")),
+        Field("weight_kg", "Berat (kg)", "kg", False,
+              ("weight kg", "weight(kg)", "berat", "total berat"),
+              note="'200 gr' dibaca 0,2 kg"),
         Field("payment_method", "Metode Bayar", "str", False,
               ("payment method", "metode pembayaran")),
         Field("purchase_channel", "Platform Sumber", "str", False,
-              ("purchase channel",), example="TikTok",
+              ("purchase channel",), example="TikTok", keep_raw=True,
               note="Kalau ada, harus cocok dengan platform toko tujuan (berkas ditolak "
                    "bila beda). Ekspor Shopee tidak memuat kolom ini — platform diambil "
-                   "dari master toko yang dipilih."),
+                   "dari master toko yang dipilih. Pesanan kanal Tokopedia di ekspor "
+                   "terpadu TikTok diterima sebagai sub-kanal toko TikTok yang sama."),
+        # 2026-11-09 (riset G17, keputusan owner) — Seller Center terpadu TikTok-Tokopedia:
+        # pesanan dari aplikasi Tokopedia tercatat di toko TikTok yang sama, kanalnya di sini.
+        Field("sales_channel", "Sub-kanal Penjualan", "str", False, derived=True),
         Field("order_channel", "Kanal Pesanan", "enum", False,
               ("order channel",),
               ("live", "video", "product_card", "search", "ads", "affiliate",
@@ -669,6 +778,30 @@ RETIRED_MAPPINGS: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "marketplace_orders": (
         ("harga setelah diskon", "sku_subtotal_after_discount"),
         ("subtotal pesanan", "sku_subtotal_before_discount"),
+        # G2 (9 Nov 2026) — kolom SKU Shopee yang dulu tertukar
+        ("sku induk", "platform_sku_id"),
+        ("sku induk", "seller_sku"),
+        ("nomor referensi sku", "platform_sku_id"),
+        # 2026-11-09 (riset G5) — kolom subtotal PLATFORM dulu langsung menjadi dasar omzet;
+        # angkanya sudah dipotong diskon yang dibiayai platform (omzet 2,2–4,1% terlalu kecil).
+        ("subtotal pesanan", "sku_subtotal_after_discount"),
+        ("sku subtotal after discount", "sku_subtotal_after_discount"),
+        # 2026-11-09 (riset G14) — arti kolom tercampur
+        ("waktu pesanan selesai", "delivered_at"),
+        ("potongan koin shopee", "coin_cashback"),
+    ),
+    "marketplace_fulfillment": (
+        ("waktu pesanan selesai", "delivered_at"),
+    ),
+    "returns": (
+        # 2026-11-09 (riset G11) — kompensasi ke PENJUAL bukan refund ke pembeli
+        ("compensation amount", "refund_amount"),
+        ("jumlah kompensasi", "refund_amount"),
+        ("order amount", "price"),
+    ),
+    "ads": (
+        # 2026-11-09 (riset G3) — "Waktu posting" = tanggal unggah video, bukan tanggal biaya
+        ("waktu posting", "date"),
     ),
 }
 
@@ -714,7 +847,7 @@ MARKETPLACE_FULFILLMENT = SourceType(
     fields=(
         Field("order_id", "No. Pesanan", "str", True,
               ("order id", "order sn", "no pesanan", "nomor pesanan", "kode pesanan"),
-              example="585055055923938626",
+              example="585055055923938626", id_teks=True,
               note="KUNCI — harus sudah ada dari impor Ekspor A"),
         Field("status", "Status Pesanan", "enum", True,
               ("order status", "status pesanan", "status"),
@@ -731,7 +864,10 @@ MARKETPLACE_FULFILLMENT = SourceType(
         Field("shipped_at", "Waktu Dikirim", "datetime", False,
               ("shipped time", "waktu dikirim", "waktu pengiriman")),
         Field("delivered_at", "Waktu Diterima", "datetime", False,
-              ("delivered time", "waktu diterima", "waktu pesanan selesai")),
+              ("delivered time", "waktu diterima")),
+        # 2026-11-09 (riset G14) — "Waktu Pesanan Selesai" bukan waktu paket diterima
+        Field("completed_at", "Waktu Selesai", "datetime", False,
+              ("waktu pesanan selesai", "completed time")),
         Field("cancelled_at", "Waktu Dibatalkan", "datetime", False,
               ("cancelled time", "waktu dibatalkan", "waktu pembatalan")),
         Field("cancel_by", "Dibatalkan Oleh", "str", False,
@@ -772,12 +908,13 @@ ADS = SourceType(
     account_scope="required",
     dedupe=("account_id", "date", "campaign_name"),
     fields=(
-        # Ekspor iklan TikTok (GMV Max) tidak punya kolom TANGGAL BELANJA — yang ada
-        # hanya "Waktu posting" materi iklannya. Itu satu-satunya tanggal nyata di
-        # berkas, jadi dipakai apa adanya (dan disimpan mentah di `date_raw`) —
-        # bukan diganti tanggal impor, supaya tidak ada tanggal karangan.
+        # 2026-11-09 (riset G3, keputusan owner) — DULU "Waktu posting" ekspor GMV Max
+        # dipakai sebagai tanggal biaya: satu ekspor menyebar biayanya ke 15 bulan
+        # (2024-06 … 2026-08) karena itu tanggal UNGGAH VIDEO, bukan tanggal belanja.
+        # Ekspor GMV Max sekarang punya jenis impor sendiri (`tiktok_gmv_max`, periode
+        # laporan wajib); kolom "Waktu posting" tidak lagi dikenali sebagai tanggal di sini.
         Field("date", "Tanggal", "datetime", True,
-              _DATE_SYN + ("waktu posting", "post time", "tanggal iklan"),
+              _DATE_SYN + ("tanggal iklan",),
               example="2026-08-01", keep_raw=True),
         Field("campaign_name", "Nama Kampanye", "str", True,
               ("kampanye", "campaign", "campaign name", "nama iklan", "iklan",
@@ -1211,9 +1348,10 @@ RETURNS = SourceType(
               example="2026-08-01"),
         Field("order_id", "No. Pesanan", "str", True,
               ("order id", "no pesanan", "nomor pesanan", "order sn", "no. pesanan"),
-              example="SHP-2026081001"),
+              example="SHP-2026081001", id_teks=True),
         Field("return_id", "No. Pengembalian", "str", False,
-              ("no pengembalian", "return order id", "return id", "no. pengembalian")),
+              ("no pengembalian", "return order id", "return id", "no. pengembalian"),
+              id_teks=True),
         Field("product", "Produk", "str", True, ("produk", "nama produk", "product name")),
         Field("sku", "SKU", "str", False,
               ("sku induk", "seller sku", "sku id", "kode variasi", "nomor referensi sku")),
@@ -1222,8 +1360,10 @@ RETURNS = SourceType(
               ("jumlah produk dikembalikan", "return quantity", "qty", "jumlah")),
         Field("buyer_username", "Username Pembeli", "str", False,
               ("username pembeli", "username (pembeli)", "buyer username")),
+        # 2026-11-09 (riset §6.1) — "Order Amount" = total PESANAN, bukan harga satuan
+        # barang yang diretur; dulu keduanya bertabrakan di field ini.
         Field("price", "Harga (Rp)", "money", False,
-              ("harga", "nilai", "harga satuan", "return unit price", "order amount")),
+              ("harga", "nilai", "harga satuan", "return unit price")),
         # Alasan retur di berkas asli adalah TEKS BEBAS platform ("Barang rusak",
         # "Berubah pikiran", "Produk tidak sesuai deskripsi", …). Kalau ia
         # diperlakukan enum ketat, SELURUH berkas retur ditolak. Jadi: kamus untuk
@@ -1232,7 +1372,7 @@ RETURNS = SourceType(
         Field("reason", "Alasan", "enum", True,
               ("alasan", "reason", "penyebab", "alasan pengembalian", "return reason"),
               ("ukuran_tidak_sesuai", "warna_berbeda", "barang_rusak", "salah_kirim",
-               "kualitas_buruk", "berubah_pikiran", "lainnya"),
+               "kualitas_buruk", "berubah_pikiran", "barang_kurang", "lainnya"),
               example="ukuran_tidak_sesuai",
               value_map=_RETURN_REASON_MAP, keep_raw=True, value_map_fallback="lainnya"),
         Field("reason_detail", "Detail Alasan", "str", False,
@@ -1245,9 +1385,15 @@ RETURNS = SourceType(
               ("full_refund", "partial_refund", "replacement", "no_refund"),
               example="full_refund",
               value_map=_REFUND_TYPE_MAP, keep_raw=True, value_map_fallback="full_refund"),
+        # 2026-11-09 (riset G11) — "Compensation Amount" (TikTok) / "Jumlah Kompensasi"
+        # (Shopee) = kompensasi yang DITERIMA PENJUAL dari platform, bukan dana yang
+        # dikembalikan ke pembeli. Dulu dicatat sebagai nilai refund.
         Field("refund_amount", "Nilai Refund (Rp)", "money", False,
               ("jumlah refund", "nilai refund", "total pengembalian dana",
-               "refund amount", "compensation amount")),
+               "refund amount")),
+        Field("compensation_amount", "Kompensasi untuk Penjual (Rp)", "money", False,
+              ("compensation amount", "jumlah kompensasi"),
+              note="Dibayar platform ke penjual — tidak mengurangi omzet"),
         Field("refund_completed_at", "Waktu Refund Selesai", "date", False,
               ("waktu pengembalian dana selesai", "refund time")),
         Field("tracking_number", "No. Resi Retur", "str", False,
@@ -1257,6 +1403,10 @@ RETURNS = SourceType(
                "status pembatalan/ pengembalian", "return status"),
               ("pending", "approved", "rejected", "completed"), example="pending",
               value_map=_RETURN_STATUS_MAP, keep_raw=True, value_map_fallback="pending"),
+        Field("substatus_raw", "Sub-status Retur", "str", False, ("return sub status",),
+              note="'Request Canceled' = permintaan dibatalkan (status ditolak)"),
+        # Turunan (keputusan owner 9 Nov): "Refund only" = barang TIDAK kembali ke gudang.
+        Field("goods_returned", "Barang Kembali ke Gudang", "bool", False, derived=True),
         Field("notes", "Catatan", "str", False, ("catatan", "buyer note")),
         Field("account_id", "Akun", "str", True, derived=True),
     ),
@@ -1552,6 +1702,84 @@ SHOPEE_ADS_CPC = SourceType(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 17b. LAPORAN IKLAN TIKTOK GMV MAX (2026-11-09, riset G3/G4, keputusan owner)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ekspor GMV Max (Seller Center → Iklan → GMV Max → Ekspor) adalah AGREGAT untuk
+# rentang tanggal yang dipilih saat mengekspor — berkasnya TIDAK punya kolom tanggal
+# belanja. Karena itu:
+#   · periode laporan WAJIB diisi staf saat unggah (atau tertulis di nama berkas);
+#     periode yang menyeberang bulan ditolak, sama seperti laporan CPC Shopee;
+#   · baris berbiaya 0 dibuang SEBELUM batas baris (ekspor contoh: 100.000 baris,
+#     hanya 67 berbiaya), dan berkas tepat 100.000 baris diberi peringatan "mungkin
+#     terpotong";
+#   · kunci ganda = (toko, periode, ID kampanye, ID produk, ID video);
+#   · uang ditulis dengan TITIK sebagai desimal ("40797.000" = Rp40.797) — dibaca
+#     penormal dengan gaya angka per kolom (G1);
+#   · "Pendapatan kotor" versi TikTok MEMUAT pesanan organik produk yang diiklankan:
+#     dipakai untuk ROI iklan, TIDAK PERNAH dijumlah dengan omzet pesanan.
+# Biaya iklan resmi untuk ANALISIS = laporan ini; jurnal tetap dari potongan di
+# laporan penghasilan (Pencairan), supaya biaya tidak tercatat dua kali.
+TIKTOK_GMV_MAX = SourceType(
+    key="tiktok_gmv_max",
+    label="Laporan Iklan TikTok GMV Max",
+    group="Iklan",
+    collection="marketing_ads_data",
+    describe="Biaya & hasil iklan GMV Max TikTok per kampanye × produk × materi untuk SATU "
+             "periode laporan. Berkas ekspornya tidak memuat tanggal, jadi periode wajib "
+             "diisi saat unggah. Baris tanpa biaya dibuang. Pendapatan kotor TikTok "
+             "termasuk pesanan organik — hanya untuk ROI iklan, bukan omzet.",
+    module_hint="marketing-ads (tab Iklan) & Target & Anggaran (realisasi anggaran)",
+    export_hint="TikTok Seller Center → Iklan → GMV Max → pilih rentang tanggal (dalam satu "
+                "bulan) → Ekspor data. Tulis periodenya di layar unggah.",
+    account_scope="required",
+    dedupe=("account_id", "period_start", "period_end", "campaign_id", "product_id", "video_id"),
+    prenorm="tiktok_gmv_max",
+    fields=(
+        Field("date", "Tanggal (awal periode)", "date", True, ("tanggal",), example="2026-08-01"),
+        Field("period_start", "Periode Mulai", "date", True, ("periode mulai",),
+              example="2026-08-01"),
+        Field("period_end", "Periode Selesai", "date", True, ("periode selesai",),
+              example="2026-08-31"),
+        Field("campaign_name", "Nama Kampanye", "str", True, ("nama kampanye",),
+              example="GMV Max Gamis"),
+        Field("campaign_id", "ID Kampanye", "str", True, ("id campaign",), id_teks=True),
+        Field("product_id", "ID Produk", "str", True, ("id produk",), id_teks=True),
+        Field("video_id", "ID Video", "str", True, ("id video",),
+              note="'-' untuk materi kartu produk (tanpa video)"),
+        Field("ad_type", "Jenis Materi", "enum", False, ("jenis materi iklan",),
+              ("search", "discovery", "video", "live", "shop", "affiliate", "lainnya"),
+              value_map=(("Video", "video"), ("Live", "live"), ("LIVE", "live"),
+                         ("Kartu produk", "shop"), ("Product card", "shop")),
+              keep_raw=True, value_map_fallback="lainnya"),
+        Field("video_title", "Judul Video", "str", False, ("judul video",)),
+        Field("creator_handle", "Akun TikTok", "str", False, ("akun tiktok",)),
+        Field("video_posted_at", "Waktu Posting Video", "str", False, ("waktu posting",),
+              note="Tanggal unggah video — BUKAN tanggal biaya"),
+        Field("authorization_type", "Jenis Otorisasi", "str", False, ("jenis otorisasi",)),
+        Field("status_raw", "Status Materi", "str", False, ("status",)),
+        Field("notes", "Catatan", "str", False, ("status sekunder penjelajahan",)),
+        Field("spend", "Biaya Iklan (Rp)", "money", True, ("biaya",), example="40797"),
+        Field("conversions", "Pesanan (SKU)", "int", False, ("pesanan sku",)),
+        Field("cost_per_order", "Biaya per Pesanan (Rp)", "money", False, ("biaya per pesanan",)),
+        Field("revenue", "Pendapatan Kotor TikTok (Rp)", "money", False, ("pendapatan kotor",),
+              note="Termasuk pesanan organik — bukan omzet"),
+        Field("impressions", "Impresi", "int", False, ("impresi iklan produk",)),
+        Field("clicks", "Klik", "int", False, ("jumlah klik iklan produk",)),
+        Field("ctr_platform", "CTR Platform (%)", "pct", False, ("tingkat klik iklan produk",)),
+        Field("conversion_rate", "Rasio Konversi (%)", "pct", False, ("rasio konversi iklan",)),
+        Field("currency", "Mata Uang", "str", False, ("mata uang",)),
+        Field("account_id", "Akun", "str", True, derived=True),
+        Field("ctr", "CTR (%)", "pct", False, derived=True),
+        Field("cpa", "CPA (Rp)", "money", False, derived=True),
+        Field("roas", "ROAS", "num", False, derived=True),
+        Field("period_days", "Hari dalam Periode", "int", False, derived=True),
+        Field("spend_per_day_avg", "Biaya Rata-rata per Hari", "money", False, derived=True),
+        Field("source_report", "Sumber Laporan", "str", False, derived=True),
+        Field("ad_platform", "Platform Iklan", "str", False, derived=True),
+    ),
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 18. KPI PER KONTEN (F7.2) — kunci `published_url`
 # ═══════════════════════════════════════════════════════════════════════════════
 # Scorecard kreator butuh angka PER KONTEN, dan satu-satunya identitas konten yang
@@ -1622,8 +1850,15 @@ SOURCE_TYPES: Dict[str, SourceType] = {
         CREATORS, RETURNS, REVIEWS, COMPLAINTS, HEALTH,
         # F7.2 — jalur impor KPI dari ekspor Seller Center
         SHOPEE_SHOP_KPI, SHOPEE_CONTENT_KPI, SHOPEE_ADS_CPC, CONTENT_PERFORMANCE,
+        # 2026-11-09 — iklan TikTok GMV Max (periode wajib)
+        TIKTOK_GMV_MAX,
     )
 }
+
+# 2026-11-09 (kebutuhan lintas-agen AI-impor) — jenis yang berkas ekspornya TIDAK memuat
+# tanggal: periode laporan diisi staf saat unggah (isian ``period_start``/``period_end`` di
+# ``POST /upload``, atau penanda ``periode_YYYY-MM-DD_YYYY-MM-DD__`` di nama berkas).
+PERIOD_INPUT_TYPES = ("tiktok_gmv_max",)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # F12 (2026-08-14, sesi #11) — JENIS YANG SENGAJA TIDAK PUNYA `identity`
@@ -1648,6 +1883,11 @@ NO_IDENTITY_REASON: Dict[str, str] = {
         "kampanye tidak dijamin unik antar toko, jadi tidak bisa dipakai sebagai "
         "bukti kepemilikan. Yang menjaga jenis ini: penolakan periode BERIRISAN "
         "(409) per toko + peringatan 'berkas identik pernah masuk toko lain'.",
+    "tiktok_gmv_max":
+        "laporan GMV Max dikunci per periode + ID kampanye + ID produk + ID video. ID "
+        "kampanye milik akun iklan, dan satu akun iklan bisa membiayai beberapa toko, jadi "
+        "ID itu bukan bukti kepemilikan toko. Penjaga jenis ini: periode wajib + sidik isi "
+        "berkas (berkas identik di toko lain diperingatkan).",
     "shopee_shop_kpi":
         "ekspor statistik toko hanya berisi TANGGAL & KANAL. Tidak ada satu pun "
         "penanda toko di dalam berkas — bahkan nama tokonya tidak ada. Satu-satunya "
@@ -1739,9 +1979,9 @@ SOURCE_GROUPS: Tuple[Tuple[str, str, str, Tuple[str, ...]], ...] = (
      "omzet harian.",
      ("marketplace_orders", "orders", "marketplace_fulfillment", "sales_daily")),
     ("iklan", "Iklan",
-     "Biaya & performa iklan — baik laporan CPC asli dari Shopee maupun rekap "
-     "iklan yang diketik sendiri.",
-     ("shopee_ads_cpc", "ads")),
+     "Biaya & performa iklan — laporan CPC asli dari Shopee, laporan GMV Max TikTok, "
+     "maupun rekap iklan yang diketik sendiri.",
+     ("shopee_ads_cpc", "tiktok_gmv_max", "ads")),
     ("after_sales", "Retur, Komplain & Ulasan",
      "Apa yang terjadi SETELAH barang sampai: retur/refund, komplain pelanggan, "
      "dan rating/ulasan.",
@@ -1786,6 +2026,8 @@ DEPRECATED_SOURCE_TYPES: Dict[str, Dict[str, str]] = {
 NOT_DEPRECATED_WHY: Dict[str, str] = {
     "ads": "berkas rekap iklan yang diketik staf; `shopee_ads_cpc` butuh berkas "
            "CPC asli Shopee (perlu prenorm). Dua bentuk berkas berbeda.",
+    "tiktok_gmv_max": "ekspor GMV Max TikTok tanpa tanggal belanja (periode wajib, baris "
+                      "biaya 0 dibuang); `ads` = rekap ketikan per tanggal.",
     "content_calendar": "RENCANA konten (belum terbit, belum ada KPI); "
                         "`content_performance` butuh link terbit.",
     "shopee_shop_kpi": "statistik TOKO; `shopee_content_kpi` statistik KONTEN. "
@@ -1883,6 +2125,8 @@ def source_type_catalog() -> List[dict]:
             # BUKAN header) dan dari mana berkasnya diunduh di Seller Center.
             "prenorm": t.prenorm,
             "export_hint": t.export_hint,
+            # 2026-11-09 — layar menampilkan isian periode laporan (wajib) untuk jenis ini
+            "period_input": t.key in PERIOD_INPUT_TYPES,
             # F3 — layar WAJIB memberi tahu dua hal ini sebelum staf menyimpan:
             # (1) jenis ini hanya memperbarui pesanan yang sudah ada;
             # (2) pemetaan kolomnya belum diverifikasi dengan berkas asli.

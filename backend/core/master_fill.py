@@ -302,7 +302,9 @@ async def parse_fill_workbook(db, data: bytes) -> dict:
             if berat > 0 and abs(berat - float(models[mcode].get("weight_gram") or 0)) > 1e-9:
                 model_rows.append({"model_code": mcode, "model_id": models[mcode]["id"], "weight_gram": berat})
     from core.gap_workbook import parse_extra_sheets
-    extra = await parse_extra_sheets(db, wb, errors)
+    # 2026-11-09 (G7): harga dari sheet MATERIAL di berkas yang sama sudah diterapkan sebelum stok awal dimuat
+    extra = await parse_extra_sheets(db, wb, errors, pending_costs={m["code"]: m.get("unit_cost") for m in mats
+                                                                    if m.get("unit_cost")})
     warnings = bom["bom_warnings"] + extra.pop("warnings")
     return {"ok": not errors, "errors": errors, "materials": mats, "accounts": accs, "stores": stores, "bom_lines": bom_rows, "models": model_rows,
             "bom_groups": bom["bom_groups"], "bom_issues": bom["bom_issues"], "bom_issue_counts": bom["bom_issue_counts"], "warnings": warnings,

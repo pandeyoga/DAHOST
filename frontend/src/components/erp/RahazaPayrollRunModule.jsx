@@ -763,6 +763,10 @@ const slipBersih = (s) => s.net_pay ?? s.net_salary;
 function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVoidObligation, onRecalc }) {
   const run = data.run;
   const payslips = data.payslips || [];
+  // 2026-11-09 (Q8, keputusan owner): Keuangan hanya total run + nilai transfer per karyawan (tanpa komponen slip).
+  const rincianTersembunyi = Boolean(data.detail_hidden);
+  const transfers = data.transfers || [];
+  const jumlahSlip = rincianTersembunyi ? transfers.length : payslips.length;
   const locked = run.status !== 'draft';
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const [dlSlipId, setDlSlipId] = useState(null);
@@ -847,7 +851,7 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
   return (
     <DetailPopup open onClose={onClose} judul={run.run_number} testId="pr-detail"
       status={<StatusBadge status={run.status} label={runStatusLabel(run.status)} />}
-      keterangan={`${periodeLabel(run)} · ${payslips.length} slip gaji`}
+      keterangan={`${periodeLabel(run)} · ${jumlahSlip} slip gaji`}
       aksi={<>
         {run.status === 'draft' && onRecalc && (
           <Button variant="outline" size="sm" onClick={() => onRecalc(run.id)} data-testid="pr-detail-recalc"
@@ -856,18 +860,20 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
           </Button>
         )}
         <Button variant="outline" size="sm" onClick={() => onDownloadExcel(run.id, run.run_number)} data-testid="pr-download-excel"
-          title="Unduh Excel: rekap, slip per karyawan, dan data transfer bank">
-          <FileText />Excel rekap &amp; bank
+          title={rincianTersembunyi ? 'Unduh Excel data transfer bank' : 'Unduh Excel: rekap, slip per karyawan, dan data transfer bank'}>
+          <FileText />{rincianTersembunyi ? 'Excel transfer bank' : <>Excel rekap &amp; bank</>}
         </Button>
-        <Button variant="outline" size="sm" onClick={downloadAllPdf} disabled={dlAllLoading} data-testid="pr-download-all-pdf"
-          title="Unduh PDF semua slip gaji dalam satu berkas">
-          {dlAllLoading ? <RefreshCw className="animate-spin" /> : <FilesIcon />}
-          {dlAllLoading ? 'Menyiapkan…' : 'PDF semua slip'}
-        </Button>
+        {!rincianTersembunyi && (
+          <Button variant="outline" size="sm" onClick={downloadAllPdf} disabled={dlAllLoading} data-testid="pr-download-all-pdf"
+            title="Unduh PDF semua slip gaji dalam satu berkas">
+            {dlAllLoading ? <RefreshCw className="animate-spin" /> : <FilesIcon />}
+            {dlAllLoading ? 'Menyiapkan…' : 'PDF semua slip'}
+          </Button>
+        )}
       </>}>
       {/* Ringkasan = total yang tersimpan di run (sama dengan baris di daftar Proses gaji) */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatTile label="Total bruto" value={fmtIDR(run.total_gross)} sub={`Jumlah bruto ${payslips.length} slip`} />
+        <StatTile label="Total bruto" value={fmtIDR(run.total_gross)} sub={`Jumlah bruto ${jumlahSlip} slip`} />
         <StatTile label="Potongan" value={fmtIDR(run.total_deductions)} sub="BPJS, PPh21, kasbon, keterlambatan, dan potongan manual" />
         <StatTile label="Gaji bersih" value={fmtIDR(run.total_net)} accent="success" sub="Yang dibayarkan ke karyawan" />
       </div>
@@ -917,7 +923,24 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
         </dl>
       )}
 
-      <div className="space-y-2">
+      {rincianTersembunyi && (
+        <div className="space-y-2">
+          <Notice tone="info" icon={ShieldAlert} title="Rincian slip khusus penggajian" testId="pr-transfer-notice">
+            Peran Anda melihat total dan nilai transfer per karyawan. Rincian komponen gaji hanya untuk owner, admin, dan HR penggajian.
+          </Notice>
+          <TabelData baris={transfers} kunci={(t) => t.id || t.employee_id} testId="pr-transfers"
+            kolom={[
+              { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (t) => (
+                <div className="min-w-0"><p className="font-medium">{t.employee_name}</p><p className="text-xs text-muted-foreground">{t.employee_code}</p></div>) },
+              { kunci: 'bank', label: 'Bank', isi: (t) => t.bank_name || '—' },
+              { kunci: 'rekening', label: 'No. rekening', isi: (t) => <span className="tabular-nums">{t.bank_account_number || '—'}</span> },
+              { kunci: 'bersih', label: 'Gaji bersih', rata: 'kanan', isi: (t) => <span className="font-semibold tabular-nums">{fmtIDR(t.net_pay)}</span> },
+            ]}
+            kosong={<EmptyState title="Belum ada data transfer" description="Run ini tidak berisi slip gaji." />} />
+        </div>
+      )}
+
+      {!rincianTersembunyi && <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-medium text-foreground">Slip gaji ({payslips.length})</p>
           <TombolUnduh namaBerkas={`slip-gaji-${run.run_number}`} namaLembar="Slip gaji" baris={payslips} testId="pr-slip-unduh"
@@ -935,13 +958,14 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
         </div>
         <TabelData kolom={kolomSlip} baris={payslips} testId="pr-slips"
           kosong={<EmptyState title="Belum ada slip gaji" description="Run ini tidak berisi slip. Periksa profil gaji karyawan lalu hitung ulang." />} />
-      </div>
+      </div>}
     </DetailPopup>
   );
 }
 
 /* 2026-11-02 (K34): penyesuaian slip sebelum finalisasi — tambah/kurangi PENDAPATAN, potongan tambahan,
-   dan KURANGI baris potongan sistem (terlambat/LWOP/kasbon). BPJS & PPh21 tidak diubah manual. Alasan wajib. */
+   dan KURANGI baris potongan sistem (terlambat/LWOP/kasbon). BPJS & PPh21 tidak diubah manual. Alasan wajib.
+   2026-11-09 (H3): server menghitung ulang PPh21 bila penyesuaian mengubah bruto kena pajak (THR/bonus/rapel). */
 const NON_EDITABLE = (t) => /^(bpjs|pph21)/.test(String(t || '').toLowerCase());
 
 function AdjustCell({ slip, onSave }) {
@@ -983,7 +1007,7 @@ function AdjustCell({ slip, onSave }) {
       </Button>
       <FormPopup open={open} onClose={() => setOpen(false)} ukuran="pendek" onSimpan={submit} menyimpan={busy}
         testId={`payslip-adjust-dialog-${slipId}`} judul={`Penyesuaian slip — ${slip.employee_name}`}
-        keterangan={`Bruto sistem ${fmtIDR(slip.gross_before_adjustment ?? (Number(slip.gross_pay || 0) - curAdd))}. BPJS dan PPh21 tidak dihitung ulang.`}>
+        keterangan={`Bruto sistem ${fmtIDR(slip.gross_before_adjustment ?? (Number(slip.gross_pay || 0) - curAdd))}. Penyesuaian pendapatan ikut dipotong PPh21 (dihitung ulang otomatis); BPJS tetap dari upah tetap.`}>
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Penyesuaian pendapatan (Rp)" petunjuk="Minus = mengurangi pendapatan.">
             <MoneyInput allowNegative value={earning} onChange={e => setEarning(Number(e.target.value))}

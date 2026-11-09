@@ -174,7 +174,7 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
                   {unmapped.map(u => (
                     <tr key={u.platform_sku_id} className="border-t border-border"
                       data-testid={`sku-map-row-${u.platform_sku_id}`}>
-                      <td className="px-2 py-1.5 font-mono">{u.platform_sku_id}</td>
+                      <td className="px-2 py-1.5 font-mono">{u.sku_label || u.platform_sku_id}</td>
                       <td className="px-2 py-1.5 max-w-[240px] truncate" title={u.product_name_raw}>
                         {u.product_name_raw || '—'}
                       </td>

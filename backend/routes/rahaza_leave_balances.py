@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, check_role
-from utils.waktu import wib_year
+from utils.waktu import today_wib, wib_year
 
 router = APIRouter(prefix="/api/rahaza/leave-balances", tags=["rahaza-leave-balances"])
 
@@ -49,9 +49,34 @@ async def _require_admin(request: Request):
     return user
 
 
-def default_allocation(lt: Optional[dict]) -> int:
-    """Jatah bawaan satu jenis cuti per tahun — dipakai bila dokumen saldo belum ada."""
-    return int(lt.get("quota_default", 12)) if lt else 12
+def default_allocation(lt: Optional[dict], emp: Optional[dict] = None, year: Optional[int] = None) -> int:
+    """Jatah bawaan satu jenis cuti per tahun — dipakai bila dokumen saldo belum ada.
+
+    2026-11-09 (Q7): cuti TAHUNAN hanya untuk karyawan yang sudah berhak (12 bulan bekerja) paling lambat akhir
+    tahun itu — penuh, TANPA prorata; belum berhak → 0. Jenis lain: kuota jenisnya (perilaku lama)."""
+    quota = int(lt.get("quota_default", 12)) if lt else 12
+    if lt and emp is not None and year:
+        from utils.leave_types import quota_rule_of
+        if quota_rule_of(lt) == "tahunan":
+            elig = annual_eligible_from(emp, lt)
+            if elig and elig.year > int(year):
+                return 0
+    return quota
+
+
+def annual_eligible_from(emp: Optional[dict], lt: Optional[dict] = None):
+    """Tanggal mulai BERHAK cuti tahunan = tanggal masuk + `min_service_months` (bawaan 12) bulan. None = tidak
+    diketahui (tanggal masuk kosong) → tidak dibatasi (konservatif: tidak memblokir karyawan lama tanpa data)."""
+    from datetime import date as _date
+    from routes.rahaza_payroll_rules import employment_window
+    join, _ = employment_window(emp)
+    if not join:
+        return None
+    months = int((lt or {}).get("min_service_months") or 12)
+    y, m = divmod(join.month - 1 + months, 12)
+    y, m = join.year + y, m + 1
+    import calendar
+    return _date(y, m, min(join.day, calendar.monthrange(y, m)[1]))
 
 
 async def balance_snapshot(db, employee_id: str, leave_type_id: str, year: int,
@@ -68,7 +93,8 @@ async def balance_snapshot(db, employee_id: str, leave_type_id: str, year: int,
     else:
         if lt is None:
             lt = await db.rahaza_leave_types.find_one({"id": leave_type_id}, {"_id": 0})
-        allocated, used = float(default_allocation(lt)), 0.0
+        emp = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0, "join_date": 1})
+        allocated, used = float(default_allocation(lt, emp or {}, year)), 0.0
     return {"allocated": allocated, "used": used, "remaining": allocated - used, "exists": bool(doc)}
 
 
@@ -79,8 +105,9 @@ async def employee_balance_rows(db, employee_id: str, year: int) -> list:
     2026-11-07 (Tahap 7): dulu Portal Saya hanya membaca dokumen saldo yang SUDAH ada → sebelum pengajuan
     pertama disetujui kartu saldo kosong, padahal HR melihat jatah 12 hari. Jenis tak dibayar (mis. izin
     pribadi) tidak punya jatah: `remaining` = None (dulu tampil minus, mis. −1,5)."""
-    from utils.leave_types import is_unpaid
+    from utils.leave_types import QUOTA_RULE_LABELS, is_unpaid, quota_rule_of
     types = await db.rahaza_leave_types.find({}, {"_id": 0}).to_list(500)
+    emp = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0, "join_date": 1}) or {}
     docs = {d.get("leave_type_id"): d for d in await db.rahaza_leave_balances.find(
         {"employee_id": employee_id, "year": year}, {"_id": 0}).to_list(500)}
     rows = []
@@ -90,13 +117,25 @@ async def employee_balance_rows(db, employee_id: str, year: int) -> list:
             continue
         snap = await balance_snapshot(db, employee_id, lt["id"], year, lt=lt)
         unpaid = is_unpaid(lt)
+        rule = quota_rule_of(lt)
+        # 2026-11-09 (Q7): jenis per bulan / per kejadian / sakit bersurat tidak punya "sisa per tahun".
+        no_annual = rule in ("per_bulan", "per_kejadian", "sakit_bersurat")
+        note = ""
+        if rule == "tahunan":
+            elig = annual_eligible_from(emp, lt)
+            if elig and elig > today_wib():
+                note = f"berhak mulai {elig.strftime('%d/%m/%Y')}"
+        elif no_annual:
+            note = f"maks {int(lt.get('quota_default') or 0)} hari {QUOTA_RULE_LABELS[rule]}" \
+                if rule != "sakit_bersurat" else "dengan surat dokter tanpa batas"
         rows.append({
             **(doc or {}), "employee_id": employee_id, "leave_type_id": lt["id"], "year": year,
             "leave_type_name": lt.get("name") or lt.get("code") or "", "leave_type_code": lt.get("code") or "",
             "leave_type_color": lt.get("color", "#6366f1"),
             "request_type": (lt.get("request_type") or "cuti").lower(), "unpaid": unpaid,
+            "quota_rule": rule, "quota_note": note,
             "allocated": 0.0 if unpaid else snap["allocated"], "quota": 0.0 if unpaid else snap["allocated"],
-            "used": snap["used"], "remaining": None if unpaid else snap["remaining"],
+            "used": snap["used"], "remaining": None if (unpaid or no_annual) else snap["remaining"],
         })
     rows.sort(key=lambda r: (r["unpaid"], r["request_type"] != "cuti", r["leave_type_name"]))
     return rows
@@ -112,7 +151,8 @@ async def get_or_create_balance(db, employee_id: str, leave_type_id: str, year: 
         return existing
 
     lt = await db.rahaza_leave_types.find_one({"id": leave_type_id}, {"_id": 0})
-    allocated = default_allocation(lt)
+    emp = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0, "join_date": 1})
+    allocated = default_allocation(lt, emp or {}, year)
 
     doc = {
         "id": _uid(),
@@ -153,6 +193,21 @@ async def restore_balance(db, employee_id: str, leave_type_id: str, year: int, d
             {"$inc": {"used": -float(days)}, "$set": {"updated_at": _now()}})
         if not getattr(res, "matched_count", 0):
             await db.rahaza_leave_balances.update_one({"id": doc["id"]}, {"$set": {"used": 0, "updated_at": _now()}})
+
+
+async def used_from_approved(db, employee_id: str, leave_type_id: str, year: int) -> float:
+    """Hari saldo terpakai dari pengajuan DISETUJUI (potongan per tahun yang tersimpan saat disetujui)."""
+    rows = await db.rahaza_leave_requests.find(
+        {"employee_id": employee_id, "leave_type_id": leave_type_id, "status": "approved"},
+        {"_id": 0, "balance_deducted_by_year": 1, "balance_deducted_days": 1, "from_date": 1}).to_list(500)
+    total = 0.0
+    for r in rows:
+        by_year = r.get("balance_deducted_by_year")
+        if by_year:
+            total += float(by_year.get(str(year)) or 0)
+        elif str(r.get("from_date") or "")[:4] == str(year):
+            total += float(r.get("balance_deducted_days") or 0)
+    return total
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────────
@@ -264,8 +319,8 @@ async def allocate_year(request: Request):
     # cuti dan HR mengira "setup cuti"-nya gagal. Pakai filter SSOT.
     from utils.employee_identity import ACTIVE_EMPLOYEE_FILTER
     employees = await db.rahaza_employees.find(
-        dict(ACTIVE_EMPLOYEE_FILTER), {"_id": 0, "id": 1}).to_list(2000)
-    leave_types = await db.rahaza_leave_types.find({"active": True}, {"_id": 0, "id": 1, "quota_default": 1}).to_list(500)
+        dict(ACTIVE_EMPLOYEE_FILTER), {"_id": 0, "id": 1, "join_date": 1}).to_list(2000)
+    leave_types = await db.rahaza_leave_types.find({"active": True}, {"_id": 0}).to_list(500)
     if not employees or not leave_types:
         raise HTTPException(
             409,
@@ -281,11 +336,15 @@ async def allocate_year(request: Request):
             )
             if existing and not force_reset:
                 continue
-            allocated = int(lt.get("quota_default", 12))
+            # 2026-11-09 (Q7): cuti tahunan 0 bila belum berhak 12 bulan bekerja di tahun itu (tanpa prorata).
+            allocated = default_allocation(lt, emp, year)
             if existing:
+                # M7 (bug pasti): dulu `used = 0` walau ada cuti DISETUJUI tahun itu → saldo bisa dipakai dua kali.
+                # Pemakaian dihitung ulang dari pengajuan disetujui (potongan per tahun yang tersimpan).
+                used = await used_from_approved(db, emp["id"], lt["id"], year)
                 await db.rahaza_leave_balances.update_one(
                     {"id": existing["id"]},
-                    {"$set": {"allocated": allocated, "used": 0, "updated_at": _now()}}
+                    {"$set": {"allocated": allocated, "used": used, "updated_at": _now()}}
                 )
                 updated += 1
             else:

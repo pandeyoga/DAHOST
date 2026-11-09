@@ -192,7 +192,7 @@ function CreateMasterDialog({ row, onClose, onDone }) {
       )}>
       <p className="text-sm text-muted-foreground">
         Judul dari platform: <span className="font-medium text-foreground">{row.product_name || '(tanpa nama)'}</span>
-        {' '}· variasi <b>{row.variation || '—'}</b> · SKU platform <span className="tabular-nums">{row.platform_sku_id}</span>
+        {' '}· variasi <b>{row.variation || '—'}</b> · SKU platform <span className="tabular-nums">{row.sku_label || row.platform_sku_id}</span>
         {' '}· {fmt(row.pcs)} pcs di {fmt(row.orders)} pesanan
       </p>
       <Isian label="Model produk di master"
@@ -256,7 +256,7 @@ function BulkPanel({ onDone }) {
   ] : [];
   const kolomHasil = [
     { kunci: 'kelompok', label: 'Kelompok', hp: 'keterangan', isi: (r) => r._kelompok },
-    { kunci: 'barang', label: 'SKU / barang', hp: 'judul', isi: (r) => <span className="font-medium">{r.will_create || r.target_sku || r.product_name || r.platform_sku_id}</span> },
+    { kunci: 'barang', label: 'SKU / barang', hp: 'judul', isi: (r) => <span className="font-medium">{r.will_create || r.target_sku || r.product_name || r.sku_label || r.platform_sku_id}</span> },
     { kunci: 'aksi', label: 'Aksi', isi: (r) => (r.action
       ? <StatusBadge tone={ACTION_META[r.action]?.tone} label={ACTION_META[r.action]?.label || r.action} />
       : <span className="text-muted-foreground">—</span>) },
@@ -300,7 +300,7 @@ function BulkPanel({ onDone }) {
           <TombolUnduh namaBerkas="sku-selesaikan-massal" namaLembar="Hasil" baris={hasil} testId="bulk-unduh"
             kolom={[
               { label: 'Kelompok', nilai: (r) => r._kelompok },
-              { label: 'SKU platform', nilai: (r) => r.platform_sku_id || '' },
+              { label: 'SKU platform', nilai: (r) => r.sku_label || r.platform_sku_id || '' },
               { label: 'SKU / barang', nilai: (r) => r.will_create || r.target_sku || r.product_name || '' },
               { label: 'Aksi', nilai: (r) => ACTION_META[r.action]?.label || r.action || '' },
               { label: 'Pcs', nilai: (r) => (r.pcs != null ? Number(r.pcs) : '') },
@@ -351,7 +351,7 @@ function MappedPanel({ reloadKey, onChanged }) {
   };
 
   const kolom = [
-    { kunci: 'psku', label: 'SKU platform', hp: 'keterangan', isi: (r) => <span className="tabular-nums">{r.platform_sku_id}</span> },
+    { kunci: 'psku', label: 'SKU platform', hp: 'keterangan', isi: (r) => <span className="tabular-nums">{r.sku_label || r.platform_sku_id}</span> },
     { kunci: 'barang', label: 'Barang gudang', hp: 'judul', isi: (r) => (
       <div className="min-w-0 md:max-w-[22rem]">
         <p className="truncate">{r.target_name || '—'}</p>
@@ -374,7 +374,7 @@ function MappedPanel({ reloadKey, onChanged }) {
         kanan={(
           <TombolUnduh namaBerkas="sku-sudah-dipetakan" namaLembar="Pemetaan" baris={rows} testId="mapped-unduh"
             kolom={[
-              { label: 'SKU platform', nilai: (r) => r.platform_sku_id },
+              { label: 'SKU platform', nilai: (r) => r.sku_label || r.platform_sku_id },
               { label: 'Barang gudang', nilai: (r) => r.target_name || '' },
               { label: 'Judul platform', nilai: (r) => r.product_name_sample || '' },
               { label: 'Kode FG', nilai: (r) => r.fg_code || '' },
@@ -457,7 +457,7 @@ export default function SkuBridgeModule({ onNavigate }) {
     { kunci: 'barang', label: 'Barang dipesan pembeli', hp: 'judul', isi: (r) => (
       <div className="min-w-0 md:max-w-[24rem]">
         <p className="truncate font-medium">{r.product_name || '(tanpa nama)'}</p>
-        <p className="text-xs text-muted-foreground">{r.account_name || '—'} · <span className="tabular-nums">{r.platform_sku_id}</span></p>
+        <p className="text-xs text-muted-foreground">{r.account_name || '—'} · <span className="tabular-nums">{r.sku_label || r.platform_sku_id}</span></p>
       </div>) },
     { kunci: 'varian', label: 'Warna / ukuran', hp: 'keterangan', isi: (r) => (
       <div>
@@ -543,8 +543,9 @@ export default function SkuBridgeModule({ onNavigate }) {
       footer={onNavigate ? (
         <p className="flex flex-wrap items-center gap-x-1 text-sm text-muted-foreground">
           Lanjut ke:
-          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('fulfillment')} data-testid="goto-fulfillment">
-            Antrean gudang<ArrowRight />
+          {/* 2026-11-09 (audit gudang G11): Fulfillment dilepas (K6/K15) — barang keluar lewat Scan Keluar Penjualan */}
+          <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('wh-scan-out')} data-testid="goto-scan-out">
+            Scan Keluar Penjualan<ArrowRight />
           </Button>
           <Button variant="link" size="sm" className="h-auto px-1" onClick={() => onNavigate('sync-audit')} data-testid="goto-sync-audit">
             Kesehatan sinkronisasi<ArrowRight />
@@ -567,7 +568,7 @@ export default function SkuBridgeModule({ onNavigate }) {
               // Daftar ini dipakai untuk membagi pekerjaan ke staf & dibawa ke rapat (kontrak INV-F10 A-3).
               <TombolUnduh namaBerkas="sku-belum-tertaut" namaLembar="SKU belum tertaut" baris={rows} testId="unmapped-export"
                 kolom={[
-                  { label: 'SKU platform', nilai: (r) => r.platform_sku_id },
+                  { label: 'SKU platform', nilai: (r) => r.sku_label || r.platform_sku_id },
                   { label: 'Toko', nilai: (r) => r.account_name || '' },
                   { label: 'Nama produk', nilai: (r) => r.product_name || '' },
                   { label: 'Variasi', nilai: (r) => r.variation || '' },

@@ -41,7 +41,7 @@ async def list_units(
     docs = await db.dewi_org_units.find({}).sort("level", 1).to_list(200)
     return {"ok": True, "units": [serialize(d) for d in docs]}
 
-@router.post("/units")
+@router.post("/units", dependencies=only(*HR_ROLES, perm="hr.manage"))  # 2026-11-09 (P2 audit HR): tulis struktur organisasi hanya HR
 async def create_unit(
     body: dict,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -90,7 +90,7 @@ async def get_unit(
         raise HTTPException(404, "Unit tidak ditemukan")
     return {"ok": True, "unit": serialize(doc)}
 
-@router.put("/units/{unit_id}")
+@router.put("/units/{unit_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # 2026-11-09 (P2 audit HR): tulis struktur organisasi hanya HR
 async def update_unit(
     unit_id: str, body: dict,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -137,7 +137,7 @@ async def list_positions(
     docs = await db.dewi_org_positions.find(filt).sort("grade", -1).to_list(200)
     return {"ok": True, "positions": [serialize(d) for d in docs]}
 
-@router.post("/positions")
+@router.post("/positions", dependencies=only(*HR_ROLES, perm="hr.manage"))  # 2026-11-09 (P2 audit HR): tulis struktur organisasi hanya HR
 async def create_position(
     body: dict,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -166,7 +166,7 @@ async def create_position(
     await db.dewi_org_positions.insert_one(doc)
     return {"ok": True, "position": serialize(doc)}
 
-@router.put("/positions/{position_id}")
+@router.put("/positions/{position_id}", dependencies=only(*HR_ROLES, perm="hr.manage"))  # 2026-11-09 (P2 audit HR): tulis struktur organisasi hanya HR
 async def update_position(
     position_id: str, body: dict,
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -308,7 +308,7 @@ async def headcount_analysis(
 # SEED
 # ──────────────────────────────────────────────────────────────────────────────
 
-@router.post("/seed")
+@router.post("/seed", dependencies=only(*HR_ROLES, perm="hr.manage"))  # 2026-11-09 (P2 audit HR): tulis struktur organisasi hanya HR
 async def seed_org(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),

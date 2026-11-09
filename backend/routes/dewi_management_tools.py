@@ -181,12 +181,15 @@ async def get_weekly_digest(
 
     # --- Marketing: Live sessions revenue --- (RC-07: field SSOT gmv/total_orders;
     # session_date bertipe STRING "YYYY-MM-DD")
-    sessions = await db.marketing_live_sessions.find(
-        {"session_date": {"$gte": since.strftime("%Y-%m-%d")}},
-        {"_id": 0, "gmv": 1, "total_orders": 1}
-    ).to_list(length=200)
-    live_revenue = sum(float(s.get("gmv", 0) or 0) for s in sessions)
-    live_orders = sum(int(s.get("total_orders", 0) or 0) for s in sessions)
+    # M-13 / Q-2 (9 Nov 2026) — omzet live resmi = pesanan berkanal LIVE (dulu field mati
+    # `gmv`/`total_orders` ⇒ selalu 0).
+    from core import ukuran_penjualan as _uk
+    _accs = await db.marketing_platform_accounts.find(
+        {}, {"_id": 0, "id": 1, "account_name": 1}).to_list(1000)
+    _live = await _uk.ringkas_live(db, _accs, since.strftime("%Y-%m-%d"),
+                                   _now().strftime("%Y-%m-%d"))
+    live_revenue = _live["omzet"]
+    live_orders = _live["pesanan"]
 
     # --- Warehouse Occupancy Alerts --- (RC-07: rahaza_racks = phantom; SSOT wh_racks
     # TIDAK punya field okupansi → metrik di-drop jujur, jangan mengarang angka)
@@ -213,7 +216,7 @@ async def get_weekly_digest(
             "attendance_issues": attendance_issues,
         },
         "marketing": {
-            "live_sessions": len(sessions),
+            "live_sessions": _live["sesi"],
             "live_revenue": live_revenue,
             "live_orders": live_orders,
         },

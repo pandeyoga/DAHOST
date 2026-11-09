@@ -65,10 +65,12 @@ class HitungDB(FakeDB):
 
 
 def _req(db, rid=1, requester="u-pemohon", levels=("manager", "hr"), meta=None):
+    # 2026-11-09 (Q6): jenis "leave" tidak lagi diputus mesin rantai (cuti → core.leave_engine); uji mesin rantai
+    # memakai jenis lain yang masih aktif (klaim biaya).
     lv = [{"level": i + 1, "role": r, "label": {"manager": "Manajer", "hr": "HR", "owner": "Direktur"}.get(r, r),
            "status": "pending" if i == 0 else "waiting", "approver_id": None, "approver_name": None, "note": "",
            "actioned_at": None} for i, r in enumerate(levels)]
-    db.approval_requests.docs.append({"_id": rid, "id": rid, "type": "leave", "ref_id": "L1", "ref_code": "L1",
+    db.approval_requests.docs.append({"_id": rid, "id": rid, "type": "expense", "ref_id": "L1", "ref_code": "L1",
                                       "requester_id": requester, "requester_name": "Pemohon", "current_level": 1,
                                       "max_level": len(lv), "status": "pending", "levels": lv, "meta": meta or {},
                                       "created_at": "x", "updated_at": "x", "completed_at": None})
@@ -228,12 +230,20 @@ def test_route_penjadwal_shift_generate_dan_terbitkan_menolak_staf(monkeypatch):
     db.rahaza_schedules.docs.append({"id": "j1", "status": "draft"})
     monkeypatch.setattr(ss, "get_db", lambda: db)
 
+    async def _tanpa_log(*a, **k):
+        return None
+    monkeypatch.setattr(ss, "log_activity", _tanpa_log)   # Tahap C: terbit kini dicatat di log aktivitas
+
     async def _staf(request):
         return U("u1", "admin_gudang")
     monkeypatch.setattr(ss, "require_auth", _staf)
-    req = ss.GenerateScheduleRequest(start_date="2026-11-10", end_date="2026-11-11", shift_templates=["t1"])
+    # Tahap C audit HR (9 Nov 2026): jadwal otomatis lama dipensiunkan (410), tetapi gerbang penulis tetap lebih dulu.
     with pytest.raises(HTTPException) as e:
-        run(ss.generate_schedule(FakeRequest(), req))
+        run(ss.generate_schedule(FakeRequest()))
+    assert e.value.status_code == 403
+    with pytest.raises(HTTPException) as e:
+        run(ss.buat_jadwal(FakeRequest(), ss.JadwalBaruModel(start_date="2026-11-10", end_date="2026-11-11",
+                                                               cara="shift", shift_id="sh-x")))
     assert e.value.status_code == 403
     with pytest.raises(HTTPException) as e:
         run(ss.publish_schedule(FakeRequest(), "j1"))

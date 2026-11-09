@@ -151,6 +151,30 @@ def valid_period(period: str) -> Tuple[int, int]:
     raise ValueError(f"periode harus YYYY-MM atau YYYY-MM-DD, dapat: {raw!r}")
 
 
+def period_range(period: str, days: int = 7) -> Tuple[str, str]:
+    """Periode anggaran → ``(tanggal_awal, tanggal_akhir)`` inklusif ``YYYY-MM-DD``.
+
+    M-05 (audit 9 Nov 2026) — periode 7 hari (``YYYY-MM-DD`` = tanggal mulai) dulu dibaca
+    dengan ``$regex ^YYYY-MM-DD`` (omzet SATU hari) sedangkan biaya iklan/diskon dibaca
+    SEBULAN: anggaran mingguan bawaan menampilkan omzet Rp1.474.957 (harusnya Rp3.801.889)
+    dan biaya Rp5,33 jt. Semua pembaca realisasi sekarang memakai rentang ini.
+    """
+    raw = str(period or '').strip()
+    if len(raw) == 7:
+        y, m = valid_period(raw)
+        dim = calendar.monthrange(y, m)[1]
+        return f"{raw}-01", f"{raw}-{dim:02d}"
+    start = datetime.strptime(raw, '%Y-%m-%d')
+    end = start + timedelta(days=max(1, int(days or 7)) - 1)
+    return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+
+
+def _bounds_dt(lo: str, hi: str) -> Tuple[datetime, datetime]:
+    a = datetime.strptime(lo, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+    b = datetime.strptime(hi, '%Y-%m-%d').replace(tzinfo=timezone.utc) + timedelta(days=1)
+    return a, b
+
+
 def period_of(year: int, month: int) -> str:
     return f"{int(year):04d}-{int(month):02d}"
 
@@ -195,18 +219,29 @@ def month_progress(period: str, today: Optional[datetime] = None) -> Dict[str, A
 # ══════════════════════════════════════════════════════════════════════════════
 # OMZET (dibaca dari rekap harian turunan — SSOT F2)
 # ══════════════════════════════════════════════════════════════════════════════
-async def actual_from_daily(db, account_id: str, period: str) -> Dict[str, Any]:
-    """Angka realisasi bulan ini dari rekap harian (`revenue_type='total'`).
+async def actual_from_daily(db, account_id: str, period: str, days: int = 7) -> Dict[str, Any]:
+    """Angka realisasi periode ini dari rekap harian (`revenue_type='total'`).
 
     Mengembalikan juga `sources` (dari `source` dokumen) supaya layar bisa
     menyebut apakah angkanya turunan pesanan, impor rekap, atau override SPV —
     tiga hal yang tidak boleh terlihat sama.
+
+    M-05 — periode 7 hari dibaca sebagai RENTANG (dulu regex = satu hari); data contoh
+    dibuang dan satu dokumen per tanggal (aturan baku `core.ukuran_penjualan`).
     """
-    rows = await db[DAILY].find(
-        {'account_id': account_id, 'date': {'$regex': f'^{period}'},
-         'revenue_type': 'total'},
+    lo, hi = period_range(period, days)
+    raw_rows = await db[DAILY].find(
+        {'account_id': account_id, 'date': {'$gte': lo, '$lte': hi},
+         'revenue_type': 'total', **_ukuran.TANPA_CONTOH},
         {'_id': 0},
-    ).to_list(400)
+    ).to_list(1000)
+    pick: Dict[str, dict] = {}
+    for r in raw_rows:
+        k = str(r.get('date') or '')[:10]
+        if k in pick and str(r.get('updated_at') or '') <= str(pick[k].get('updated_at') or ''):
+            continue
+        pick[k] = r
+    rows = [pick[k] for k in sorted(pick)]
 
     tot = {'revenue': 0.0, 'revenue_product': 0.0, 'revenue_order_amount': 0.0,
            'gross_before_discount': 0.0, 'seller_discount': 0.0,
@@ -355,98 +390,97 @@ def _creator_cost(config: dict, revenue: float) -> float:
     return _r(cost)
 
 
-async def _auto_diskon(db, account_id: str, period: str,
-                       daily: Optional[dict] = None) -> Dict[str, Any]:
-    """Realisasi kategori `diskon` — diskon penjual + subsidi ongkir penjual.
+def seller_funded_discount(o: dict) -> Dict[str, float]:
+    """Q-1 (keputusan owner 9 Nov 2026) — diskon yang benar-benar DITANGGUNG penjual.
 
-    Dihitung dari **pesanan** karena subsidi ongkir hanya ada di tingkat pesanan
-    (rekap harian menyimpan diskon item saja). Toko yang belum memakai impor
-    pesanan (masih impor rekap `sales_daily`) tetap dapat angka dari rekap, dengan
-    `basis` yang menyebutkan asalnya — supaya "Rp 0" tidak pernah berarti dua hal.
+    = voucher toko + paket diskon penjual + subsidi ongkir penjual. Selisih harga coret
+    (harga awal − harga jual; Shopee "Diskon Dari Penjual", TikTok "SKU Seller Discount")
+    BUKAN belanja marketing: dulu Rp5,3 jt "biaya diskon" untuk omzet Rp4,9 jt membuat
+    ROAS 0,84 dan ROI −100% pada toko yang untung kotor.
     """
-    y, m = valid_period(period)
-    days_total = calendar.monthrange(y, m)[1]
-    start = datetime(y, m, 1, tzinfo=timezone.utc)
-    end = start + timedelta(days=days_total)
-    date_from = f"{y:04d}-{m:02d}-01"
-    date_to = f"{y:04d}-{m:02d}-{days_total:02d}"
+    return {'voucher': _num(o.get('voucher_seller')),
+            'bundle': _num(o.get('bundle_discount_seller')),
+            'shipping': _num(o.get('shipping_fee_seller_discount'))}
+
+
+async def _auto_diskon(db, account_id: str, period: str,
+                       daily: Optional[dict] = None, days: int = 7) -> Dict[str, Any]:
+    """Realisasi kategori `diskon` = diskon DITANGGUNG penjual (Q-1), dari pesanan.
+
+    Toko tanpa impor pesanan (rekap manual) memakai angka "diskon penjual" yang DIKETIK di
+    rekap, dengan `basis` yang menyebutkan asalnya — supaya "Rp 0" tidak pernah berarti dua hal.
+    """
+    lo, hi = period_range(period, days)
+    start, end = _bounds_dt(lo, hi)
     rows = await db[ORDERS].find({
         'account_id': account_id,
         '$or': [
             {'order_date': {'$gte': start, '$lt': end}},
-            {'order_date': {'$gte': date_from, '$lte': date_to + '\uffff'}},
+            {'order_date': {'$gte': lo, '$lte': hi + '\uffff'}},
         ],
-    }, {'_id': 0, 'seller_discount_total': 1, 'discount_seller': 1,
-        'items': 1, 'shipping_fee_seller_discount': 1, **_ukuran.PROYEKSI_STATUS}).to_list(30000)
+    }, {'_id': 0, 'voucher_seller': 1, 'bundle_discount_seller': 1,
+        'shipping_fee_seller_discount': 1, 'seller_discount_total': 1, 'discount_seller': 1,
+        'items': 1, **_ukuran.PROYEKSI_STATUS}).to_list(30000)
     live = [r for r in rows if _ukuran.dihitung_omzet(r)]   # 2026-11-07: satu definisi omzet
     if live:
-        # `discount_seller` (pesanan input manual) ikut terbaca lewat SSOT pembaca
-        # defensif — kalau tidak, diskon yang diberikan staf lewat layar hilang
-        # dari realisasi anggaran.
-        disc = sum(_rollup.order_seller_discount(r) for r in live)
-        ship = sum(_num(r.get('shipping_fee_seller_discount')) for r in live)
-        return {'amount': _r(disc + ship), 'basis': 'orders',
-                'evidence': f"{len(live)} pesanan (diskon penjual {_r(disc):,.0f} "
-                            f"+ subsidi ongkir {_r(ship):,.0f})".replace(',', '.'),
+        parts = [seller_funded_discount(r) for r in live]
+        voucher = sum(p['voucher'] for p in parts)
+        bundle = sum(p['bundle'] for p in parts)
+        ship = sum(p['shipping'] for p in parts)
+        strike = sum(_rollup.order_seller_discount(r) for r in live)
+        return {'amount': _r(voucher + bundle + ship), 'basis': 'orders',
+                'evidence': (f"{len(live)} pesanan (voucher toko {_r(voucher):,.0f} + paket "
+                             f"diskon {_r(bundle):,.0f} + subsidi ongkir {_r(ship):,.0f}); "
+                             f"potongan harga coret {_r(strike):,.0f} tidak dihitung biaya"
+                             ).replace(',', '.'),
                 'docs': len(live),
-                'breakdown': {'seller_discount': _r(disc), 'shipping_subsidy': _r(ship)}}
+                'breakdown': {'voucher_seller': _r(voucher), 'bundle_discount_seller': _r(bundle),
+                              'shipping_subsidy': _r(ship),
+                              'price_markdown_excluded': _r(strike),
+                              # nama lama dipertahankan untuk pembaca layar lama
+                              'seller_discount': _r(voucher + bundle)}}
     d = daily or {}
     amount = _num(d.get('seller_discount'))
     if amount > 0:
         return {'amount': _r(amount), 'basis': 'daily_recap',
-                'evidence': f"{_int(d.get('days_with_data'))} hari rekap "
-                            f"(tanpa impor pesanan ⇒ subsidi ongkir belum terhitung)",
+                'evidence': f"{_int(d.get('days_with_data'))} hari rekap yang diketik "
+                            f"(tanpa impor pesanan ⇒ diskon dibaca apa adanya dari rekap)",
                 'docs': _int(d.get('days_with_data')),
                 'breakdown': {'seller_discount': _r(amount), 'shipping_subsidy': 0.0}}
     return {'amount': 0.0, 'basis': 'none',
-            'evidence': 'belum ada pesanan/rekap bulan ini', 'docs': 0,
+            'evidence': 'belum ada pesanan/rekap pada periode ini', 'docs': 0,
             'breakdown': {'seller_discount': 0.0, 'shipping_subsidy': 0.0}}
 
 
-async def _auto_ads(db, account_id: str, period: str) -> Dict[str, Any]:
-    """Biaya iklan bulan `period` dari `marketing_ads_data`.
+async def _auto_ads(db, account_id: str, period: str, days: int = 7) -> Dict[str, Any]:
+    """Biaya iklan periode `period` dari `marketing_ads_data` (pembaca baku ukuran_penjualan).
 
-    F7.2 — `date` di koleksi ini bisa berbentuk **string** `YYYY-MM-DD` (impor
-    laporan iklan Shopee, entri manual) ATAU **datetime** (jenis impor `ads`
-    lama). Kueri yang hanya memakai `$regex` melewatkan seluruh dokumen datetime,
-    dan akibatnya realisasi anggaran iklan tampak Rp 0 padahal datanya ada — nol
-    yang paling mahal, karena tampak seperti "belum belanja iklan".
+    Q-3 — laporan berperiode (CPC Shopee) DIBAGI RATA per hari; hanya hari di dalam periode
+    anggaran yang dihitung. M-05 — periode 7 hari membaca 7 hari (dulu sebulan penuh).
+    Tanggal datetime maupun teks sama-sama terbaca (F7.2).
     """
-    y, m = valid_period(period)
-    days_total = calendar.monthrange(y, m)[1]
-    start = datetime(y, m, 1, tzinfo=timezone.utc)
-    end = start + timedelta(days=days_total)
-    rows = await db[ADS].find(
-        {'account_id': account_id,
-         '$or': [
-             {'date': {'$regex': f'^{period}'}},
-             {'date': {'$gte': start, '$lt': end}},
-         ]},
-        {'_id': 0, 'spend': 1, 'campaign_name': 1, 'period_start': 1, 'period_end': 1},
-    ).to_list(5000)
-    total = sum(_num(r.get('spend')) for r in rows)
+    lo, hi = period_range(period, days)
+    rows = await _ukuran.baca_iklan(db, [account_id], lo, hi)
+    total = sum(_num(r.get('spend')) * float(r.get('_porsi', 1.0)) for r in rows)
     ranged = sorted({f"{str(r.get('period_start'))[:10]}..{str(r.get('period_end'))[:10]}"
-                     for r in rows if r.get('period_start')})
+                     for r in rows if r.get('_dibagi_rata')})
     evidence = f"{len(rows)} baris data iklan"
     if ranged:
-        evidence += f" (periode laporan: {', '.join(ranged[:4])})"
+        evidence += (f" ({_ukuran.LABEL_DIBAGI_RATA} per hari dari laporan periode "
+                     f"{', '.join(ranged[:4])})")
     return {'amount': _r(total), 'basis': 'ads_data',
             'evidence': evidence, 'docs': len(rows)}
 
 
-async def _auto_komisi(db, account_id: str, period: str) -> Dict[str, Any]:
+async def _auto_komisi(db, account_id: str, period: str, days: int = 7) -> Dict[str, Any]:
     """Komisi kreator dari pesanan yang MEMBAWA `creator_id`.
 
     Kalau ekspor platform tidak memuat kreator (kasus TikTok "Untuk Dikirim"),
     hasilnya 0 **dengan alasan tertulis** — bukan 0 yang tampak seperti "tidak ada
     komisi". Itu perbedaan antara data belum ada dan biaya benar-benar nol.
     """
-    y, m = valid_period(period)
-    days_total = calendar.monthrange(y, m)[1]
-    start = datetime(y, m, 1, tzinfo=timezone.utc)
-    end = start + timedelta(days=days_total)
-    date_from = f"{y:04d}-{m:02d}-01"
-    date_to = f"{y:04d}-{m:02d}-{days_total:02d}"
+    date_from, date_to = period_range(period, days)
+    start, end = _bounds_dt(date_from, date_to)
     rows = await db[ORDERS].find({
         'account_id': account_id,
         'creator_id': {'$nin': [None, '']},
@@ -488,8 +522,12 @@ async def _auto_komisi(db, account_id: str, period: str) -> Dict[str, Any]:
             'docs': len(live), 'detail': detail}
 
 
-async def _auto_kol_fee(db, account_id: str, period: str) -> Dict[str, Any]:
-    """Fee kreator (bagian TETAP) untuk kreator yang di-assign ke toko ini."""
+async def _auto_kol_fee(db, account_id: str, period: str, days: int = 7) -> Dict[str, Any]:
+    """Fee kreator (bagian TETAP, per bulan) untuk kreator yang di-assign ke toko ini.
+
+    M-05 — periode 7 hari dibebani porsi bulan kalendernya (dulu fee sebulan penuh)."""
+    lo, hi = period_range(period, days)
+    share = 1.0 if len(str(period).strip()) == 7 else month_share(lo, hi)
     creators = await db[CREATORS].find(
         {'assigned_account_ids': account_id}, {'_id': 0}
     ).to_list(500)
@@ -503,12 +541,15 @@ async def _auto_kol_fee(db, account_id: str, period: str) -> Dict[str, Any]:
         fee = _num(cfg.get('fixed_fee'))
         if fee <= 0:
             continue
-        total += fee
+        charged = _r(fee * share)
+        total += charged
         detail.append({'creator_id': c['id'], 'creator_name': c.get('name', ''),
-                       'fixed_fee': _r(fee)})
+                       'fixed_fee': _r(fee), 'charged': charged})
+    ev = f"{len(detail)} kreator ber-fee tetap"
+    if share < 1.0:
+        ev += f" (porsi {round(share * 100, 1)}% fee bulanan untuk periode {lo}..{hi})"
     return {'amount': _r(total), 'basis': 'kol_cost_config',
-            'evidence': f"{len(detail)} kreator ber-fee tetap", 'docs': len(detail),
-            'detail': detail}
+            'evidence': ev, 'docs': len(detail), 'detail': detail}
 
 
 def month_share(date_from, date_to) -> float:
@@ -531,7 +572,7 @@ def month_share(date_from, date_to) -> float:
     return share
 
 
-async def _auto_livehost(db, account_id: str, period: str) -> Dict[str, Any]:
+async def _auto_livehost(db, account_id: str, period: str, days: int = 7) -> Dict[str, Any]:
     """Biaya Live Host = **GAJI BULANAN** dari master HR (sesi #34).
 
     Sebelumnya: Σ `total_pay` shift ber-status `calculated` (upah per sesi).
@@ -544,16 +585,8 @@ async def _auto_livehost(db, account_id: str, period: str) -> Dict[str, Any]:
     host yang belum tertaut TIDAK diberi angka karangan — ia disebut di `detail`
     dengan `salary_source: 'none'`.
     """
-    y, m = valid_period(period)
-    if len(str(period).strip()) == 10:      # periode 7 hari (YYYY-MM-DD)
-        start = datetime.strptime(str(period).strip(), '%Y-%m-%d')
-        end = start + timedelta(days=6)
-        days = 7
-    else:
-        start = datetime(y, m, 1)
-        days = calendar.monthrange(y, m)[1]
-        end = datetime(y, m, days)
-    lo, hi = start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+    lo, hi = period_range(period, days)
+    days = (datetime.strptime(hi, '%Y-%m-%d') - datetime.strptime(lo, '%Y-%m-%d')).days + 1
     share = month_share(lo, hi)   # pola P5: porsi bulan kalender, bukan hari ÷ 30
 
     shifts = await db.marketing_livehost_shifts.find(
@@ -611,13 +644,17 @@ async def manual_spend(db, account_id: str, period: str) -> Tuple[Dict[str, floa
 
 
 async def auto_spend(db, account_id: str, period: str,
-                     daily: Optional[dict] = None) -> Tuple[Dict[str, float], List[dict]]:
-    """Realisasi anggaran yang DIHITUNG SISTEM per kategori + daftar buktinya."""
-    diskon = await _auto_diskon(db, account_id, period, daily)
-    ads = await _auto_ads(db, account_id, period)
-    komisi = await _auto_komisi(db, account_id, period)
-    kol = await _auto_kol_fee(db, account_id, period)
-    lh = await _auto_livehost(db, account_id, period)
+                     daily: Optional[dict] = None,
+                     days: int = 7) -> Tuple[Dict[str, float], List[dict]]:
+    """Realisasi anggaran yang DIHITUNG SISTEM per kategori + daftar buktinya.
+
+    ``days`` = panjang periode anggaran 7-hari (setelan `period_days`); periode bulanan
+    (``YYYY-MM``) mengabaikannya."""
+    diskon = await _auto_diskon(db, account_id, period, daily, days)
+    ads = await _auto_ads(db, account_id, period, days)
+    komisi = await _auto_komisi(db, account_id, period, days)
+    kol = await _auto_kol_fee(db, account_id, period, days)
+    lh = await _auto_livehost(db, account_id, period, days)
     by_cat = empty_categories()
     by_cat['diskon'] = diskon['amount']
     by_cat['ads'] = ads['amount']
@@ -1140,7 +1177,13 @@ async def cycle_overview(db, period: str, *, account_ids: Optional[Sequence[str]
         'returns_pct': _r(returned_amount / revenue * 100) if revenue > 0 else 0.0,
         'returns_coverage_complete': all(
             ((r.get('returns') or {}).get('coverage') or {}).get('complete', True) for r in rows),
-        'revenue_pct': _r(revenue / rev_target * 100) if rev_target > 0 else 0.0,
+        # M-04 — capaian gabungan dari toko bertarget saja (pembilang & penyebut sama)
+        'revenue_pct': _r(_ukuran.capaian_gabungan(
+            rows, lambda r: (r.get('target') or {}).get('revenue'),
+            lambda r: (r.get('actual') or {}).get('revenue'))['persen'] or 0.0),
+        'revenue_untargeted': _r(_ukuran.capaian_gabungan(
+            rows, lambda r: (r.get('target') or {}).get('revenue'),
+            lambda r: (r.get('actual') or {}).get('revenue'))['aktual_tanpa_target']),
         'pace_pct': prog['pace_pct'],
         'total_plan': total_plan, 'total_spend': total_spend,
         'total_remaining': _r(total_plan - total_spend),

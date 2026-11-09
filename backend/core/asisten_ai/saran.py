@@ -22,8 +22,26 @@ _PER_PERAN = {
 }
 
 
-def saran_untuk(peran: str | None) -> list[dict]:
+# Audit HR Tahap D (9 Nov 2026): saran per ruang. Portal SDM — per peran SDM (Staf HR tanpa akses run gaji tidak
+# ditawari cek payroll). Portal Saya — data milik sendiri.
+SARAN_SDM = ("Rekap absensi & pengecualian minggu ini", "Siapa yang lupa absen pulang kemarin?",
+             "Cek payroll sebelum finalisasi", "Susun draf shift minggu depan untuk tim packing",
+             "Cakupan shift minggu depan per departemen", "Cuti dan lembur yang menunggu persetujuan")
+_SDM_PER_PERAN = {
+    "staff_hr": ("Rekap absensi & pengecualian minggu ini", "Siapa yang lupa absen pulang kemarin?",
+                 "Cakupan shift minggu depan per departemen", "Susun draf shift minggu depan untuk tim packing",
+                 "Cuti dan lembur yang menunggu persetujuan"),
+}
+SARAN_SAYA = ("Sisa cuti saya tahun ini", "Rekap absen saya bulan ini", "Rincian slip gaji terakhir saya",
+              "Shift saya minggu depan", "Kenapa ada potongan di gaji saya?")
+
+
+def saran_untuk(peran: str | None, ruang: str | None = None) -> list[dict]:
     p = str(peran or "").strip().lower()
+    if ruang == "saya":
+        return [{"teks": t} for t in SARAN_SAYA]
+    if ruang == "sdm":
+        return [{"teks": t} for t in _SDM_PER_PERAN.get(p, SARAN_SDM)]
     if p in _PERAN_MANAJEMEN:
         daftar = SARAN_MANAJEMEN
     else:

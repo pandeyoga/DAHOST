@@ -12,6 +12,10 @@
  *
  * Standar UI/UX v2 (8 Nov 2026): penyaring satu baris (cari + pilihan toko), daftar produk = tabel dengan varian
  * di bawah barisnya (RowDetail), isian harga/batas stok di FormPopup, hasil = tabel yang bisa diunduh.
+ *
+ * 9 Nov 2026 (klarifikasi owner B1/D7): harga awal = harga resmi PER SKU (cadangan harga model) dan tampil per
+ * varian; SKU berstatus produk Stop/Dead DILEWATI (bisa dimatikan di popup) dan tidak ikut tercentang saat memilih
+ * satu model; item impor lama toko itu yang belum masuk katalog dihitung "sudah ada" (tidak dibuat kembar).
  */
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { PackagePlus, RefreshCw, Search, Store, CheckCircle2 } from 'lucide-react';
@@ -31,6 +35,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { Toolbar, RowDetail, RowToggle } from '../layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import { productStatusLabel, productStatusTone } from '@/lib/productStatus';
 import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -38,6 +43,13 @@ const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 const angka = (n) => Number(n || 0).toLocaleString('id-ID');
 const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada', blibli: 'Blibli' };
 const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '';
+const STOP_DEAD = ['stop', 'dead'];
+// Harga resmi per model = rentang harga per SKU variannya (cadangan harga model sudah termasuk)
+const hargaModel = (p) => {
+  if (!p.retail_price_max) return '—';
+  if (p.retail_price_min && p.retail_price_min !== p.retail_price_max) return `${rp(p.retail_price_min)} – ${rp(p.retail_price_max)}`;
+  return rp(p.retail_price_max);
+};
 
 export default function CatalogFromMasterModule({ token, onAssigned }) {
   const [q, setQ] = useState('');
@@ -51,6 +63,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
   const [result, setResult] = useState(null);
   const [priceMode, setPriceMode] = useState('master');   // 'master' | 'kosong'
   const [alertQty, setAlertQty] = useState('10');
+  const [ikutStopDead, setIkutStopDead] = useState(false);   // D7 — bawaan: SKU Stop/Dead dilewati
   const [formBuka, setFormBuka] = useState(false);
   const [galat, setGalat] = useState('');
   const pg = useClientPagination(products, 25);
@@ -98,7 +111,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
     setPickedFg((prev) => {
       const next = { ...prev };
       p.variants.forEach((v) => {
-        if (on && !v.in_catalog) next[v.fg_material_id] = true;
+        if (on && !v.in_catalog && (ikutStopDead || !STOP_DEAD.includes(v.product_status))) next[v.fg_material_id] = true;
         if (!on) delete next[v.fg_material_id];
       });
       return next;
@@ -125,6 +138,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
           fg_material_ids: Object.keys(pickedFg).filter((k) => pickedFg[k]),
           price_mode: priceMode,
           stock_alert_threshold: Number(alertQty) >= 0 ? Number(alertQty) : 10,
+          include_stop_dead: ikutStopDead,
         }),
       });
       const b = await r.json().catch(() => ({}));
@@ -142,6 +156,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
 
   const ditolak = (result?.results || []).flatMap((r) => (r.notes || [])
     .filter((n) => n.action === 'ditolak').map((n) => `${r.account_name}: ${n.why}`));
+  const dilewatiStatus = (result?.results || []).reduce((t, r) => t + Number(r.skipped_status || 0), 0);
 
   return (
     <div className="space-y-4" data-testid="catalog-from-master-module">
@@ -186,11 +201,13 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
               { label: 'Nama', nilai: ({ p }) => p.name },
               { label: 'Kategori', nilai: ({ p }) => p.category_name || '' },
               { label: 'HPP model', nilai: ({ p }) => Number(p.hpp || 0) },
-              { label: 'Harga resmi', nilai: ({ p }) => Number(p.retail_price_master || 0) },
+              { label: 'Harga resmi model', nilai: ({ p }) => Number(p.retail_price_master || 0) },
               { label: 'Kode varian', nilai: ({ v }) => v?.code || '' },
               { label: 'Warna', nilai: ({ v }) => v?.color || '' },
               { label: 'Ukuran', nilai: ({ v }) => v?.size_code || '' },
               { label: 'HPP varian', nilai: ({ v }) => (v ? Number(v.hpp || 0) : '') },
+              { label: 'Harga resmi SKU', nilai: ({ v }) => (v ? Number(v.retail_price_master || 0) : '') },
+              { label: 'Status produk', nilai: ({ v }) => (v?.product_status ? productStatusLabel(v.product_status) : '') },
               { label: 'Stok jual', nilai: ({ v }) => (v ? Number(v.sellable_stock || 0) : '') },
               { label: 'Sudah di katalog', nilai: ({ v }) => (v ? (v.in_catalog ? 'Ya' : 'Belum') : '') },
             ]} />
@@ -219,6 +236,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
                   { label: 'Katalog baru dibuat', nilai: (r) => (r.catalog_created ? 'Ya' : 'Tidak') },
                   { label: 'Baru', nilai: (r) => r.created || 0 }, { label: 'Sudah ada', nilai: (r) => r.skipped || 0 },
                   { label: 'Ditolak', nilai: (r) => r.rejected || 0 },
+                  { label: 'Dilewati (Stop/Dead)', nilai: (r) => r.skipped_status || 0 },
                 ]} />
             )} />
           <TabelData baris={result.results || []} kunci={(r) => r.account_id} testId="cfm-result-table"
@@ -230,7 +248,13 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
               { kunci: 'ada', label: 'Sudah ada', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.skipped)}</span> },
               { kunci: 'tolak', label: 'Ditolak', rata: 'kanan', isi: (r) => (
                 <span className={`tabular-nums ${r.rejected ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>{angka(r.rejected)}</span>) },
+              { kunci: 'status', label: 'Dilewati (Stop/Dead)', rata: 'kanan', isi: (r) => <span className="tabular-nums">{angka(r.skipped_status)}</span> },
             ]} />
+          {dilewatiStatus > 0 && (
+            <p className="text-sm text-muted-foreground" data-testid="cfm-skipped-status">
+              {angka(dilewatiStatus)} varian tidak ditambahkan karena status produknya Stop/Dead. Centang "Tetap tambahkan SKU Stop/Dead" di popup bila memang dijual.
+            </p>
+          )}
           {ditolak.length > 0 && (
             <ul className="space-y-0.5 text-sm text-[hsl(var(--danger-text))]">
               {ditolak.map((t, i) => <li key={i}>{t}</li>)}
@@ -251,7 +275,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
                 <TableHead>Produk</TableHead>
                 <TableHead className="hidden md:table-cell">Kategori</TableHead>
                 <TableHead className="text-right">HPP</TableHead>
-                <TableHead className="hidden text-right md:table-cell">Harga resmi</TableHead>
+                <TableHead className="hidden text-right md:table-cell">Harga resmi (SKU)</TableHead>
                 <TableHead className="text-right">Varian</TableHead>
                 <TableHead className="hidden md:table-cell">Di katalog</TableHead>
               </TableRow>
@@ -288,7 +312,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
                           ? <StatusBadge status="belum" label="HPP belum ada" tone="warning" />
                           : <span className="tabular-nums">{rp(p.hpp)}</span>}
                       </TableCell>
-                      <TableCell className="hidden text-right tabular-nums md:table-cell">{p.retail_price_master ? rp(p.retail_price_master) : '—'}</TableCell>
+                      <TableCell className="hidden text-right tabular-nums md:table-cell">{hargaModel(p)}</TableCell>
                       <TableCell className="text-right tabular-nums">{angka(p.variant_count)}</TableCell>
                       <TableCell className="hidden md:table-cell">
                         {p.in_catalog_count > 0 ? `${angka(p.in_catalog_count)} varian` : <span className="text-muted-foreground">Belum</span>}
@@ -307,8 +331,10 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
                                 <TableHead>Warna</TableHead>
                                 <TableHead>Ukuran</TableHead>
                                 <TableHead className="text-right">HPP</TableHead>
+                                <TableHead className="text-right">Harga resmi</TableHead>
                                 <TableHead className="text-right">Stok jual</TableHead>
-                                <TableHead>Status</TableHead>
+                                <TableHead>Status produk</TableHead>
+                                <TableHead>Di katalog</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -327,13 +353,23 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
                                   <TableCell>{v.color || '—'}</TableCell>
                                   <TableCell>{v.size_code || '—'}</TableCell>
                                   <TableCell className="text-right tabular-nums">{rp(v.hpp)}</TableCell>
+                                  <TableCell className="text-right tabular-nums" data-testid={`cfm-price-${v.code}`}>
+                                    {v.retail_price_master ? rp(v.retail_price_master) : <span className="text-muted-foreground">belum ada</span>}
+                                    {v.retail_price_source === 'model' && <span className="block text-xs text-muted-foreground">harga model</span>}
+                                  </TableCell>
                                   <TableCell className="text-right tabular-nums">
                                     {v.sellable_stock > 0 ? angka(v.sellable_stock)
                                       : <span className="text-[hsl(var(--warning-text))]">0 (habis)</span>}
                                   </TableCell>
+                                  <TableCell data-testid={`cfm-status-${v.code}`}>
+                                    {v.product_status
+                                      ? <StatusBadge status={v.product_status} label={productStatusLabel(v.product_status)} tone={productStatusTone(v.product_status)} />
+                                      : <span className="text-muted-foreground">Belum diisi</span>}
+                                  </TableCell>
                                   <TableCell>
                                     {v.in_catalog
-                                      ? <StatusBadge status="ada" label="Sudah di katalog" tone="success" />
+                                      ? <StatusBadge status="ada" label={v.in_catalog_hidden ? 'Ada (item lama, perlu dirapikan)' : 'Sudah di katalog'}
+                                        tone={v.in_catalog_hidden ? 'warning' : 'success'} />
                                       : <span className="text-muted-foreground">Belum</span>}
                                   </TableCell>
                                 </TableRow>
@@ -363,7 +399,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
         <Isian label="Harga jual awal" htmlFor="cfm-price-mode">
           <SmartNativeSelect id="cfm-price-mode" className="w-full" value={priceMode}
             onChange={(e) => setPriceMode(e.target.value)} data-testid="cfm-price-mode">
-            <option value="master">Harga resmi dari master produk</option>
+            <option value="master">Harga resmi master (per SKU, cadangan harga model)</option>
             <option value="kosong">Kosongkan (isi per toko nanti)</option>
           </SmartNativeSelect>
         </Isian>
@@ -371,6 +407,10 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
           <Input id="cfm-alert-qty" type="number" min="0" step="1" value={alertQty}
             onChange={(e) => setAlertQty(e.target.value)} className="w-32" data-testid="cfm-alert-qty" />
         </Isian>
+        <label className="flex items-start gap-2 text-sm" htmlFor="cfm-stop-dead">
+          <Checkbox id="cfm-stop-dead" checked={ikutStopDead} onCheckedChange={(v) => setIkutStopDead(!!v)} data-testid="cfm-include-stop-dead" />
+          <span>Tetap tambahkan SKU berstatus produk Stop/Dead (bawaan: dilewati).</span>
+        </label>
       </FormPopup>
     </div>
   );

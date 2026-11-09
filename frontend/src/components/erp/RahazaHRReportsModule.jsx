@@ -266,6 +266,9 @@ export default function RahazaHRReportsModule({ token }) {
   const kolomAtt = [kolomKaryawan, kolomDept,
     kanan('hadir', 'Hadir', (e) => e.hadir), kanan('izin', 'Izin', (e) => e.izin), kanan('sakit', 'Sakit', (e) => e.sakit),
     kanan('cuti', 'Cuti', (e) => e.cuti), kanan('alfa', 'Alfa', (e) => e.alfa ?? e.alpha),
+    // 2026-11-09 (Q3): terlambat & pulang cepat dicatat (hari · menit); pulang cepat tidak memotong gaji.
+    kanan('telat', 'Terlambat', (e) => (e.terlambat ? `${e.terlambat} hari · ${e.terlambat_menit || 0} mnt` : '—')),
+    kanan('pulang', 'Pulang cepat', (e) => (e.pulang_cepat ? `${e.pulang_cepat} hari · ${e.pulang_cepat_menit || 0} mnt` : '—')),
     { kunci: 'rate', label: 'Kehadiran', rata: 'kanan', isi: (e) => (!e.recorded_days
       ? <span className="text-muted-foreground" title="Belum ada catatan absen di periode ini">—</span> : (
       <span className={`font-semibold tabular-nums ${e.attendance_rate >= 90 ? 'text-[hsl(var(--success-text))]' : e.attendance_rate >= 80 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}`}>
@@ -338,7 +341,9 @@ export default function RahazaHRReportsModule({ token }) {
         { kunci: 'potongan', label: 'Potongan', rata: 'kanan', isi: (e) => <span className="tabular-nums text-[hsl(var(--danger-text))]">{formatRupiah(e.total_deductions)}</span> },
         { kunci: 'bersih', label: 'Bersih', rata: 'kanan', isi: (e) => <span className="font-semibold tabular-nums">{formatRupiah(e.net_salary)}</span> },
         kanan('hadir', 'Hari hadir', (e) => e.attendance_days)]}
-      kosong={<EmptyState title="Belum ada data gaji" description={pr.period ? 'Ubah saringan.' : 'Belum ada proses penggajian untuk periode ini.'} />} />
+      kosong={pr.detail_hidden
+        ? <EmptyState title="Rincian per karyawan khusus penggajian" description="Peran Anda melihat total penggajian saja. Rincian gaji per karyawan hanya untuk owner, admin, dan HR penggajian." />
+        : <EmptyState title="Belum ada data gaji" description={pr.period ? 'Ubah saringan.' : 'Belum ada proses penggajian untuk periode ini.'} />} />
   );
 
   // ─── Keluar-masuk ───
@@ -405,7 +410,10 @@ export default function RahazaHRReportsModule({ token }) {
                 { label: 'Departemen', nilai: (e) => e.department_name || '' }, { label: 'Hari kerja', nilai: (e) => e.working_days },
                 { label: 'Hadir', nilai: (e) => e.hadir }, { label: 'Izin', nilai: (e) => e.izin }, { label: 'Sakit', nilai: (e) => e.sakit },
                 { label: 'Cuti', nilai: (e) => e.cuti }, { label: 'Alfa', nilai: (e) => e.alfa ?? e.alpha },
-                { label: 'Terlambat', nilai: (e) => e.terlambat }, { label: 'Kehadiran (%)', nilai: (e) => e.attendance_rate },
+                { label: 'Terlambat (hari)', nilai: (e) => e.terlambat }, { label: 'Terlambat (menit)', nilai: (e) => e.terlambat_menit || 0 },
+                { label: 'Pulang cepat (hari)', nilai: (e) => e.pulang_cepat || 0 },
+                { label: 'Pulang cepat (menit)', nilai: (e) => e.pulang_cepat_menit || 0 },
+                { label: 'Kehadiran (%)', nilai: (e) => e.attendance_rate },
               ]} />),
             summary: att && (
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -416,7 +424,7 @@ export default function RahazaHRReportsModule({ token }) {
                 <StatTile label="Izin, cuti, sakit" value={angka((attAgg.total_izin || 0) + (attAgg.total_cuti || 0) + (attAgg.total_sakit || 0))}
                   sub={`Izin ${attAgg.total_izin || 0} · cuti ${attAgg.total_cuti || 0} · sakit ${attAgg.total_sakit || 0} (hari).`} />
                 <StatTile label="Alfa" value={angka(attAgg.total_alfa)} accent={attAgg.total_alfa ? 'danger' : 'default'}
-                  sub={`Hari tanpa keterangan. Terlambat ${attAgg.total_terlambat || 0} kali.`} />
+                  sub={`Hari tanpa keterangan. Terlambat ${attAgg.total_terlambat || 0} kali, pulang cepat ${attAgg.total_pulang_cepat || 0} kali.`} />
               </div>
             ),
           } },

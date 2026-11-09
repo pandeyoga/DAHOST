@@ -305,6 +305,30 @@ def row_problem(row: Optional[dict], blocked_locs: set) -> Optional[str]:
     return None
 
 
+def sellable_row_match(blocked_locs: set) -> dict:
+    """Penyaring Mongo yang SAMA dengan ``row_problem(row) is None`` (2026-11-09, audit gudang G8).
+
+    SATU aturan stok jual barang jadi DA untuk semua pembaca (Portal Penjualan, Fulfillment, daftar
+    lokasi Scan Keluar, pengeluaran FG): bukan karantina/terblokir, milik DA, kategori kosong atau FG.
+    Dulu pembaca lain menyaring `inventory_category == 'fg_internal'` saja ⇒ stok hasil pindah/Excel
+    tanpa kategori tidak terlihat, sementara scan keluar tetap boleh memotongnya. Pemanggil membatasi
+    ke material bertipe fg (baris tanpa kategori bisa milik bahan)."""
+    from core.fg_cost_layers import DA_OWNERSHIP
+    return {"blocked": {"$ne": True}, "quarantine": {"$ne": True},
+            "location_id": {"$nin": sorted(blocked_locs or [])},
+            "ownership": {"$in": list(DA_OWNERSHIP)},
+            "inventory_category": {"$in": list(SELLABLE_CATEGORIES)}}
+
+
+async def fg_material_ids(db, material_ids: Optional[list] = None) -> list:
+    """id master barang jadi milik DA (bukan barang klien maklon, K14; dibatasi `material_ids` bila
+    diberikan) — pasangan :func:`sellable_row_match`."""
+    q: dict = {"type": "fg", "owner_type": {"$ne": "client"}}
+    if material_ids is not None:
+        q["id"] = {"$in": list(material_ids)}
+    return [m["id"] async for m in db.rahaza_materials.find(q, {"_id": 0, "id": 1})]
+
+
 def parse_multiplier(v) -> int:
     try:
         m = int(float(v if v not in (None, "") else 1))
@@ -370,25 +394,45 @@ def build_cogs_lines(totals: dict, codes: dict, memo: str) -> list:
     return lines
 
 
+BASIS_SHIP, BASIS_RTS, BASIS_ORDER = "kirim", "siap_kirim", "pesanan"
+# Status pesanan yang BELUM diatur kirim (Shopee "Perlu Dikirim" = paid). Tanpa tanggal kirim/siap kirim
+# pesanan ini belum tentu keluar gudang hari itu → tidak ikut kontrol (2026-11-09, audit gudang G12).
+NOT_ARRANGED_STATUSES = ("new", "paid", "unpaid", "pending")
+
+
 def order_day(order: dict) -> tuple:
     """(tanggal 'YYYY-MM-DD', basis) satu pesanan impor untuk kontrol pcs.
-    Tanggal KIRIM (`shipped_at`, Impor B/C) bila ada; selain itu tanggal pesanan (basis
-    'pesanan'). Keduanya jam dinding WIB platform → bagian tanggalnya dipakai apa adanya
+
+    2026-11-09 (audit gudang G12, keputusan ★): tanggal KIRIM (`shipped_at`, Impor B/C) → "Waktu
+    Pengiriman Diatur" (`rts_at`, ekspor Shopee — paket siap diambil kurir) → tanggal pesanan. Dulu
+    ekspor Shopee yang tidak punya tanggal kirim selalu jatuh ke tanggal pesanan ⇒ pesanan malam yang
+    dikirim besok membuat selisih harian semu. Semua jam dinding WIB platform → tanggalnya apa adanya
     (`core.marketing_daily_rollup.order_date_key`, aturan rekap harian)."""
     from core.marketing_daily_rollup import order_date_key
     k = order_date_key(order.get("shipped_at"))
     if k:
-        return k, "kirim"
-    return order_date_key(order.get("order_date")), "pesanan"
+        return k, BASIS_SHIP
+    k = order_date_key(order.get("rts_at"))
+    if k:
+        return k, BASIS_RTS
+    return order_date_key(order.get("order_date")), BASIS_ORDER
 
 
 def order_counts(order: dict) -> bool:
     """Pesanan ikut kontrol? Batal TIDAK, kecuali batal SETELAH dikirim (paketnya sempat keluar
-    gudang dan sudah di-scan; kembalinya lewat retur K1)."""
+    gudang dan sudah di-scan; kembalinya lewat retur K1). 2026-11-09 (G12): pesanan yang belum diatur
+    kirim (baru/perlu dikirim tanpa tanggal kirim/siap kirim) TIDAK dihitung."""
     st = (order.get("status") or "").lower()
     if st == "cancelled":
         return bool(order.get("shipped_at"))
+    if st in NOT_ARRANGED_STATUSES and not (order.get("shipped_at") or order.get("rts_at")):
+        return False
     return True
+
+
+def is_manual_order(order: dict) -> bool:
+    """Pesanan input layar (Order Terpadu), bukan hasil impor Seller Center (aturan `fulfillment.is_imported_order`)."""
+    return not (order or {}).get("_import_session_id")
 
 
 def order_pcs(order: dict) -> tuple:
@@ -619,6 +663,35 @@ async def _prior_net_scans(db, line: dict, days: int = 7) -> int:
     return sum(line_sign(r) * int(_f(r.get("qty"))) for r in rows if r.get("id") != line["id"])
 
 
+async def stock_elsewhere(db, material_id: str, location_id: str, limit: int = 5) -> list:
+    """Lokasi LAIN yang masih memegang stok jual SKU ini (qty > 0), terbanyak dulu — [{location_id, code, qty}].
+    Hanya informasi: tidak pernah melempar galat (scan sudah memotong stok saat fungsi ini dipanggil)."""
+    try:
+        from core import location_resolver
+        from core.catalog_stock import blocked_location_ids
+        blocked = await blocked_location_ids(db)
+        rows = await db.rahaza_material_stock.find(
+            {"material_id": material_id, "location_id": {"$ne": location_id}}, {"_id": 0}).to_list(200)
+        rows = [r for r in rows if _f(r.get("qty")) > 0 and row_problem(r, blocked) is None]
+        rows.sort(key=lambda r: -_f(r.get("qty")))
+        rows = rows[:limit]
+        disp = await location_resolver.build_display_map(db, [r["location_id"] for r in rows]) if rows else {}
+        return [{"location_id": r["location_id"],
+                 "code": (disp.get(r["location_id"]) or {}).get("code") or r.get("location_code") or "",
+                 "name": (disp.get(r["location_id"]) or {}).get("name") or "", "qty": _f(r.get("qty"))}
+                for r in rows]
+    except Exception:  # noqa: BLE001
+        logger.warning("[scan-out] cek stok lokasi lain gagal (%s)", material_id, exc_info=True)
+        return []
+
+
+def elsewhere_warning(line: dict, elsewhere: list) -> str:
+    """Kalimat peringatan untuk petugas (fungsi murni)."""
+    where = ", ".join(f"{e.get('code') or e.get('name') or '-'} ({e['qty']:g} pcs)" for e in elsewhere)
+    return (f"Stok {line.get('sku') or ''} di lokasi ini kurang, tetapi ada di {where}. Scan tetap dicatat; "
+            "bila barang diambil dari lokasi itu, batalkan baris ini lalu scan ulang dengan lokasi yang benar.")
+
+
 async def _process(db, line: dict, actor: dict) -> dict:
     """Langkah efek satu baris (stok → nilai → aktif). Setiap langkah dicek dari jejaknya."""
     out = line.get("kind") != KIND_CANCEL
@@ -632,8 +705,14 @@ async def _process(db, line: dict, actor: dict) -> dict:
         raise ScanOutError(500, f"Scan gagal diproses: {e}. Scan ulang kode yang sama — tidak akan dobel.")
     flags = []
     negative = out and stock_after < 0
+    elsewhere = []
     if negative:
         flags.append("stok_kurang")
+        # 2026-11-09 (audit gudang G9, keputusan ★a): scan TETAP diterima (Stok Boleh Minus), tetapi petugas
+        # diberi tahu bila SKU ini ada di lokasi lain — kemungkinan besar lokasi scan yang dipilih salah.
+        elsewhere = await stock_elsewhere(db, line["material_id"], line["location_id"])
+        if elsewhere:
+            flags.append("stok_di_lokasi_lain")
     if int(_f(val.get("uncosted_qty"))) > 0:
         flags.append("tanpa_wac")
     if not out and await _prior_net_scans(db, line) < int(line["qty"]):
@@ -643,7 +722,8 @@ async def _process(db, line: dict, actor: dict) -> dict:
            "value": _r2(val.get("cogs")), "signed_value": _r2(val.get("cogs")) * (1 if out else -1),
            "uncosted_qty": int(_f(val.get("uncosted_qty"))), "basis": "wac", "stock_after": stock_after,
            "negative_stock": bool(negative), "flags": flags, "claim_at": None, "error": None,
-           "processed_at": _now()}
+           "processed_at": _now(), "stock_elsewhere": elsewhere,
+           "warning": elsewhere_warning(line, elsewhere) if elsewhere else None}
     await db[LINES].update_one({"id": line["id"]}, {"$set": upd})
     line.update(upd)
     return line
@@ -1002,12 +1082,15 @@ async def _import_orders(db, first: str, last: str) -> list:
     d1 = datetime.fromisoformat(last).replace(tzinfo=timezone.utc) + timedelta(days=1)
     s0, s1 = first, (date.fromisoformat(last) + timedelta(days=1)).isoformat()
     no_ship = {"$in": [None, ""]}
+    # 2026-11-09 (G12): basis kirim → siap kirim (`rts_at`) → pesanan (cermin :func:`order_day`)
     q = {"$or": [{"shipped_at": {"$gte": d0, "$lt": d1}}, {"shipped_at": {"$gte": s0, "$lt": s1}},
-                 {"shipped_at": no_ship, "order_date": {"$gte": d0, "$lt": d1}},
-                 {"shipped_at": no_ship, "order_date": {"$gte": s0, "$lt": s1}}]}
-    proj = {"_id": 0, "id": 1, "order_id": 1, "status": 1, "shipped_at": 1, "order_date": 1,
+                 {"shipped_at": no_ship, "rts_at": {"$gte": d0, "$lt": d1}},
+                 {"shipped_at": no_ship, "rts_at": {"$gte": s0, "$lt": s1}},
+                 {"shipped_at": no_ship, "rts_at": no_ship, "order_date": {"$gte": d0, "$lt": d1}},
+                 {"shipped_at": no_ship, "rts_at": no_ship, "order_date": {"$gte": s0, "$lt": s1}}]}
+    proj = {"_id": 0, "id": 1, "order_id": 1, "status": 1, "shipped_at": 1, "rts_at": 1, "order_date": 1,
             "quantity": 1, "items.quantity": 1, "items.fg_material_id": 1, "account_id": 1,
-            "account_name": 1, "platform": 1}
+            "account_name": 1, "platform": 1, "_import_session_id": 1}
     return await db.marketing_orders.find(q, proj).to_list(100000)
 
 
@@ -1022,8 +1105,9 @@ async def control(db, *, end_day: Optional[str] = None, days: Optional[int] = No
     end_day = end_day or today_str()
     span = _days(end_day, n)
     sku_day = sku_day or end_day
-    rows = {d: {"date": d, "import_pcs": 0, "import_pcs_ship": 0, "import_pcs_order": 0, "import_orders": 0,
-                "unlinked_pcs": 0, "scan_out": 0, "scan_cancel": 0, "scan_pcs": 0} for d in span}
+    rows = {d: {"date": d, "import_pcs": 0, "import_pcs_ship": 0, "import_pcs_rts": 0, "import_pcs_order": 0,
+                "import_orders": 0, "manual_pcs": 0, "unlinked_pcs": 0, "scan_out": 0, "scan_cancel": 0,
+                "scan_pcs": 0} for d in span}
     imp_sku: dict = {}
     for o in await _import_orders(db, span[0], span[-1]):
         if not order_counts(o):
@@ -1034,7 +1118,9 @@ async def control(db, *, end_day: Optional[str] = None, days: Optional[int] = No
         total, by_mat, unl = order_pcs(o)
         r = rows[d]
         r["import_pcs"] += total
-        r["import_pcs_ship" if basis == "kirim" else "import_pcs_order"] += total
+        r[{BASIS_SHIP: "import_pcs_ship", BASIS_RTS: "import_pcs_rts"}.get(basis, "import_pcs_order")] += total
+        if is_manual_order(o):
+            r["manual_pcs"] += total      # pesanan input layar (K15: ikut keluar lewat Scan Keluar)
         r["import_orders"] += 1
         r["unlinked_pcs"] += unl
         if d == sku_day:
@@ -1083,9 +1169,11 @@ async def control(db, *, end_day: Optional[str] = None, days: Optional[int] = No
                            "gap": last["cum_gap"], "flag": cum_flag},
             "sku_day": sku_day, "per_sku": per_sku,
             "data_notes": [
-                "Pcs impor = Σ jumlah item pesanan Seller Center menurut TANGGAL KIRIM (Impor B/C). Pesanan "
-                "tanpa tanggal kirim memakai tanggal pesanan (kolom 'basis pesanan').",
-                "Pesanan batal tidak dihitung, kecuali batal setelah dikirim (paketnya sempat keluar).",
+                "Pcs pesanan = Σ jumlah item pesanan menurut TANGGAL KIRIM (Impor B/C); bila belum ada, tanggal "
+                "'Waktu Pengiriman Diatur' (siap kirim, ekspor Shopee); bila keduanya kosong, tanggal pesanan "
+                "(kolom 'basis pesanan'). Pesanan input layar (manual) ikut dihitung dan ditandai terpisah.",
+                "Pesanan batal tidak dihitung, kecuali batal setelah dikirim (paketnya sempat keluar). Pesanan "
+                "yang belum diatur kirim (Baru / Perlu Dikirim tanpa tanggal kirim atau siap kirim) belum dihitung.",
                 "Pcs scan = scan keluar − batal kirim (baris aktif). Nota Portal Penjualan tidak ikut kedua sisi.",
                 "Selisih per SKU hanya untuk item impor yang tertaut master FG; sisanya 'tak tertaut'.",
                 f"Ditandai merah bila |selisih| ≥ maks({settings['control_gap_pcs']} pcs, "

@@ -248,9 +248,8 @@ const RahazaDowntimeModule        = lazyRetry(() => import('./RahazaDowntimeModu
 
 // Phase 20C — AI Layer
 // FASE IA-1: RahazaAIModule (= "HR AI Insights") tidak lagi dipetakan dari registry.
-// Modulnya tetap hidup & dipakai sebagai tab di `hubs/HRAIHub.jsx` (yang meng-import
-// sendiri secara lazy). Deep-link 'hr-ai-insights' → makeRedirect('hr-ai-hub','insights').
-// const RahazaAIModule              = lazyRetry(() => import('./RahazaAIModule'));
+// Audit HR Tahap D (9 Nov 2026): modul itu (isinya AI PRODUKSI) DIHAPUS dari hub AI SDM dan berkasnya dihapus;
+// deep-link 'hr-ai-insights' / 'ai-actions' kini mendarat di tab pertama hub (Asisten AI SDM).
 const AssetManagementPortalLazy   = lazyRetry(() => import('./AssetManagementPortal'));
 // BACKLOG-A — Hub konsolidasi (T3.3/T3.4/T3.5/T3.6/T3.9)
 const FinanceJournalHub  = lazyRetry(() => import('./hubs/FinanceJournalHub'));
@@ -398,6 +397,9 @@ const MarketingReportsHub   = lazyRetry(() => import('./MarketingReportsHub')); 
 const MarketingSettlementsView = lazyRetry(() => import('./marketing/MarketingSettlementsView')); // sesi #34: pencairan marketplace (lihat saja)
 const HRPerformanceHub      = lazyRetry(() => import('./HRPerformanceHub'));      // KPI + Annual Review + 360° Feedback
 const ImportCenterModule = lazyRetry(() => import('./ImportCenterModule'));
+// 9 Nov 2026 (agen MKT-AI) — impor banyak berkas satu langkah + Laporan Marketing mode AI
+const ImporPaketModule = lazyRetry(() => import('./marketing/ImporPaketModule'));
+const LaporanAIModule = lazyRetry(() => import('./marketing/LaporanAIModule'));
 const CatalogManagementModule = lazyRetry(() => import('./CatalogManagementModule'));
 // ── Sesi #20 — Sinkronisasi Marketing ⇄ Gudang ──────────────────────────────
 // `sku-bridge`  : master pemetaan SKU platform (TikTok/Shopee) ⇄ master gudang.
@@ -567,7 +569,12 @@ const MyAnnualReviewModule = lazyRetry(() => import('./portal/MyAnnualReviewModu
 const PeerFeedbackModule = lazyRetry(() => import('./portal/PeerFeedbackModule'));
 
 // Session 17 Batch 1 — HR/SDM Features (P2-11, P2-12, P2-16)
-const ShiftSchedulerModule = lazyRetry(() => import('./hr/ShiftSchedulerModule'));
+// Tahap C audit HR (9 Nov 2026): ShiftSchedulerModule ("Jadwal otomatis" + "Pola jadwal") DIHAPUS — diganti Roster &
+// Pola rotasi di hub Shift; id lama 'hr-shift-scheduler' diarahkan ke tab Roster.
+// Portal Saya › Jadwal Shift: jadwal sendiri + ganti/tukar shift (rekan → atasan → SDM).
+const PortalShiftSayaModule = lazyRetry(() => import('./portal/PortalShiftSayaModule'));
+// Audit HR Tahap D: Portal Saya › Tanya Asisten (Asisten AI ruang `saya`, data milik sendiri).
+const TanyaAsistenSaya = lazyRetry(() => import('./portal/TanyaAsistenSaya'));
 const JobBoardModule = lazyRetry(() => import('./hr/JobBoardModule'));
 const CareerCoachModule = lazyRetry(() => import('./portal/CareerCoachModule'));
 
@@ -1043,7 +1050,7 @@ export const MODULE_REGISTRY = {
   'hr-coaching':           makeRedirect('hr-ai-hub', 'coaching'),       // T3.5 → hub
 
   // Session 17 — HR/SDM Features
-  'hr-shift-scheduler':    ShiftSchedulerModule,
+  'hr-shift-scheduler':    makeRedirect('hr-shift-hub', 'schedule'),   // Tahap C: → Roster
   'hr-job-board':          JobBoardModule,
   
   // Session 18 — P2-20 Skill Gap Analysis
@@ -1071,6 +1078,8 @@ export const MODULE_REGISTRY = {
   'portal-profile':        PortalSayaProfile,
   'portal-cuti':           PortalSayaCuti,
   'portal-absen':          PortalSayaAbsen,
+  'portal-shift':          PortalShiftSayaModule,     // Tahap C audit HR (9 Nov 2026)
+  'portal-asisten':        TanyaAsistenSaya,          // Tahap D audit HR (9 Nov 2026)
   'portal-payslip':        PortalSayaPayslip,
   'portal-training':       PortalSayaTraining,
   'portal-notifikasi':     PortalSayaNotifikasi,
@@ -1160,6 +1169,8 @@ export const MODULE_REGISTRY = {
   'marketing-account-review': AccountBulkReviewModule,  // BD-5 koreksi massal data toko
   'marketing-sales':        SalesDataEntryModule,      // NEW Phase 2
   'marketing-import':       ImportCenterModule,        // Phase 1 Universal Smart Import Engine
+  'marketing-impor-paket':  ImporPaketModule,          // 9 Nov 2026 — banyak berkas, satu langkah
+  'marketing-laporan-ai':   LaporanAIModule,           // 9 Nov 2026 — laporan mingguan/bulanan mode AI
   // sesi #34 — pintu PENCAIRAN marketplace di portal Marketing (backend F9 sudah
   // ada sejak 2026-08-14 tetapi tanpa layar; pemilik: "di mana menu pencairan?").
   'marketing-settlements':  MarketingSettlementsView,

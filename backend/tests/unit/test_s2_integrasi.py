@@ -116,7 +116,8 @@ def test_01_dispose_books_wac_loss_and_reversal_reverses_it(posting, monkeypatch
     doc = db.wh_returns.docs[0]
     assert doc["status"] == "Resolved" and doc["loss_je_id"] == "je-1" and doc["loss_kind"] == "disposed"
     assert doc["loss_amount"] == 50000.0 and doc["disposed_qty"] == 1 and not doc.get("restocked")
-    assert posting.lines() == [("6-1300", 50000.0, 0), ("5-1000", 0, 50000.0)]
+    # 2026-11-09 (audit gudang G14): reklas HPP per komponen WAC (bahan 40.000 + upah 10.000), bukan satu 5-1000
+    assert posting.lines() == [("6-1300", 50000.0, 0), ("5-1000", 0, 40000.0), ("5-2000", 0, 10000.0)]
     assert posting.jes[-1]["source_ref"] == "whret_disposed:W1"
     assert "beban Rp 50,000" in doc["timeline"][-1]["note"] and out["action_taken"] == rb.ACTION_DISPOSE
     # qty dibuang dibatasi qty diterima
@@ -128,7 +129,7 @@ def test_01_dispose_books_wac_loss_and_reversal_reverses_it(posting, monkeypatch
     # Balik Keputusan → jurnal pembalik kerugian, tanpa stok keluar
     res = run(rb.reverse_decision(db, "W1", actor={"name": "g"}, reason="salah putus", reopen=False))
     assert res["stock_out"] is None and res["journals"][0]["ok"] and res["wac"] is None
-    assert posting.lines() == [("6-1300", 0, 50000.0), ("5-1000", 50000.0, 0)]
+    assert posting.lines() == [("6-1300", 0, 50000.0), ("5-1000", 40000.0, 0), ("5-2000", 10000.0, 0)]
 
 
 def test_02_reverse_restock_restores_wac_with_zero_difference(posting, monkeypatch):

@@ -335,6 +335,8 @@ async def merge_punches(db, punches: list[dict], *, user: dict, apply: bool, sou
                                          "clock_in": fp["first"], "clock_out": fp["last"]})
             if apply:
                 late = await compute_late_minutes(db, g["emp"], cin) if cin else {}
+                if cout:   # 2026-11-09 (Q3): pulang cepat dicatat
+                    late = {**late, **await ar.early_leave_fields(db, g["emp"], {"status": "hadir", "date": day}, cout)}
                 hours = _hours(cin, cout)
                 doc = {"id": str(uuid.uuid4()), "employee_id": emp_id, "date": day,
                        "clock_in": cin, "clock_out": cout, "hours_worked": hours, "net_hours_worked": hours,
@@ -388,6 +390,8 @@ async def merge_punches(db, punches: list[dict], *, user: dict, apply: bool, sou
             upd["status"] = "hadir"
         if "clock_in" in upd and (upd.get("status") or status) == "hadir":
             upd.update(await compute_late_minutes(db, g["emp"], new_in, existing.get("shift_id")))
+        if "clock_out" in upd:   # 2026-11-09 (Q3): pulang cepat dicatat
+            upd.update(await ar.early_leave_fields(db, g["emp"], {**existing, **upd}, new_out))
         upd.update({"updated_by": user.get("id"), "updated_by_name": user.get("name", ""), "updated_at": now})
         await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": upd})
         await ar.write_attendance_audit(db, before=existing, after={**existing, **upd}, user=user,

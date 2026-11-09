@@ -57,6 +57,10 @@ const TYPE_LABELS = {
   asset_purchase: 'Pembelian aset',
 };
 const labelJenis = (t) => TYPE_LABELS[t] || 'Lainnya';
+// 2026-11-09 (Q6): cuti & lembur diputus di menu Cuti & Lembur (atasan langsung lalu HR), bukan di sini —
+// jenis itu tidak ditawarkan di saringan (server juga menyembunyikannya).
+const JENIS_DIPENSIUNKAN = ['leave', 'overtime'];
+const JENIS_SARINGAN = Object.entries(TYPE_LABELS).filter(([k]) => !JENIS_DIPENSIUNKAN.includes(k));
 
 // Data tambahan ajuan: kunci program → label yang dipahami staf (kunci teknis disembunyikan).
 const META_LABEL = {
@@ -327,7 +331,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
       <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)}
         data-testid="approval-filter-type" className="w-44">
         <option value="">Semua jenis</option>
-        {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        {JENIS_SARINGAN.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
       </SmartNativeSelect>
     </>
   );
@@ -364,7 +368,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
   return (
     <div data-testid="multi-level-approval-module">
       <HubTabs hubId="approval-multilevel" title="Persetujuan bertingkat"
-        subtitle="Ajuan yang perlu disetujui berjenjang, dari atasan langsung sampai direktur."
+        subtitle="Ajuan berjenjang di luar cuti dan lembur (cuti dan lembur diputus di menu Cuti & Lembur)."
         value={tab} onValueChange={setTab}
         tabs={[
           { key: 'pending', label: `Perlu tindakan${myPending.length ? ` (${myPending.length})` : ''}`, Component: IsiTab,

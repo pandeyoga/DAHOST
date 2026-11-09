@@ -23,7 +23,8 @@ const rentangPreset = (key) => {
   const to = todayWIB();
   if (key === 'month') return { date_from: monthStartWIB(), date_to: to };
   const days = Number(key);
-  return { date_from: days === 0 ? to : daysAgoWIB(days), date_to: to };
+  // M-26 — "30 hari terakhir" = 30 hari termasuk hari ini (dulu 31 hari)
+  return { date_from: days === 0 ? to : daysAgoWIB(days - 1), date_to: to };
 };
 
 const presetDari = (value) => {

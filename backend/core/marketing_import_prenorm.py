@@ -49,6 +49,14 @@ logger = logging.getLogger(__name__)
 
 MAX_ROWS = 20000
 
+
+class PrenormBlocked(ValueError):
+    """Berkas DIKENALI, tetapi isian wajib dari staf belum ada (mis. periode GMV Max).
+
+    Bukan "bentuk berkas belum dikenal": `parse_table_lenient` TIDAK membaca ulang
+    berkas apa adanya, dan pesannya diteruskan ke staf apa adanya (2026-11-09)."""
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Pembantu
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -521,6 +529,14 @@ _ADS_MAP: Dict[str, str] = {
     "efektifitas iklan": "roas_platform",
     "efektivitas langsung": "direct_roas_platform",
     "persentase biaya iklan terhadap penjualan dari iklan acos": "acos",
+    # ── 2026-11-09 (riset G24) — ejaan lain di ekspor nyata (repo pihak ketiga):
+    # "Efektivitas Iklan" (tanpa salah eja), "Add to Cart" (UI campuran), dan sejak
+    # 16 Jan 2026 "GMV" diganti "Penjualan".
+    "efektivitas iklan": "roas_platform",
+    "efektifitas langsung": "direct_roas_platform",
+    "add to cart": "add_to_cart",
+    "penjualan": "revenue",
+    "penjualan langsung": "direct_revenue",
 }
 _ADS_META = {
     "username": "shop_username",
@@ -588,17 +604,296 @@ def prenorm_shopee_ads_cpc(raw: bytes, filename: str) -> Tuple[List[str], List[D
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 4. LAPORAN IKLAN TIKTOK GMV MAX (2026-11-09, riset G1/G3/G4)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bentuk nyata (berkas contoh owner): sheet `Data`, 26 kolom berbahasa Indonesia,
+# 100.000 baris TEPAT dengan hanya 67 baris berbiaya > 0, uang berupa TEKS dengan titik
+# sebagai DESIMAL ("40797.000"), rasio pecahan 0–1, "-"/"N/A" untuk materi kartu produk,
+# dan TIDAK ADA kolom tanggal belanja ("Waktu posting" = tanggal unggah video).
+_GMV_MAP: Dict[str, str] = {
+    # bahasa Indonesia (berkas asli)
+    "nama kampanye": "campaign_name", "id campaign": "campaign_id", "id kampanye": "campaign_id",
+    "id produk": "product_id", "jenis materi iklan": "ad_type", "judul video": "video_title",
+    "id video": "video_id", "akun tiktok": "creator_handle", "waktu posting": "video_posted_at",
+    "status": "status_raw", "status sekunder penjelajahan": "notes",
+    "jenis otorisasi": "authorization_type", "biaya": "spend",
+    "pesanan sku": "conversions", "pesanan": "conversions",
+    "biaya per pesanan": "cost_per_order", "pendapatan kotor": "revenue",
+    "impresi iklan produk": "impressions", "jumlah klik iklan produk": "clicks",
+    "tingkat klik iklan produk": "ctr_platform", "rasio klik iklan produk": "ctr_platform",
+    "rasio konversi iklan": "conversion_rate", "tingkat konversi iklan": "conversion_rate",
+    "mata uang": "currency",
+    # bahasa Inggris (Seller Center ber-UI Inggris; nama dari Pusat Bantuan TikTok Ads)
+    "campaign name": "campaign_name", "campaign id": "campaign_id", "product id": "product_id",
+    "creative type": "ad_type", "video title": "video_title", "video id": "video_id",
+    "tiktok account": "creator_handle", "post time": "video_posted_at", "cost": "spend",
+    "orders sku": "conversions", "sku orders": "conversions", "cost per order": "cost_per_order",
+    "gross revenue": "revenue", "product ad impressions": "impressions",
+    "product ad clicks": "clicks", "product ad click rate": "ctr_platform",
+    "ad conversion rate": "conversion_rate", "currency": "currency",
+}
+_GMV_UANG = ("spend", "cost_per_order", "revenue")
+_GMV_JUMLAH = ("conversions", "impressions", "clicks")
+_GMV_RASIO = ("ctr_platform", "conversion_rate")
+GMV_BATAS_EKSPOR = 100_000          # bilangan bulat yang mencurigakan: kemungkinan batas ekspor
+_KOSONG = {"", "-", "--", "n/a", "na", "none", "null"}
+
+# Periode di nama berkas. Penanda baku `periode_YYYY-MM-DD_YYYY-MM-DD` ditulis oleh layar
+# "Impor banyak berkas" dari isian staf; pola lain = nama ekspor yang lazim.
+_PERIODE_NAMA = (
+    re.compile(r"periode[_\s-]*(\d{4}-\d{2}-\d{2})[_\s]*(?:s\.?d\.?|sd|-|_|sampai)?[_\s]*(\d{4}-\d{2}-\d{2})",
+               re.IGNORECASE),
+    re.compile(r"(?<!\d)(\d{4}-\d{2}-\d{2})\s*(?:_|~|–|-|to|s\.?d\.?|sampai)\s*(\d{4}-\d{2}-\d{2})(?!\d)",
+               re.IGNORECASE),
+    re.compile(r"(?<!\d)(20\d{6})\s*[_~–-]\s*(20\d{6})(?!\d)"),
+)
+
+
+def periode_dari_nama(filename: str) -> Tuple[Optional[str], Optional[str]]:
+    """(mulai, selesai) ISO dari nama berkas, atau (None, None). Tanggal tidak sah → None."""
+    from datetime import date as _date
+    name = str(filename or "")
+    for rx in _PERIODE_NAMA:
+        m = rx.search(name)
+        if not m:
+            continue
+        out = []
+        for g in m.groups():
+            s = g.replace("-", "")
+            try:
+                d = _date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+            except ValueError:
+                out = []
+                break
+            out.append(d.isoformat())
+        if len(out) == 2 and out[0] <= out[1]:
+            return out[0], out[1]
+    return None, None
+
+
+def penanda_periode(mulai: str, selesai: str, filename: str) -> str:
+    """Nama berkas baru yang MEMBAWA periode isian staf (dibaca ulang saat commit)."""
+    base = re.sub(r"periode_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}__", "", str(filename or "berkas.xlsx"))
+    return f"periode_{mulai}_{selesai}__{base}"
+
+
+def _gmv_matrix(raw: bytes, filename: str):
+    """Iterator baris (list nilai) dari xlsx (sheet `Data` bila ada) atau csv."""
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm", ".xls")):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        try:
+            ws = wb["Data"] if "Data" in wb.sheetnames else wb.active
+            try:
+                ws.reset_dimensions()
+            except Exception:  # noqa: BLE001
+                pass
+            for values in ws.iter_rows(values_only=True):
+                yield list(values or [])
+        finally:
+            try:
+                wb.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return
+    text = raw.decode("utf-8-sig", errors="replace")
+    sample = text[:4000]
+    try:
+        delim = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except Exception:  # noqa: BLE001
+        delim = ";" if sample.count(";") > sample.count(",") else ","
+    for row in csv.reader(io.StringIO(text), delimiter=delim):
+        yield list(row)
+
+
+def _nol(v: Any) -> bool:
+    """True bila sel biaya kosong/nol APA PUN gaya angkanya ("0", "0.000", "0,00", "-")."""
+    if v is None:
+        return True
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v) == 0.0
+    s = str(v).strip().lower()
+    if s in _KOSONG:
+        return True
+    return bool(re.fullmatch(r"[0.,\s]+", s)) and not re.search(r"[1-9]", s)
+
+
+GMV_SAMPEL_DETEKSI = 3000            # deteksi jenis cukup membaca awal berkas
+
+
+def prenorm_tiktok_gmv_max(raw: bytes, filename: str, deteksi: bool = False, lengkap: bool = False
+                           ) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Ekspor GMV Max → satu baris per (kampanye, produk, materi) BERBIAYA untuk satu periode.
+
+    ``deteksi=True``: periode boleh kosong; tanpa ``lengkap`` hanya awal berkas yang dibaca
+    (cukup untuk mengenali jenisnya)."""
+    from core.marketing_import_engine import gaya_angka_kolom, parse_number, KOLOM_CATATAN, TooManyRows
+    rows_iter = _gmv_matrix(raw, filename)
+    header: List[str] = []
+    col_of: Dict[str, int] = {}
+    for i, row in enumerate(rows_iter):
+        hn = [_norm(c) for c in row]
+        if "biaya" in hn or "cost" in hn:
+            if ("nama kampanye" in hn or "campaign name" in hn):
+                header = [str(c or "").strip() for c in row]
+                for j, h in enumerate(hn):
+                    canon = _GMV_MAP.get(h)
+                    if canon and canon not in col_of:
+                        col_of[canon] = j
+                break
+        if i >= 25:
+            break
+    if not header:
+        raise ValueError(
+            "Kolom 'Nama kampanye' dan 'Biaya' tidak ditemukan di 25 baris pertama. Unggah berkas "
+            "asli ekspor GMV Max dari TikTok Seller Center (Iklan → GMV Max → Ekspor).")
+
+    total = 0
+    kept: List[List[Any]] = []
+    i_spend = col_of.get("spend")
+    for row in rows_iter:
+        if not row or all(c in (None, "") for c in row):
+            continue
+        total += 1
+        if deteksi and not lengkap and total > GMV_SAMPEL_DETEKSI:
+            break
+        v = row[i_spend] if i_spend is not None and i_spend < len(row) else None
+        if _nol(v):
+            continue                                   # baris tanpa biaya dibuang (G4)
+        kept.append(row)
+        if len(kept) > MAX_ROWS:
+            raise TooManyRows(filename or "")
+
+    # G1 — gaya angka per kolom dari baris yang DIPAKAI; ekspor GMV Max memakai titik
+    # desimal, jadi bila kolom ambigu (semua "ddd.ddd") gaya itu yang dipakai.
+    gaya: Dict[str, str] = {}
+    for canon in _GMV_UANG + _GMV_JUMLAH + _GMV_RASIO:
+        j = col_of.get(canon)
+        if j is None:
+            continue
+        g = gaya_angka_kolom([r[j] if j < len(r) else None for r in kept])
+        gaya[canon] = g or "titik_desimal"
+
+    p_from, p_to = periode_dari_nama(filename)
+    catatan: List[str] = []
+    if not (p_from and p_to):
+        if not deteksi:
+            raise PrenormBlocked(
+                "Periode laporan GMV Max wajib diisi. Berkas ekspor GMV Max tidak memuat tanggal "
+                "belanja — angkanya total untuk rentang yang Anda pilih saat mengekspor. Isi "
+                "periodenya di layar unggah (Impor Data atau Impor banyak berkas), atau tulis di "
+                "nama berkas, mis. 'gmvmax_2026-08-01_2026-08-31.xlsx'.")
+        p_from = p_to = ""
+    elif p_from[:7] != p_to[:7] and not deteksi:
+        raise PrenormBlocked(
+            f"Periode {p_from} s/d {p_to} menyeberang bulan. Biaya iklan dipakai untuk realisasi "
+            "anggaran BULANAN — ekspor ulang GMV Max per bulan, lalu unggah masing-masing.")
+    if total == GMV_BATAS_EKSPOR:
+        catatan.append(
+            f"Berkas berisi tepat {GMV_BATAS_EKSPOR:,} baris — kemungkinan ekspor TikTok "
+            "terpotong di batas maksimum. Ekspor ulang per kampanye atau per rentang yang lebih "
+            "pendek, lalu bandingkan total biayanya.".replace(",", "."))
+
+    def _num(canon, row):
+        j = col_of.get(canon)
+        if j is None or j >= len(row):
+            return None
+        v = row[j]
+        if v is None or (isinstance(v, str) and v.strip().lower() in _KOSONG):
+            return None
+        n, err = parse_number(v, gaya.get(canon, ""))
+        return None if err else n
+
+    def _teks(canon, row):
+        j = col_of.get(canon)
+        if j is None or j >= len(row) or row[j] is None:
+            return ""
+        s = str(row[j]).strip()
+        return "" if s.lower() in ("n/a", "na") else s
+
+    agg: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+    dobel = 0
+    for row in kept:
+        vid = _teks("video_id", row) or "-"
+        key = (_teks("campaign_id", row), _teks("product_id", row), vid)
+        rec = agg.get(key)
+        if rec is None:
+            rec = agg[key] = {
+                "date": p_from, "period_start": p_from, "period_end": p_to,
+                "campaign_name": _teks("campaign_name", row), "campaign_id": key[0],
+                "product_id": key[1], "video_id": vid,
+                "ad_type": _teks("ad_type", row), "video_title": _teks("video_title", row),
+                "creator_handle": _teks("creator_handle", row),
+                "video_posted_at": _teks("video_posted_at", row),
+                "authorization_type": _teks("authorization_type", row),
+                "status_raw": _teks("status_raw", row), "notes": _teks("notes", row),
+                "currency": _teks("currency", row) or "IDR",
+            }
+            for c in _GMV_UANG + _GMV_JUMLAH:
+                rec[c] = 0.0
+            for c in _GMV_RASIO:
+                n = _num(c, row)
+                if n is not None:
+                    rec[c] = n
+        else:
+            dobel += 1
+        for c in ("spend", "revenue") + _GMV_JUMLAH:
+            n = _num(c, row)
+            if n is not None:
+                rec[c] = float(rec.get(c) or 0) + n
+    if dobel:
+        catatan.append(f"{dobel} baris berkunci sama (kampanye, produk, materi) dijumlahkan "
+                       "menjadi satu baris.")
+    rows: List[Dict[str, Any]] = []
+    for rec in agg.values():
+        conv = float(rec.get("conversions") or 0)
+        rec["cost_per_order"] = round(float(rec["spend"]) / conv, 3) if conv else ""
+        for c in ("spend", "revenue"):
+            rec[c] = round(float(rec[c]), 3)
+        for c in _GMV_JUMLAH:
+            rec[c] = int(round(float(rec[c] or 0)))
+        if catatan:
+            rec[KOLOM_CATATAN] = " · ".join(catatan)
+        rows.append(rec)
+    if not rows and not deteksi:
+        raise ValueError(
+            f"Tidak ada baris berbiaya di berkas ini ({total} baris, semuanya biaya 0). Pastikan "
+            "rentang ekspor GMV Max mencakup hari kampanye berjalan.")
+    headers = sorted({k for r in rows for k in r if k != KOLOM_CATATAN}) or sorted(
+        set(col_of) | {"date", "period_start", "period_end"})
+    return headers, rows
+
+
+def ringkas_gmv_max(raw: bytes, filename: str) -> Dict[str, Any]:
+    """Ringkasan berkas GMV Max untuk layar paket impor: baris, berbiaya, total biaya."""
+    try:
+        headers, rows = prenorm_tiktok_gmv_max(raw, filename, deteksi=True, lengkap=True)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "baris_berbiaya": len(rows),
+            "total_biaya": round(sum(float(r.get("spend") or 0) for r in rows), 2),
+            "catatan": (rows[0].get("Catatan sistem") if rows else "") or ""}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Titik masuk
 # ═══════════════════════════════════════════════════════════════════════════════
 PRENORMALIZERS = {
     "shopee_content_kpi": prenorm_shopee_content_kpi,
     "shopee_shop_stats": prenorm_shopee_shop_stats,
     "shopee_ads_cpc": prenorm_shopee_ads_cpc,
+    "tiktok_gmv_max": prenorm_tiktok_gmv_max,
 }
+# Penormal yang menerima `deteksi=True` (butuh isian staf yang belum ada saat deteksi).
+_DENGAN_DETEKSI = {"tiktok_gmv_max"}
 
 
-def prenormalize(raw: bytes, filename: str, key: str) -> Tuple[List[str], List[Dict[str, Any]]]:
+def prenormalize(raw: bytes, filename: str, key: str, *,
+                 deteksi: bool = False) -> Tuple[List[str], List[Dict[str, Any]]]:
     fn = PRENORMALIZERS.get(key)
     if fn is None:
         raise ValueError(f"Penormal berkas '{key}' tidak dikenali")
+    if key in _DENGAN_DETEKSI:
+        return fn(raw, filename, deteksi=deteksi)
     return fn(raw, filename)

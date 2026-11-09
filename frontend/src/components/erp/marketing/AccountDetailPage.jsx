@@ -37,6 +37,16 @@ const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
 const pct = (n) => n != null ? `${(n * 100).toFixed(1)}%` : '-';
 
 // ─── Target Progress Bar ──────────────────────────────────────────────────────
+/** Tanggal WIB: awal bulan berjalan dan awal riwayat (60 hari, minimal awal bulan). */
+function rentangDetail() {
+  const hariIni = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+  const awalBulan = `${hariIni.slice(0, 8)}01`;
+  const d60 = new Date(`${hariIni}T00:00:00Z`);
+  d60.setUTCDate(d60.getUTCDate() - 59);
+  const dari60 = d60.toISOString().slice(0, 10);
+  return { hariIni, awalBulan, dari: dari60 < awalBulan ? dari60 : awalBulan };
+}
+
 function TargetBar({ label, actual, target, fmtFn = fmtCompact }) {
   if (target == null || target === 0) return null;
   const p = Math.min(Math.round((actual / target) * 100), 100);
@@ -388,7 +398,11 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
   const fetchSales = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/marketing/accounts/${account.id}/sales?limit=60`, { headers });
+      // M-08 (audit 9 Nov 2026) — dulu SEMUA riwayat diambil lalu dijumlah lalu dibandingkan
+      // dengan target BULAN INI. Sekarang 60 hari terakhir (untuk riwayat & grafik) dan KPI
+      // hanya menjumlah bulan berjalan (WIB).
+      const { dari } = rentangDetail();
+      const res = await fetch(`${API}/api/marketing/accounts/${account.id}/sales?revenue_type=total&date_from=${dari}&limit=500`, { headers });
       if (res.ok) {
         const data = await res.json();
         setSalesData(Array.isArray(data) ? data.sort((a, b) => b.date.localeCompare(a.date)) : []);
@@ -468,23 +482,24 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
   }, [fetchSales, fetchCreators, fetchHosts]); // eslint-disable-line
 
   // Compute revenue trend from sales data
+  // Q-2 — omzet live resmi = pesanan berkanal LIVE di rekap total (`traffic.live`).
   const trendData = useMemo(() => {
     const map = {};
     salesData.forEach(row => {
+      if (row.revenue_type === 'live') return;
       if (!map[row.date]) map[row.date] = { date: row.date, total: 0, live: 0 };
-      const rev = row.metrics?.revenue || 0;
-      if (row.revenue_type === 'live') map[row.date].live += rev;
-      else map[row.date].total += rev;
+      map[row.date].total += row.metrics?.revenue || 0;
+      map[row.date].live += row.traffic?.live || 0;
     });
     return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
   }, [salesData]);
 
-  // Compute KPI summary (last 30 days total-type only)
+  // KPI = bulan berjalan (WIB), sama dengan periode target di bawahnya (M-08)
   const kpi = useMemo(() => {
-    const totalRows = salesData.filter(r => r.revenue_type === 'total');
-    const liveRows = salesData.filter(r => r.revenue_type === 'live');
+    const { awalBulan } = rentangDetail();
+    const totalRows = salesData.filter(r => r.revenue_type === 'total' && r.date >= awalBulan);
     const rev = totalRows.reduce((s, r) => s + (r.metrics?.revenue || 0), 0);
-    const revLive = liveRows.reduce((s, r) => s + (r.metrics?.revenue || 0), 0);
+    const revLive = totalRows.reduce((s, r) => s + (r.traffic?.live || 0), 0);
     const orders = totalRows.reduce((s, r) => s + (r.metrics?.orders || 0), 0);
     const aov = orders > 0 ? rev / orders : 0;
     const ratings = totalRows.map(r => r.metrics?.rating).filter(Boolean);
@@ -526,7 +541,7 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
       </>}
       summary={(
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Omzet" value={fmtCompact(kpi.rev)} sub={`Termasuk live ${fmtCompact(kpi.revLive)} · ${kpi.days} hari berdata`} testId="kpi-total-revenue" />
+          <StatTile label={`Omzet ${bulanIni}`} value={fmtCompact(kpi.rev)} sub={`Dari live ${fmtCompact(kpi.revLive)} · ${kpi.days} hari berdata`} testId="kpi-total-revenue" />
           <StatTile label="Pesanan" value={fmtNum(kpi.orders)} sub={kpi.orders ? `Rata-rata ${fmtCompact(kpi.aov)} per pesanan` : 'Belum ada pesanan'} testId="kpi-total-orders" />
           <StatTile label="Skor kesehatan" value={account.health_score != null ? account.health_score : '—'} accent={healthColor}
             sub={account.health_score >= 80 ? 'Sangat baik' : account.health_score >= 60 ? 'Baik' : account.health_score != null ? 'Perlu perhatian' : 'Belum ada data 30 hari terakhir'}

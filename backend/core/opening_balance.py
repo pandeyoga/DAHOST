@@ -182,6 +182,7 @@ async def parse_workbook(db, data: bytes, balance_to_retained: bool = False) -> 
         relations.append({"sheet": name, "control_account": ctrl, "detail_total": round(tot, 2), "control_balance": round(bal, 2), "rows": n, "match": match})
         if not match:
             errors.append(f"{name}: rincian Rp {tot:,.0f} ≠ saldo akun kontrol {ctrl} Rp {bal:,.0f}")
+    warnings = await inventory_overlap_check(db, lines, errors)
     diff = round(td - tc, 2)
     balancing = None
     re_code = await retained_earnings_code(db)
@@ -196,7 +197,52 @@ async def parse_workbook(db, data: bytes, balance_to_retained: bool = False) -> 
     if diff:
         errors.append(f"Debit Rp {td:,.0f} ≠ Kredit Rp {tc:,.0f} (selisih Rp {diff:,.0f}) — centang 'tutup selisih ke Laba Ditahan' bila memang begitu")
     return {"ok": not errors, "errors": errors, "lines": lines, "rows": rows, "relations": relations, "balancing": balancing,
+            "warnings": warnings,
             "totals": {"debit": round(td, 2), "credit": round(tc, 2), "diff": diff, "lines": len(lines)}}
+
+
+OPENING_COUNT_MODULE = "inventory_opening_count"   # = core.opname_engine.OPENING_EVENT (tanpa impor siklik)
+
+
+async def inventory_overlap_check(db, lines: list, errors: list) -> list:
+    """2026-11-09 (klarifikasi C3, audit gudang G7) — akun PERSEDIAAN di Saldo Awal vs opname stok awal.
+
+    Opname stok awal menjurnal nilai stok ke akun persediaan lawan ekuitas saldo awal. Bila Saldo Awal juga
+    mengisi akun yang sama, persediaan terhitung DUA KALI:
+      * akun persediaan yang SUDAH terisi jurnal opname stok awal → galat (unggahan ditolak);
+      * akun persediaan lain yang terisi → peringatan (pilih satu jalur: Excel STOK_AWAL + Saldo Awal, atau
+        Opname stok awal tanpa Saldo Awal persediaan)."""
+    try:
+        from routes.rahaza_posting import get_mapping, inventory_account
+        m = await get_mapping(db, "inventory_adjust")
+        inv = {}
+        for kind in ("bahan", "aksesoris", "fg"):
+            code, _ = inventory_account(m, "inventory_adjust", kind)
+            if code:
+                inv[code] = kind
+    except Exception:  # noqa: BLE001 — pemeriksaan tambahan tidak boleh mematikan pratinjau
+        return []
+    filled = {ln["account_code"]: round(float(ln.get("debit") or 0) - float(ln.get("credit") or 0), 2)
+              for ln in lines if ln.get("account_code") in inv}
+    if not filled:
+        return []
+    counted: dict = {}
+    async for je in db.rahaza_journal_entries.find({"source_module": OPENING_COUNT_MODULE, "status": "posted"},
+                                                   {"_id": 0, "lines": 1}):
+        for ln in je.get("lines") or []:
+            if ln.get("account_code") in filled:
+                counted[ln["account_code"]] = round(counted.get(ln["account_code"], 0.0)
+                                                    + float(ln.get("debit") or 0) - float(ln.get("credit") or 0), 2)
+    warnings = []
+    for code, amt in sorted(filled.items()):
+        if abs(counted.get(code, 0.0)) >= 0.01:
+            errors.append(f"{code}: akun persediaan ini sudah berisi nilai OPNAME STOK AWAL Rp {counted[code]:,.0f} — "
+                          f"mengisinya lagi di Saldo Awal (Rp {amt:,.0f}) membuat persediaan dobel. Kosongkan baris ini.")
+        else:
+            warnings.append(f"{code}: persediaan diisi Rp {amt:,.0f} di Saldo Awal. Pastikan stok fisiknya dimuat lewat "
+                            "Excel STOK_AWAL (tanpa jurnal), BUKAN Opname stok awal — Opname stok awal menolak "
+                            "jenis barang yang akun persediaannya sudah terisi Saldo Awal.")
+    return warnings
 
 
 async def post_opening(db, user: dict, ob_date: str, lines: list, source_ref: str, entity: str = "DA") -> dict:

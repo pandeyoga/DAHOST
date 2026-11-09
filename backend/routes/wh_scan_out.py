@@ -49,27 +49,37 @@ def _can_supervise(user: dict) -> bool:
 
 
 @router.get("/locations")
-async def list_locations(request: Request):
+async def list_locations(request: Request, semua: bool = False):
+    """Lokasi untuk Scan Keluar. 2026-11-09 (audit gudang G9): bawaan hanya lokasi berperan barang jadi
+    + lokasi yang sedang memegang stok jual FG (dulu Ruang Aksesoris & gudang bahan ikut tampil; salah
+    pilih ⇒ minus di lokasi itu sementara stok ada di lokasi lain). `semua=1` = semua lokasi simpan."""
     await require_auth(request)
     db = get_db()
     from core import location_resolver
     from core.catalog_stock import blocked_location_ids
     blocked = await blocked_location_ids(db)
     pcs: dict = {}
+    # SATU aturan stok jual FG (sama dengan scan): baris hasil pindah tanpa kategori ikut terhitung.
     async for r in db.rahaza_material_stock.aggregate([
-        {"$match": {"inventory_category": {"$in": ["fg_internal", "finished_goods"]}}},
+        {"$match": {**so.sellable_row_match(blocked), "material_id": {"$in": await so.fg_material_ids(db)}}},
         {"$group": {"_id": "$location_id", "qty": {"$sum": {"$ifNull": ["$qty", 0]}},
-                    "skus": {"$sum": 1}}}]):
+                    "skus": {"$sum": {"$cond": [{"$gt": [{"$ifNull": ["$qty", 0]}, 0]}, 1, 0]}}}}]):
         if r.get("_id"):
             pcs[r["_id"]] = {"qty": float(r.get("qty") or 0), "skus": int(r.get("skus") or 0)}
-    out, seen = [], set()
+    out, seen, hidden = [], set(), 0
     for loc in await location_resolver.list_storage_locations(db):
         if loc["id"] in blocked:
             continue
         seen.add(loc["id"])
+        holds = pcs.get(loc["id"], {}).get("qty", 0.0) > 0
+        if not semua and loc.get("role") != "fg" and not holds:
+            hidden += 1
+            continue
         out.append({**loc, "fg_qty": pcs.get(loc["id"], {}).get("qty", 0.0),
                     "fg_skus": pcs.get(loc["id"], {}).get("skus", 0)})
-    extra = [i for i in pcs if i not in seen and i not in blocked]
+    if not semua and not out and hidden:
+        return await list_locations(request, semua=True)   # belum ada lokasi berperan FG: jangan kosong
+    extra = [i for i in pcs if i not in seen and i not in blocked and (semua or pcs[i]["qty"] > 0)]
     disp = await location_resolver.build_display_map(db, extra)
     for i in extra:
         d = disp.get(i) or {}

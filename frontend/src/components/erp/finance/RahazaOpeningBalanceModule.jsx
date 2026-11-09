@@ -91,6 +91,12 @@ function PreviewTable({ preview }) {
           <ul className="text-sm space-y-1 list-disc pl-5 text-foreground">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
         </Notice>
       )}
+      {/* 2026-11-09: akun persediaan di Saldo Awal vs Opname stok awal (pilih SATU jalur nilai stok awal) */}
+      {(preview.warnings || []).length > 0 && (
+        <Notice tone="warning" icon={AlertTriangle} testId="ob-warnings" title="Periksa akun persediaan">
+          <ul className="text-sm space-y-1 list-disc pl-5 text-foreground">{preview.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+        </Notice>
+      )}
       {preview.balancing && (
         <p className="text-sm text-[hsl(var(--warning-text))]" data-testid="ob-balancing">
           Selisih Rp {fmt(Math.max(preview.balancing.debit, preview.balancing.credit))} ditutup otomatis ke {preview.balancing.account_code} {preview.balancing.account_name} ({preview.balancing.debit ? 'debit' : 'kredit'}).

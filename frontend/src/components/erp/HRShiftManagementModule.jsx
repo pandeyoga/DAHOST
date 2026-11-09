@@ -9,6 +9,8 @@
  *    dari /api/hr/shifts/summary yang sama.
  *  • form shift & penugasan = FormPopup (dulu form di halaman), tanggal = DatePicker.
  * Data yang dikirim ke server tidak berubah. Daftar penugasan memuat sampai 500 (dulu batas bawaan API 100).
+ * Tahap C audit HR (9 Nov 2026): toleransi terlambat & jam mulai istirahat per shift; "Hari aktif" → "Hari kerja"
+ * (dipakai roster); Penugasan = daftar SEMUA karyawan aktif + shift hari ini + asalnya, pilih baris → penugasan massal.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
@@ -32,7 +34,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { todayWIB } from '@/lib/waktu';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
-import { EmployeeSelect, useActiveEmployees, employeeLabel } from './hr/hrPickers';
+import { EmployeeSelect, useActiveEmployees, useDepartmentFilterOptions, useHrMasters } from './hr/hrPickers';
 import { checkPerm } from '@/lib/rbac';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -42,7 +44,6 @@ const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const CADANGAN = 'default';
 const namaShift = (s) => (s.id === CADANGAN ? `Shift cadangan sistem (${s.start_time}–${s.end_time})` : s.shift_name);
 const kodeShift = (s) => (s.id === CADANGAN ? 'Cadangan' : s.shift_code);
-const STATUS_PENUGASAN = { active: { label: 'Aktif', tone: 'success' }, inactive: { label: 'Nonaktif', tone: 'muted' }, ended: { label: 'Berakhir', tone: 'muted' } };
 
 /** "Sen–Sab" bila berurutan, selain itu "Sen, Rab, Jum". */
 function labelHari(days = []) {
@@ -68,12 +69,13 @@ function ShiftForm({ open, initial, onSave, onClose }) {
   const kosong = {
     shift_code: '', shift_name: '', start_time: '08:00', end_time: '17:00',
     break_duration_minutes: 60, days_active: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], // pola P5 (2026-11-06): 6 hari kerja
-    is_overnight: false, color: '#3b82f6', description: '',
+    is_overnight: false, color: '#3b82f6', description: '', toleransi_menit: '', istirahat_mulai: '',
   };
-  const [form, setForm] = useState(initial || kosong);
+  const dariAwal = (i) => (i ? { ...i, toleransi_menit: i.toleransi_menit ?? '', istirahat_mulai: i.istirahat_mulai || '' } : kosong);
+  const [form, setForm] = useState(() => dariAwal(initial));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { if (open) { setForm(initial || kosong); setError(''); } }, [open, initial]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open) { setForm(dariAwal(initial)); setError(''); } }, [open, initial]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleDay = (d) => setForm(p => ({
     ...p,
@@ -92,9 +94,13 @@ function ShiftForm({ open, initial, onSave, onClose }) {
     if (!form.shift_code || !form.shift_name || !form.start_time || !form.end_time) {
       setError('Kode shift, nama, jam mulai, dan jam selesai wajib diisi.'); return;
     }
+    const tol = String(form.toleransi_menit ?? '').trim();
+    if (tol !== '' && !(Number(tol) >= 0 && Number(tol) <= 240)) { setError('Toleransi terlambat 0–240 menit, atau kosongkan.'); return; }
     setSaving(true); setError('');
     try {
-      await onSave({ ...form, break_duration_minutes: parseInt(form.break_duration_minutes) });
+      // Tahap C audit HR: toleransi kosong = ikut setelan umum (dikirim null); jam istirahat kosong = dihapus.
+      await onSave({ ...form, break_duration_minutes: parseInt(form.break_duration_minutes, 10) || 0,
+        toleransi_menit: tol === '' ? null : parseInt(tol, 10), istirahat_mulai: form.istirahat_mulai || null });
     } catch (e) {
       setError(e.response?.data?.detail || 'Gagal menyimpan');
     } finally { setSaving(false); }
@@ -124,6 +130,14 @@ function ShiftForm({ open, initial, onSave, onClose }) {
           <Input id="shift-break" type="number" min={0} value={form.break_duration_minutes}
             onChange={e => setForm(p => ({ ...p, break_duration_minutes: e.target.value }))} />
         </Isian>
+        <Isian label="Jam mulai istirahat" htmlFor="shift-break-start" petunjuk="Acuan jam masuk cuti setengah hari pagi.">
+          <Input id="shift-break-start" type="time" value={form.istirahat_mulai || ''}
+            onChange={e => setForm(p => ({ ...p, istirahat_mulai: e.target.value }))} data-testid="shift-istirahat-mulai" />
+        </Isian>
+        <Isian label="Toleransi terlambat (menit)" htmlFor="shift-grace" petunjuk="Kosong = ikut setelan umum absensi.">
+          <Input id="shift-grace" type="number" min={0} max={240} value={form.toleransi_menit ?? ''} placeholder="Setelan umum"
+            onChange={e => setForm(p => ({ ...p, toleransi_menit: e.target.value }))} data-testid="shift-toleransi" />
+        </Isian>
         <Isian label="Warna penanda" htmlFor="shift-color" petunjuk="Titik warna di daftar dan jadwal shift.">
           <div className="flex items-center gap-2">
             <input id="shift-color" type="color" value={form.color} onChange={e => setForm(p => ({ ...p, color: e.target.value }))}
@@ -133,8 +147,8 @@ function ShiftForm({ open, initial, onSave, onClose }) {
         </Isian>
       </div>
 
-      <Isian label="Hari aktif">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Hari aktif">
+      <Isian label="Hari kerja" petunjuk="Hari di luar hari kerja menjadi libur saat roster disusun dari shift ini.">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Hari kerja">
           {ALL_DAYS.map(d => {
             const on = form.days_active.includes(d);
             return (
@@ -162,67 +176,97 @@ function ShiftForm({ open, initial, onSave, onClose }) {
   );
 }
 
-// Tahap 5 (2026-11-07): karyawan DIPILIH dari master (dulu kotak "ID Karyawan" diketik bebas, mis. "emp-001",
-// tanpa pemeriksaan — penugasan bisa menunjuk karyawan yang tidak ada). Departemen mengikuti data karyawan.
-function AssignmentForm({ open, shifts, employees = [], onSave, onClose }) {
-  const kosong = () => ({ employee_id: '', shift_id: '', effective_from: todayWIB(), effective_until: '', department: '', notes: '' });
+
+// Tahap C audit HR (9 Nov 2026): PENUGASAN MASSAL. Dulu satu karyawan per formulir (25 karyawan = 25 kali buka
+// formulir). Sekarang: baris karyawan terpilih ATAU semua karyawan aktif satu departemen/lokasi ATAU satu karyawan.
+// Server: POST /api/hr/shifts/assignments/massal (aturan penugasan tunggal: hanya bagian penugasan lama yang
+// beririsan yang ditutup — penugasan sementara tidak menghapus penugasan tetap).
+function PenugasanForm({ open, shifts, employees = [], terpilih = [], deptOpsi = [], lokasi = [], onSave, onClose }) {
+  const kosong = () => ({ lingkup: terpilih.length ? 'pilihan' : 'satu', employee_id: '', department: '', location_id: '',
+    shift_id: '', effective_from: todayWIB(), effective_until: '', notes: '' });
   const [form, setForm] = useState(kosong);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { if (open) { setForm(kosong()); setError(''); } }, [open]);
-  const pickEmployee = (id) => {
-    const emp = employees.find(e => e.id === id);
-    setForm(p => ({ ...p, employee_id: id, department: emp?.department || '' }));
-  };
+  useEffect(() => { if (open) { setForm(kosong()); setError(''); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ubah = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
   const handleSubmit = async () => {
-    if (!form.employee_id || !form.shift_id || !form.effective_from) {
-      setError('Karyawan, shift, dan tanggal mulai wajib diisi.'); return;
-    }
-    if (form.effective_until && form.effective_until < form.effective_from) {
-      setError('Tanggal berakhir tidak boleh sebelum tanggal mulai.'); return;
+    if (!form.shift_id || !form.effective_from) { setError('Shift dan tanggal mulai wajib diisi.'); return; }
+    if (form.effective_until && form.effective_until < form.effective_from) { setError('Tanggal berakhir tidak boleh sebelum tanggal mulai.'); return; }
+    const body = { shift_id: form.shift_id, effective_from: form.effective_from, effective_until: form.effective_until || null, notes: form.notes };
+    if (form.lingkup === 'pilihan') body.employee_ids = terpilih;
+    else if (form.lingkup === 'satu') {
+      if (!form.employee_id) { setError('Pilih karyawan.'); return; }
+      body.employee_ids = [form.employee_id];
+    } else if (form.lingkup === 'departemen') {
+      if (!form.department) { setError('Pilih departemen.'); return; }
+      body.department = form.department;
+    } else {
+      if (!form.location_id) { setError('Pilih lokasi.'); return; }
+      body.location_id = form.location_id;
     }
     setSaving(true); setError('');
-    try {
-      await onSave({ ...form, effective_until: form.effective_until || null });
-    } catch (e) {
-      setError(e.response?.data?.detail || 'Gagal menugaskan shift');
-    } finally { setSaving(false); }
+    try { await onSave(body); } catch (e) { setError(e.response?.data?.detail || 'Gagal menugaskan shift'); } finally { setSaving(false); }
   };
 
   return (
     <FormPopup open={open} onClose={onClose} ukuran="pendek" testId="shift-assign-form"
-      judul="Tugaskan shift ke karyawan" keterangan="Penugasan menggantikan shift utama karyawan selama masa berlakunya."
+      judul="Tugaskan shift" keterangan="Penugasan menggantikan shift utama karyawan selama masa berlakunya; penugasan dengan tanggal akhir tidak menghapus penugasan tetap."
       onSimpan={handleSubmit} menyimpan={saving} galat={error} labelSimpan="Tugaskan">
-      <Isian label="Karyawan" wajib>
-        <EmployeeSelect employees={employees} value={form.employee_id} onChange={pickEmployee} testId="assign-employee" className="w-full" />
+      <Isian label="Untuk" wajib>
+        <SmartNativeSelect value={form.lingkup} onChange={(e) => ubah('lingkup', e.target.value)} searchable={false} className="w-full" data-testid="assign-lingkup">
+          {terpilih.length > 0 && <option value="pilihan">{`Baris terpilih (${terpilih.length} karyawan)`}</option>}
+          <option value="satu">Satu karyawan</option>
+          <option value="departemen">Semua karyawan satu departemen</option>
+          {lokasi.length > 0 && <option value="lokasi">Semua karyawan satu lokasi</option>}
+        </SmartNativeSelect>
       </Isian>
+      {form.lingkup === 'satu' && (
+        <Isian label="Karyawan" wajib>
+          <EmployeeSelect employees={employees} value={form.employee_id} onChange={(v) => ubah('employee_id', v)} testId="assign-employee" className="w-full" />
+        </Isian>
+      )}
+      {form.lingkup === 'departemen' && (
+        <Isian label="Departemen" wajib>
+          <SmartNativeSelect value={form.department} onChange={(e) => ubah('department', e.target.value)} className="w-full" data-testid="assign-department">
+            <option value="">— Pilih departemen —</option>
+            {deptOpsi.map((d) => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      )}
+      {form.lingkup === 'lokasi' && (
+        <Isian label="Lokasi" wajib>
+          <SmartNativeSelect value={form.location_id} onChange={(e) => ubah('location_id', e.target.value)} className="w-full">
+            <option value="">— Pilih lokasi —</option>
+            {lokasi.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      )}
       <Isian label="Shift" wajib>
-        <SmartNativeSelect value={form.shift_id} onChange={e => setForm(p => ({ ...p, shift_id: e.target.value }))} data-testid="assign-shift" className="w-full">
+        <SmartNativeSelect value={form.shift_id} onChange={(e) => ubah('shift_id', e.target.value)} data-testid="assign-shift" className="w-full">
           <option value="">— Pilih shift —</option>
-          {shifts.filter(s => !s.is_default).map(s => (
+          {shifts.filter((s) => !s.is_default).map((s) => (
             <option key={s.id} value={s.id}>{`${s.shift_code} — ${s.shift_name} (${s.start_time}–${s.end_time})`}</option>
           ))}
         </SmartNativeSelect>
       </Isian>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Isian label="Berlaku mulai" wajib>
-          <DatePicker value={form.effective_from} onChange={v => setForm(p => ({ ...p, effective_from: v }))} bolehKosong={false} testId="assign-from" />
+          <DatePicker value={form.effective_from} onChange={(v) => ubah('effective_from', v)} bolehKosong={false} testId="assign-from" />
         </Isian>
         <Isian label="Berlaku hingga" petunjuk="Kosong = sampai dicabut.">
           <DatePicker value={form.effective_until} min={form.effective_from || undefined} placeholder="Sampai dicabut"
-            onChange={v => setForm(p => ({ ...p, effective_until: v }))} testId="assign-until" />
+            onChange={(v) => ubah('effective_until', v)} testId="assign-until" />
         </Isian>
       </div>
-      <Isian label="Departemen" petunjuk="Mengikuti data karyawan.">
-        <div className="flex h-9 items-center text-sm text-muted-foreground" data-testid="assign-department">{form.department || '—'}</div>
-      </Isian>
       <Isian label="Catatan" htmlFor="assign-notes">
-        <Input id="assign-notes" value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+        <Input id="assign-notes" value={form.notes} onChange={(e) => ubah('notes', e.target.value)} />
       </Isian>
     </FormPopup>
   );
 }
+
+const SUMBER = { jadwal: 'Jadwal terbit', penugasan: 'Penugasan', karyawan: 'Shift utama' };
 
 /**
  * @param bagian  'shifts' | 'assignments' — dipakai hub Shift (satu tab hub per bagian).
@@ -230,7 +274,7 @@ function AssignmentForm({ open, shifts, employees = [], onSave, onClose }) {
  */
 export default function HRShiftManagementModule({ user, bagian }) {
   const [shifts, setShifts] = useState([]);
-  const [assignments, setAssignments] = useState([]);
+  const [rows, setRows] = useState([]);              // penugasan per karyawan (Tahap C)
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tabSendiri, setTabSendiri] = useState('shifts');
@@ -238,36 +282,51 @@ export default function HRShiftManagementModule({ user, bagian }) {
   const [shiftForm, setShiftForm] = useState(null);   // null | {} (baru) | shift (ubah)
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignCounts, setAssignCounts] = useState({});
+  const [cari, setCari] = useState('');
+  const [dept, setDept] = useState('');
+  const [lok, setLok] = useState('');
+  const [terpilih, setTerpilih] = useState(() => new Set());
+  const [lokasi, setLokasi] = useState([]);
   const token = localStorage.getItem('erp_token');
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   // 2026-11-08: kode peran lama ATAU izin Shift & Penjadwalan (hr.attendance.manage / hr.manage) — izin yang sama
   // dengan server `_require_shift_writer` (routes/hr_shifts.py), supaya peran buatan owner melihat tombolnya.
   const isAdmin = checkPerm({ user, roles: ['superadmin', 'admin', 'owner', 'hr'], keys: ['hr.attendance.manage', 'hr.manage'] });
   const { employees } = useActiveEmployees(token);
-  const empById = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);
+  const { units } = useHrMasters(token, { positions: false, shifts: false });
+  const deptOpsi = useDepartmentFilterOptions(units, employees);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [shiftRes, assignRes, sumRes] = await Promise.all([
+      const [shiftRes, sumRes, assignRes] = await Promise.all([
         axios.get(`${API}/api/hr/shifts`, { headers }),
-        axios.get(`${API}/api/hr/shifts/assignments?limit=500`, { headers }),
         axios.get(`${API}/api/hr/shifts/summary`, { headers }),
+        axios.get(`${API}/api/hr/shifts/assignments?limit=500`, { headers }).catch(() => ({ data: { data: [] } })),
       ]);
       setShifts(shiftRes.data?.data || []);
-      setAssignments(assignRes.data?.data || []);
       setSummary(sumRes.data?.data || null);
-      // Build assign count map
       const counts = {};
-      for (const a of assignRes.data?.data || []) {
-        counts[a.shift_id] = (counts[a.shift_id] || 0) + 1;
-      }
+      for (const a of assignRes.data?.data || []) counts[a.shift_id] = (counts[a.shift_id] || 0) + 1;
       setAssignCounts(counts);
     } catch (e) { toast.error('Gagal memuat data shift'); }
     finally { setLoading(false); }
   }, [headers]);
 
+  const loadRows = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API}/api/hr/shifts/penugasan-karyawan`, {
+        headers, params: { department: dept || undefined, location_id: lok || undefined, q: cari || undefined } });
+      setRows(r.data?.data || []);
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal memuat penugasan karyawan'); }
+  }, [headers, dept, lok, cari]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (tab === 'assignments') loadRows(); }, [tab, loadRows]);
+  useEffect(() => {
+    if (tab !== 'assignments') return;
+    axios.get(`${API}/api/rahaza/locations`, { headers }).then((r) => setLokasi(Array.isArray(r.data) ? r.data : (r.data?.items || []))).catch(() => setLokasi([]));
+  }, [tab, headers]);
 
   const handleCreateShift = async (data) => {
     await axios.post(`${API}/api/hr/shifts`, data, { headers });
@@ -295,11 +354,24 @@ export default function HRShiftManagementModule({ user, bagian }) {
     } catch (e) { toast.error(e.response?.data?.detail || 'Gagal menonaktifkan shift'); }
   };
 
-  const handleAssign = async (data) => {
-    await axios.post(`${API}/api/hr/shifts/assignments`, data, { headers });
-    toast.success('Shift ditugaskan');
+  const handleAssign = async (body) => {
+    const r = await axios.post(`${API}/api/hr/shifts/assignments/massal`, body, { headers });
+    const gagal = r.data?.data?.gagal || [];
+    if (gagal.length) toast.warning(`${r.data?.message} ${gagal.slice(0, 3).map((g) => `${g.karyawan}: ${g.pesan}`).join('; ')}`);
+    else toast.success(r.data?.message || 'Shift ditugaskan');
     setAssignOpen(false);
-    load();
+    setTerpilih(new Set());
+    load(); loadRows();
+  };
+
+  const cabut = async (row) => {
+    if (!row.penugasan?.id) return;
+    if (!(await confirmDialog({ title: `Cabut penugasan ${row.name}?`, body: 'Karyawan kembali memakai shift utamanya di Data Karyawan.', confirmLabel: 'Cabut', danger: true }))) return;
+    try {
+      await axios.delete(`${API}/api/hr/shifts/assignments/${row.penugasan.id}`, { headers });
+      toast.success('Penugasan dicabut');
+      loadRows(); load();
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal mencabut penugasan'); }
   };
 
   const handleSeedDefaults = async () => {
@@ -311,9 +383,9 @@ export default function HRShiftManagementModule({ user, bagian }) {
   };
 
   const nonDefaultShifts = shifts.filter(s => !s.is_default);
-  const { page, setPage, totalPages, total, paged } = useClientPagination(assignments, 10);
-  const namaKaryawan = (a) => (a.employee_name ? `${a.employee_code || ''} · ${a.employee_name}`.replace(/^ · /, '')
-    : (empById[a.employee_id] ? employeeLabel(empById[a.employee_id]) : 'Karyawan tidak ditemukan'));
+  const { page, setPage, totalPages, total, paged } = useClientPagination(rows, 25);
+  const toggle = (id) => setTerpilih((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const semua = rows.length > 0 && rows.every((r) => terpilih.has(r.employee_id));
 
   // ─── Tabel shift ─────────────────────────────────────────────────────────────
   const kolomShift = [
@@ -326,7 +398,8 @@ export default function HRShiftManagementModule({ user, bagian }) {
     { kunci: 'jam', label: 'Jam', hp: 'keterangan', isi: (s) => (
       <span className="tabular-nums md:whitespace-nowrap">{s.start_time}–{s.end_time}{s.is_overnight ? ' (lewat tengah malam)' : ''}</span>) },
     { kunci: 'efektif', label: 'Jam efektif', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.effective_hours ?? '—'} jam</span> },
-    { kunci: 'hari', label: 'Hari aktif', isi: (s) => labelHari(s.days_active) },
+    { kunci: 'hari', label: 'Hari kerja', isi: (s) => labelHari(s.days_active) },
+    { kunci: 'tol', label: 'Toleransi', isi: (s) => (s.toleransi_menit != null && s.toleransi_menit !== '' ? `${s.toleransi_menit} menit` : 'Setelan umum') },
     { kunci: 'tugas', label: 'Penugasan aktif', rata: 'kanan', isi: (s) => <span className="tabular-nums">{assignCounts[s.id] || 0}</span> },
     { kunci: 'jenis', label: 'Jenis', isi: (s) => (s.is_default
       ? <StatusBadge status="bawaan" label="Bawaan" tone="muted" />
@@ -352,35 +425,54 @@ export default function HRShiftManagementModule({ user, bagian }) {
     { label: 'Jam mulai', nilai: (s) => s.start_time },
     { label: 'Jam selesai', nilai: (s) => s.end_time },
     { label: 'Istirahat (menit)', nilai: (s) => Number(s.break_duration_minutes ?? 0) },
+    { label: 'Mulai istirahat', nilai: (s) => s.istirahat_mulai || '' },
     { label: 'Jam efektif', nilai: (s) => Number(s.effective_hours ?? 0) },
-    { label: 'Hari aktif', nilai: (s) => (s.days_active || []).map(d => DAYS_ID[d]).join(', ') },
+    { label: 'Hari kerja', nilai: (s) => (s.days_active || []).map(d => DAYS_ID[d]).join(', ') },
+    { label: 'Toleransi terlambat (menit)', nilai: (s) => (s.toleransi_menit != null && s.toleransi_menit !== '' ? Number(s.toleransi_menit) : 'Setelan umum') },
     { label: 'Lewat tengah malam', nilai: (s) => (s.is_overnight ? 'Ya' : 'Tidak') },
     { label: 'Penugasan aktif', nilai: (s) => assignCounts[s.id] || 0 },
     { label: 'Jenis', nilai: (s) => (s.is_default ? 'Bawaan' : 'Aktif') },
   ];
 
-  // ─── Tabel penugasan ─────────────────────────────────────────────────────────
-  const statusPenugasan = (a) => STATUS_PENUGASAN[a.status] || { label: 'Lainnya', tone: 'default' };
+  // ─── Tabel penugasan per karyawan (pilih baris → penugasan massal) ─────────────
+  const berlakuHingga = (r) => (r.penugasan ? (r.penugasan.effective_until ? formatTanggalID(r.penugasan.effective_until) : 'Sampai dicabut') : '—');
   const kolomTugas = [
-    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (a) => <span className="font-medium text-foreground">{namaKaryawan(a)}</span> },
-    { kunci: 'shift', label: 'Shift', isi: (a) => <ShiftKode code={a.shift_code} color={a.shift_color} /> },
-    { kunci: 'dept', label: 'Departemen', hp: 'keterangan', isi: (a) => a.department || '—' },
-    { kunci: 'mulai', label: 'Berlaku mulai', isi: (a) => formatTanggalID(a.effective_from) || '—' },
-    { kunci: 'hingga', label: 'Berlaku hingga', isi: (a) => (a.effective_until ? formatTanggalID(a.effective_until) : 'Sampai dicabut') },
-    { kunci: 'status', label: 'Status', isi: (a) => { const s = statusPenugasan(a); return <StatusBadge status={a.status} label={s.label} tone={s.tone} />; } },
+    { kunci: 'pilih', label: (
+      <Checkbox checked={semua} aria-label="Pilih semua karyawan" data-testid="assign-pilih-semua"
+        onCheckedChange={(v) => setTerpilih(v ? new Set(rows.map((r) => r.employee_id)) : new Set())} />), hp: 'aksi', lebar: 'w-10',
+      isi: (r) => <Checkbox checked={terpilih.has(r.employee_id)} onCheckedChange={() => toggle(r.employee_id)} aria-label={`Pilih ${r.name}`} data-testid="assign-pilih" /> },
+    { kunci: 'karyawan', label: 'Karyawan', hp: 'judul', isi: (r) => (
+      <span className="font-medium text-foreground">{[r.employee_code, r.name].filter(Boolean).join(' · ')}</span>) },
+    { kunci: 'dept', label: 'Departemen', hp: 'keterangan', isi: (r) => r.department || '—' },
+    { kunci: 'lokasi', label: 'Lokasi', isi: (r) => r.location_name || '—' },
+    { kunci: 'shift', label: 'Shift hari ini', isi: (r) => (r.shift ? <ShiftKode code={`${r.shift.kode} ${r.shift.mulai}–${r.shift.selesai}`} color={r.shift.warna} /> : 'Belum ada shift') },
+    { kunci: 'asal', label: 'Asal', isi: (r) => SUMBER[r.sumber] || '—' },
+    { kunci: 'hingga', label: 'Penugasan berlaku hingga', isi: berlakuHingga },
+    { kunci: 'nanti', label: 'Berikutnya', isi: (r) => (r.berikutnya?.length
+      ? r.berikutnya.map((b) => `${b.shift_code} mulai ${formatTanggalID(b.effective_from)}`).join('; ') : '—') },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (isAdmin && r.penugasan?.id ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya"><MoreHorizontal /></Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => cabut(r)} className="text-[hsl(var(--danger-text))]">
+            <Power className="mr-2 h-4 w-4" />Cabut penugasan
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>) : null) },
   ];
   const unduhTugas = [
-    { label: 'Karyawan', nilai: namaKaryawan },
-    { label: 'Shift', nilai: (a) => a.shift_code || '' },
-    { label: 'Nama shift', nilai: (a) => a.shift_name || '' },
-    { label: 'Departemen', nilai: (a) => a.department || '' },
-    { label: 'Berlaku mulai', nilai: (a) => formatTanggalID(a.effective_from) },
-    { label: 'Berlaku hingga', nilai: (a) => (a.effective_until ? formatTanggalID(a.effective_until) : 'Sampai dicabut') },
-    { label: 'Status', nilai: (a) => statusPenugasan(a).label },
-    { label: 'Catatan', nilai: (a) => a.notes || '' },
+    { label: 'Kode', nilai: (r) => r.employee_code },
+    { label: 'Karyawan', nilai: (r) => r.name },
+    { label: 'Departemen', nilai: (r) => r.department || '' },
+    { label: 'Lokasi', nilai: (r) => r.location_name || '' },
+    { label: 'Shift hari ini', nilai: (r) => (r.shift ? `${r.shift.kode} ${r.shift.mulai}–${r.shift.selesai}` : '') },
+    { label: 'Asal', nilai: (r) => SUMBER[r.sumber] || '' },
+    { label: 'Penugasan berlaku hingga', nilai: berlakuHingga },
   ];
 
-  const ringkasan = summary && (
+  const ringkasan = tab === 'shifts' ? (summary && (
     <p className="text-sm text-muted-foreground" data-testid="shift-summary">
       <span className="font-medium text-foreground">{summary.total_shifts}</span> shift aktif tersimpan
       {shifts.some(s => s.id === CADANGAN) ? ' + 1 shift cadangan sistem' : ''}
@@ -388,15 +480,35 @@ export default function HRShiftManagementModule({ user, bagian }) {
       {summary.by_shift?.[0] ? <> · paling banyak dipakai: <span className="font-medium text-foreground">{summary.by_shift[0].shift_name}</span> ({summary.by_shift[0].count})</> : null}
 .<span className="hidden sm:inline"> Karyawan tanpa penugasan memakai shift utamanya di Data Karyawan atau shift cadangan.</span>
     </p>
+  )) : (
+    <p className="text-sm text-muted-foreground" data-testid="assign-summary">
+      <span className="font-medium text-foreground">{rows.length}</span> karyawan aktif
+      {' · '}<span className="font-medium text-foreground">{rows.filter((r) => !r.shift).length}</span> belum punya shift
+      {terpilih.size > 0 && <> · <span className="font-medium text-foreground">{terpilih.size}</span> dipilih</>}.
+      <span className="hidden sm:inline"> Centang beberapa baris lalu Tugaskan shift untuk menugaskan sekaligus.</span>
+    </p>
   );
 
   const pil = !bagian && (
     <FilterChips value={tabSendiri} onChange={setTabSendiri} hideWhenEmpty={false} testId="shift-bagian"
-      options={[{ key: 'shifts', label: 'Daftar shift', count: shifts.length }, { key: 'assignments', label: 'Penugasan', count: assignments.length }]} />
+      options={[{ key: 'shifts', label: 'Daftar shift', count: shifts.length }, { key: 'assignments', label: 'Penugasan', count: rows.length }]} />
   );
+  const penyaringTugas = tab === 'assignments' && (<>
+    <Input value={cari} onChange={(e) => setCari(e.target.value)} placeholder="Cari karyawan" className="h-9 w-48" aria-label="Cari karyawan" />
+    <SmartNativeSelect value={dept} onChange={(e) => setDept(e.target.value)} className="h-9 w-44" aria-label="Departemen">
+      <option value="">Semua departemen</option>
+      {deptOpsi.map((d) => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+    </SmartNativeSelect>
+    {lokasi.length > 1 && (
+      <SmartNativeSelect value={lok} onChange={(e) => setLok(e.target.value)} className="h-9 w-40" aria-label="Lokasi">
+        <option value="">Semua lokasi</option>
+        {lokasi.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+      </SmartNativeSelect>
+    )}
+  </>);
 
   const muatUlang = (
-    <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+    <Button variant="outline" size="icon" onClick={() => { load(); if (tab === 'assignments') loadRows(); }} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
       <RefreshCw className={loading ? 'animate-spin' : ''} />
     </Button>
   );
@@ -410,17 +522,17 @@ export default function HRShiftManagementModule({ user, bagian }) {
         )}
         <Button onClick={() => setShiftForm({})} data-testid="shift-add"><Plus />Shift baru</Button>
       </>) : (
-        <Button onClick={() => setAssignOpen(true)} data-testid="shift-assign-add"><Plus />Tugaskan shift</Button>
+        <Button onClick={() => setAssignOpen(true)} data-testid="shift-assign-add"><Plus />Tugaskan shift{terpilih.size ? ` (${terpilih.size})` : ''}</Button>
       ))}
-      filters={pil}
+      filters={<>{pil}{penyaringTugas}</>}
       tools={<>
         {tab === 'shifts'
           ? <TombolUnduh namaBerkas="daftar-shift" namaLembar="Shift" baris={shifts} kolom={unduhShift} testId="shift-unduh" />
-          : <TombolUnduh namaBerkas="penugasan-shift" namaLembar="Penugasan shift" baris={assignments} kolom={unduhTugas} testId="shift-assign-unduh" />}
+          : <TombolUnduh namaBerkas="penugasan-shift" namaLembar="Penugasan shift" baris={rows} kolom={unduhTugas} testId="shift-assign-unduh" />}
         {muatUlang}
       </>}
-      summary={tab === 'shifts' ? ringkasan : null}
-      footer={tab === 'assignments' && assignments.length > 0
+      summary={ringkasan}
+      footer={tab === 'assignments' && rows.length > 25
         ? <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} /> : null}>
 
       {loading && shifts.length === 0 ? (
@@ -432,14 +544,15 @@ export default function HRShiftManagementModule({ user, bagian }) {
             description="Isi 5 shift bawaan (pagi, siang, malam, normal, fleksibel), lalu ubah sesuai kebutuhan."
             action={isAdmin && <Button variant="outline" onClick={handleSeedDefaults}>Isi shift bawaan</Button>} />} />
       ) : (
-        <TabelData kolom={kolomTugas} baris={paged} testId="shift-assign-table"
-          kosong={<EmptyState title="Belum ada penugasan shift"
+        <TabelData kolom={kolomTugas} baris={paged} kunci={(r) => r.employee_id} testId="shift-assign-table"
+          kosong={<EmptyState title="Belum ada karyawan aktif"
             description="Karyawan tanpa penugasan memakai shift utamanya di Data Karyawan atau shift bawaan 08:00–17:00." />} />
       )}
 
       <ShiftForm open={shiftForm !== null} initial={shiftForm?.id ? shiftForm : null}
         onSave={shiftForm?.id ? handleUpdateShift : handleCreateShift} onClose={() => setShiftForm(null)} />
-      <AssignmentForm open={assignOpen} shifts={shifts} employees={employees} onSave={handleAssign} onClose={() => setAssignOpen(false)} />
+      <PenugasanForm open={assignOpen} shifts={shifts} employees={employees} terpilih={[...terpilih]} deptOpsi={deptOpsi}
+        lokasi={lokasi} onSave={handleAssign} onClose={() => setAssignOpen(false)} />
     </PageLayout>
   );
 }

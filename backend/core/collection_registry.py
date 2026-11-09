@@ -220,6 +220,9 @@ REGISTRY: dict[str, str] = {
     "hr_ai_results": "lain",
     "hr_issued_documents": "lain",
     "hr_shift_assignments": "lain",
+    # 2026-11-09 (Tahap C audit HR): pola rotasi shift + permintaan ganti/tukar shift Portal Saya
+    "hr_shift_pola": "hr",
+    "hr_shift_requests": "hr",
     "hris_assignments": "hr",
     "hris_cycles": "hr",
     "hris_kpi_assignments": "hr",
@@ -238,6 +241,7 @@ REGISTRY: dict[str, str] = {
     "marketing_alert_runs": "marketing",
     "marketing_alert_settings": "marketing",
     "marketing_budgets": "marketing",
+    "marketing_catalog_bulk_runs": "marketing",   # 2026-11-09 — jejak + batalkan aksi massal katalog
     "marketing_catalog_items": "marketing",
     "marketing_catalogs": "marketing",
     "marketing_churn_scores": "marketing",
@@ -389,6 +393,7 @@ REGISTRY: dict[str, str] = {
     "rahaza_maklon_quotes": "lain",
     "rahaza_material_categories": "inventory",
     "rahaza_material_cost_history": "inventory",
+    "rahaza_sku_price_history": "inventory",   # 2026-11-09 — riwayat harga jual resmi per SKU
     "rahaza_material_issues": "inventory",
     "rahaza_material_movements": "inventory",
     "rahaza_material_reservations": "inventory",
@@ -455,6 +460,8 @@ REGISTRY: dict[str, str] = {
     "wh_delivery_notes": "gudang",
     "wh_fabric_roll_movements": "gudang",
     "wh_fabric_rolls": "gudang",
+    # 2026-11-09: impor roll kain massal stok awal (core/fabric_roll_import) — satu dokumen per berkas
+    "wh_fabric_roll_imports": "gudang",
     "wh_location_migration_map": "gudang",
     "wh_opname3_counts": "gudang",
     "wh_opname3_sessions": "gudang",
@@ -605,7 +612,7 @@ dewi_org_positions dewi_org_units dewi_perf_cycles dewi_perf_kpis dewi_recruitme
 dewi_rnd_materials dewi_rnd_patterns dewi_rnd_revisions dewi_rnd_sample_costing dewi_rnd_styles
 dewi_rnd_tech_packs dewi_rnd_variants dewi_toko_channels dewi_toko_products employee_documents
 employee_expense_categories employee_per_diem_rates fx_rates garments hr_issued_documents
-hr_shift_assignments hris_cycles hris_kpi_assignments marketing_account_targets marketing_budgets
+hr_shift_assignments hr_shift_pola hris_cycles hris_kpi_assignments marketing_account_targets marketing_budgets
 marketing_catalog_items marketing_catalogs marketing_creator_catalog marketing_creator_targets
 marketing_kol_creators marketing_livehost_scripts marketing_livehost_training marketing_livehosts
 marketing_platform_accounts marketing_sku_bridge marketing_targets marketing_task_templates
@@ -615,7 +622,7 @@ rahaza_cash_accounts rahaza_coa_accounts rahaza_colors rahaza_cost_centers rahaz
 rahaza_defect_codes rahaza_depr_schedules rahaza_employees rahaza_expense_categories rahaza_fg_matrix
 rahaza_fingerprint_profiles rahaza_fixed_assets rahaza_handover_templates rahaza_job_postings
 rahaza_leave_balances rahaza_leave_types rahaza_line_assignments rahaza_lines rahaza_locations
-rahaza_machines rahaza_material_categories rahaza_material_cost_history rahaza_materials
+rahaza_machines rahaza_material_categories rahaza_material_cost_history rahaza_materials rahaza_sku_price_history
 rahaza_model_costing rahaza_model_process_sop rahaza_model_variants rahaza_models
 rahaza_office_locations rahaza_okr_key_results rahaza_okr_objectives rahaza_payroll_profiles
 rahaza_petty_cash_funds rahaza_processes rahaza_product_categories rahaza_production_calendar
@@ -627,6 +634,7 @@ workspace_shares workspace_versions
 """
 
 _TRANSAKSI = """
+hr_shift_requests
 acc_loans acc_opname_lines acc_opname_sessions acc_purchase_requests acc_stock_movements
 accessory_shipment_items accessory_shipments approval_requests bank_recon_matches bank_recon_sessions
 bank_recon_txns buyer_shipment_items buyer_shipments buyer_short_records cmt_delivery_notes
@@ -678,7 +686,7 @@ rahaza_shift_handovers rahaza_shipments rahaza_stock_ledger rahaza_wip_events ra
 rahaza_year_end_closings sales_direct_notes sales_direct_returns vendor_jobs
 vendor_material_inspection_items vendor_material_inspections vendor_progress_reports
 vendor_shipment_items vendor_shipments warehouse_opname warehouse_receiving wh_cmt_dispatches
-wh_delivery_notes wh_fabric_roll_movements wh_fabric_rolls wh_opname3_counts wh_opname3_sessions
+wh_delivery_notes wh_fabric_roll_imports wh_fabric_roll_movements wh_fabric_rolls wh_opname3_counts wh_opname3_sessions
 wh_opname_lines wh_opname_sessions wh_opname_sessions2 wh_pending_movements wh_picklists
 wh_placement_movements wh_quarantine_items wh_returns wh_scan_out_controls wh_scan_out_lines
 wh_scan_out_rejects wh_scan_out_sheets wms_fabric_rolls work_orders
@@ -690,7 +698,7 @@ announcements assistant_chat_history client_login_attempts comm_conversations co
 comm_read_receipts cron_runs dewi_ai_actions dewi_asset_scans dewi_scheduler_runs
 dewi_toko_channel_syncs dewi_universal_scans hr_ai_results legacy_drop_log legacy_loan_close_log
 login_attempts marketing_account_health marketing_ai_content_history marketing_alert_runs
-marketing_change_log marketing_churn_scores marketing_dynamic_pricing_suggestions
+marketing_catalog_bulk_runs marketing_change_log marketing_churn_scores marketing_dynamic_pricing_suggestions
 marketing_import_templates marketing_kol_login_attempts marketing_stock_syncs marketing_webhook_events
 notifications payroll_automation_log rahaza_ai_audit_logs rahaza_ai_chat_history rahaza_ai_usage_logs
 rahaza_alerts rahaza_audit_logs rahaza_career_chats rahaza_career_reports
@@ -717,6 +725,17 @@ _LOG += " ai_lampiran ai_berkas "
 _KONFIGURASI += " ai_memories "
 _LOG += " ai_proaktif_runs "
 # ── akhir Asisten AI (proaktif) ──
+# 2026-11-09 (agen MKT-AI) — impor banyak berkas satu langkah, pemetaan kolom per toko yang
+# dikonfirmasi staf (AI pemeta), dan paket fakta Laporan Marketing mode AI (penjaga angka).
+REGISTRY.update({
+    "marketing_impor_paket": "marketing",
+    "marketing_impor_pemetaan_toko": "marketing",
+    "ai_fakta_laporan_marketing": "lain",
+})
+_TRANSAKSI += " marketing_impor_paket "
+_KONFIGURASI += " marketing_impor_pemetaan_toko "
+_LOG += " ai_fakta_laporan_marketing "
+# ── akhir MKT-AI ──
 
 
 def _kind_table() -> dict[str, str]:

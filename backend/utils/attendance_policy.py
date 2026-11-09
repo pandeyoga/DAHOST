@@ -222,11 +222,15 @@ def check_gps_fix(fix: Optional[dict], office: dict) -> dict:
 async def enforce_attendance_policy(db, *, photo_b64: Optional[str],
                                     lat, lng, action: str = "masuk",
                                     selfie_required: Optional[bool] = None,
-                                    fix: Optional[dict] = None) -> dict:
+                                    fix: Optional[dict] = None,
+                                    duty_day: bool = False) -> dict:
     """Tegakkan kebijakan sebelum absen dicatat. Melempar HTTPException bila gagal.
 
     `selfie_required=False` dipakai jalur BIOMETRIK (WebAuthn/fingerprint) yang
     sudah membuktikan identitas tanpa foto — lokasinya TETAP diperiksa.
+
+    `duty_day=True` (2026-11-09, Q11): hari TUGAS LUAR yang disetujui — lokasi dicatat tetapi tidak dibatasi
+    geofence kantor (karyawan absen dari tempat tujuan dinas).
 
     Return `{office, geo}` supaya pemanggil tidak perlu query ulang.
     """
@@ -237,6 +241,8 @@ async def enforce_attendance_policy(db, *, photo_b64: Optional[str],
         raise HTTPException(400, MSG_SELFIE_REQUIRED)
 
     geo = check_geofence(lat, lng, office)
+    if duty_day:
+        return {"office": office, "geo": {**geo, "status": "tugas_luar"}}
     if office["require_geofence"]:
         if not office["configured"]:
             raise HTTPException(409, MSG_OFFICE_UNSET)

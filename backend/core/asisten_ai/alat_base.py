@@ -75,7 +75,37 @@ KIND_TINDAKAN = "action"
 KINDS = (KIND_BACA, KIND_UI, KIND_TINDAKAN)
 KINDS_TAHAP_A = (KIND_BACA, KIND_UI)
 DOMAINS = ("penjualan", "iklan", "live", "setoran", "keuangan", "stok", "produksi", "sdm",
-           "umum", "laporan", "ui")
+           "umum", "laporan", "ui", "saya")
+
+# ── Ruang Asisten AI (audit HR Tahap D, 9 Nov 2026) ──────────────────────────
+# Asisten AI dibuka di tiga tempat; tiap ruang menawarkan alat yang relevan saja (alat lain ditahan seperti alat
+# ingatan yang dimatikan — tidak dikirim ke model dan ditolak bila tetap dipanggil):
+#   umum — Portal Manajemen: semua alat (perilaku lama).
+#   sdm  — Portal SDM › AI SDM: alat ber-domain `sdm` + alat bantu umum (tanggal, data fleksibel, grafik/tabel,
+#          laporan, ingatan, daftar persetujuan, pengingat). Gaji per orang tetap mengikuti PERAN_GAJI.
+#   saya — Portal Saya › Tanya Asisten: hanya alat ber-domain `saya` (data MILIK pengguna sendiri) + tanggal &
+#          grafik/tabel. Tanpa data fleksibel lintas karyawan dan tanpa tindakan.
+RUANG = ("umum", "sdm", "saya")
+ALAT_BERSAMA_RUANG = {
+    "sdm": frozenset({"tanggal_dan_periode", "daftar_data", "cari_data", "tampilkan_grafik", "tampilkan_tabel",
+                      "simpan_ingatan", "lupakan_ingatan", "buat_laporan", "daftar_persetujuan_menunggu",
+                      "buat_pengingat"}),
+    "saya": frozenset({"tanggal_dan_periode", "tampilkan_grafik", "tampilkan_tabel"}),
+}
+DOMAIN_RUANG = {"sdm": frozenset({"sdm"}), "saya": frozenset({"saya"})}
+
+
+def alat_di_ruang(a: "Alat", ruang: Optional[str]) -> bool:
+    """True bila alat `a` ditawarkan di `ruang` (lihat RUANG)."""
+    if ruang not in DOMAIN_RUANG:
+        return True
+    return a.domain in DOMAIN_RUANG[ruang] or a.name in ALAT_BERSAMA_RUANG[ruang]
+
+
+def alat_luar_ruang(ruang: Optional[str]) -> frozenset:
+    """Nama semua alat (baca, ui, tindakan) yang TIDAK ditawarkan di `ruang` — dipakai sebagai `kecuali`."""
+    muat_semua_alat()
+    return frozenset(n for n, a in _DAFTAR.items() if not alat_di_ruang(a, ruang))
 
 BATAS_HASIL = 15_000          # karakter JSON hasil alat yang dikirim ke model (panggilan langsung)
 # Tahap E: hasil untuk KODE di ruang hitung tidak masuk konteks model (hanya keluaran akhir kode yang masuk),

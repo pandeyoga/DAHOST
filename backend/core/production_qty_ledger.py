@@ -805,6 +805,14 @@ async def issue_fg(db, *, material_id: str, qty: int, ref: dict,
         except (TypeError, ValueError):
             return 0.0
     usable = [r for r in rows if r.get("location_id") != qloc and _q(r) > 0]
+    # 2026-11-09 (audit gudang G8): barang jadi DA keluar hanya dari baris stok jual — aturan yang SAMA dengan
+    # Scan Keluar & daftar stok Portal Penjualan (`scan_out.row_problem`): bukan karantina/terblokir, milik DA,
+    # kategori FG/kosong. Barang klien maklon / kiriman PO maklon (`skip_cost`) tetap memakai jalurnya (K14).
+    if not skip_cost and not await client_owner_of_material(db, material_id):
+        from core.catalog_stock import blocked_location_ids
+        from core.scan_out import row_problem
+        blocked = set(await blocked_location_ids(db)) | ({qloc} if qloc else set())
+        usable = [r for r in usable if row_problem(r, blocked) is None]
     usable.sort(key=lambda r: (0 if r.get("location_id") == fg_loc else 1, -_q(r)))
     have = sum(_q(r) for r in usable)
     if have + 0.0001 < qty:

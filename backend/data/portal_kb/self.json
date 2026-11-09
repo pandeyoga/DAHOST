@@ -9,6 +9,17 @@
   ],
   "alur": [
     {
+      "judul": "Ganti atau tukar shift",
+      "kata_kunci": ["tukar shift", "ganti shift", "jadwal shift", "shift saya", "roster"],
+      "modul": ["portal-shift"],
+      "langkah": [
+        "Buka menu 'Jadwal Shift' untuk melihat shift Anda 2 minggu ke depan.",
+        "Tekan 'Ajukan perubahan' pada tanggal yang ingin diubah, pilih ganti shift atau tukar dengan rekan, lalu tulis alasannya.",
+        "Tukar shift menunggu rekan setuju dulu; sesudah itu atasan langsung, lalu SDM.",
+        "Setelah SDM menyetujui, jadwal tanggal itu langsung berubah dan dipakai absensi."
+      ]
+    },
+    {
       "judul": "Absen masuk dan pulang",
       "kata_kunci": ["absen", "clock in", "clock out", "kehadiran saya", "absen sekarang"],
       "modul": ["portal-absen", "self-dashboard"],
@@ -44,8 +55,10 @@
     {"modul": "portal-dashboard", "nama": "Dashboard", "deskripsi": "Ringkasan pribadi hari ini."},
     {"modul": "portal-profile", "nama": "Profil", "deskripsi": "Data diri dan kontak."},
     {"modul": "portal-absen", "nama": "Absen Saya", "deskripsi": "Absen masuk/pulang dengan swafoto dan lokasi."},
+    {"modul": "portal-shift", "nama": "Jadwal Shift", "deskripsi": "Shift Anda 2 minggu ke depan; ajukan ganti shift atau tukar dengan rekan (rekan → atasan → SDM)."},
     {"modul": "portal-cuti", "nama": "Cuti & Lembur", "deskripsi": "Pengajuan dan sisa kuota."},
     {"modul": "portal-notifikasi", "nama": "Notifikasi", "deskripsi": "Pemberitahuan yang ditujukan kepada Anda."},
+    {"modul": "portal-asisten", "nama": "Tanya Asisten", "deskripsi": "Tanya absen, sisa cuti, slip gaji, dan shift Anda sendiri; asisten hanya membaca data milik Anda."},
     {"modul": "portal-payslip", "nama": "Slip Gaji", "deskripsi": "Rincian gaji per periode."},
     {"modul": "portal-kasbon", "nama": "Kasbon", "deskripsi": "Pinjaman dan cicilannya."},
     {"modul": "kpi-portal", "nama": "KPI", "deskripsi": "Target dan capaian pribadi."},

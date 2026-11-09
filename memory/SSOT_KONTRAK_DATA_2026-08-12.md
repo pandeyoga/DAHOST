@@ -551,3 +551,27 @@ mengunggah ulang Ekspor A — dan justru itu yang membekukan status pesanan lama
 * **PERLU KEPUTUSAN PEMILIK:** `EXCLUDED_FOR_REVENUE = ('cancelled',)` ⇒ pesanan **`returned` ikut
   dihitung** sebagai omzet. Selama belum diputuskan, rincian WAJIB memuat catatan
   “PERLU KEPUTUSAN PEMILIK …” beserta jumlah & nilainya (jangan diubah sepihak: menyentuh F2 & F5).
+
+## §SHIFT — roster, pola rotasi, permintaan shift (Tahap C audit HR, 9 Nov 2026)
+
+* **Satu master shift** = `rahaza_shifts`. Field tambahan: `toleransi_menit` (0–240; kosong = setelan umum, disalin ke
+  `grace_minutes` yang dibaca aturan absen) dan `istirahat_mulai` (JJ:MM, acuan cuti setengah hari pagi).
+  `rahaza_shift_templates` ("Pola jadwal" lama) **dipensiunkan** — baca saja.
+* `hr_shift_pola` (master): `{id, nama, keterangan, urutan[id shift | null=libur] (kelipatan 7, ≤ 56), aktif}`.
+* `rahaza_schedules` (jadwal): `{id, judul, jenis: roster|perubahan, start_date, end_date, department, location_id,
+  employee_ids[], cara, pola_id, status: draft|published|dibatalkan, shifts[], metadata, …}`. Entri kerja WAJIB
+  menyimpan `shift_id` + `shift_code` + jam; entri libur `{libur: true}`. Hanya `published` yang dibaca absensi;
+  jadwal terbit terbaru menang (`core.attendance_rules.resolve_day_shift`). Aturan: `core/shift_roster.py`.
+* `hr_shift_requests` (transaksi): ganti/tukar shift Portal Saya; alur rekan → atasan (`manager_id` → akun) → SDM;
+  disetujui = jadwal terbit `jenis: perubahan` satu tanggal. Aturan: `core/shift_permintaan.py`.
+
+## §IMPOR ROLL KAIN STOK AWAL — `wh_fabric_roll_imports` (2026-11-09, klarifikasi owner C5)
+
+* Satu dokumen per berkas yang diterapkan: `id`, `import_no` (IMR-YYYYMM-NNN), `batch_key` (sha256 isi baris yang
+  dinormalkan — kunci idempoten; berkas yang sama tidak membuat roll/sesi kedua kecuali impor lama `dibatalkan`),
+  `status` (`memproses` → `menunggu_persetujuan` → `selesai` | `sebagian` | `dibatalkan`), `groups[]`
+  (material_id, code, location_id, location_code, rolls, qty, average_rolls, value), `totals`, `session_ids[]`,
+  `sessions[]`, `session_status{}`, `rolls_created`, `filename`, `created_at/by`.
+* Penulis tunggal `core/fabric_roll_import.py`. Roll yang dibuat (`wh_fabric_rolls`) berstatus `pending_opening`
+  (tidak bisa dipotong/dikeluarkan) dengan `opening_import_id`, `opening_session_id`, `is_average`; stok & nilai
+  HANYA lahir lewat persetujuan sesi Opname stok awal (`wh_opname3_sessions.mode='opening'`, `roll_import_id`).

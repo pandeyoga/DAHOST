@@ -42,7 +42,20 @@ import UtasPesan from './UtasPesan';
 import { alamatTanpaSesi, sesiDariAlamat, sesiDariParams } from './adapterTahapCD';
 
 // Tahap B: halaman "Tindakan AI" (TindakanAIModule) membuka percakapan asal lewat kunci yang sama.
-const KUNCI_SESI = KUNCI_SESI_AKTIF;
+const KUNCI_SESI_UMUM = KUNCI_SESI_AKTIF;
+// Audit HR Tahap D (9 Nov 2026): ruang Asisten AI — umum (Portal Manajemen), sdm (Portal SDM › AI SDM),
+// saya (Portal Saya › Tanya Asisten, data milik sendiri). Teks layar per ruang; riwayat & saran disaring server.
+const TEKS_RUANG = {
+  umum: { judul: 'Asisten AI', sub: 'Tanya data penjualan, keuangan, stok, dan produksi; dijawab dengan grafik, tabel, dan sumber.',
+    sambut: 'Tanyakan omzet per toko, produk terlaris, piutang jatuh tempo, atau stok menipis. Jawaban mengikuti CV dan periode yang dipilih.',
+    hp: 'Tanya soal penjualan, stok…', kotak: 'Tanya soal penjualan, keuangan, stok, atau produksi…' },
+  sdm: { judul: 'Asisten AI SDM', sub: 'Tanya absensi, cuti, lembur, shift, dan penggajian; koreksi dan draf shift lewat kartu persetujuan.',
+    sambut: 'Tanyakan siapa yang terlambat atau lupa absen pulang, cek gaji sebelum finalisasi, atau minta draf shift minggu depan. Perubahan data selalu lewat kartu yang Anda setujui.',
+    hp: 'Tanya soal absensi, shift…', kotak: 'Tanya soal absensi, cuti, lembur, shift, atau penggajian…' },
+  saya: { judul: 'Tanya asisten', sub: 'Tanya absen, cuti, slip gaji, dan shift Anda sendiri.',
+    sambut: 'Tanyakan sisa cuti, rekap absen, rincian slip gaji, atau shift Anda minggu depan. Asisten hanya membaca data milik Anda.',
+    hp: 'Tanya soal absen, cuti, gaji…', kotak: 'Tanya soal absen, cuti, slip gaji, atau shift Anda…' },
+};
 const CATATAN_TINDAKAN_MATI = 'Tindakan AI sedang dimatikan admin; AI hanya menjawab.';
 const CATATAN_ADA_MENUNGGU = 'Ada usulan perubahan yang menunggu keputusan Anda. Pertanyaan baru membuat usulan itu kedaluwarsa.';
 const KUNCI_CV = 'asisten_ai_cv';
@@ -127,8 +140,10 @@ function useTinggiPenuh(ref, min = 440) {
   return tinggi;
 }
 
-export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
+export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruang }) {
   const peran = user?.role;
+  const teksRuang = TEKS_RUANG[ruang] || TEKS_RUANG.umum;
+  const KUNCI_SESI = ruang && ruang !== 'umum' ? `${KUNCI_SESI_UMUM}:${ruang}` : KUNCI_SESI_UMUM;
   const [status, setStatus] = useState({ memuat: true, data: null, galat: null });
   const [saran, setSaran] = useState([]);
   const [sesi, setSesi] = useState([]);
@@ -171,7 +186,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
   const muatDaftar = useCallback(async (diam = false) => {
     if (!diam) setMemuatSesi(true);
     try {
-      const rows = await asistenApi.listSessions();
+      const rows = await asistenApi.listSessions(ruang);
       setSesi(rows);
       setGalatSesi(null);
     } catch (e) {
@@ -179,7 +194,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     } finally {
       if (!diam) setMemuatSesi(false);
     }
-  }, []);
+  }, [ruang]);
 
   const bukaSesi = useCallback(async (id) => {
     setMemuatPesan(true);
@@ -202,18 +217,18 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     } finally {
       if (aktifRef.current === id || aktifRef.current === null) setMemuatPesan(false);
     }
-  }, []);
+  }, [KUNCI_SESI]);
 
   useEffect(() => {
     muatStatus();
     muatDaftar();
-    asistenApi.saran(peran)
+    asistenApi.saran(peran, ruang)
       .then((rows) => setSaran(rows.map((r) => (typeof r === 'string' ? r : r?.teks)).filter(Boolean)))
       .catch(() => setSaran(SARAN_CADANGAN));
     loadCvOptions().then((m) => { if (m) setCvOpsi(m); });
     if (aktifRef.current) bukaSesi(aktifRef.current);
     return () => { abortRef.current?.abort(); };
-  }, [muatStatus, muatDaftar, bukaSesi, peran]);
+  }, [muatStatus, muatDaftar, bukaSesi, peran, ruang]);
 
   // CV tersimpan yang tidak diizinkan → CV pertama yang diizinkan
   useEffect(() => {
@@ -233,7 +248,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     setAktifId(id);
     tulis(KUNCI_SESI, id);
     bukaSesi(id);
-  }, [bukaSesi]);
+  }, [bukaSesi, KUNCI_SESI]);
 
   const baru = useCallback(() => {
     abortRef.current?.abort();
@@ -244,7 +259,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     setMemuatPesan(false);
     setLaci(false);
     requestAnimationFrame(() => komposerRef.current?.fokus());
-  }, []);
+  }, [KUNCI_SESI]);
 
   const kirim = useCallback(async (teks, { lampiran } = {}) => {
     if (mengalirRef.current || !siap) return;
@@ -262,7 +277,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     try {
       let sid = aktifRef.current;
       if (!sid) {
-        const s = await asistenApi.createSession(judulDariTeks(teks));
+        const s = await asistenApi.createSession(judulDariTeks(teks), ruang);
         sid = s?.id;
         if (!sid) throw new Error('Percakapan baru gagal dibuat.');
         if (ctrl.signal.aborted) { ubah((p) => ({ ...p, keadaan: 'terhenti' })); return; }
@@ -291,7 +306,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
       setMengalir(false);
       muatDaftar(true);
     }
-  }, [siap, cv, periode, muatDaftar]);
+  }, [siap, cv, periode, muatDaftar, KUNCI_SESI, ruang]);
 
   /**
    * Muat ulang isi percakapan tanpa kerangka memuat (keadaan & rencana kartu dari server = sumber kebenaran).
@@ -392,7 +407,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
     muatDaftar(true);
     if (id === aktifRef.current) { if (!mengalirRef.current) segarkan(id); return; }
     pilih(id);
-  }, [deepLinkParams, pilih, segarkan, muatDaftar]);
+  }, [deepLinkParams, pilih, segarkan, muatDaftar, KUNCI_SESI]);
 
   // "Coba lagi" = kirim ulang pertanyaan sebelum jawaban yang gagal, sebagai giliran baru (riwayat server append-only).
   // Lampirannya tidak dikirim ulang: berkas itu sudah tercatat pada pertanyaan sebelumnya di percakapan yang sama.
@@ -459,7 +474,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
 
   const riwayat = (
     <RiwayatPercakapan sesi={sesi} memuat={memuatSesi} galat={galatSesi} aktifId={aktifId} cari={cari} onCari={setCari}
-      onPilih={pilih} onBaru={baru} tampilan="chat" onTampilan={gantiTampilan} />
+      onPilih={pilih} onBaru={baru} tampilan="chat" onTampilan={!ruang || ruang === 'umum' ? gantiTampilan : undefined} />
   );
 
   // Sambutan di TENGAH utas: judul + saran sebagai tombol (dulu: ruang kosong besar + saran di bawah).
@@ -470,9 +485,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
       </span>
       <div className="max-w-xl space-y-1">
         <p className="text-lg font-semibold text-foreground">Mau tanya apa hari ini?</p>
-        <p className="text-sm text-muted-foreground">
-          Tanyakan omzet per toko, produk terlaris, piutang jatuh tempo, atau stok menipis. Jawaban mengikuti CV dan periode yang dipilih.
-        </p>
+        <p className="text-sm text-muted-foreground">{teksRuang.sambut}</p>
       </div>
       {saran.length > 0 && (
         <div className="grid w-full max-w-2xl gap-2 sm:grid-cols-2" data-testid="asisten-saran">
@@ -495,10 +508,13 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
   // CV & periode ada di kepala percakapan (dulu satu baris penyaring sendiri di atas jendela chat).
   const pilihan = (
     <div className="flex w-full items-center gap-2 sm:w-auto">
-      <SmartNativeSelect value={cv} onChange={(e) => gantiCv(e.target.value)} searchable={false}
-        className="h-9 w-full sm:w-44" aria-label="CV yang dianalisis" title="CV yang dianalisis" data-testid="asisten-cv">
-        {cvOpsi.map((o) => <option key={o.code} value={o.code}>{labelCv(o)}</option>)}
-      </SmartNativeSelect>
+      {/* Portal Saya: data milik sendiri tidak dipisah per CV → pilihan CV tidak ditampilkan */}
+      {ruang !== 'saya' && (
+        <SmartNativeSelect value={cv} onChange={(e) => gantiCv(e.target.value)} searchable={false}
+          className="h-9 w-full sm:w-44" aria-label="CV yang dianalisis" title="CV yang dianalisis" data-testid="asisten-cv">
+          {cvOpsi.map((o) => <option key={o.code} value={o.code}>{labelCv(o)}</option>)}
+        </SmartNativeSelect>
+      )}
       <SmartNativeSelect value={periode} onChange={(e) => setPeriode(e.target.value)} searchable={false}
         className="h-9 w-full sm:w-40" aria-label="Periode bawaan" title="Periode bawaan jawaban" data-testid="asisten-periode">
         {periodeOpsi.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -509,8 +525,8 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
   return (
     <PageLayout
       testId="asisten-ai-page"
-      title="Asisten AI"
-      subtitle={sempit ? undefined : 'Tanya data penjualan, keuangan, stok, dan produksi; dijawab dengan grafik, tabel, dan sumber.'}
+      title={teksRuang.judul}
+      subtitle={sempit ? undefined : teksRuang.sub}
     >
       <div ref={wadahRef} className="min-h-[440px]" style={tinggi ? { height: tinggi } : { height: 'calc(100dvh - 12rem)' }}
         data-testid="asisten-wadah">
@@ -552,7 +568,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
             <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : []} saranRingkas={pesan.length > 0}
               onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap} catatan={catatanKomposer} lampiranAktif
               placeholder={!siap ? (PLACEHOLDER_BELUM_SIAP[status.data?.alasan] || 'Asisten AI belum siap')
-                : (sempit ? 'Tanya soal penjualan, stok…' : undefined)} />
+                : (sempit ? teksRuang.hp : teksRuang.kotak)} />
           </section>
         </GlassCard>
       </div>

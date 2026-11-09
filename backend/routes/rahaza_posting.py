@@ -862,9 +862,52 @@ async def cash_mutations_from_gl(db, gl_code: str, from_date: Optional[str] = No
             "count": count, "page": page, "page_size": page_size, "truncated": False, "rows": rows}
 
 
+# ───────────────────────── HPP RETUR PER KOMPONEN (2026-11-09, audit gudang G14) ─────────
+# Scan keluar (K15) menjurnal HPP terpecah 5-1000/5-2000/5-3500 (profil `cogs_marketplace_scan`).
+# Jurnal balik retur dulu selalu ke SATU akun (`credit_cogs` = 5-1000) ⇒ total benar tetapi rincian HPP
+# per komponen bergeser (upah 5-2000 tidak pernah dikoreksi). Sekarang dibalik per komponen dengan akun
+# yang SAMA dengan jurnal keluarnya; tanpa komponen/akun → satu baris akun cadangan seperti dulu.
+RETURN_COGS_EVENT = "cogs_marketplace_scan"
+_RETURN_COGS_ROLES = (("material", "debit_cogs_material"), ("labor", "debit_cogs_labor"),
+                      ("overhead", "debit_cogs_overhead"))
+
+
+def split_by_components(total: float, components: Optional[dict]) -> dict:
+    """Bagi `total` sebanding komponen per pcs (fungsi murni). Σ hasil = total (selisih pembulatan ke
+    komponen terbesar). Komponen kosong/0 → {}."""
+    comps = {k: max(0.0, float((components or {}).get(k) or 0)) for k, _ in _RETURN_COGS_ROLES}
+    s = sum(comps.values())
+    total = round(float(total or 0), 2)
+    if s <= 0 or total <= 0:
+        return {}
+    out = {k: round(total * v / s, 2) for k, v in comps.items() if v > 0}
+    resid = round(total - sum(out.values()), 2)
+    if resid:
+        big = max(out, key=lambda k: out[k])
+        out[big] = round(out[big] + resid, 2)
+    return out
+
+
+async def return_cogs_lines(db, total: float, components: Optional[dict], fallback_code: str,
+                            desc: str, *, side: str = "credit") -> list:
+    """Baris HPP retur (sisi `side`) per komponen; cadangan satu baris `fallback_code`."""
+    parts = split_by_components(total, components)
+    if parts:
+        m = await get_mapping(db, RETURN_COGS_EVENT)
+        codes = {k: m.get(r) for k, r in _RETURN_COGS_ROLES}
+        if all(codes.get(k) for k in parts):
+            label = {"material": "bahan", "labor": "upah", "overhead": "overhead"}
+            return [{"account_code": codes[k], "debit": amt if side == "debit" else 0,
+                     "credit": amt if side == "credit" else 0, "description": f"{desc} · {label[k]}"}
+                    for k, amt in parts.items() if amt > 0]
+    total = round(float(total or 0), 2)
+    return [{"account_code": fallback_code, "debit": total if side == "debit" else 0,
+             "credit": total if side == "credit" else 0, "description": desc}]
+
+
 # ───────────────────────── RETUR RUSAK → KERUGIAN (Iter 122) ──────────────────
 async def post_return_damaged_loss(db, wh_ret: dict, qty: int, unit_cost: float, user: dict,
-                                   disposed: bool = False) -> dict:
+                                   disposed: bool = False, components: Optional[dict] = None) -> dict:
     """Retur kondisi rusak masuk karantina: nilai HPP direklas Dr Kerugian Retur Rusak / Cr HPP.
     Persediaan karantina bernilai 0 (tidak dijual). Idempoten per retur gudang.
 
@@ -884,10 +927,8 @@ async def post_return_damaged_loss(db, wh_ret: dict, qty: int, unit_cost: float,
     code = wh_ret.get("return_code") or wh_ret.get("id")
     where = "dibuang (tidak masuk stok)" if disposed else "rusak → karantina"
     desc = f"Retur {code} {where} ({qty} × {round(unit_cost)})"
-    lines = [
-        {"account_code": loss_code, "debit": total, "credit": 0, "description": desc},
-        {"account_code": cogs_code, "debit": 0, "credit": total, "description": f"Retur {code} reklas HPP → kerugian"},
-    ]
+    lines = [{"account_code": loss_code, "debit": total, "credit": 0, "description": desc}]
+    lines += await return_cogs_lines(db, total, components, cogs_code, f"Retur {code} reklas HPP → kerugian")
     memo = f"Kerugian retur {'dibuang' if disposed else 'rusak'} {code}"
     return await _create_posted_je(db, today_wib(), memo, "return_damaged_loss", source_ref, lines, user)
 
@@ -1054,9 +1095,10 @@ async def post_fg_issue_cogs(db, issue_doc: dict, user: dict) -> dict:
 
 
 # ───────────────────────── RETUR MARKETPLACE → FG BERNILAI (Iter 121, B-08) ────
-async def post_marketplace_return_restock(db, wh_ret: dict, qty: int, unit_cost: float, user: dict) -> dict:
+async def post_marketplace_return_restock(db, wh_ret: dict, qty: int, unit_cost: float, user: dict,
+                                          components: Optional[dict] = None) -> dict:
     """Barang retur kondisi baik masuk stok jual → Dr FG / Cr HPP sebesar HPP saat keluar.
-    Idempoten per retur gudang."""
+    Idempoten per retur gudang. 2026-11-09 (G14): kredit HPP per komponen (`components` per pcs)."""
     total = round(float(unit_cost or 0) * int(qty or 0), 2)
     if total <= 0:
         return {"ok": False, "error": "HPP retur 0 — tidak ada nilai yang bisa dijurnal.", "zero_cost": True}
@@ -1070,10 +1112,8 @@ async def post_marketplace_return_restock(db, wh_ret: dict, qty: int, unit_cost:
         return {"ok": False, "error": "Mapping 'cogs_marketplace_return' belum lengkap."}
     code = wh_ret.get("return_code") or wh_ret.get("id")
     desc = f"Retur {code} FG kembali ({qty} × {round(unit_cost)})"
-    lines = [
-        {"account_code": fg_code, "debit": total, "credit": 0, "description": desc},
-        {"account_code": cogs_code, "debit": 0, "credit": total, "description": f"Retur {code} balik HPP"},
-    ]
+    lines = [{"account_code": fg_code, "debit": total, "credit": 0, "description": desc}]
+    lines += await return_cogs_lines(db, total, components, cogs_code, f"Retur {code} balik HPP")
     return await _create_posted_je(db, today_wib(), f"Balik HPP retur marketplace {code}",
                                    "cogs_marketplace_return", source_ref, lines, user)
 

@@ -109,6 +109,12 @@ class ReturnBridgeError(Exception):
     """Kegagalan yang harus terlihat (mis. lokasi master tidak ada)."""
 
 
+# 2026-11-09 (audit gudang G5) — satu kalimat untuk semua jalur keputusan yang menambah stok.
+UNLINKED_DECISION_MSG = (
+    "Retur ini belum tertaut master barang jadi, jadi stok tidak bisa ditambah. Tekan 'Pilih barang' "
+    "di detail retur dan pilih SKU yang benar-benar kembali, lalu putuskan lagi.")
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # 2026-11-02 (K30) — "PERLU TINDAKAN" untuk gudang: retur menunggu keputusan
 # ═════════════════════════════════════════════════════════════════════════════
@@ -220,6 +226,30 @@ async def resolve_location(db, condition) -> dict:
         "name": loc.get("name") or code,
         "sellable": sellable,
     }
+
+
+async def sellable_location(db, location_id: str) -> dict:
+    """2026-11-09 (audit gudang G16) — lokasi pilihan untuk barang retur kondisi BAIK.
+
+    Harus lokasi aktif `rahaza_locations` dan BUKAN lokasi karantina/terblokir (barang baik masuk stok
+    jual). Barang rusak tetap ke lokasi berperan karantina (:func:`resolve_location`)."""
+    from core.catalog_stock import blocked_location_ids
+    loc = await db.rahaza_locations.find_one({"id": location_id, "active": {"$ne": False}},
+                                            {"_id": 0, "id": 1, "code": 1, "name": 1})
+    if not loc:
+        raise ReturnBridgeError("Lokasi simpan retur tidak ditemukan di Struktur Gudang — pilih dari daftar.")
+    if loc["id"] in await blocked_location_ids(db):
+        raise ReturnBridgeError(f"Lokasi {loc.get('code')} adalah lokasi karantina/terblokir — barang retur "
+                                "kondisi baik harus masuk lokasi stok jual.")
+    return {"id": loc["id"], "code": loc.get("code") or "", "name": loc.get("name") or loc.get("code") or "",
+            "sellable": True}
+
+
+async def restock_location(db, condition, location_id: str | None = None) -> dict:
+    """Lokasi tujuan stok retur: kondisi Baik + lokasi dipilih → lokasi itu; selain itu menurut peran."""
+    if location_id and is_sellable_condition(condition):
+        return await sellable_location(db, location_id)
+    return await resolve_location(db, condition)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -438,6 +468,33 @@ async def find_linked_wh(db, ret: dict) -> dict | None:
     return rows[0] if rows else None
 
 
+def alasan_tanpa_retur_fisik(ret: dict) -> str:
+    """Alasan retur ini TIDAK butuh pekerjaan Retur Fisik di gudang, atau ``""``.
+
+    2026-11-09 (keputusan owner, kebutuhan lintas-agen AI-impor) — impor "Retur & Refund"
+    menurunkan ``goods_returned=False`` untuk jenis "Refund only" (dana kembali TANPA barang
+    kembali). Membuat pekerjaan Pending untuknya membuat gudang menunggu paket yang tidak
+    pernah datang. Hanya ``False`` yang eksplisit yang dilewati — ``None`` (kolom jenis
+    pengembalian tidak ada / retur dari form) tetap dijembatani seperti biasa.
+    """
+    if (ret or {}).get("goods_returned") is not False:
+        return ""
+    jenis = str(ret.get("refund_type_raw") or "").strip() or "Refund only"
+    return (f"jenis pengembalian “{jenis}” — dana dikembalikan tanpa barang dikirim balik, "
+            "jadi tidak ada paket yang perlu diterima gudang dan stok tidak bertambah.")
+
+
+async def _stamp_skip(db, marketing_return_id: str, alasan: str) -> None:
+    """Catat di retur Marketing KENAPA tidak ada Retur Fisik (layar Toko & audit membacanya)."""
+    try:
+        await db[MKT].update_one({"id": marketing_return_id}, {"$set": {
+            "wh_skip_reason": alasan, "wh_sync_ok": True, "wh_sync_error": "",
+            "wh_sync_at": _now(), "updated_at": _now()}})
+    except Exception as e:  # noqa: BLE001
+        logger.error("[retur-jembatan] gagal mencatat alasan tanpa Retur Fisik %s: %s",
+                     marketing_return_id, e)
+
+
 async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
                            auto_restock: bool = False) -> dict:
     """Pastikan retur Marketing punya SATU pekerjaan Retur Fisik di Gudang.
@@ -447,7 +504,10 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
     ``auto_restock=True`` dibiarkan untuk pemanggil lama yang sadar, tetapi tidak
     lagi dipakai jalur Marketing mana pun.
 
-    Return: {created, restocked, wh_return, identity, message}
+    2026-11-09 — retur ``goods_returned=False`` ("Refund only") TIDAK dibuatkan pekerjaan baru
+    (:func:`alasan_tanpa_retur_fisik`); pekerjaan yang SUDAH ada tidak disentuh.
+
+    Return: {created, restocked, wh_return, identity, message} (+ ``skipped``, ``reason``)
     """
     actor = actor or {}
     cond = normalize_condition(condition if condition is not None
@@ -466,6 +526,15 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
             res["message"] = done.get("message") or res["message"]
         await _stamp_marketing(db, ret["id"], res["wh_return"])
         return res
+
+    # ── 2026-11-09 — "Refund only": barang TIDAK kembali, jadi tidak ada paket yang ditunggu ──
+    alasan = alasan_tanpa_retur_fisik(ret)
+    if alasan:
+        await _stamp_skip(db, ret["id"], alasan)
+        logger.info("[retur-jembatan] retur %s tidak dibuatkan Retur Fisik: %s", ret.get("id"), alasan)
+        return {"created": False, "restocked": False, "skipped": True, "wh_return": None,
+                "identity": None, "reason": alasan,
+                "message": f"Retur fisik tidak dibuat: {alasan}"}
 
     ident = await resolve_identity(db, ret)
     code = await _next_code(db)
@@ -643,7 +712,8 @@ async def _value_damaged(db, wh_ret: dict, mid: str, qty: int, actor: dict,
         out["loss_basis"] = basis["basis"]
         out["loss_unit_cost"] = unit_cost
         out["loss_amount"] = round(unit_cost * qty, 2)
-        je = await post_return_damaged_loss(db, wh_ret, qty, unit_cost, actor or {}, disposed=disposed)
+        je = await post_return_damaged_loss(db, wh_ret, qty, unit_cost, actor or {}, disposed=disposed,
+                                            components=basis.get("components"))
         out["loss_je_id"] = je.get("je_id")
         out["loss_je_number"] = je.get("je_number")
         out["loss_post_error"] = None if je.get("ok") else je.get("error")
@@ -682,7 +752,8 @@ async def _value_restock(db, wh_ret: dict, mid: str, qty: int, actor: dict) -> d
                                          unit_cost=unit_cost, components=basis["components"],
                                          breakdown={"source": "marketplace_return", "unit_cost": unit_cost})
             out["hpp_layer_id"] = (layer or {}).get("id")
-        je = await post_marketplace_return_restock(db, wh_ret, qty, unit_cost, actor or {})
+        je = await post_marketplace_return_restock(db, wh_ret, qty, unit_cost, actor or {},
+                                                   components=basis.get("components"))
         out["cogs_je_id"] = je.get("je_id")
         out["cogs_je_number"] = je.get("je_number")
         out["cogs_post_error"] = None if je.get("ok") else je.get("error")
@@ -699,25 +770,23 @@ async def _value_restock(db, wh_ret: dict, mid: str, qty: int, actor: dict) -> d
 
 
 async def restock(db, wh_ret: dict, *, condition=None, qty=None, actor=None,
-                  note: str = "") -> dict:
+                  note: str = "", location_id: str | None = None) -> dict:
     """Tambah stok barang retur. IDEMPOTEN & guarded.
 
     · Penjaga atomik `restocked` dipasang SEBELUM stok ditambah supaya klik ganda
       / dua proses paralel tidak pernah menambah stok dua kali.
     · Barang Baik → `ZNA-FG` (ikut stok jual). Barang Rusak → `ZNA-KARANTINA`
       (dikecualikan dari stok jual oleh K-6a) ⇒ barang rusak tidak bisa terjual.
+    · 2026-11-09 (G16): barang Baik boleh ke lokasi stok jual PILIHAN (`location_id`, dari langkah Terima).
     """
     actor = actor or {}
     mid = wh_ret.get("material_id") or wh_ret.get("fg_material_id")
     if not mid:
-        raise ReturnBridgeError(
-            "Retur ini belum tertaut master barang jadi, jadi stok tidak bisa "
-            "ditambah. Pilih produknya dari katalog di retur Marketing, atau "
-            "petakan SKU-nya lewat Jembatan SKU.")
+        raise ReturnBridgeError(UNLINKED_DECISION_MSG)
     cond = normalize_condition(condition if condition is not None
                                else wh_ret.get("item_condition"))
     n = max(1, _int(qty if qty is not None else wh_ret.get("qty"), 1))
-    loc = await resolve_location(db, cond)
+    loc = await restock_location(db, cond, location_id)
 
     # ── penjaga idempotensi (atomik) ──────────────────────────────────────────
     claim = await db[WH].update_one(
@@ -825,6 +894,58 @@ async def restock(db, wh_ret: dict, *, condition=None, qty=None, actor=None,
     }
 
 
+async def set_material(db, wh_return_id: str, material_id: str, *, actor=None, note: str = "") -> dict:
+    """2026-11-09 (audit gudang G5) — "Pilih barang": gudang menautkan retur ke SATU master FG.
+
+    Syarat: retur belum diputuskan (Pending/Received/Inspected) dan stoknya belum pernah ditambah;
+    master = barang jadi AKTIF milik DA (barang klien maklon ditolak — bukan stok DA, K14).
+    Retur yang sudah tertaut boleh diganti barangnya selama belum diputuskan (jejak barang lama dicatat).
+    → {wh_return, message}"""
+    actor = actor or {}
+    if not material_id:
+        raise ReturnBridgeError("Pilih barang jadi dari master dulu.")
+    doc = await db[WH].find_one({"id": wh_return_id}, {"_id": 0})
+    if not doc:
+        raise ReturnBridgeError("Retur fisik tidak ditemukan")
+    if doc.get("status") not in OPEN_STATUSES or doc.get("restocked"):
+        raise ReturnBridgeError(
+            f"Retur {doc.get('return_code')} sudah diputuskan ('{doc.get('status')}') — barangnya tidak bisa "
+            "diganti. Gunakan 'Balik Keputusan' bila keputusannya salah.")
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+    if not mat or (mat.get("type") or "fg") != "fg":
+        raise ReturnBridgeError("Barang yang dipilih bukan master barang jadi.")
+    if mat.get("active") is False:
+        raise ReturnBridgeError(f"{mat.get('code')} sudah nonaktif di master — pilih SKU yang masih aktif.")
+    if mat.get("owner_type") == "client":
+        raise ReturnBridgeError(f"{mat.get('code')} barang milik klien maklon — bukan stok jual DA.")
+    snap = await _material_snapshot(db, material_id)
+    who = _actor_name(actor)
+    old = doc.get("material_id") or doc.get("fg_material_id")
+    cands = {c.get("fg_material_id") for c in (doc.get("link_candidates") or []) if c.get("fg_material_id")}
+    txt = (f"Barang dipilih gudang: {snap['material_code']} {snap['material_name']}"
+           + (f" (ganti dari {doc.get('sku_code') or old})" if old and old != material_id else "")
+           + (" · sesuai kandidat pesanan" if material_id in cands else "")
+           + (f" · {note.strip()}" if note and note.strip() else ""))
+    patch = {
+        "material_id": material_id, "fg_material_id": material_id, "variant_id": snap.get("variant_id"),
+        "sku_code": snap["material_code"], "product_name": snap["material_name"] or doc.get("product_name") or "",
+        "material_unit": snap.get("unit") or "pcs", "material_category": snap.get("category_name") or "",
+        "material_color": snap.get("color_name") or "", "material_option": snap.get("option_name") or "",
+        "link_status": LINK_OK, "link_reason": "", "link_source": "manual_pick_wh",
+        "linked_by": who, "linked_at": _now_iso(), "updated_at": _now_iso(),
+    }
+    res = await db[WH].update_one({"id": wh_return_id, "status": {"$in": list(OPEN_STATUSES)},
+                                   "restocked": {"$ne": True}},
+                                  {"$set": patch, "$push": {"timeline": {
+                                      "status": doc.get("status"), "at": _now_iso(), "by": who, "note": txt}}})
+    if not res.matched_count:
+        raise ReturnBridgeError("Retur ini baru saja diproses pengguna lain — muat ulang.")
+    fresh = await db[WH].find_one({"id": wh_return_id}, {"_id": 0})
+    if fresh.get("source_marketing_return_id"):
+        await _stamp_marketing(db, fresh["source_marketing_return_id"], fresh)
+    return {"wh_return": fresh, "message": txt}
+
+
 async def refresh_catalog_cache(db, material_id: str) -> int:
     """Segarkan cache stok jual item katalog yang memakai material ini (K-7a).
 
@@ -853,7 +974,7 @@ async def refresh_catalog_cache(db, material_id: str) -> int:
 # PROSES OTOMATIS: terima → inspeksi → selesai + restock
 # ═════════════════════════════════════════════════════════════════════════════
 async def auto_process(db, wh_return_id: str, *, condition=None, qty=None,
-                       actor=None, note: str = "") -> dict:
+                       actor=None, note: str = "", location_id: str | None = None) -> dict:
     """Terima + periksa + putuskan dalam satu langkah (tombol gudang "Terima & Putuskan").
 
     2026-11-02 (K1) — sejak W4 dicabut, fungsi ini TIDAK lagi dipanggil saat retur
@@ -880,6 +1001,16 @@ async def auto_process(db, wh_return_id: str, *, condition=None, qty=None,
     n = decision_qty(doc, qty)
     sellable = is_sellable_condition(cond)
     action = ACTION_RESTOCK if sellable else ACTION_QUARANTINE
+    # 2026-11-09 (G5/G16): semua syarat stok diperiksa SEBELUM status ditulis "Resolved" — dulu lokasi
+    # yang tidak ada / barang tak tertaut baru ketahuan sesudahnya ⇒ retur "Selesai" tanpa stok.
+    if not (doc.get("material_id") or doc.get("fg_material_id")):
+        raise ReturnBridgeError(UNLINKED_DECISION_MSG)
+    await restock_location(db, cond, location_id)
+    before = {k: doc.get(k) for k in (
+        "status", "received_at", "received_by", "received_qty", "unboxing_condition_notes",
+        "package_condition", "inspected_at", "inspected_by", "item_condition", "return_cause",
+        "cause_detail", "recommended_action", "resolved_at", "resolved_by", "action_taken",
+        "action_notes", "auto_processed")}
 
     steps = [
         {"status": "Received", "at": _now_iso(), "by": who,
@@ -913,7 +1044,16 @@ async def auto_process(db, wh_return_id: str, *, condition=None, qty=None,
     })
 
     fresh = await db[WH].find_one({"id": wh_return_id}, {"_id": 0})
-    res = await restock(db, fresh, condition=cond, qty=n, actor=actor, note=note)
+    try:
+        res = await restock(db, fresh, condition=cond, qty=n, actor=actor, note=note, location_id=location_id)
+    except Exception:
+        # stok tidak bertambah (klaim `restocked` sudah dilepas restock) ⇒ keputusan cepat dibatalkan,
+        # retur kembali ke tahap sebelumnya (jejak timeline tetap, ditambah catatan gagal).
+        await db[WH].update_one({"id": wh_return_id, "restocked": {"$ne": True}}, {
+            "$set": {**before, "updated_at": _now_iso()},
+            "$push": {"timeline": {"status": before.get("status") or STATUS_PENDING, "at": _now_iso(),
+                                   "by": who, "note": "Keputusan cepat GAGAL — stok tidak berubah, retur dibuka lagi"}}})
+        raise
     if res.get("wh_return") and doc.get("source_marketing_return_id"):
         await _stamp_marketing(db, doc["source_marketing_return_id"], res["wh_return"])
     await close_pending_notifs(db, wh_return_id)   # 2026-11-02 (K30)
@@ -944,6 +1084,15 @@ async def sync_all(db, *, actor=None, dry_run: bool = False,
                                            "restocked": 1})
         if wh_exists and not dry_run:
             out["already"] += 1
+            continue
+        tanpa_fisik = "" if wh_exists else alasan_tanpa_retur_fisik(r)
+        if tanpa_fisik:
+            # 2026-11-09 — "Refund only": dilaporkan, tidak dijembatani (dry-run maupun nyata)
+            out["skipped"] += 1
+            out["details"].append({"marketing_return_id": r["id"], "order_id": r.get("order_id"),
+                                   "skipped": True, "reason": tanpa_fisik})
+            if not dry_run:
+                await _stamp_skip(db, r["id"], tanpa_fisik)
             continue
         if dry_run:
             ident = await resolve_identity(db, r)

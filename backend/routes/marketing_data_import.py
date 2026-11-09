@@ -50,11 +50,13 @@ from auth import require_auth, log_activity
 from core import marketing_account_scope as scope
 from core.marketing_import_schema import (
     get_source_type, source_type_catalog, source_group_catalog, SourceType,
-    is_retired_mapping,
+    is_retired_mapping, PERIOD_INPUT_TYPES,
 )
+from core.marketing_import_prenorm import PrenormBlocked
 from core import marketing_import_engine as eng
 from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
+from core import sku_kunci as _skuk
 # Sesi #20 — SSOT kosakata status fulfillment. Impor pesanan dulu menulis
 # 'unallocated' yang TIDAK dikenal antrean gudang ⇒ 559 pesanan "Perlu dikirim"
 # tidak pernah terlihat tim gudang. Sekarang status awal diturunkan dari status
@@ -210,17 +212,23 @@ async def context_options(
     except KeyError as e:
         raise HTTPException(400, str(e)) from None
 
+    # M-01 — pilihan toko di wizard = toko yang dipegang pemakai ini
+    _visible = await scope.visible_account_ids(db, await _actor(request))
+    _opts = await scope.account_options(db)
+    if _visible is not None:
+        _opts = [a for a in _opts if a.get("id") in set(_visible)]
     out: Dict[str, Any] = {
         "ok": True,
         "source_type": st.key,
         "account_scope": st.account_scope,
         "context": list(st.context),
-        "accounts": await scope.account_options(db),
+        "accounts": _opts,
     }
     if account_id:
         acc = await db[scope.ACCOUNTS].find_one({"id": account_id}, {"_id": 0})
         if not acc:
             raise HTTPException(404, f"Akun '{account_id}' tidak ditemukan")
+        await _guard_account(db, request, account_id)
         out["account"] = _ser(acc)
         if "creator" in st.context:
             out["creators"] = _ser(await scope.creator_options(db, account_id))
@@ -343,6 +351,7 @@ async def detect_file(
     """
     await require_auth(request)
     db = get_db()
+    await _guard_account(db, request, account_id)            # M-01
     raw = await file.read()
     if len(raw) > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"Berkas lebih dari {MAX_FILE_MB} MB")
@@ -374,10 +383,11 @@ async def detect_file(
     # toko mana yang benar dari daftar panjang.
     matching_accounts = []
     if plat_file:
-        rows_acc = await db[scope.ACCOUNTS].find(
-            {"status": {"$ne": "inactive"}},
-            {"_id": 0, "id": 1, "account_name": 1, "account_code": 1, "platform": 1,
-             "platform_warehouse_name": 1}).to_list(200)
+        # M-01 / I-6 — usulan toko hanya dari toko yang DIPEGANG pemakai ini
+        rows_acc = await scope.visible_accounts(
+            db, await _actor(request), base={"status": {"$ne": "inactive"}},
+            projection={"_id": 0, "id": 1, "account_name": 1, "account_code": 1,
+                        "platform": 1, "platform_warehouse_name": 1}, limit=200)
         matching_accounts = [a for a in rows_acc
                              if _platform_matches(a.get("platform"), plat_file)][:20]
 
@@ -403,6 +413,59 @@ async def detect_file(
     }
 
 
+def _tanggal_isian(v: Any) -> str:
+    """Isian tanggal form → teks rapi; nilai bukan teks (mis. bawaan `Form(None)` saat handler
+    dipanggil langsung oleh impor paket / uji) dianggap kosong."""
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _periode_unggah(st: SourceType, fname: str, period_start: Any, period_end: Any
+                    ) -> tuple:
+    """Periode laporan untuk jenis yang berkasnya tanpa tanggal (``PERIOD_INPUT_TYPES``).
+
+    2026-11-09 (kebutuhan lintas-agen AI-impor) — isian staf DITERUSKAN ke penormal dengan cara
+    yang sama seperti layar "Impor banyak berkas": nama berkas sesi diberi penanda
+    ``periode_YYYY-MM-DD_YYYY-MM-DD__…`` (dibaca ulang saat pratinjau & commit lewat
+    ``_reparse``), jadi staf tidak perlu mengganti nama berkasnya sendiri. Tanpa isian, periode
+    yang tertulis di nama berkas tetap diterima.
+
+    → ``(nama_berkas_sesi, {"period_start", "period_end", "period_source"} | None)``;
+    galat isian → HTTP 400 berbahasa Indonesia.
+    """
+    from core.marketing_import_prenorm import penanda_periode, periode_dari_nama
+    if st.key not in PERIOD_INPUT_TYPES:
+        return fname, None
+    mulai, selesai = _tanggal_isian(period_start), _tanggal_isian(period_end)
+    sumber = "isian"
+    if mulai or selesai:
+        if not (mulai and selesai):
+            raise HTTPException(400, "Isi kedua tanggal periode laporan: Periode mulai dan Periode selesai.")
+        for v in (mulai, selesai):
+            try:
+                ok = datetime.strptime(v, "%Y-%m-%d").strftime("%Y-%m-%d") == v
+            except ValueError:
+                ok = False
+            if not ok:
+                raise HTTPException(400, f"Tanggal periode '{v}' tidak sah. Gunakan format TTTT-BB-HH, "
+                                         "mis. 2026-08-01.")
+    else:
+        mulai, selesai = periode_dari_nama(fname)
+        sumber = "nama_berkas"
+        if not (mulai and selesai):
+            raise HTTPException(400, (
+                f"Periode laporan wajib diisi untuk “{st.label}”. Berkas ekspornya tidak memuat "
+                "tanggal belanja — angkanya total untuk rentang yang Anda pilih saat mengekspor. "
+                "Isi Periode mulai dan Periode selesai di langkah Konteks data."))
+    if mulai > selesai:
+        raise HTTPException(400, "Tanggal mulai periode tidak boleh sesudah tanggal selesai.")
+    if mulai[:7] != selesai[:7]:
+        raise HTTPException(400, (
+            f"Periode {mulai} s/d {selesai} menyeberang bulan. Biaya iklan dipakai untuk realisasi "
+            "anggaran BULANAN — ekspor ulang laporannya per bulan, lalu unggah masing-masing."))
+    nama = penanda_periode(mulai, selesai, fname) if sumber == "isian" else fname
+    return nama, {"period_start": mulai, "period_end": selesai, "period_source": sumber}
+
+
 @router.post("/upload")
 async def upload(
     request: Request,
@@ -413,6 +476,9 @@ async def upload(
     creator_id: Optional[str] = Form(None),
     catalog_id: Optional[str] = Form(None),
     live_session_id: Optional[str] = Form(None),
+    # 2026-11-09 — periode laporan untuk jenis tanpa tanggal di berkas (GMV Max)
+    period_start: Optional[str] = Form(None),
+    period_end: Optional[str] = Form(None),
 ):
     await require_auth(request)
     user = _user(request)
@@ -423,6 +489,8 @@ async def upload(
     except KeyError as e:
         raise HTTPException(400, str(e)) from None
 
+    # M-01 — toko tujuan harus toko yang dipegang pemakai (sebelum berkas dibaca)
+    await _guard_account(db, request, account_id)
     ctx_in = {"host_id": host_id, "creator_id": creator_id, "catalog_id": catalog_id,
               "live_session_id": live_session_id}
     resolved = await _validate_context(db, st, account_id, ctx_in)
@@ -433,6 +501,8 @@ async def upload(
     fname = file.filename or "data.csv"
     if not fname.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm", ".tsv", ".txt")):
         raise HTTPException(400, "Format berkas harus CSV atau Excel (.xlsx)")
+    original_fname = fname
+    fname, periode = _periode_unggah(st, fname, period_start, period_end)
 
     # 2026-11-06 (Tahap 2) — penolakan PENORMAL (ekspor KPI yang bentuknya belum
     # dikenal) tidak lagi menghentikan unggahan: berkas dibaca apa adanya dan
@@ -442,6 +512,9 @@ async def upload(
     except eng.TooManyRows as e:
         # 2026-11-07 (audit §3.C #10) — dulu baris ke-20.001 dst. DIBUANG diam-diam dan
         # impor tampak "berhasil". Sekarang berkas ditolak dengan jalan keluarnya.
+        raise HTTPException(400, str(e)) from None
+    except PrenormBlocked as e:
+        # berkas DIKENALI tetapi isian wajib kurang — pesannya sudah kalimat untuk staf
         raise HTTPException(400, str(e)) from None
     except Exception as e:
         raise HTTPException(400, f"Berkas tidak bisa dibaca: {e}") from None
@@ -639,7 +712,11 @@ async def upload(
         "source_type": st.key,
         "source_label": st.label,
         "target_collection": st.collection,
+        # `filename` = nama yang dibaca penormal (bisa membawa penanda periode isian staf);
+        # `original_filename` = nama berkas yang diunggah, untuk ditampilkan.
         "filename": fname,
+        "original_filename": original_fname,
+        **(periode or {}),
         "file_path": path,
         "file_size_kb": round(len(raw) / 1024, 1),
         # F12 — sidik ISI berkas. Satu berkas ekspor tidak mungkin milik dua toko,
@@ -833,10 +910,34 @@ def _commit_message(st: SourceType, inserted: int, updated: int, rejected: int) 
 
 
 
-async def _load_session(db, session_id: str) -> dict:
+async def _actor(request: Optional[Request]) -> dict:
+    """Pemakai permintaan ini (diisi `require_auth` di `request.state`)."""
+    if request is None:
+        return {}
+    return _user(request) or (await require_auth(request)) or {}
+
+
+async def _guard_account(db, request: Optional[Request], account_id: Optional[str]) -> None:
+    """M-01 (audit Marketing 9 Nov 2026) — impor hanya ke toko yang DIPEGANG pemakai.
+
+    Middleware lingkup toko sengaja melewati unggahan multipart, dan `require_account`
+    hanya memeriksa toko itu ADA. Akibatnya PIC toko A bisa mengunggah, merencanakan,
+    menyimpan, dan membatalkan impor toko B (uji s4 #9: HTTP 200). Semua pintu impor
+    sekarang lewat pemeriksaan yang sama dengan layar lain (`assert_account_visible`).
+    """
+    if request is None or not account_id:
+        return
+    await scope.assert_account_visible(db, await _actor(request), account_id)
+
+
+async def _load_session(db, session_id: str, request: Optional[Request]) -> dict:
+    """Sesi impor + PAGAR LINGKUP TOKO (M-01): sesi toko yang tidak di-assign ke
+    pemakai ini dijawab 403 — membuka, memetakan ulang, merencanakan, menyimpan,
+    membatalkan, dan menghapusnya sama-sama mengubah data toko itu."""
     s = await db[SESSIONS].find_one({"id": session_id})
     if not s:
         raise HTTPException(404, "Sesi impor tidak ditemukan")
+    await _guard_account(db, request, s.get("account_id"))
     return s
 
 
@@ -976,7 +1077,7 @@ async def get_session(session_id: str, request: Request,
                       only: Optional[str] = Query(None, pattern="^(valid|warning|error)$")):
     await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     rows = _reparse(s)
     built = eng.build_rows(rows, s.get("mapping") or [], st, limit=eng.MAX_PREVIEW_ROWS)
@@ -1019,7 +1120,7 @@ async def update_mapping(session_id: str, body: MappingIn, request: Request):
     """
     await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     if s.get("status") == "committed":
         raise HTTPException(400, "Sesi sudah di-commit; buat sesi baru untuk mengubah")
     st = get_source_type(s["source_type"])
@@ -1098,7 +1199,7 @@ async def download_errors(session_id: str, request: Request):
     """Laporan baris bermasalah — supaya staf memperbaiki di file aslinya."""
     await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     built = eng.build_rows(_reparse(s), s.get("mapping") or [], st)
     bad = [r for r in built if r["status"] != "valid"]
@@ -1179,7 +1280,7 @@ async def ai_assist(session_id: str, request: Request):
     """
     user = await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     mapping = s.get("mapping") or []
     unmapped = [m["column"] for m in mapping
@@ -1265,13 +1366,18 @@ async def _reference_index(db, st: SourceType, session: dict) -> dict:
             {"catalog_id": {"$in": cat_ids}} if cat_ids else {"catalog_id": "__none__"},
             {"_id": 0, "id": 1, "sku": 1, "name": 1, "hpp": 1, "harga_jual": 1,
              "price": 1, "fg_material_id": 1, "category": 1,
-             "platform_sku_ids": 1, "variant_id": 1, "model_id": 1}).to_list(5000)
+             "platform_sku_ids": 1, "bridge_keys": 1, "variant_id": 1, "model_id": 1,
+             "fg_color": 1, "fg_size": 1, "variant_info": 1}).to_list(5000)
         idx["items_by_sku"] = {scope.norm(i.get("sku")): i for i in items if i.get("sku")}
+        # Dipakai hanya untuk USULAN (layar Pemetaan SKU). Penautan SUNGGUHAN lewat nama
+        # memakai `items_by_name_all` + variasi (G3, `core.sku_kunci.pilih_lewat_nama`).
         idx["items_by_name"] = {scope.norm(i.get("name")): i for i in items if i.get("name")}
+        idx["items_by_name_all"] = _skuk.indeks_nama(items)
         # F1 — SSOT §4.3: pemetaan SKU platform → item katalog (hasil layar Pemetaan SKU)
+        # G4 — + kunci nama+variasi untuk baris TANPA SKU platform (`bridge_keys`)
         by_psku: Dict[str, Any] = {}
         for i in items:
-            for psid in (i.get("platform_sku_ids") or []):
+            for psid in list(i.get("platform_sku_ids") or []) + list(i.get("bridge_keys") or []):
                 if psid:
                     by_psku[str(psid).strip()] = i
         idx["items_by_platform_sku"] = by_psku
@@ -1448,12 +1554,18 @@ async def _annotate_master_links(db, st: SourceType, session: dict,
         return await _annotate_derived_daily(db, st, session, built)
     refidx = await _reference_index(db, st, session)
     by_sku = refidx.get("items_by_sku", {})
-    by_name = refidx.get("items_by_name", {})
+    by_all = refidx.get("items_by_name_all", {})
     for r in built:
         d = r.get("data") or {}
-        found = (by_sku.get(scope.norm(d.get("sku")))
-                 or by_name.get(scope.norm(d.get("product_name"))))
-        if not found:
+        found = by_sku.get(scope.norm(d.get("sku")))
+        why_name = ""
+        if not found and d.get("product_name"):
+            found, why_name = _skuk.pilih_lewat_nama(by_all, d.get("product_name"),
+                                                     punya_variasi=False)
+        if not found and why_name:
+            r["errors"] = list(r.get("errors") or []) + [why_name]
+            r["status"] = "error"
+        elif not found:
             r["errors"] = list(r.get("errors") or []) + [
                 f"SKU/produk '{d.get('sku') or d.get('product_name') or '(kosong)'}' "
                 f"tidak ada di katalog toko ini — tambahkan dulu di Manajemen Katalog"]
@@ -1497,6 +1609,13 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         if rtype not in _shape.REVENUE_TYPES:
             return None, [f"Jenis Revenue '{d.get('revenue_type')}' tidak dikenali "
                           f"(pilih: {', '.join(_shape.REVENUE_TYPES)})"]
+        if rtype == "live":
+            # M-24 / Q-2 (9 Nov 2026) — omzet live resmi = pesanan berkanal LIVE di
+            # rekap total (`traffic.live`). Baris "live" di rekap impor dulu
+            # diterima lalu DITIMPA diam-diam oleh sinkron shift/kreator.
+            return None, ["Baris jenis 'live' tidak diterima: omzet live dihitung dari "
+                          "pesanan berkanal LIVE (impor pesanan), bukan diketik di rekap. "
+                          "Isi angka live di kolom kanal 'Live' pada baris jenis 'total'."]
         doc = _shape.build_daily_doc(
             account=acc,
             date=d.get("date"),
@@ -1509,10 +1628,13 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
 
     elif st.key == "orders":
         item = None
+        _why_name = ""
         if d.get("sku_id"):
             item = refidx.get("items_by_sku", {}).get(scope.norm(d["sku_id"]))
         if item is None and d.get("product_name"):
-            item = refidx.get("items_by_name", {}).get(scope.norm(d["product_name"]))
+            # G3 — nama hanya bila nama + variasi menunjuk tepat satu item katalog
+            item, _why_name = _skuk.pilih_lewat_nama(
+                refidx.get("items_by_name_all", {}), d["product_name"], d.get("variation"))
         if item:
             d["catalog_item_id"] = item["id"]
             d["fg_material_id"] = item.get("fg_material_id")
@@ -1521,8 +1643,8 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         else:
             d["catalog_item_id"] = None
             d["master_link_source"] = "unlinked"
-            warn.append("SKU/produk tidak ada di katalog toko — order tersimpan "
-                        "tapi belum tertaut master (alokasi stok harus manual)")
+            warn.append(_why_name or "SKU/produk tidak ada di katalog toko — order tersimpan "
+                        "tapi belum tertaut barang (tautkan di Pemetaan SKU)")
         qty = _num("quantity", 1) or 1
         price = _num("price_final") or _num("price_original")
         if not d.get("total_payment"):
@@ -1551,8 +1673,10 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         d["allocations"] = []
         d["items"] = []
         if d.get("status") in ("new", "paid", "packed"):
-            warn.append("Status masih belum terkirim — stok TIDAK dipesan oleh impor; "
-                        "alokasikan di Fulfillment bila memang perlu dikirim")
+            # G15 (audit Gudang 9 Nov 2026) — Fulfillment dilepas (K6); stok keluar
+            # dicatat gudang lewat Scan Keluar Penjualan saat paket berangkat.
+            warn.append("Status masih belum terkirim — impor TIDAK mengurangi stok; stok "
+                        "berkurang saat gudang memindai paketnya di Scan Keluar Penjualan")
 
     elif st.key == "marketplace_orders":
         # ── F1 — 1 DOKUMEN = 1 PESANAN (items[]) ─────────────────────────────
@@ -1565,7 +1689,8 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
 
         by_psku = refidx.get("items_by_platform_sku", {})
         by_sku = refidx.get("items_by_sku", {})
-        by_name = refidx.get("items_by_name", {})
+        by_all = refidx.get("items_by_name_all", {})
+        name_reasons: List[str] = []
 
         items_out: List[dict] = []
         n_unlinked = 0
@@ -1585,9 +1710,18 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
             if master is None and psid:
                 master = by_sku.get(scope.norm(psid))
                 link = "sku_exact" if master else link
+            if master is None:
+                # G4 — kunci nama+variasi yang sudah dipetakan staf (baris tanpa SKU)
+                bkey = _skuk.kunci_baris(it, (account or {}).get("id") or session.get("account_id"))
+                if bkey and _skuk.kunci_nama(bkey) and bkey in by_psku:
+                    master, link = by_psku[bkey], "sku_map"
             if master is None and it.get("product_name_raw"):
-                master = by_name.get(scope.norm(it["product_name_raw"]))
+                # G3 — nama HANYA bila nama + variasi menunjuk tepat satu item katalog
+                master, _why = _skuk.pilih_lewat_nama(by_all, it["product_name_raw"],
+                                                      it.get("variation_raw"))
                 link = "name_match" if master else link
+                if _why and _why not in name_reasons:
+                    name_reasons.append(_why)
             if master:
                 it["catalog_item_id"] = master["id"]
                 it["fg_material_id"] = master.get("fg_material_id")
@@ -1680,6 +1814,7 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         if n_unlinked:
             warn.append(f"{n_unlinked} dari {len(items_out)} SKU belum tertaut item katalog — "
                         f"omzet TETAP masuk; lengkapi lewat layar 'Pemetaan SKU'")
+            warn.extend(name_reasons[:3])
 
     elif st.key == "ads":
         spend, clicks = _num("spend"), _num("clicks")
@@ -1713,10 +1848,14 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         # dijumlahkan per produk, jadi menyimpannya hanya menambah baris yang
         # kelihatan berhasil tapi tidak pernah muncul di laporan.
         item = None
+        _why_name = ""
         if d.get("sku"):
             item = refidx.get("items_by_sku", {}).get(scope.norm(d["sku"]))
         if item is None and d.get("product_name"):
-            item = refidx.get("items_by_name", {}).get(scope.norm(d["product_name"]))
+            item, _why_name = _skuk.pilih_lewat_nama(
+                refidx.get("items_by_name_all", {}), d["product_name"], punya_variasi=False)
+        if item is None and _why_name:
+            return None, [_why_name]
         if item is None:
             return None, [f"SKU/produk '{d.get('sku') or d.get('product_name')}' "
                           f"tidak ada di katalog toko ini — tambahkan dulu di "
@@ -1758,10 +1897,16 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         d["creator_id"] = session.get("creator_id")
         d["username"] = session.get("creator_username") or session.get("creator_name") or ""
         item = None
+        _why_name = ""
         if d.get("sku"):
             item = refidx.get("items_by_sku", {}).get(scope.norm(d["sku"]))
         if item is None and d.get("product"):
-            item = refidx.get("items_by_name", {}).get(scope.norm(d["product"]))
+            _var = " ".join(str(d.get(k) or "") for k in ("color", "size")).strip()
+            item, _why_name = _skuk.pilih_lewat_nama(
+                refidx.get("items_by_name_all", {}), d["product"], _var,
+                punya_variasi=bool(_var))
+            if _why_name:
+                warn.append(_why_name)
         if item:
             d["catalog_item_id"] = item["id"]
             d.setdefault("sku", item.get("sku"))
@@ -1772,8 +1917,9 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
                                 "biaya sample tidak dilaporkan Rp 0")
         else:
             d["catalog_item_id"] = None
-            warn.append("Produk tidak ditemukan di katalog toko — HPP dipakai apa "
-                        "adanya dari berkas")
+            if not _why_name:
+                warn.append("Produk tidak ditemukan di katalog toko — HPP dipakai apa "
+                            "adanya dari berkas")
         d["total_hpp"] = round(_num("hpp") * _num("quantity", 1), 2)
         d.setdefault("shipment_status", "pending")
         d.setdefault("progress", "open")
@@ -1796,15 +1942,27 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
     elif st.key == "returns":
         # F15 — nama produk dari berkas ditautkan ke ITEM KATALOG bila cocok,
         # supaya laporan "produk paling banyak diretur" tidak pecah karena ejaan.
-        _it = (refidx.get("items_by_sku", {}).get(scope.norm(d.get("sku")))
-               or refidx.get("items_by_name", {}).get(scope.norm(d.get("product"))))
+        # G3 — retur menentukan barang yang di-RESTOCK: nama hanya bila nama + variasi
+        # menunjuk tepat satu item; G4 — kunci nama+variasi yang sudah dipetakan.
+        _it = refidx.get("items_by_sku", {}).get(scope.norm(d.get("sku")))
+        _why_name = ""
+        if _it is None and d.get("product"):
+            _bk = _skuk.kunci_baris({"product_name": d.get("product"),
+                                     "variation": d.get("variation")},
+                                    session.get("account_id"))
+            _it = (refidx.get("items_by_platform_sku") or {}).get(_bk)
+        if _it is None and d.get("product"):
+            _it, _why_name = _skuk.pilih_lewat_nama(
+                refidx.get("items_by_name_all", {}), d.get("product"), d.get("variation"))
         if _it:
             d["catalog_item_id"] = _it["id"]
             d["sku"] = _it.get("sku", "")
             d["product"] = _it.get("name") or d.get("product")
         else:
             d["catalog_item_id"] = None
-            if d.get("product"):
+            if _why_name:
+                warn.append(_why_name)
+            elif d.get("product"):
                 warn.append(f"Produk '{d.get('product')}' tidak ada di katalog toko — "
                             "baris tersimpan tapi tidak tertaut produk")
         oid = d.get("order_id")
@@ -1977,7 +2135,13 @@ class CommitIn(BaseModel):
 # 'skip' dipertahankan, koreksi angka platform (yang lazim: GMV H+1 berubah karena
 # pesanan batal) tidak akan pernah masuk dan staf akan menganggap impornya gagal.
 REFRESH_ON_DUPLICATE = ("shopee_shop_kpi", "shopee_content_kpi",
-                        "shopee_ads_cpc", "content_performance")
+                        "shopee_ads_cpc", "content_performance",
+                        # 2026-11-09 — GMV Max: periode yang sama diunggah ulang = angka terbaru
+                        "tiktok_gmv_max")
+
+# Laporan iklan BERPERIODE: satu toko tidak boleh punya dua rentang yang beririsan
+# (lihat pagar di `_commit_blockers`). Baris disaring per `source_report` = kunci jenis.
+PERIODIC_ADS_TYPES = ("shopee_ads_cpc", "tiktok_gmv_max")
 
 # Field yang TIDAK boleh ditimpa impor KPI konten: konten sudah direncanakan staf
 # (judul, tanggal rencana, jenis, pemilik). Impor hanya menempelkan ANGKA.
@@ -2025,7 +2189,8 @@ class SkuMapIn(BaseModel):
 # aturan yang bisa berbeda; satu-satunya cara pratinjau tidak bisa berbohong
 # adalah memakai sumber yang sama.
 async def _shop_evidence(db, st: SourceType, s: dict, built: List[dict],
-                         account: Optional[dict]) -> tuple:
+                         account: Optional[dict],
+                         foreign_out: Optional[Dict[str, str]] = None) -> tuple:
     """F12 — **BUKTI** bahwa berkas ini milik toko LAIN → ``(blockers, warnings)``.
 
     Kenapa ini ada, dan kenapa hanya "bukti" (bukan dugaan)
@@ -2097,6 +2262,15 @@ async def _shop_evidence(db, st: SourceType, s: dict, built: List[dict],
                         acc = await db[scope.ACCOUNTS].find_one(
                             {"id": oid}, {"_id": 0, "account_name": 1})
                         o["name"] = (acc or {}).get("account_name") or oid[:8]
+                if foreign_out is not None:
+                    # M-15 / Q-7 — nomor milik toko lain => BARIS itu ditolak (bukan masuk)
+                    async for row in db[coll].find(
+                            {st.identity: {"$in": sorted(hit_refs)},
+                             "account_id": {"$ne": aid}},
+                            {"_id": 0, st.identity: 1, "account_id": 1}):
+                        ref = str(row.get(st.identity) or "")
+                        o = owners.get(str(row.get("account_id") or "")) or {}
+                        foreign_out.setdefault(ref, o.get("name") or "toko lain")
                 top = max(owners.values(), key=lambda x: x["n"])
                 rincian = "; ".join(
                     f"{o['name']} ({o['n']} {st.identity_label or 'baris'}, mis. "
@@ -2115,13 +2289,16 @@ async def _shop_evidence(db, st: SourceType, s: dict, built: List[dict],
                         f"'{account.get('account_name')}'. Kalau diteruskan, angka "
                         f"yang sama akan tercatat di DUA toko.")})
                 else:
+                    # M-15 / Q-7 (keputusan owner 9 Nov 2026) — baris yang nomornya
+                    # milik toko lain DITOLAK; sisanya tetap boleh disimpan.
                     warnings.append({"code": "sebagian_milik_toko_lain", "message": (
                         f"Periksa dulu: {n_hit} dari {n_all} "
                         f"{st.identity_label or 'baris'} di berkas ini sudah tercatat "
-                        f"pada toko lain — {rincian}. Baris itu akan MASUK ke "
-                        f"'{account.get('account_name')}' juga (nomor yang sama pada "
-                        f"dua toko), sehingga omzetnya terhitung dua kali. Kalau "
-                        f"berkasnya campur, pisahkan dulu per toko.")})
+                        f"pada toko lain — {rincian}. Baris itu DITOLAK (tidak masuk ke "
+                        f"'{account.get('account_name')}') supaya nomor yang sama tidak "
+                        f"tercatat di dua toko dan omzetnya tidak terhitung dua kali. "
+                        f"Baris lain tetap disimpan. Kalau berkasnya campur, pisahkan "
+                        f"per toko lalu impor ke toko masing-masing.")})
 
     # ── BUKTI 2 — berkas dengan isi sama persis pernah masuk ke toko lain ─────
     h = str(s.get("content_sha256") or "")
@@ -2154,6 +2331,22 @@ async def _shop_evidence(db, st: SourceType, s: dict, built: List[dict],
                 if digest == h:
                     other = cand
                     break
+        # M-18 — berkas SAMA yang sedang diunggah (belum disimpan) ke toko lain.
+        # Bukti VPS 9 Nov: satu berkas identik menggantung di dua toko berbeda.
+        pending = await db[SESSIONS].find_one(
+            {"content_sha256": h, "status": {"$in": ["mapping", "ready"]},
+             "account_id": {"$nin": [aid, None, ""]}, "id": {"$ne": s.get("id")}},
+            {"_id": 0, "account_name": 1, "filename": 1, "created_at": 1,
+             "created_by": 1})
+        if pending:
+            when = str(_ser(pending.get("created_at")) or "—")[:16].replace("T", " ")
+            warnings.append({"code": "berkas_sama_menunggu_di_toko_lain", "message": (
+                f"Berkas dengan ISI yang sama persis juga sedang diunggah (belum disimpan) "
+                f"ke toko '{pending.get('account_name') or '(tanpa nama)'}' pada {when} "
+                f"oleh {pending.get('created_by') or '—'} (nama berkas: "
+                f"{pending.get('filename') or '—'}). Satu berkas ekspor hanya milik satu "
+                f"toko — pastikan toko yang benar, lalu hapus sesi yang salah di Riwayat "
+                f"impor.")})
         if other:
             when = str(_ser(other.get("committed_at")) or "—")[:16].replace("T", " ")
             warnings.append({"code": "berkas_sudah_masuk_toko_lain", "message": (
@@ -2169,7 +2362,8 @@ async def _shop_evidence(db, st: SourceType, s: dict, built: List[dict],
 
 async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
                            account: Optional[dict], on_duplicate: str,
-                           warnings_out: Optional[List[dict]] = None) -> List[dict]:
+                           warnings_out: Optional[List[dict]] = None,
+                           foreign_out: Optional[Dict[str, str]] = None) -> List[dict]:
     """Alasan SELURUH commit akan ditolak. Kosong = tidak ada penghalang.
 
     → ``[{"http": 409|423|404|400, "code": "...", "message": "..."}]`` dengan
@@ -2184,14 +2378,15 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
     # kali (Rp 374.074 muncul di dua dokumen berbeda) tanpa satu pun galat.
     # Rentang yang SAMA boleh diunggah ulang (itu koreksi, dan dedupe akan
     # memperbaruinya); rentang yang beririsan tapi berbeda ditolak dengan jalan keluar.
-    if st.key == "shopee_ads_cpc" and s.get("account_id"):
+    # 2026-11-09 — berlaku juga untuk laporan GMV Max TikTok (`PERIODIC_ADS_TYPES`).
+    if st.key in PERIODIC_ADS_TYPES and s.get("account_id"):
         new_ranges = {(str((r.get("data") or {}).get("period_start"))[:10],
                        str((r.get("data") or {}).get("period_end"))[:10])
                       for r in built if r["status"] != "error"}
         new_ranges = {(a, b) for a, b in new_ranges if a and b and a != "None"}
         existing_ranges = set()
         async for row in db[st.collection].find(
-                {"account_id": s["account_id"], "source_report": "shopee_ads_cpc"},
+                {"account_id": s["account_id"], "source_report": st.key},
                 {"_id": 0, "period_start": 1, "period_end": 1}):
             ps, pe = str(row.get("period_start"))[:10], str(row.get("period_end"))[:10]
             if ps and pe:
@@ -2208,6 +2403,29 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
                 "iklan akan terhitung dua kali di realisasi anggaran. Hapus dulu impor "
                 "periode lama (Riwayat Impor → Rollback), atau ekspor ulang dengan "
                 "rentang yang sama persis supaya baris lama diperbarui.")})
+
+    # ── M-09 — BIAYA IKLAN DOBEL LINTAS JALUR (impor CPC × impor umum × manual) ──
+    if st.key in ("shopee_ads_cpc", "ads") and s.get("account_id"):
+        from core import ukuran_penjualan as _uk
+        spans = []
+        for r in built:
+            if r["status"] == "error":
+                continue
+            d = r.get("data") or {}
+            if st.key == "shopee_ads_cpc":
+                a = _uk.kunci_tanggal(d.get("period_start")) or _uk.kunci_tanggal(d.get("date"))
+                b = _uk.kunci_tanggal(d.get("period_end")) or a
+            else:
+                a = b = _uk.kunci_tanggal(d.get("date"))
+            spans.append((str(d.get("campaign_name") or ""), a, b))
+        hits = await _uk.bentrok_iklan(db, s["account_id"], spans, jalur=st.key)
+        if st.key == "ads":
+            # baris manual bertanggal & berkampanye sama = kunci dedupe impor ini (diperbarui),
+            # bukan bentrok; yang bentrok hanya laporan CPC berperiode.
+            hits = [h for h in hits if h["jalur"] == "shopee_ads_cpc"]
+        if hits:
+            out.append({"http": 409, "code": "iklan_dobel_lintas_jalur",
+                        "message": _uk.pesan_bentrok_iklan(hits, saat="Commit")})
 
     # ── F18#3 — rincian produk tidak boleh membuat omzet sesi live dobel ──────
     if st.key == "live_session_products":
@@ -2229,6 +2447,44 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
             except HTTPException as exc:
                 out.append({"http": exc.status_code, "code": "omzet_rincian_melebihi",
                             "message": str(exc.detail)})
+
+    # ── M-18 — IDENTITAS TOKO DI KEPALA BERKAS (username / ID toko platform) ──
+    # Laporan iklan CPC Shopee memuat "Username" & "ID Toko" di baris kepala. Dulu
+    # tidak dibandingkan sama sekali: laporan iklan toko A bisa tersimpan di toko B.
+    if account and s.get("account_id"):
+        for fld, acc_fld, label in (("shop_username", "username", "username toko"),
+                                    ("platform_shop_id", "platform_shop_id",
+                                     "ID toko platform")):
+            if not any(f.name == fld for f in st.input_fields):
+                continue
+            vals = sorted({str((r.get("data") or {}).get(fld) or "").strip()
+                           for r in built if r["status"] != "error"} - {""})
+            if not vals:
+                continue
+            mine = str(account.get(acc_fld) or "").strip()
+            if mine:
+                bad = [v for v in vals if scope.norm(v) != scope.norm(mine)]
+                if bad:
+                    out.append({"http": 409, "code": "identitas_toko_beda", "message": (
+                        f"Commit dibatalkan: {label} di berkas ini '{', '.join(bad)}', "
+                        f"sedangkan toko tujuan '{account.get('account_name')}' tercatat "
+                        f"dengan {label} '{mine}'. Pilih toko yang benar — kalau tidak, "
+                        f"biaya iklan masuk ke toko lain.")})
+                continue
+            _fam = scope.platform_family(account.get("platform"))
+            _plats = list(scope.TIKTOK_PLATFORMS) if _fam == "tiktok" else [account.get("platform")]
+            # username yang sama boleh dipakai toko lain di PLATFORM LAIN (Shopee vs TikTok)
+            owner = await db[scope.ACCOUNTS].find_one(
+                {"id": {"$ne": account.get("id")}, acc_fld: {"$in": vals},
+                 "platform": {"$in": _plats}},
+                {"_id": 0, "account_name": 1, "account_code": 1})
+            if owner:
+                out.append({"http": 409, "code": "identitas_toko_milik_lain", "message": (
+                    f"Commit dibatalkan: {label} '{', '.join(vals)}' di berkas ini "
+                    f"terdaftar pada toko '{owner.get('account_name')}' "
+                    f"({owner.get('account_code') or '-'}), bukan '{account.get('account_name')}'. "
+                    f"Pilih toko '{owner.get('account_name')}', atau perbaiki {label} di "
+                    f"Kelola Akun bila datanya keliru.")})
 
     # ── F5.3 — PAGAR KUNCI PERIODE ────────────────────────────────────────────
     # Impor adalah jalur yang paling mudah menabrak periode tertutup: satu berkas
@@ -2274,7 +2530,8 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
     # Diletakkan PALING AKHIR supaya pesan pertama yang dilihat staf untuk keadaan
     # lama tidak bergeser. `warnings_out` diisi untuk pemanggil yang bisa
     # menampilkannya (pratinjau); `commit()` hanya peduli pada penghalang.
-    ev_block, ev_warn = await _shop_evidence(db, st, s, built, account)
+    ev_block, ev_warn = await _shop_evidence(db, st, s, built, account,
+                                             foreign_out=foreign_out)
     out.extend(ev_block)
     if warnings_out is not None:
         warnings_out.extend(ev_warn)
@@ -2291,6 +2548,9 @@ _FULFILLMENT_PATCH = (
     "substatus_raw", "return_type_raw", "cancel_by", "cancel_reason",
     "order_refund_amount", "tracking_number", "courier", "courier_raw",
     "status_raw", "shipped_at", "delivered_at", "cancelled_at",
+    # 2026-11-09 (riset G14) — "Waktu Pesanan Selesai" kini dipetakan ke `completed_at`
+    # (bukan lagi `delivered_at`); tanpa ini kolomnya terbaca lalu dibuang diam-diam.
+    "completed_at",
 )
 # Tanggal dari berkas → stempel status di dokumen (dibaca "umur pesanan").
 _FULFILLMENT_STAMPS = {"shipped_at": "shipped_date", "delivered_at": "delivered_date",
@@ -2444,6 +2704,38 @@ async def _apply_fulfillment_row(db, st: SourceType, doc: dict, existing: dict,
 #   · dan layar MENYEBUT nomor pesanannya + alasannya + langkah manualnya.
 # Ini keputusan yang sama dengan `check_transition`: satu-satunya tempat aturan
 # "order terminal tidak boleh dihidupkan" ditulis.
+async def _forward_status_on_skip(db, st: SourceType, doc: dict, existing: dict,
+                                  user: dict, s: dict) -> Optional[tuple]:
+    """M-03 — status pesanan duplikat dimajukan walau mode "Lewati".
+
+    → ``None`` (status sama / kosong) · ``("status diperbarui", why[], status_lama)`` ·
+    ``("dilewati", why[], "")`` bila aturan status menolak (mis. mundur).
+    Hanya STATUS yang disentuh; isi pesanan lama tidak ditimpa.
+    """
+    new_st = str(doc.get("status") or "")
+    prev_st = str(existing.get("status") or "")
+    if not new_st or new_st == prev_st:
+        return None
+    cancel_ev = bool(doc.get("cancelled_at") or doc.get("return_type_raw"))
+    why = _status_reject_reason(prev_st, new_st, cancel_ev)
+    if why:
+        return ("dilewati", [f"status tetap '{prev_st}' (berkas: '{new_st}') — {why}"], "")
+    from core import order_status as _os
+    try:
+        await _os.apply_status(
+            db, existing, new_st, user=user, source="import_orders",
+            platform_status=doc.get("status_raw"), allow_import_vocab=True,
+            forward_only=True, cancel_evidence=cancel_ev,
+            note=f"impor {st.label} (berkas {s.get('filename') or '-'}, mode Lewati: "
+                 "hanya status)")
+    except Exception as exc:  # noqa: BLE001
+        return ("dilewati", [f"status tetap '{prev_st}' — perubahan ke '{new_st}' "
+                             f"ditolak aturan status: {exc}"], "")
+    return ("status diperbarui",
+            [f"status {prev_st} → {new_st} (data pesanan lain tidak ditimpa karena "
+             "mode Lewati)"], prev_st)
+
+
 def _mk_field_undo(session_id: str, st: SourceType, existing: dict,
                    keys, status_before: str = "") -> dict:
     """SESI #38 — potret nilai SEBELUM ditimpa impor "perbarui yang lama".
@@ -2617,7 +2909,7 @@ async def sku_map_list(session_id: str, request: Request,
     await require_auth(request)
     db = get_db()
     import difflib as _dl
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     if not st.is_grouped:
         raise HTTPException(400, "Pemetaan SKU hanya untuk impor pesanan marketplace")
@@ -2637,13 +2929,16 @@ async def sku_map_list(session_id: str, request: Request,
 
     for items in item_lists:
         for it in items:
-            psid = str(it.get("platform_sku_id") or "").strip()
+            # G4 — baris tanpa SKU platform dikelompokkan per nama + variasi (kunci `nv:`)
+            psid = _skuk.kunci_baris(it, aid)
             if not psid:
                 continue
             if only_unlinked and it.get("catalog_item_id"):
                 continue
             g = groups.setdefault(psid, {
                 "platform_sku_id": psid,
+                "sku_label": _skuk.label_kunci(psid) if _skuk.kunci_nama(psid) else psid,
+                "key_kind": "nama_variasi" if _skuk.kunci_nama(psid) else "sku_platform",
                 "seller_sku": it.get("seller_sku") or "",
                 "product_name_raw": it.get("product_name_raw") or "",
                 "variation_raw": it.get("variation_raw") or "",
@@ -2704,7 +2999,7 @@ async def sku_map_save(session_id: str, request: Request, body: List[SkuMapIn]):
     await require_auth(request)
     db = get_db()
     user = _user(request)
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     aid = s.get("account_id")
     if not body:
@@ -2722,6 +3017,17 @@ async def sku_map_save(session_id: str, request: Request, body: List[SkuMapIn]):
                               "variant_id": 1, "model_id": 1})
         if not item:
             raise HTTPException(400, f"Item katalog '{item_id}' tidak ditemukan")
+        if _skuk.kunci_nama(psid):
+            # G4 — kunci nama+variasi: satu pintu dengan Jembatan SKU (pesanan & retur lama
+            # yang menunggu ikut ditautkan; impor berikutnya membaca `bridge_keys`).
+            from core import sku_bridge as _sb
+            res_nv = await _sb.apply_mapping(db, psid, catalog_item_id=item_id, account_id=aid,
+                                             user=user, method="manual")
+            if not res_nv.get("ok"):
+                raise HTTPException(res_nv.get("status") or 400, res_nv.get("message"))
+            mapped += 1
+            orders_touched += int(res_nv.get("orders_updated") or 0)
+            continue
         await db.marketing_catalog_items.update_one(
             {"id": item_id},
             {"$addToSet": {"platform_sku_ids": psid},
@@ -2985,6 +3291,34 @@ def _plan_fulfillment_row(st: SourceType, doc: dict, existing: dict) -> tuple:
     return ("diperbarui", notes, changes, hidden)
 
 
+async def _rekap_mode_impor(db, st: SourceType, account: Optional[dict]) -> str:
+    """Q-5 — pesan penolakan rekap total BARU untuk toko bermode "Impor pesanan" ("" = boleh).
+
+    Hari yang sudah punya rekap turunan tetap ditangani pagar F2 (kolom non-turunan disimpan).
+    """
+    if st.key != "sales_daily" or not account:
+        return ""
+    from core import marketing_input_mode as _mode
+    if await _mode.mode_toko(db, account) != _mode.IMPOR:
+        return ""
+    return _mode.pesan_tolak_manual(account, "{date}")
+
+
+def _foreign_reason(st: SourceType, doc: dict,
+                    foreign: Optional[Dict[str, str]]) -> Optional[str]:
+    """M-15 / Q-7 — alasan penolakan baris yang nomornya sudah milik toko lain."""
+    if not foreign or not st.identity:
+        return None
+    ref = str(doc.get(st.identity) or "").strip()
+    owner = foreign.get(ref) if ref else None
+    if not owner:
+        return None
+    label = (st.identity_label or "nomor")
+    return (f"{label[:1].upper()}{label[1:]} '{ref}' sudah tercatat di toko '{owner}'. "
+            f"Baris ini ditolak supaya tidak tercatat di dua toko — impor baris ini ke "
+            f"toko '{owner}' bila memang miliknya.")
+
+
 def _row_ref(st: SourceType, data: dict) -> str:
     """Acuan baris yang dikenali staf (nomor pesanan / tanggal / judul)."""
     for k in ("order_id", "date", "order_date", "session_date", "title",
@@ -2998,11 +3332,13 @@ def _row_ref(st: SourceType, data: dict) -> str:
 
 async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dict,
                      account: Optional[dict], on_duplicate: str,
-                     skip_warnings: bool) -> tuple:
+                     skip_warnings: bool,
+                     foreign: Optional[Dict[str, str]] = None) -> tuple:
     """Ramalan SELURUH berkas → ``(plans[], counts{})``. TIDAK menulis apa pun."""
     plans: List[dict] = []
     counts = {"baru": 0, "diperbarui": 0, "sebagian": 0, "dilewati": 0,
               "ditolak": 0, "total": 0}
+    rekap_tolak = await _rekap_mode_impor(db, st, account)
 
     def add(row_no: int, ref: str, action: str, why: List[str],
             changes: Optional[List[dict]] = None, hidden: int = 0,
@@ -3027,6 +3363,10 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
             continue
         if account:
             scope.stamp_account(doc, account)
+        _fref = _foreign_reason(st, doc, foreign)
+        if _fref:
+            add(row_no, ref, "ditolak", [_fref])
+            continue
 
         existing = None
         if st.dedupe:
@@ -3085,6 +3425,26 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
                 add(row_no, ref, "diperbarui", notes, changes, hidden,
                     target_id=existing.get("id", ""), status_now=status_now)
             else:
+                # M-03 — cermin commit: status pesanan tetap dimajukan pada mode Lewati
+                new_st = str(doc.get("status") or "")
+                if (st.collection == "marketing_orders" and new_st
+                        and new_st != status_now):
+                    why = _status_reject_reason(
+                        status_now, new_st,
+                        bool(doc.get("cancelled_at") or doc.get("return_type_raw")))
+                    if not why:
+                        add(row_no, ref, "diperbarui",
+                            [f"status {status_now} → {new_st} (data pesanan lain tidak "
+                             "ditimpa karena mode Lewati)"],
+                            [{"field": "status", "label": "Status pesanan",
+                              "before": _disp(status_now), "after": _disp(new_st)}], 0,
+                            target_id=existing.get("id", ""), status_now=status_now)
+                        continue
+                    add(row_no, ref, "dilewati",
+                        ["sudah ada (duplikat)",
+                         f"status tetap '{status_now}' (berkas: '{new_st}') — {why}"],
+                        target_id=existing.get("id", ""), status_now=status_now)
+                    continue
                 add(row_no, ref, "dilewati", ["sudah ada (duplikat)"],
                     target_id=existing.get("id", ""), status_now=status_now)
             continue
@@ -3097,6 +3457,10 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
                  "(pesanan tanpa item & tanpa omzet)."])
             continue
 
+        if rekap_tolak and str(doc.get("revenue_type") or "total") == "total":
+            add(row_no, ref, "ditolak", [rekap_tolak.replace("{date}", str(doc.get("date") or ""))])
+            continue
+
         changes, hidden = _new_row_changes(st, doc)
         add(row_no, ref, "baru", (r["warnings"] or []) + (extra_warn or []),
             changes, hidden)
@@ -3104,9 +3468,9 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
 
 
 async def _plan_context(db, session_id: str, on_duplicate: str,
-                       skip_warnings: bool) -> dict:
+                       skip_warnings: bool, request: Optional[Request] = None) -> dict:
     """Susun seluruh ramalan impor (dipakai layar & unduhan CSV)."""
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     rows = _reparse(s)
     built = eng.build_rows(rows, s.get("mapping") or [], st, limit=eng.MAX_ROWS)
@@ -3125,11 +3489,12 @@ async def _plan_context(db, session_id: str, on_duplicate: str,
     # memakai mode yang BENAR-BENAR akan dipakai commit, bukan yang dipilih layar.
     effective = "update" if st.key in REFRESH_ON_DUPLICATE else on_duplicate
     forced = effective != on_duplicate
-    plans, counts = await _plan_rows(db, st, s, built, refidx, account,
-                                     effective, skip_warnings)
     warnings: List[dict] = []
+    foreign: Dict[str, str] = {}
     blockers = await _commit_blockers(db, st, s, built, account, effective,
-                                      warnings_out=warnings)
+                                      warnings_out=warnings, foreign_out=foreign)
+    plans, counts = await _plan_rows(db, st, s, built, refidx, account,
+                                     effective, skip_warnings, foreign=foreign)
     return {"session": s, "st": st, "plans": plans, "counts": counts,
             "blockers": blockers, "warnings": warnings,
             "mode": effective, "mode_forced": forced,
@@ -3151,7 +3516,7 @@ async def plan(session_id: str, request: Request,
     """
     await require_auth(request)
     db = get_db()
-    ctx = await _plan_context(db, session_id, on_duplicate, skip_warnings)
+    ctx = await _plan_context(db, session_id, on_duplicate, skip_warnings, request)
     st: SourceType = ctx["st"]
     rows = ctx["plans"]
     if only:
@@ -3196,7 +3561,7 @@ async def plan_csv(session_id: str, request: Request,
     """Ramalan impor sebagai CSV — supaya bisa diperiksa/diteruskan sebelum commit."""
     await require_auth(request)
     db = get_db()
-    ctx = await _plan_context(db, session_id, on_duplicate, skip_warnings)
+    ctx = await _plan_context(db, session_id, on_duplicate, skip_warnings, request)
     rows = ctx["plans"]
     if only:
         rows = [r for r in rows if r["action"] == only]
@@ -3231,7 +3596,7 @@ async def result_csv(session_id: str, request: Request,
     """
     await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     if s.get("status") != "committed":
         raise HTTPException(400, "Sesi ini belum di-commit — belum ada hasil untuk "
                                 "diunduh. Pakai \u201cUnduh rencana (CSV)\u201d di "
@@ -3283,9 +3648,14 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
     user = _user(request)
     db = get_db()
     opt = body or CommitIn()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     if s.get("status") == "committed":
         raise HTTPException(400, "Sesi ini sudah di-commit")
+    if s.get("status") in ("committing", "partial"):
+        # M-11 — commit sebelumnya terhenti; mengulang di atasnya = baris dobel
+        raise HTTPException(409, "Penyimpanan sebelumnya untuk sesi ini terhenti di tengah "
+                                 "jalan. Tekan 'Batalkan impor' dulu untuk membersihkan "
+                                 "baris yang sempat tersimpan, lalu unggah ulang berkasnya.")
     st = get_source_type(s["source_type"])
     report = s.get("mapping_report") or {}
     if not report.get("ready"):
@@ -3327,178 +3697,245 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
     # SEBELUM tombol Simpan ditekan. Perilaku di sini tidak berubah sedikit pun:
     # penghalang pertama tetap menaikkan HTTP & pesan yang sama, sebelum satu
     # baris pun tersimpan.
+    foreign: Dict[str, str] = {}
     for _blocker in await _commit_blockers(db, st, s, built, account,
-                                          opt.on_duplicate):
+                                          opt.on_duplicate, foreign_out=foreign):
         raise HTTPException(_blocker["http"], _blocker["message"])
+    rekap_tolak = await _rekap_mode_impor(db, st, account)
 
-    for r in built:
-        if r["status"] == "error" or (opt.skip_warnings and r["status"] == "warning"):
-            rejected += 1
-            row_notes.append({"row": r["row_id"] + 2, "action": "ditolak",
-                              "why": r["errors"] or r["warnings"]})
-            continue
-        doc, extra_warn = _finish(st, r["data"], s, refidx, account=account)
-        if doc is None:
-            # baris tidak bisa ditautkan ke master → ditolak dengan alasan jelas
-            rejected += 1
-            row_notes.append({"row": r["row_id"] + 2, "action": "ditolak",
-                              "why": extra_warn})
-            continue
-        if account:
-            scope.stamp_account(doc, account)
-        elif st.account_scope == "required":
-            raise HTTPException(400, "Akun sesi tidak ditemukan lagi — commit dibatalkan")
+    # M-11 (audit 9 Nov 2026) — penanda "sedang disimpan". Commit berjalan baris demi
+    # baris; bila terhenti di tengah (galat/putus), baris yang SUDAH tersimpan tetap
+    # tercatat di sesi (status `partial`) sehingga "Batalkan impor" bisa
+    # membersihkannya — dulu sesi tetap "ready" tanpa `committed_ids` dan baris
+    # setengah jadi tidak bisa dibatalkan dari layar.
+    prev_status = s.get("status") or "ready"
+    await db[SESSIONS].update_one({"id": session_id}, {"$set": {
+        "status": "committing", "commit_started_at": now,
+        "commit_started_by": user.get("email", "system")}})
+    try:
+        for r in built:
+            if r["status"] == "error" or (opt.skip_warnings and r["status"] == "warning"):
+                rejected += 1
+                row_notes.append({"row": r["row_id"] + 2, "action": "ditolak",
+                                  "why": r["errors"] or r["warnings"]})
+                continue
+            doc, extra_warn = _finish(st, r["data"], s, refidx, account=account)
+            if doc is None:
+                # baris tidak bisa ditautkan ke master → ditolak dengan alasan jelas
+                rejected += 1
+                row_notes.append({"row": r["row_id"] + 2, "action": "ditolak",
+                                  "why": extra_warn})
+                continue
+            if account:
+                scope.stamp_account(doc, account)
+            elif st.account_scope == "required":
+                raise HTTPException(400, "Akun sesi tidak ditemukan lagi — commit dibatalkan")
+            _fref = _foreign_reason(st, doc, foreign)
+            if _fref:
+                rejected += 1
+                row_notes.append({"row": r["row_id"] + 2, "action": "ditolak", "why": [_fref]})
+                continue
 
-        if st.dedupe:
-            key = {}
-            ok = True
-            for k in st.dedupe:
-                v = doc.get(k) if k != "account_id" else s.get("account_id")
-                if v in (None, ""):
-                    ok = False
-                    break
-                key[k] = v
-            if ok:
-                # F2 (2026-08-12) — dokumen LENGKAP dibaca (bukan hanya `id`) karena
-                # kita perlu tahu apakah dokumen tujuan itu TURUNAN. Lihat catatan di
-                # `core/marketing_sales_shape.derived_safe_update`.
-                existing = await db[st.collection].find_one(key, {"_id": 0})
-                if existing:
-                    # ── F3 — IMPOR YANG HANYA MEMPERBARUI (Ekspor B & C) ────
-                    if st.update_only:
-                        act, why, undo = await _apply_fulfillment_row(
-                            db, st, doc, existing, user, session_id)
-                        if undo:
-                            undo_rows.append(undo)
-                        if act == "diperbarui":
-                            updated += 1
-                        elif act == "dilewati":
-                            skipped += 1
-                        else:
-                            rejected += 1
-                        row_notes.append({"row": r["row_id"] + 2, "action": act,
-                                          "why": why, "id": existing["id"]})
-                        continue
-                    # ── PAGAR F2: omzet turunan tidak boleh ditimpa berkas ──
-                    if st.key == "sales_daily" and _shape.is_derived(existing):
-                        safe, protected = _shape.derived_safe_update(doc)
-                        msg = _shape.derived_lock_message(
-                            existing.get("date") or doc.get("date"),
-                            protected, kept=len(safe))
-                        if safe:
-                            safe["updated_at"] = now
-                            safe["updated_by"] = user.get("email", "system")
+            if st.dedupe:
+                key = {}
+                ok = True
+                for k in st.dedupe:
+                    v = doc.get(k) if k != "account_id" else s.get("account_id")
+                    if v in (None, ""):
+                        ok = False
+                        break
+                    key[k] = v
+                if ok:
+                    # F2 (2026-08-12) — dokumen LENGKAP dibaca (bukan hanya `id`) karena
+                    # kita perlu tahu apakah dokumen tujuan itu TURUNAN. Lihat catatan di
+                    # `core/marketing_sales_shape.derived_safe_update`.
+                    existing = await db[st.collection].find_one(key, {"_id": 0})
+                    if existing:
+                        # ── F3 — IMPOR YANG HANYA MEMPERBARUI (Ekspor B & C) ────
+                        if st.update_only:
+                            act, why, undo = await _apply_fulfillment_row(
+                                db, st, doc, existing, user, session_id)
+                            if undo:
+                                undo_rows.append(undo)
+                            if act == "diperbarui":
+                                updated += 1
+                            elif act == "dilewati":
+                                skipped += 1
+                            else:
+                                rejected += 1
+                            row_notes.append({"row": r["row_id"] + 2, "action": act,
+                                              "why": why, "id": existing["id"]})
+                            continue
+                        # ── PAGAR F2: omzet turunan tidak boleh ditimpa berkas ──
+                        if st.key == "sales_daily" and _shape.is_derived(existing):
+                            safe, protected = _shape.derived_safe_update(doc)
+                            msg = _shape.derived_lock_message(
+                                existing.get("date") or doc.get("date"),
+                                protected, kept=len(safe))
+                            if safe:
+                                safe["updated_at"] = now
+                                safe["updated_by"] = user.get("email", "system")
+                                undo_rows.append(_mk_field_undo(
+                                    session_id, st, existing, safe.keys()))
+                                await db[st.collection].update_one(
+                                    {"id": existing["id"]}, {"$set": safe})
+                                updated += 1
+                                row_notes.append({"row": r["row_id"] + 2,
+                                                  "action": "sebagian disimpan",
+                                                  "why": [msg], "id": existing["id"]})
+                            else:
+                                skipped += 1
+                                row_notes.append({"row": r["row_id"] + 2,
+                                                  "action": "dilewati",
+                                                  "why": [msg], "id": existing["id"]})
+                            continue
+                        if opt.on_duplicate == "update":
+                            payload = _update_payload(st, doc, existing)
+                            # ── LUBANG UANG/STOK YANG DITUTUP 2026-08-14 ──────────
+                            # Skenario nyata: staf mengimpor ekspor tanggal 1–7, lalu
+                            # mengimpor 5–12. Baris 5–7 memang terdeteksi duplikat
+                            # (kunci `order_id`), tetapi pada mode "Perbarui yang
+                            # lama" versi sebelumnya menulis SELURUH dokumen dengan
+                            # `$set` — termasuk `status`. Akibatnya:
+                            #   · pesanan yang di berkas baru "Dibatalkan" berubah
+                            #     status TANPA melepas reservasi stok ⇒ pesanan batal
+                            #     tetap menggenggam stok, dan barang yang sama bisa
+                            #     dijanjikan ke pembeli lain (overselling);
+                            #   · pesanan batal tetap tertinggal di antrean gudang
+                            #     (`fulfillment_status` tidak ikut disesuaikan);
+                            #   · status bisa MUNDUR diam-diam (mengunggah ulang
+                            #     berkas lama membuat pesanan "selesai" kembali ke
+                            #     "perlu dikirim") — cacat yang sama yang ditutup F3
+                            #     untuk Ekspor B/C, tetapi pintunya masih terbuka di
+                            #     sini.
+                            # Sekarang status TIDAK PERNAH ditulis langsung: ia
+                            # dijalankan lewat SSOT `core.order_status.apply_status`
+                            # (aturan transisi + pelepasan reservasi + jejak), sama
+                            # seperti jalur Ekspor B/C.
+                            st_note: List[str] = []
+                            status_before_undo = ""
+                            if st.collection == "marketing_orders":
+                                new_st = str(payload.pop("status", "") or "")
+                                payload.pop("status_history", None)
+                                prev_st = str(existing.get("status") or "")
+                                if new_st and new_st != prev_st:
+                                    try:
+                                        from core import order_status as _os
+                                        await _os.apply_status(
+                                            db, existing, new_st, user=user,
+                                            source="import_orders",
+                                            platform_status=doc.get("status_raw"),
+                                            allow_import_vocab=True, forward_only=True,
+                                            cancel_evidence=bool(
+                                                doc.get("cancelled_at")
+                                                or doc.get("return_type_raw")),
+                                            note=(f"impor {st.label} (berkas "
+                                                  f"{s.get('filename') or '-'})"))
+                                        st_note.append(f"status {prev_st} → {new_st} "
+                                                       "lewat aturan status (reservasi "
+                                                       "stok ikut disesuaikan)")
+                                        status_before_undo = prev_st
+                                    except Exception as exc:
+                                        st_note.append(
+                                            f"status TETAP '{prev_st}' — perubahan ke "
+                                            f"'{new_st}' ditolak aturan status: {exc}")
+                            payload["updated_at"] = now
+                            payload["updated_by"] = user.get("email", "system")
+                            # SESI #38 — JEJAK UNDO untuk pembaruan BIASA.
+                            # `undo_rows` dulu hanya diisi jalur `update_only`, jadi
+                            # impor ulang ekspor iklan/KPI menimpa 4 baris lalu
+                            # "Batalkan impor" menjawab "sesi ini tidak membuat
+                            # maupun mengubah baris" — bantahan atas perubahan yang
+                            # baru saja ia lakukan sendiri. Nilai sebelum ditimpa
+                            # disimpan supaya tombol itu menepati janjinya.
                             undo_rows.append(_mk_field_undo(
-                                session_id, st, existing, safe.keys()))
+                                session_id, st, existing, payload.keys(),
+                                status_before=status_before_undo))
                             await db[st.collection].update_one(
-                                {"id": existing["id"]}, {"$set": safe})
+                                {"id": existing["id"]}, {"$set": payload})
                             updated += 1
-                            row_notes.append({"row": r["row_id"] + 2,
-                                              "action": "sebagian disimpan",
-                                              "why": [msg], "id": existing["id"]})
+                            updated_ids.append(existing["id"])
+                            row_notes.append({"row": r["row_id"] + 2, "action": "diperbarui",
+                                              "why": st_note, "id": existing["id"]})
                         else:
-                            skipped += 1
-                            row_notes.append({"row": r["row_id"] + 2,
-                                              "action": "dilewati",
-                                              "why": [msg], "id": existing["id"]})
+                            # M-03 (audit 9 Nov 2026) — mode "Lewati" dulu MEMBUANG kabar
+                            # status: pesanan yang di berkas baru sudah "Dibatalkan" tetap
+                            # dihitung omzet. Sekarang data pesanan lama tetap tidak
+                            # ditimpa, tetapi STATUS-nya tetap dimajukan lewat aturan status
+                            # (maju saja, reservasi ikut dilepas) dan rekapnya dihitung ulang.
+                            moved = None
+                            if st.collection == "marketing_orders":
+                                moved = await _forward_status_on_skip(
+                                    db, st, doc, existing, user, s)
+                            if moved and moved[0] == "status diperbarui":
+                                undo_rows.append(_mk_field_undo(
+                                    session_id, st, existing, [], status_before=moved[2]))
+                                updated += 1
+                                updated_ids.append(existing["id"])
+                                row_notes.append({"row": r["row_id"] + 2,
+                                                  "action": "status diperbarui",
+                                                  "why": moved[1], "id": existing["id"]})
+                            else:
+                                skipped += 1
+                                row_notes.append({"row": r["row_id"] + 2, "action": "dilewati",
+                                                  "why": ["sudah ada (duplikat)"]
+                                                  + (moved[1] if moved else []),
+                                                  "id": existing["id"]})
                         continue
-                    if opt.on_duplicate == "update":
-                        payload = _update_payload(st, doc, existing)
-                        # ── LUBANG UANG/STOK YANG DITUTUP 2026-08-14 ──────────
-                        # Skenario nyata: staf mengimpor ekspor tanggal 1–7, lalu
-                        # mengimpor 5–12. Baris 5–7 memang terdeteksi duplikat
-                        # (kunci `order_id`), tetapi pada mode "Perbarui yang
-                        # lama" versi sebelumnya menulis SELURUH dokumen dengan
-                        # `$set` — termasuk `status`. Akibatnya:
-                        #   · pesanan yang di berkas baru "Dibatalkan" berubah
-                        #     status TANPA melepas reservasi stok ⇒ pesanan batal
-                        #     tetap menggenggam stok, dan barang yang sama bisa
-                        #     dijanjikan ke pembeli lain (overselling);
-                        #   · pesanan batal tetap tertinggal di antrean gudang
-                        #     (`fulfillment_status` tidak ikut disesuaikan);
-                        #   · status bisa MUNDUR diam-diam (mengunggah ulang
-                        #     berkas lama membuat pesanan "selesai" kembali ke
-                        #     "perlu dikirim") — cacat yang sama yang ditutup F3
-                        #     untuk Ekspor B/C, tetapi pintunya masih terbuka di
-                        #     sini.
-                        # Sekarang status TIDAK PERNAH ditulis langsung: ia
-                        # dijalankan lewat SSOT `core.order_status.apply_status`
-                        # (aturan transisi + pelepasan reservasi + jejak), sama
-                        # seperti jalur Ekspor B/C.
-                        st_note: List[str] = []
-                        status_before_undo = ""
-                        if st.collection == "marketing_orders":
-                            new_st = str(payload.pop("status", "") or "")
-                            payload.pop("status_history", None)
-                            prev_st = str(existing.get("status") or "")
-                            if new_st and new_st != prev_st:
-                                try:
-                                    from core import order_status as _os
-                                    await _os.apply_status(
-                                        db, existing, new_st, user=user,
-                                        source="import_orders",
-                                        platform_status=doc.get("status_raw"),
-                                        allow_import_vocab=True, forward_only=True,
-                                        cancel_evidence=bool(
-                                            doc.get("cancelled_at")
-                                            or doc.get("return_type_raw")),
-                                        note=(f"impor {st.label} (berkas "
-                                              f"{s.get('filename') or '-'})"))
-                                    st_note.append(f"status {prev_st} → {new_st} "
-                                                   "lewat aturan status (reservasi "
-                                                   "stok ikut disesuaikan)")
-                                    status_before_undo = prev_st
-                                except Exception as exc:
-                                    st_note.append(
-                                        f"status TETAP '{prev_st}' — perubahan ke "
-                                        f"'{new_st}' ditolak aturan status: {exc}")
-                        payload["updated_at"] = now
-                        payload["updated_by"] = user.get("email", "system")
-                        # SESI #38 — JEJAK UNDO untuk pembaruan BIASA.
-                        # `undo_rows` dulu hanya diisi jalur `update_only`, jadi
-                        # impor ulang ekspor iklan/KPI menimpa 4 baris lalu
-                        # "Batalkan impor" menjawab "sesi ini tidak membuat
-                        # maupun mengubah baris" — bantahan atas perubahan yang
-                        # baru saja ia lakukan sendiri. Nilai sebelum ditimpa
-                        # disimpan supaya tombol itu menepati janjinya.
-                        undo_rows.append(_mk_field_undo(
-                            session_id, st, existing, payload.keys(),
-                            status_before=status_before_undo))
-                        await db[st.collection].update_one(
-                            {"id": existing["id"]}, {"$set": payload})
-                        updated += 1
-                        updated_ids.append(existing["id"])
-                        row_notes.append({"row": r["row_id"] + 2, "action": "diperbarui",
-                                          "why": st_note, "id": existing["id"]})
-                    else:
-                        skipped += 1
-                        row_notes.append({"row": r["row_id"] + 2, "action": "dilewati",
-                                          "why": ["sudah ada (duplikat)"],
-                                          "id": existing["id"]})
-                    continue
 
-        # ── F3 — jenis `update_only` TIDAK PERNAH membuat baris baru ──────────
-        if st.update_only:
-            rejected += 1
-            row_notes.append({
-                "row": r["row_id"] + 2, "action": "ditolak",
-                "why": [f"Pesanan '{doc.get('order_id') or '(tanpa nomor)'}' belum "
-                        "pernah diimpor — impor 'Pesanan Marketplace (ekspor Seller "
-                        "Center)' dulu. Berkas status pengiriman tidak boleh "
-                        "membuat pesanan baru (pesanan tanpa item & tanpa omzet)."]})
-            continue
+            # ── F3 — jenis `update_only` TIDAK PERNAH membuat baris baru ──────────
+            if st.update_only:
+                rejected += 1
+                row_notes.append({
+                    "row": r["row_id"] + 2, "action": "ditolak",
+                    "why": [f"Pesanan '{doc.get('order_id') or '(tanpa nomor)'}' belum "
+                            "pernah diimpor — impor 'Pesanan Marketplace (ekspor Seller "
+                            "Center)' dulu. Berkas status pengiriman tidak boleh "
+                            "membuat pesanan baru (pesanan tanpa item & tanpa omzet)."]})
+                continue
 
-        doc["id"] = str(uuid.uuid4())
-        doc["created_at"] = now
-        doc["updated_at"] = now
-        doc["created_by"] = user.get("email", "system")
-        doc["_import_session_id"] = session_id
-        doc["_import_source_type"] = st.key
-        await db[st.collection].insert_one(doc)
-        inserted.append(doc["id"])
-        if extra_warn or r["warnings"]:
-            row_notes.append({"row": r["row_id"] + 2, "action": "disimpan",
-                              "why": r["warnings"] + extra_warn, "id": doc["id"]})
+            # Q-5 — toko bermode "Impor pesanan": rekap TOTAL baru dari berkas ditolak
+            if rekap_tolak and str(doc.get("revenue_type") or "total") == "total":
+                rejected += 1
+                row_notes.append({"row": r["row_id"] + 2, "action": "ditolak",
+                                  "why": [rekap_tolak.replace("{date}", str(doc.get("date") or ""))]})
+                continue
+
+            doc["id"] = str(uuid.uuid4())
+            doc["created_at"] = now
+            doc["updated_at"] = now
+            doc["created_by"] = user.get("email", "system")
+            doc["_import_session_id"] = session_id
+            doc["_import_source_type"] = st.key
+            await db[st.collection].insert_one(doc)
+            inserted.append(doc["id"])
+            if extra_warn or r["warnings"]:
+                row_notes.append({"row": r["row_id"] + 2, "action": "disimpan",
+                                  "why": r["warnings"] + extra_warn, "id": doc["id"]})
+    except Exception as exc:
+        if not inserted and not updated and not undo_rows:
+            await db[SESSIONS].update_one({"id": session_id}, {"$set": {
+                "status": prev_status}})
+            raise
+        if undo_rows:
+            await db[UNDO].insert_many(undo_rows)
+        await db[SESSIONS].update_one({"id": session_id}, {"$set": {
+            "status": "partial",
+            "committed_ids": inserted,
+            "committed_count": len(inserted),
+            "updated_count": updated,
+            "undo_count": len(undo_rows),
+            "row_notes": row_notes[:1000],
+            "commit_error": str(getattr(exc, "detail", None) or exc)[:300],
+            "committed_at": now,
+            "committed_by": user.get("email", "system"),
+            "updated_at": _now(),
+        }})
+        logger.exception("commit impor terhenti di tengah (sesi=%s)", session_id)
+        raise HTTPException(500, (
+            f"Penyimpanan terhenti di tengah: {len(inserted)} baris baru dan {updated} "
+            f"baris diperbarui SUDAH tersimpan sebelum galat. Tekan 'Batalkan impor' di "
+            f"Riwayat impor untuk membersihkannya, lalu ulangi impor.")) from None
 
     # F3 — jejak UNDO disimpan SEBELUM sesi ditandai selesai, supaya tombol
     # "Batalkan impor" pada Ekspor B/C benar-benar bisa memulihkan keadaan.
@@ -3650,12 +4087,16 @@ async def _after_returns_import(db, session_id: str, user: dict) -> dict:
     from core import returns_bridge as _rb
     rows = await db.marketing_returns.find({"_import_session_id": session_id},
                                            {"_id": 0}).to_list(20000)
-    out = {"scanned": len(rows), "wh_created": 0, "wh_existing": 0, "failed": 0}
+    # `wh_refund_only` (2026-11-09) = retur "Refund only": barang tidak kembali, tanpa Retur Fisik
+    out = {"scanned": len(rows), "wh_created": 0, "wh_existing": 0, "wh_refund_only": 0, "failed": 0}
     for r in rows:
         if str(r.get("status") or "").lower() in _rb.SKIP_STATUSES:
             continue
         try:
             res = await _rb.ensure_wh_return(db, r, actor=user, auto_restock=False)
+            if res.get("skipped"):
+                out["wh_refund_only"] += 1
+                continue
             out["wh_created" if res.get("created") else "wh_existing"] += 1
         except Exception as e:  # noqa: BLE001
             out["failed"] += 1
@@ -3727,7 +4168,7 @@ async def _rollback_locked(session_id: str, request: Request):
     await require_auth(request)
     user = _user(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     # Urutan pemeriksaan ini PENTING. Versi lama memeriksa `status != committed`
     # lebih dulu, sehingga sesi yang SUDAH dibatalkan dijawab "Sesi ini belum
     # di-commit" — pesan yang menyesatkan pada satu-satunya saat staf paling
@@ -3737,7 +4178,7 @@ async def _rollback_locked(session_id: str, request: Request):
                                  f"({_ser(s.get('rolled_back_at'))} oleh "
                                  f"{s.get('rolled_back_by') or '-'}). Buka "
                                  "'Riwayat impor' untuk melihat laporan pemulihannya.")
-    if s.get("status") != "committed":
+    if s.get("status") not in ("committed", "partial", "committing"):
         raise HTTPException(400, "Sesi ini belum di-commit")
     committed_at = s.get("committed_at")
     if isinstance(committed_at, datetime):
@@ -3758,7 +4199,9 @@ async def _rollback_locked(session_id: str, request: Request):
         try:
             from core import marketing_daily_rollup as rollup
             touched = set(await rollup.pairs_from_orders(
-                db, {"id": {"$in": ids}, "_import_session_id": session_id}))
+                db, ({"_import_session_id": session_id}
+                     if s.get("status") in ("partial", "committing")
+                     else {"id": {"$in": ids}, "_import_session_id": session_id})))
             # 2026-11-06 (Tahap 2) — pesanan yang DIPERBARUI sesi ini (impor ulang
             # "Perbarui yang lama") ikut dihitung ulang rekapnya setelah dipulihkan.
             async for u in db[UNDO].find({"session_id": session_id, "restored_at": None,
@@ -3771,8 +4214,13 @@ async def _rollback_locked(session_id: str, request: Request):
                     db, {"id": {"$in": updated_doc_ids}}))
         except Exception:
             logger.exception("gagal mengumpulkan tanggal terdampak (sesi=%s)", session_id)
-    res = await db[st.collection].delete_many({"id": {"$in": ids},
-                                               "_import_session_id": session_id})
+    if s.get("status") in ("partial", "committing"):
+        # M-11 — commit terhenti: hapus SEMUA baris yang ditandai sesi ini (daftar
+        # `committed_ids` bisa belum sempat tersimpan bila prosesnya mati).
+        res = await db[st.collection].delete_many({"_import_session_id": session_id})
+    else:
+        res = await db[st.collection].delete_many({"id": {"$in": ids},
+                                                   "_import_session_id": session_id})
     # F3 — PEMULIHAN keadaan pesanan untuk impor yang hanya memperbarui.
     restore = await _restore_fulfillment_session(db, s, st, user)
     if updated_doc_ids:
@@ -3848,7 +4296,7 @@ async def undo_report(session_id: str, request: Request):
     """
     await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     pending = await db[UNDO].count_documents({"session_id": session_id,
                                               "restored_at": None})
@@ -3880,7 +4328,7 @@ async def undo_report(session_id: str, request: Request):
 async def delete_session(session_id: str, request: Request):
     await require_auth(request)
     db = get_db()
-    s = await _load_session(db, session_id)
+    s = await _load_session(db, session_id, request)
     if s.get("status") == "committed":
         raise HTTPException(400, "Sesi yang sudah di-commit tidak boleh dihapus "
                                  "(jejak impor harus bisa ditelusuri). Pakai rollback.")
@@ -3910,7 +4358,7 @@ async def history(request: Request, page: int = Query(1, ge=1),
     # "Batalkan & pulihkan", jadi riwayat toko orang lain = jalan pintas mengubah
     # data toko orang lain.
     q = await scope.scope_filter(
-        db, user, {"status": {"$in": ["committed", "rolled_back"]}})
+        db, user, {"status": {"$in": ["committed", "partial", "rolled_back"]}})
     total = await db[SESSIONS].count_documents(q)
     docs = await db[SESSIONS].find(
         q, {"_id": 0, "mapping": 0, "row_notes": 0, "restore_notes": 0}).sort(

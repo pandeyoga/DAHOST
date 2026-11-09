@@ -73,6 +73,9 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const [subId, setSubId] = useState('');
   const [kinds, setKinds] = useState(kind ? [kind] : []);
   const [codes, setCodes] = useState('');
+  // 2026-11-09: opname STOK AWAL — nilai stok dibukukan ke ekuitas saldo awal (disetujui Keuangan/owner)
+  const [opening, setOpening] = useState(false);
+  const [problems, setProblems] = useState(null);   // daftar baris yang menolak approve stok awal
 
   // hitung
   const [ctxBin, setCtxBin] = useState({ id: '', label: '' });   // '' = lantai / belum dirak
@@ -169,11 +172,12 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       const body = {
         location_id: locId, sub_scope_type: subType, sub_scope_id: subType ? subId : '', kinds,
         material_codes: codes.split(/[\s,;]+/).map((c) => c.trim()).filter(Boolean), source: kind || 'gudang',
+        opening,
       };
       const r = await fetch(`${API}/api/wms/opname3/sessions`, { method: 'POST', headers: jsonH, body: JSON.stringify(body) });
       const d = await r.json();
       if (r.ok) {
-        setShowNew(false); setCodes(''); setSubType(''); setSubId('');
+        setShowNew(false); setCodes(''); setSubType(''); setSubId(''); setOpening(false);
         await loadSessions(); await loadDetail(d.id); setCtxBin({ id: '', label: '' }); setLastScan(null); resetScanUi();
         flash('success', `Sesi ${d.session_no} dibuat — ${d.lines} baris (${d.level === 'rak' ? 'hitung rak: penempatan saja' : 'hitung lokasi'}).`);
       } else flash('error', errText(d, 'Gagal membuat sesi'));
@@ -245,7 +249,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     try {
       const [r, d] = await post(action, { session_id: sess.id, notes, ...extra });
       if (r.ok) {
-        setZeroList(null);
+        setZeroList(null); setProblems(null);
         if (action === 'approve') {
           const s = d.session?.summary || {};
           flash('success', `Opname disetujui. ${s.stock_writes || 0} baris stok ditimpa, ${s.positions_updated || 0} bin diperbarui`
@@ -255,6 +259,8 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
         await loadDetail(sess.id);
       } else if (r.status === 409 && d?.detail?.code === 'belum_dihitung') {
         setZeroList(d.detail.belum_dihitung || []);
+      } else if (r.status === 409 && d?.detail?.code === 'opname_awal_ditolak') {
+        setProblems(d.detail.problems || {}); flash('error', errText(d, 'Approve stok awal ditolak'));
       } else flash('error', errText(d, `Gagal ${{ submit: 'mengajukan', approve: 'menyetujui', reject: 'menolak', cancel: 'membatalkan' }[action] || 'memproses'} sesi`));
     } catch (e) { flash('error', e.message); } finally { setBusy(false); }
   };
@@ -288,6 +294,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
           {s.session_no}
           {s.archived && <StatusBadge status="arsip" label="Arsip" tone="muted" />}
           {s.level === 'rak' && <StatusBadge status="rak" label="Rak" tone="muted" />}
+          {s.mode === 'opening' && <StatusBadge status="stok-awal" label="Stok awal" tone="primary" />}
         </span>) },
       { kunci: 'cakupan', label: 'Cakupan', hp: 'keterangan', isi: (s) => <span className="text-sm">{s.scope_label || '—'}</span> },
       { kunci: 'dibuat', label: 'Dibuat', isi: (s) => <span className="text-sm md:whitespace-nowrap">{formatDateTimeID(s.created_at)}</span> },
@@ -359,6 +366,15 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                 </label>
               ))}
             </div>
+          </Isian>
+          <Isian label="Jenis sesi" petunjuk={opening
+            ? 'Stok awal: nilai hasil hitung dibukukan ke ekuitas saldo awal (bukan selisih persediaan), disetujui Keuangan/owner. Barang tanpa harga ditolak; sekali per barang × lokasi.'
+            : 'Opname biasa: selisih dibukukan ke selisih persediaan.'}>
+            <label htmlFor="opname-opening-cb" className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+              <Checkbox id="opname-opening-cb" checked={opening} disabled={!!subType}
+                onCheckedChange={(c) => setOpening(c === true)} data-testid="opname-opening" />
+              Opname stok awal (go-live)
+            </label>
           </Isian>
           <Isian label="Hanya barang tertentu" htmlFor="opname-codes-field" petunjuk="Opsional — ketik atau scan kode, satu per baris. Kosongkan untuk menghitung semua barang.">
             <Textarea id="opname-codes-field" value={codes} onChange={(e) => setCodes(e.target.value)} rows={2} data-testid="opname-codes" />
@@ -575,6 +591,26 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               sub="Baris ini tidak dijurnal." />
           </div>
           {isRak && <p className="text-sm text-muted-foreground">Hitung level rak hanya memperbaiki penempatan bin — stok dan jurnal tidak berubah.</p>}
+          {sess.mode === 'opening' && (
+            <Notice tone="info" testId="opname-opening-note" title="Opname stok awal">
+              Nilai hasil hitung dibukukan ke akun persediaan lawan ekuitas saldo awal (bukan selisih persediaan). Yang boleh
+              menyetujui hanya Keuangan/owner. Barang jadi tanpa harga rata-rata dinilai HPP standar; barang tanpa harga sama sekali
+              ditolak.{sess.roll_import_no ? ` Berasal dari impor roll kain ${sess.roll_import_no} — roll aktif setelah disetujui.` : ''}
+            </Notice>
+          )}
+          {problems && Object.keys(problems).length > 0 && (
+            <Notice tone="danger" icon={AlertTriangle} testId="opname-opening-problems" title="Approve stok awal ditolak — perbaiki baris berikut">
+              {Object.entries(problems).map(([k, rows]) => (
+                <div key={k} className="mt-1">
+                  <p className="font-medium">{{ tanpa_harga: 'Belum berharga', berkurang: 'Hitungan lebih kecil dari stok sistem',
+                    sudah_ada_stok_awal: 'Sudah pernah dimuat stok awalnya', barang_klien: 'Barang milik klien maklon' }[k] || k}</p>
+                  <ul className="ml-4 list-disc">
+                    {rows.slice(0, 30).map((x, i) => <li key={i}>{x.material_code} {x.material_name ? `· ${x.material_name}` : ''} ({fmtNum(x.variance_qty)} {x.unit || ''})</li>)}
+                  </ul>
+                </div>
+              ))}
+            </Notice>
+          )}
 
           {status === 'submitted' && (
             <div className="flex flex-wrap gap-2" data-testid="opname-approval-actions">

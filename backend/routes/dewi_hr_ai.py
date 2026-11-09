@@ -260,6 +260,37 @@ async def get_screening_history(request: Request, limit: int = Query(20, ge=1, l
 #  P2-9: PREDICTIVE ATTRITION
 # ═══════════════════════════════════════════════════════════════════════
 
+KESIAPAN_ABSEN_PER_KARYAWAN = 10   # rata-rata ≥ 10 catatan absen per karyawan aktif dalam 90 hari
+
+
+@router.get("/kesiapan")
+async def kesiapan_ai_sdm(request: Request):
+    """Audit HR Tahap D (9 Nov 2026): fitur AI SDM lama hanya ditampilkan bila datanya cukup. Dulu ketiganya tampil
+    walau KPI/LMS/skill = 0 dokumen dan absensi 2 catatan, sehingga hasilnya tebakan LLM atau kosong.
+      attrition — catatan absensi 90 hari ≥ 10 × jumlah karyawan aktif (dan ≥ 5 karyawan aktif);
+      skill-gap — ada syarat keahlian (`rahaza_skill_requirements`) DAN karyawan yang sudah diisi keahliannya;
+      coaching  — ada penilaian kinerja (`dewi_perf_reviews`) atau peserta pelatihan (`dewi_lms_enrollments`).
+    Hanya hitungan (tanpa data pribadi)."""
+    await require_auth(request)
+    db = get_db()
+    aktif = await db.rahaza_employees.count_documents({"active": True})
+    since90 = (_now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    absen = await db.rahaza_attendance_events.count_documents({"date": {"$gte": since90}})
+    syarat = await db["rahaza_skill_requirements"].count_documents({})   # ditulis routes/dewi_skill_gap.py
+    berkeahlian = await db.rahaza_employees.count_documents({"active": True, "skills.0": {"$exists": True}})
+    nilai = await db.dewi_perf_reviews.count_documents({})
+    lms = await db.dewi_lms_enrollments.count_documents({})
+    perlu = KESIAPAN_ABSEN_PER_KARYAWAN * max(aktif, 1)
+    return {
+        "attrition": {"siap": aktif >= 5 and absen >= perlu,
+                      "alasan": f"{absen} catatan absensi 90 hari terakhir (perlu ≥ {perlu}) untuk {aktif} karyawan aktif."},
+        "skill-gap": {"siap": syarat > 0 and berkeahlian > 0,
+                      "alasan": f"{syarat} syarat keahlian, {berkeahlian} karyawan sudah diisi keahliannya."},
+        "coaching": {"siap": nilai > 0 or lms > 0,
+                     "alasan": f"{nilai} penilaian kinerja, {lms} peserta pelatihan."},
+    }
+
+
 @router.post("/attrition/predict")
 async def predict_attrition(
     request: Request,
@@ -309,9 +340,13 @@ async def predict_attrition(
 
         # Get leave requests (last 6 months)
         since180 = _now() - timedelta(days=180)
+        # 2026-11-09 (audit HR P6): dulu `created_at` (tersimpan sebagai datetime) dibandingkan dengan TEKS ISO →
+        # Mongo tidak pernah mencocokkan beda tipe, hitungan selalu 0. Kini memakai `from_date` (teks YYYY-MM-DD,
+        # tipe sama) dan hanya pengajuan yang tidak ditolak/dibatalkan.
         leave_count = await db.rahaza_leave_requests.count_documents({
             "employee_id": emp_id,
-            "created_at": {"$gte": since180.isoformat()}
+            "from_date": {"$gte": since180.strftime("%Y-%m-%d")},
+            "status": {"$nin": ["rejected", "cancelled", "draft"]},
         })
 
         # Years of service
@@ -356,10 +391,10 @@ Format JSON response:
   "priority_actions": ["aksi prioritas 1", "aksi prioritas 2"]
 }"""
 
-    user_prompt = f"Data karyawan aktif:\n{ai_json(emp_data[:10])}"
-
-    raw = await _call_ai(system_prompt, user_prompt, "attrition", user.get("id"))
-    analysis = _restore_attrition(_parse_json_response(raw), ps, ref_map)
+    # 2026-11-09 (audit HR P6): dulu hanya 10 karyawan pertama yang dikirim (`emp_data[:10]`) walau dasbor
+    # menyebut "semua karyawan aktif". Kini semua karyawan dianalisis, per kelompok `ATTRITION_BATCH` orang
+    # (satu panggilan AI per kelompok), lalu hasilnya digabung.
+    analysis = await _attrition_batches(system_prompt, emp_data, ps, ref_map, user.get("id"))
 
     # Save to DB
     doc = {
@@ -374,6 +409,36 @@ Format JSON response:
 
     # K27: `raw_employee_data` (berisi base_salary) DIHAPUS dari respons.
     return ok(data={"analysis": analysis, "generated_at": doc["generated_at"]})
+
+
+ATTRITION_BATCH = 40
+
+
+def batches(rows: list, size: int = ATTRITION_BATCH) -> list:
+    """Bagi daftar menjadi kelompok berukuran `size` (kelompok terakhir boleh lebih kecil)."""
+    size = max(1, int(size or ATTRITION_BATCH))
+    return [rows[i:i + size] for i in range(0, len(rows), size)]
+
+
+async def _attrition_batches(system_prompt: str, emp_data: list, ps: Pseudonymizer, ref_map: dict,
+                             user_id) -> dict:
+    """Analisis semua karyawan per kelompok; gabungkan `employees`, ringkasan departemen, dan aksi prioritas."""
+    gabung: dict = {"employees": [], "department_summary": [], "overall_insights": "", "priority_actions": []}
+    kelompok = batches(emp_data)
+    insights = []
+    for i, rows in enumerate(kelompok, 1):
+        catatan = f" (kelompok {i} dari {len(kelompok)})" if len(kelompok) > 1 else ""
+        raw = await _call_ai(system_prompt, f"Data karyawan aktif{catatan}:\n{ai_json(rows)}", "attrition", user_id)
+        part = _restore_attrition(_parse_json_response(raw), ps, ref_map)
+        gabung["employees"] += [e for e in part.get("employees") or [] if isinstance(e, dict)]
+        gabung["department_summary"] += [d for d in part.get("department_summary") or [] if isinstance(d, dict)]
+        for a in part.get("priority_actions") or []:
+            if a not in gabung["priority_actions"]:
+                gabung["priority_actions"].append(a)
+        if part.get("overall_insights"):
+            insights.append(str(part["overall_insights"]))
+    gabung["overall_insights"] = "\n\n".join(insights)
+    return gabung
 
 
 def _restore_attrition(analysis: dict, ps: Pseudonymizer, ref_map: dict) -> dict:

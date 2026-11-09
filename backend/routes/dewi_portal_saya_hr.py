@@ -169,7 +169,8 @@ async def get_dashboard(request: Request):
         slip = published[0] if published else None
         if slip:
             last_payslip = {
-                "period": slip.get("period_from", "")[:7],
+                # 2026-11-09 (M2): bulan gaji = bulan tanggal akhir periode (run 26 Okt–25 Nov = November)
+                "period": str(slip.get("period_to") or slip.get("period_from") or "")[:7],
                 "net_pay": slip.get("net_pay", 0),
                 "gross_pay": slip.get("gross_pay", 0),
             }
@@ -191,8 +192,11 @@ async def get_dashboard(request: Request):
     # --- Pending leave requests ---
     pending_leave = 0
     if emp_id:
+        # 2026-11-09 (pola status, audit HR): status menunggu = pending_approval / pending_hr_approval
+        # (core.leave_engine.PENDING_STATUSES). Dulu dicari "pending" yang tidak pernah ditulis → selalu 0.
+        from core.leave_engine import PENDING_STATUSES
         pending_leave = await db.rahaza_leave_requests.count_documents(
-            {"employee_id": emp_id, "status": "pending"}
+            {"employee_id": emp_id, "status": {"$in": list(PENDING_STATUSES)}}
         )
 
     # --- Training progress ---
@@ -315,9 +319,15 @@ async def cancel_leave(leave_id: str, request: Request):
     lr = await db.rahaza_leave_requests.find_one({"id": leave_id, "employee_id": emp["id"]}, {"_id": 0})
     if not lr:
         raise HTTPException(404, "Request tidak ditemukan.")
-    if lr.get("status") != "pending":
-        raise HTTPException(400, f"Tidak dapat membatalkan request dengan status '{lr.get('status')}'.")
-    await db.rahaza_leave_requests.delete_one({"id": leave_id})
+    # 2026-11-09 (pola status, audit HR): dulu hanya status "pending" (tidak pernah ditulis) → selalu 400, dan
+    # bila lolos dokumennya DIHAPUS (antrean persetujuan atasan/HR tertinggal). Sekarang satu jalur dengan tombol
+    # Batalkan: pengajuan menunggu ditarik (status 'cancelled', antrean & "Perlu Tindakan" ikut ditutup).
+    from core.leave_engine import PENDING_STATUSES
+    if lr.get("status") not in PENDING_STATUSES:
+        raise HTTPException(400, "Hanya pengajuan yang masih menunggu persetujuan yang bisa ditarik di sini. "
+                                 "Cuti yang sudah disetujui dibatalkan lewat tombol Batalkan.")
+    from routes.rahaza_leave import _cancel_pending_leave
+    await _cancel_pending_leave(db, lr, user, "Ditarik oleh karyawan")
     return {"ok": True}
 
 
@@ -327,6 +337,104 @@ async def get_leave_types(request: Request):
     db = get_db()
     types = await db.rahaza_leave_types.find({"active": True}, {"_id": 0}).sort("name", 1).to_list(500)
     return {"items": types}
+
+
+# ══════════════════════════════════════════════════════════════
+# PERSETUJUAN TIM — atasan langsung (2026-11-09, Q6 keputusan owner)
+# ══════════════════════════════════════════════════════════════
+# Tingkat 1 cuti/izin/sakit & lembur = atasan langsung (`manager_id` karyawan), lalu HR. Atasan (spv packing,
+# spv cutting, koordinator) umumnya tidak memegang Portal SDM, jadi keputusannya lewat Portal Saya — satu mesin
+# yang sama (`core.leave_engine`, `routes.rahaza_overtime`) memeriksa bahwa pemutusnya benar atasan langsung.
+
+async def _team_pending(db, me: dict) -> dict:
+    from core.approval_route import waiting_manager
+    q = {"approval_route.manager_employee_id": me["id"]}
+    leaves = [lv for lv in await db.rahaza_leave_requests.find(
+        {**q, "status": "pending_approval"}, {"_id": 0}).sort("created_at", 1).to_list(200) if waiting_manager(lv)]
+    ots = [o for o in await db.rahaza_overtime_requests.find(
+        {**q, "status": "pending"}, {"_id": 0}).sort("date", 1).to_list(200) if waiting_manager(o)]
+    ids = list({d.get("employee_id") for d in leaves + ots if d.get("employee_id")})
+    emps = {e["id"]: e for e in await db.rahaza_employees.find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "employee_code": 1}).to_list(len(ids) or 1)} if ids else {}
+    lt_ids = list({lv.get("leave_type_id") for lv in leaves if lv.get("leave_type_id")})
+    lts = {t["id"]: t for t in await db.rahaza_leave_types.find(
+        {"id": {"$in": lt_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(lt_ids) or 1)} if lt_ids else {}
+    rows = []
+    for lv in leaves:
+        e = emps.get(lv.get("employee_id")) or {}
+        rows.append({"kind": "leave", "id": lv["id"], "employee_name": e.get("name") or "",
+                     "employee_code": e.get("employee_code") or "",
+                     "title": (lts.get(lv.get("leave_type_id")) or {}).get("name") or "Cuti",
+                     "detail": f"{lv.get('duration_working_days', lv.get('duration_days'))} hari kerja"
+                               + (" (setengah hari)" if lv.get("is_half_day") else ""),
+                     "from_date": lv.get("from_date"), "to_date": lv.get("to_date"), "reason": lv.get("reason") or "",
+                     "attachment_url": lv.get("attachment_url") or "", "created_at": lv.get("created_at")})
+    for o in ots:
+        e = emps.get(o.get("employee_id")) or {}
+        rows.append({"kind": "overtime", "id": o["id"], "employee_name": e.get("name") or "",
+                     "employee_code": e.get("employee_code") or "", "title": "Lembur",
+                     "detail": f"{o.get('hours')} jam", "from_date": o.get("date"), "to_date": o.get("date"),
+                     "reason": o.get("reason") or "", "warnings": o.get("limit_warnings") or [],
+                     "created_at": o.get("created_at")})
+    return {"items": serialize_doc(rows)}
+
+
+async def _require_team_manager(db, kind: str, item_id: str, user: dict) -> dict:
+    """Gerbang: pengajuan ini sedang menunggu ATASAN dan `user` = atasan langsung pada rutenya (403/404)."""
+    coll = db.rahaza_leave_requests if kind == "leave" else db.rahaza_overtime_requests
+    doc = await coll.find_one({"id": item_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Pengajuan tidak ditemukan.")
+    from core.approval_route import is_route_manager, waiting_manager
+    if not (waiting_manager(doc) and await is_route_manager(db, user, doc)):
+        raise HTTPException(403, "Pengajuan ini tidak menunggu keputusan Anda sebagai atasan langsung.")
+    return doc
+
+
+@router.get("/team-approvals")
+async def team_approvals(request: Request):
+    """Pengajuan cuti/izin/sakit & lembur tim yang menunggu keputusan SAYA sebagai atasan langsung."""
+    user = await require_auth(request)
+    db = get_db()
+    from utils.employee_identity import resolve_my_employee
+    from core.approval_route import team_member_ids
+    me = await resolve_my_employee(db, user)
+    if not me:
+        return {"is_manager": False, "team_size": 0, "items": []}
+    team = await team_member_ids(db, user)
+    out = await _team_pending(db, me)
+    return {"is_manager": bool(team) or bool(out["items"]), "team_size": len(team), **out}
+
+
+@router.post("/team-approvals/{kind}/{item_id}/{action}")
+async def team_decide(kind: str, item_id: str, action: str, request: Request):
+    """Atasan menyetujui/menolak tingkat 1. Body: {notes} untuk setuju, {reason} (wajib) untuk tolak."""
+    user = await require_auth(request)
+    db = get_db()
+    if kind not in ("leave", "overtime") or action not in ("approve", "reject"):
+        raise HTTPException(404, "Aksi tidak dikenal.")
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    reason = (body.get("reason") or body.get("notes") or "").strip()
+    if action == "reject" and not reason:
+        raise HTTPException(400, "Alasan penolakan wajib diisi.")
+    await _require_team_manager(db, kind, item_id, user)
+    if kind == "leave":
+        from core.leave_engine import approve_leave_request, reject_leave_request
+        if action == "approve":
+            res = await approve_leave_request(db, item_id, user, notes=reason, via="atasan")
+            out = res["leave"]
+        else:
+            out = await reject_leave_request(db, item_id, user, reason, via="atasan")
+    else:
+        from routes.rahaza_overtime import approve_overtime_request, reject_overtime_request
+        out = (await approve_overtime_request(db, item_id, user, reason) if action == "approve"
+               else await reject_overtime_request(db, item_id, user, reason))
+    msg = ("Disetujui — diteruskan ke HR." if action == "approve" else "Pengajuan ditolak.")
+    return {"ok": True, "message": msg, "item": serialize_doc(out)}
 
 
 # ══════════════════════════════════════════════════════════════

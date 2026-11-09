@@ -639,6 +639,14 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             {showDetail.wh_return_code && (
               <BarisDetail label="Retur fisik (gudang)">{showDetail.wh_return_code} · {showDetail.wh_return_status || 'Menunggu'}</BarisDetail>
             )}
+            {/* 2026-11-09 — "Refund only": barang tidak kembali, jadi tidak ada Retur Fisik. */}
+            {!showDetail.wh_return_id && showDetail.goods_returned === false && (
+              <BarisDetail label="Retur fisik (gudang)">
+                <span data-testid="mkt-ret-refund-only">
+                  Tidak dibuat{showDetail.wh_skip_reason ? `: ${showDetail.wh_skip_reason}` : ' — barang tidak dikirim balik ke gudang.'}
+                </span>
+              </BarisDetail>
+            )}
             {/* W4 — apa yang terjadi pada STOK, dinyatakan terang-terangan. */}
             {showDetail.wh_return_id && (
               <BarisDetail label="Efek stok">
@@ -664,7 +672,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           </dl>
 
           {/* RC-FLOW-UX-11c (opsi B, soft-warning): retur approved > 24 jam & belum ada wh_return_id */}
-          {showDetail.status === 'approved' && !showDetail.wh_return_id && (() => {
+          {showDetail.status === 'approved' && !showDetail.wh_return_id && showDetail.goods_returned !== false && (() => {
             const upd = new Date(showDetail.updated_at || showDetail.date || 0).getTime();
             const hours = (Date.now() - upd) / 36e5;
             if (hours < 24) return null;
@@ -685,7 +693,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
 
           <div className="flex flex-wrap gap-2 border-t border-[var(--glass-border)] pt-3">
             {/* W4 — retur LAMA (sebelum jembatan otomatis) bisa ditarik ke gudang, apa pun statusnya selain ditolak/dibatalkan. */}
-            {!showDetail.wh_return_id && !['rejected', 'cancelled'].includes(showDetail.status) && (
+            {!showDetail.wh_return_id && showDetail.goods_returned !== false && !['rejected', 'cancelled'].includes(showDetail.status) && (
               <Button onClick={() => handleCreateWhReturn(showDetail.id)} disabled={actionLoading === showDetail.id}
                 variant="outline" data-testid="btn-create-wh-return">
                 {actionLoading === showDetail.id ? <Loader2 className="animate-spin" /> : <Warehouse />}

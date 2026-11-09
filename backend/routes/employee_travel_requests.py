@@ -565,9 +565,13 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
                                   "pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'approve', 'travel_request',
                        f"Approve travel request {doc.get('trip_number')}")
+    # 2026-11-09 (Q11): hari kerja dinas tercatat "hadir (tugas luar)" tanpa geofence.
+    from core.tugas_luar import write_duty_days
+    duty = await write_duty_days(db, doc, user)
     await _notify_travel_decision(db, doc, approved=True, note=payload.note or '',
                                   advance=float(cash_adv_approved or 0))
-    return {'ok': True, 'id': req_id, 'new_status': 'approved', 'cash_advance_approved': cash_adv_approved}
+    return {'ok': True, 'id': req_id, 'new_status': 'approved', 'cash_advance_approved': cash_adv_approved,
+            'attendance': duty}
 
 
 async def _notify_travel_decision(db, doc: dict, *, approved: bool, note: str = '', advance: float = 0) -> None:
@@ -613,6 +617,9 @@ async def reject_travel_request(req_id: str, payload: RejectPayload, user: dict 
                                   "pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'reject', 'travel_request',
                        f"Reject travel request {doc.get('trip_number')}: {payload.reason}")
+    if doc.get('status') == 'approved':   # 2026-11-09 (Q11): absensi tugas luar dikembalikan
+        from core.tugas_luar import restore_duty_days
+        await restore_duty_days(db, doc, user)
     await _notify_travel_decision(db, doc, approved=False, note=payload.reason)
     return {'ok': True, 'id': req_id, 'new_status': 'rejected'}
 

@@ -56,6 +56,15 @@ router = APIRouter(prefix="/api/wms/fabric-rolls", tags=["wms-fabric-rolls"])
 
 QC_STATUSES = ["pending", "pass", "partial", "reject"]
 ROLL_STATUSES = ["in_stock", "partly_issued", "fully_issued", "returned", "rejected"]
+# 2026-11-09 (impor roll stok awal): roll menunggu persetujuan stok awal / dibatalkan — tidak bisa dipakai.
+LOCKED_STATUSES = ("pending_opening", "cancelled")
+
+
+def _assert_usable(roll: dict) -> None:
+    if (roll or {}).get("status") in LOCKED_STATUSES:
+        raise HTTPException(400, (
+            f"Roll {roll.get('roll_no')} " + ("masih menunggu persetujuan stok awal oleh Keuangan — belum bisa dipakai."
+                                             if roll.get("status") == "pending_opening" else "sudah dibatalkan.")))
 
 
 def _now(): return datetime.now(timezone.utc)
@@ -380,6 +389,54 @@ async def roll_stats(request: Request):
     return {"by_status": [{**s, "_id": s["_id"]} for s in stats]}
 
 
+# ── 2026-11-09: IMPOR ROLL KAIN MASSAL (stok awal, klarifikasi owner C5) ───────────────────────────
+@router.get("/import/template")
+async def roll_import_template(request: Request):
+    await require_auth(request)
+    from io import BytesIO
+    from core import fabric_roll_import as fri
+    data = await fri.build_template(get_db())
+    return StreamingResponse(BytesIO(data), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": 'attachment; filename="template_impor_roll_kain.xlsx"'})
+
+
+async def _read_upload(request: Request) -> tuple:
+    form = await request.form()
+    f = form.get("file")
+    if f is None or not hasattr(f, "read"):
+        raise HTTPException(400, "Unggah berkas Excel (.xlsx) di isian 'file'.")
+    data = await f.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(400, "Berkas terlalu besar (maks. 10 MB).")
+    return data, getattr(f, "filename", "") or ""
+
+
+@router.post("/import/preview", dependencies=only(*WAREHOUSE_ROLES, perm="inv.stock.manage"))
+async def roll_import_preview(request: Request):
+    """Pratinjau impor roll (tidak menulis apa pun)."""
+    await require_auth(request)
+    from core import fabric_roll_import as fri
+    data, _name = await _read_upload(request)
+    return serialize_doc(await fri.parse(get_db(), data))
+
+
+@router.post("/import/apply", dependencies=only(*WAREHOUSE_ROLES, perm="inv.stock.manage"))
+async def roll_import_apply(request: Request):
+    """Terapkan impor: roll menunggu + sesi Opname stok awal per lokasi (disetujui Keuangan/owner)."""
+    user = await require_auth(request)
+    from core import fabric_roll_import as fri
+    data, name = await _read_upload(request)
+    return serialize_doc(await fri.apply(get_db(), user, data, name))
+
+
+@router.get("/imports")
+async def roll_imports(request: Request, limit: int = Query(20, ge=1, le=100)):
+    await require_auth(request)
+    from core import fabric_roll_import as fri
+    rows = await get_db()[fri.IMPORTS].find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return serialize_doc(rows)
+
+
 @router.get("/by-material/{material_id}")
 async def rolls_by_material(material_id: str, request: Request):
     await require_auth(request)
@@ -456,6 +513,7 @@ async def issue_roll(roll_id: str, data: IssueIn, request: Request):
     roll = await db.wh_fabric_rolls.find_one({"id": roll_id})
     if not roll:
         raise HTTPException(404, "Roll tidak ditemukan")
+    _assert_usable(roll)
     if roll.get("status") in ("rejected", "fully_issued"):
         raise HTTPException(400, f"Roll berstatus '{roll['status']}' tidak dapat di-issue")
     # Satuan pengeluaran WAJIB satuan gulungan itu sendiri (2026-08-21).
@@ -500,6 +558,7 @@ async def return_roll(roll_id: str, data: ReturnIn, request: Request):
     roll = await db.wh_fabric_rolls.find_one({"id": roll_id})
     if not roll:
         raise HTTPException(404, "Roll tidak ditemukan")
+    _assert_usable(roll)
     field = "remaining_m" if data.unit == "meter" else "remaining_kg"
     new_remaining = roll.get(field, 0) + data.qty
     new_status = _recalc_status({**roll, field: new_remaining})
@@ -532,6 +591,7 @@ async def reject_roll(roll_id: str, data: RejectIn, request: Request):
     roll = await db.wh_fabric_rolls.find_one({"id": roll_id})
     if not roll:
         raise HTTPException(404, "Roll tidak ditemukan")
+    _assert_usable(roll)
     if roll.get("status") == "rejected":
         raise HTTPException(400, "Roll sudah ditandai reject")
     await db.wh_fabric_rolls.update_one({"id": roll_id}, {"$set": {
@@ -556,6 +616,7 @@ async def adjust_roll(roll_id: str, data: AdjustIn, request: Request):
     roll = await db.wh_fabric_rolls.find_one({"id": roll_id})
     if not roll:
         raise HTTPException(404, "Roll tidak ditemukan")
+    _assert_usable(roll)
     new_m = max(0, roll.get("remaining_m", 0) + data.delta_m)
     new_kg = max(0, roll.get("remaining_kg", 0) + data.delta_kg)
     new_status = _recalc_status({**roll, "remaining_m": new_m, "remaining_kg": new_kg})

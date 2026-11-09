@@ -141,34 +141,52 @@ async def run_pricing_suggestions(request: Request):
             remain = round(cooldown - gap)
             raise HTTPException(429, f"Terlalu sering. Coba lagi dalam {remain} menit.")
 
-    # Kumpulkan data produk dari orders (derive pricing context)
-    pipeline = [
-        {"$group": {
-            "_id": "$product_name",
-            "total_orders_30d": {"$sum": 1},
-            "avg_price": {"$avg": {"$ifNull": ["$unit_price", "$price", 0]}},
-            "total_revenue": {"$sum": {"$ifNull": ["$total_amount", 0]}},
-            "return_count": {"$sum": {"$cond": [{"$eq": ["$status", "returned"]}, 1, 0]}},
-            "cancel_count": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
-            # K28 (2026-11-02): bukti pemetaan produk → item katalog/SKU untuk "Terapkan".
-            "catalog_item_ids": {"$addToSet": "$catalog_item_id"},
-            "skus": {"$addToSet": "$sku_id"},
-        }},
-        {"$match": {"_id": {"$ne": None}}},
-        {"$sort": {"total_orders_30d": -1}},
-        {"$limit": 20}
-    ]
+    # Kumpulkan data produk dari pesanan 30 hari terakhir (konteks harga).
+    # M-19 (audit Marketing 9 Nov 2026) — dulu `$total_amount` (field yang tidak ada ⇒ omzet
+    # 0), tanpa saring tanggal ("30d" = seluruh riwayat), tanpa saring batal/belum dibayar,
+    # dan tanpa lingkup toko. Sekarang pembaca baku `core.ukuran_penjualan`: pesanan yang
+    # dihitung omzet, per item katalog, rentang 30 hari WIB, toko yang boleh dilihat.
+    from core import ukuran_penjualan as _uk
+    from utils.waktu import today_wib
+    _today = today_wib()
+    d0, d1 = (_today - timedelta(days=29)).isoformat(), _today.isoformat()
+    _accs = await _uk.toko_terlihat(db, user)
+    _ids = [a_["id"] for a_ in _accs]
+    counted = await _uk.baca_pesanan(db, _ids, d0, d1)
+    per_item = await _uk.rincian_item(db, counted, "katalog")
+    # pembanding batal/retur per item (semua status pada rentang yang sama)
+    _all = []
+    if _ids:
+        async for o in db.marketing_orders.find(
+                {"$and": [{"account_id": {"$in": _ids}}, _uk.filter_tanggal("order_date", d0, d1),
+                          dict(_uk.TANPA_CONTOH)]},
+                {"_id": 0, "status": 1, "items": 1, "catalog_item_id": 1, "sku_id": 1,
+                 "product_name": 1, "quantity": 1, "id": 1}):
+            _all.append(o)
+    _kat = await _uk.katalog_untuk(db, (ln.get("catalog_item_id") for o in _all
+                                        for ln in _uk.baris_item(o)))
+    _bad: dict = {}
+    for o in _all:
+        st_ = str(o.get("status") or "").lower()
+        if st_ not in ("cancelled", "canceled", "returned"):
+            continue
+        for k_ in {_uk.kunci_item(ln, _kat, "katalog")[0] for ln in _uk.baris_item(o)}:
+            b_ = _bad.setdefault(k_, {"cancel": 0, "return": 0})
+            b_["return" if st_ == "returned" else "cancel"] += 1
     products = []
-    async for p in db.marketing_orders.aggregate(pipeline):
+    for p in sorted(per_item, key=lambda r: -r["pesanan"])[:20]:
+        n = max(p["pesanan"], 1)
+        bad = _bad.get(p["kunci"]) or {}
         products.append({
-            "product": p["_id"],
-            "orders_30d": p["total_orders_30d"],
-            "avg_price_rp": round(p["avg_price"] or 0),
-            "revenue_30d": round(p["total_revenue"] or 0),
-            "return_rate_pct": round(p["return_count"] / max(p["total_orders_30d"], 1) * 100, 1),
-            "cancel_rate_pct": round(p["cancel_count"] / max(p["total_orders_30d"], 1) * 100, 1),
-            "_catalog_item_ids": [x for x in (p.get("catalog_item_ids") or []) if x],
-            "_skus": [x for x in (p.get("skus") or []) if x],
+            "product": p["label"],
+            "orders_30d": p["pesanan"],
+            "units_30d": p["unit"],
+            "avg_price_rp": round(p["omzet"] / p["unit"]) if p["unit"] else 0,
+            "revenue_30d": round(p["omzet"]),
+            "return_rate_pct": round(bad.get("return", 0) / (n + bad.get("cancel", 0)) * 100, 1),
+            "cancel_rate_pct": round(bad.get("cancel", 0) / (n + bad.get("cancel", 0)) * 100, 1),
+            "_catalog_item_ids": [p["kunci"][5:]] if p["kunci"].startswith("item:") else [],
+            "_skus": [p["sku"]] if p.get("sku") else [],
         })
 
     # Review scores per product
@@ -560,15 +578,21 @@ async def run_churn_analysis(request: Request):
     db = get_db()
 
     # Build customer profiles from orders
+    # 9 Nov 2026 (pola M-19) — dulu `$buyer_name` (field tak ditulis impor), `$created_at`
+    # (waktu IMPOR, bukan waktu pesanan) dan `$total_amount` (tak ada ⇒ belanja 0), tanpa
+    # lingkup toko & tanpa saring belum dibayar. Sekarang definisi omzet baku.
+    from core import ukuran_penjualan as _uk
+    _ids = [a_["id"] for a_ in await _uk.toko_terlihat(db, user)]
     now = _now()
     pipeline = [
-        {"$match": {"status": {"$nin": ["cancelled", "returned"]}}},
+        {"$match": {"$and": [{"account_id": {"$in": _ids}}, _uk.filter_dihitung_omzet(),
+                             {"status": {"$ne": "returned"}}]}},
         {"$group": {
-            "_id": "$buyer_name",
-            "last_order": {"$max": "$created_at"},
-            "first_order": {"$min": "$created_at"},
+            "_id": {"$ifNull": ["$buyer_username", {"$ifNull": ["$customer_phone", "$customer_name"]}]},
+            "last_order": {"$max": "$order_date"},
+            "first_order": {"$min": "$order_date"},
             "order_count": {"$sum": 1},
-            "total_spent": {"$sum": {"$ifNull": ["$total_amount", 0]}},
+            "total_spent": {"$sum": _uk.EKSPR_OMZET_PRODUK},
             "platforms": {"$addToSet": "$platform"}
         }},
         {"$match": {"_id": {"$ne": None}}},
@@ -577,7 +601,16 @@ async def run_churn_analysis(request: Request):
     ]
 
     customers = []
+    def _as_dt(v):
+        if isinstance(v, datetime):
+            return v
+        try:
+            return datetime.fromisoformat(str(v)[:10])
+        except ValueError:
+            return now
+
     async for c in db.marketing_orders.aggregate(pipeline):
+        c["last_order"], c["first_order"] = _as_dt(c["last_order"]), _as_dt(c["first_order"])
         last_dt = c["last_order"]
         if hasattr(last_dt, 'tzinfo') and last_dt.tzinfo is None:
             last_dt = last_dt.replace(tzinfo=timezone.utc)

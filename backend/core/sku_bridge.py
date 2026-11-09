@@ -53,6 +53,9 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from typing import Optional
+
+from core import sku_kunci as _skuk   # G4: kunci nama+variasi untuk baris tanpa SKU platform
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -224,11 +227,16 @@ async def list_unmapped(db, *, account_id: str = None, q: str = None,
         for ln in (o.get('items') or []):
             if not isinstance(ln, dict) or ln.get('fg_material_id'):
                 continue
-            psid = str(ln.get('platform_sku_id') or '').strip()
+            # G4 (audit Gudang 9 Nov 2026) — baris TANPA SKU platform (ekspor Shopee) dulu
+            # dibuang di sini ⇒ "0 belum tertaut" padahal pesanannya tak tertaut. Sekarang
+            # dikelompokkan per (toko, nama produk, variasi) dengan kunci `nv:…`.
+            psid = _skuk.kunci_baris(ln, o.get('account_id'))
             if not psid:
                 continue
             g = groups.setdefault(psid, {
                 'platform_sku_id': psid, 'pcs': 0.0, 'orders': 0, 'value': 0.0,
+                'sku_label': _skuk.label_kunci(psid) if _skuk.kunci_nama(psid) else psid,
+                'key_kind': 'nama_variasi' if _skuk.kunci_nama(psid) else 'sku_platform',
                 'product_name': ln.get('product_name_raw') or ln.get('product_name') or '',
                 'variation': ln.get('variation_raw') or '',
                 'account_id': o.get('account_id'), 'account_name': o.get('account_name') or '',
@@ -577,8 +585,61 @@ async def _resolve_target(db, *, catalog_item_id: str = None, variant_id: str = 
     return None, (400, 'Pilih sasaran: catalog_item_id, variant_id, atau fg_material_id.')
 
 
+async def _backfill_by_name_key(db, key: str, target: Optional[dict]) -> int:
+    """G4 — terapkan pemetaan berkunci nama+variasi ke pesanan LAMA (dan retur Marketing
+    yang belum tertaut). ``target=None`` = lepas tautan. Idempoten."""
+    acc = _skuk.akun_kunci(key)
+    q = {'account_id': acc} if acc else {}
+    touched = 0
+    async for o in db[ORDERS].find(q, {'_id': 0, 'id': 1, 'items': 1, 'account_id': 1}):
+        items = o.get('items') or []
+        changed = False
+        for ln in items:
+            if not isinstance(ln, dict) or str(ln.get('platform_sku_id') or '').strip():
+                continue
+            if _skuk.kunci_baris(ln, o.get('account_id')) != key:
+                continue
+            if target is None:
+                if ln.get('master_link_source') not in ('sku_bridge', 'sku_map'):
+                    continue
+                ln.update({'catalog_item_id': None, 'fg_material_id': None, 'variant_id': None,
+                           'master_link_source': 'unlinked'})
+            else:
+                if ln.get('fg_material_id') == target.get('fg_material_id') and ln.get(
+                        'catalog_item_id') == target.get('id'):
+                    continue
+                ln.update({'catalog_item_id': target.get('id'),
+                           'fg_material_id': target.get('fg_material_id'),
+                           'variant_id': target.get('variant_id'),
+                           'model_id': target.get('model_id'),
+                           'master_link_source': 'sku_bridge', 'linked_at': _now()})
+                if ln.get('hpp_snapshot') is None and _f(target.get('hpp')) > 0:
+                    ln['hpp_snapshot'] = _f(target.get('hpp'))
+            changed = True
+        if changed:
+            await db[ORDERS].update_one({'id': o['id']},
+                                        {'$set': {'items': items, 'updated_at': _now()}})
+            touched += 1
+    # retur Marketing yang menunggu tautan barang (nama+variasi sama, toko sama)
+    if target is not None and target.get('id'):
+        async for r in db['marketing_returns'].find(
+                {**q, 'catalog_item_id': {'$in': [None, '']}},
+                {'_id': 0, 'id': 1, 'product': 1, 'product_name': 1, 'variation': 1,
+                 'account_id': 1}):
+            if _skuk.kunci_baris({'product_name': r.get('product') or r.get('product_name'),
+                                  'variation': r.get('variation')},
+                                 r.get('account_id')) != key:
+                continue
+            await db['marketing_returns'].update_one({'id': r['id']}, {'$set': {
+                'catalog_item_id': target.get('id'), 'link_source': 'sku_bridge',
+                'updated_at': _now()}})
+    return touched
+
+
 async def _backfill_orders(db, psid: str, target: dict) -> int:
     """Tautkan SEMUA baris pesanan ber-``platform_sku_id`` ini. Idempoten."""
+    if _skuk.kunci_nama(psid):
+        return await _backfill_by_name_key(db, psid, target)
     res = await db[ORDERS].update_many(
         {'items.platform_sku_id': psid},
         {'$set': {
@@ -617,6 +678,8 @@ async def apply_mapping(db, platform_sku_id: str, *, catalog_item_id: str = None
     if not psid:
         raise ValueError('platform_sku_id wajib diisi.')
 
+    if not account_id and _skuk.kunci_nama(psid):
+        account_id = _skuk.akun_kunci(psid)
     if not account_id:
         o = await db[ORDERS].find_one({'items.platform_sku_id': psid},
                                       {'_id': 0, 'account_id': 1})
@@ -651,9 +714,11 @@ async def apply_mapping(db, platform_sku_id: str, *, catalog_item_id: str = None
         upsert=True)
 
     # B-2 — jalur warisan tetap dihidupi supaya impor berikutnya ikut tertaut.
+    # G4 — kunci nama+variasi disimpan di `bridge_keys` (bukan SKU platform).
     if target.get('id'):
+        _fld = 'bridge_keys' if _skuk.kunci_nama(psid) else 'platform_sku_ids'
         await db[ITEMS].update_one({'id': target['id']},
-                                   {'$addToSet': {'platform_sku_ids': psid},
+                                   {'$addToSet': {_fld: psid},
                                     '$set': {'updated_at': _now()}})
 
     orders_updated = await _backfill_orders(db, psid, target)
@@ -673,6 +738,14 @@ async def remove_mapping(db, platform_sku_id: str, *, user: dict = None) -> dict
     b = await db[BRIDGE].find_one({'platform_sku_id': psid}, {'_id': 0})
     if not b:
         return {'ok': False, 'status': 404, 'message': f'Pemetaan {psid} tidak ada.'}
+    if _skuk.kunci_nama(psid):
+        if b.get('catalog_item_id'):
+            await db[ITEMS].update_one({'id': b['catalog_item_id']},
+                                       {'$pull': {'bridge_keys': psid}})
+        n = await _backfill_by_name_key(db, psid, None)
+        await db[BRIDGE].delete_one({'platform_sku_id': psid})
+        return {'ok': True, 'orders_updated': n,
+                'message': f'Pemetaan dilepas; {n} pesanan dikembalikan ke tak-tertaut.'}
     if b.get('catalog_item_id'):
         await db[ITEMS].update_one({'id': b['catalog_item_id']},
                                    {'$pull': {'platform_sku_ids': psid}})
@@ -847,8 +920,12 @@ async def list_mappings(db, *, q: str = None, limit: int = 300) -> dict:
             if nq not in norm(b.get('target_name')) and nq not in b.get('platform_sku_id', '') \
                     and nq not in norm(b.get('product_name_sample')):
                 continue
-        cnt = await db[ORDERS].count_documents({'items.platform_sku_id': b['platform_sku_id']})
-        rows.append({**b, 'orders_using': cnt})
+        if _skuk.kunci_nama(b['platform_sku_id']):
+            cnt = None                     # dihitung saat diterapkan (kunci nama+variasi)
+        else:
+            cnt = await db[ORDERS].count_documents({'items.platform_sku_id': b['platform_sku_id']})
+        rows.append({**b, 'orders_using': cnt,
+                     'sku_label': _skuk.label_kunci(b['platform_sku_id'])})
     total = await db[BRIDGE].count_documents({})
     return {'rows': rows, 'total': total}
 
@@ -986,6 +1063,16 @@ async def create_master_and_map(db, platform_sku_id: str, *, product_name: str =
         return {'ok': False, 'status': 400, 'message': 'platform_sku_id wajib diisi.'}
 
     # Lengkapi konteks dari pesanan bila layar tidak mengirimkannya.
+    if _skuk.kunci_nama(psid) and (not (product_name or variation) or not account_id):
+        account_id = account_id or _skuk.akun_kunci(psid)
+        async for o in db[ORDERS].find({'account_id': account_id},
+                                       {'_id': 0, 'items': 1, 'account_id': 1}):
+            ln = next((x for x in (o.get('items') or []) if isinstance(x, dict)
+                       and _skuk.kunci_baris(x, o.get('account_id')) == psid), None)
+            if ln:
+                product_name = product_name or ln.get('product_name_raw') or ''
+                variation = variation or ln.get('variation_raw') or ''
+                break
     if not (product_name or variation) or not account_id:
         o = await db[ORDERS].find_one({'items.platform_sku_id': psid},
                                       {'_id': 0, 'items': 1, 'account_id': 1})

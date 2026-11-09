@@ -7,7 +7,7 @@
  * Satu kepala halaman, tab pil berikon + jumlah data, penjelasan singkat per tab.
  */
 import { useState, useEffect } from 'react';
-import { Shirt, ListTree, Ruler, Boxes, Palette, Tags, FlaskConical, ArrowUpRight, RefreshCw, FileSpreadsheet } from 'lucide-react';
+import { Shirt, ListTree, Ruler, Boxes, Palette, Tags, FlaskConical, ArrowUpRight, RefreshCw, FileSpreadsheet, Coins } from 'lucide-react';
 import { apiGet, apiPost } from '@/lib/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ import RahazaVariantsModule from './RahazaVariantsModule';
 import RahazaColorsModule from './RahazaColorsModule';
 import RahazaProductCategoriesModule from './RahazaProductCategoriesModule';
 import RahazaMasterFillModule from './finance/RahazaMasterFillModule';
+import SkuPriceModule from './SkuPriceModule';  // 2026-11-09 (klarifikasi B2): harga jual resmi per SKU
 
 const ALL_TABS = [
   { key: 'models', label: 'Model DA', icon: Shirt, count: 'models',
@@ -28,6 +29,8 @@ const ALL_TABS = [
     hint: 'Kelompok produk & awalan SKU. Dipakai grouping katalog marketing dan filter laporan.' },
   { key: 'variants', label: 'Varian / SKU', icon: Boxes, count: 'variants',
     hint: 'Kombinasi model × warna × ukuran yang menjadi SKU barang jadi.' },
+  { key: 'prices', label: 'Harga jual per SKU', icon: Coins, count: null,
+    hint: 'Harga jual resmi tiap SKU — nilai awal harga di katalog toko (SKU kosong memakai harga model). Harga toko yang sudah ada tidak ikut berubah.' },
   { key: 'bom', label: 'BOM', icon: ListTree, count: null,
     hint: 'Resep per model + ukuran + warna: 1 pcs potongan (biaya dari kain roll yang benar-benar dipotong) + aksesoris. Dasar HPP produk.' },
   { key: 'fill', label: 'Isi massal (Excel)', icon: FileSpreadsheet, count: null,
@@ -48,7 +51,7 @@ const VARIANTS = {
     crossLink: { module: 'rnd-master-product-hub', label: 'Kategori · Varian · BOM · Ukuran · Warna kini disunting di Portal RnD → Master produk' },
   },
   rnd: {
-    tabs: ['categories', 'variants', 'bom', 'fill', 'sizes', 'colors'],
+    tabs: ['categories', 'variants', 'prices', 'bom', 'fill', 'sizes', 'colors'],
     eyebrow: 'Portal RnD · Master Data (SSOT)',
     title: 'Master produk',
     subtitle: 'Resep produk untuk Cutting, HPP, dan katalog: kategori, varian/SKU, BOM, ukuran, dan warna.',
@@ -113,6 +116,7 @@ export default function RahazaModelsAndBOMModule({ token, user, headers, userRol
     models: (p) => <RahazaModelsModule {...p} embedded />,
     categories: () => <RahazaProductCategoriesModule token={token} />,
     variants: () => <RahazaVariantsModule token={token} />,
+    prices: () => <SkuPriceModule token={token} />,
     bom: (p) => <RahazaBOMModuleV2 {...p} />,
     fill: (p) => <RahazaMasterFillModule {...p} />,
     sizes: (p) => <RahazaSizesModule {...p} />,

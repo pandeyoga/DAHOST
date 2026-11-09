@@ -171,55 +171,46 @@ async def ads_summary(request: Request,
     # F14 — ringkasan harus bisa dilingkupi toko yang sama dengan tabelnya.
     # F6 (sesi #9) — tanpa filter toko, staf berlingkup hanya menjumlah tokonya.
     _m = await _scope.scope_filter(db, user, {"account_id": account_id} if account_id else None)
-    conds = [dict(_m or {}), dict(_ukuran.TANPA_CONTOH)]
     if date_from or date_to:
         try:
             d0, d1 = _ukuran.periode(date_from, date_to, maks_hari=3700)
         except _ukuran.PeriodeSalah as e:
             raise HTTPException(400, str(e)) from None
-        conds.append(_ukuran.filter_tanggal("date", d0, d1))
-    match = {"$and": conds}
-    pipeline = [{"$match": match}] + [
-        {"$group": {
-            "_id": None,
-            "total_spend": {"$sum": "$spend"},
-            "total_revenue": {"$sum": "$revenue"},
-            "total_impressions": {"$sum": "$impressions"},
-            "total_clicks": {"$sum": "$clicks"},
-            "total_conversions": {"$sum": "$conversions"},
-            "campaigns": {"$sum": 1}
-        }}
-    ]
-    
-    result = await db.marketing_ads_data.aggregate(pipeline).to_list(1)
-    stats = result[0] if result else {
-        "total_spend": 0, "total_revenue": 0, "total_impressions": 0,
-        "total_clicks": 0, "total_conversions": 0, "campaigns": 0
-    }
-    
+        # Q-3 — laporan berperiode dibagi rata per hari; hanya hari di rentang ini dihitung
+        rows = []
+        q = {"$and": [dict(_m or {}), _ukuran.filter_iklan_rentang(d0, d1),
+                      dict(_ukuran.TANPA_CONTOH)]}
+        async for d in db.marketing_ads_data.find(q, {"_id": 0}):
+            porsi = _ukuran.porsi_iklan(d, d0, d1)
+            if porsi > 0:
+                d["_porsi"] = porsi
+                rows.append(d)
+    else:
+        rows = await db.marketing_ads_data.find(
+            {"$and": [dict(_m or {}), dict(_ukuran.TANPA_CONTOH)]}, {"_id": 0}).to_list(20000)
+
+    def _t(rs, k):
+        return sum(float(r.get(k) or 0) * float(r.get("_porsi", 1.0)) for r in rs)
+
+    stats = {"total_spend": round(_t(rows, "spend"), 2), "total_revenue": round(_t(rows, "revenue"), 2),
+             "total_impressions": _t(rows, "impressions"), "total_clicks": _t(rows, "clicks"),
+             "total_conversions": round(_t(rows, "conversions")), "campaigns": len(rows)}
     overall_roas = (stats["total_revenue"] / stats["total_spend"]) if stats["total_spend"] > 0 else 0
     overall_ctr = (stats["total_clicks"] / stats["total_impressions"] * 100) if stats["total_impressions"] > 0 else 0
     overall_cpa = (stats["total_spend"] / stats["total_conversions"]) if stats["total_conversions"] > 0 else 0
-    
-    # By platform — saringan SAMA dengan total di atas (2026-11-07, audit #5)
-    platform_pipeline = [
-        {"$match": match},
-        {"$group": {
-            "_id": "$platform",
-            "spend": {"$sum": "$spend"},
-            "revenue": {"$sum": "$revenue"},
-            "campaigns": {"$sum": 1}
-        }}
-    ]
+
+    # M-23 (audit 9 Nov 2026) — dikelompokkan menurut SALURAN IKLAN (Shopee Ads, TikTok
+    # Ads, Meta, …), bukan platform TOKO (`platform` distempel dari master toko).
+    groups: dict = {}
+    for r in rows:
+        key = str(r.get("ad_platform") or r.get("source_report") or r.get("platform") or "lainnya")
+        groups.setdefault(key, []).append(r)
     by_platform = {}
-    async for doc in db.marketing_ads_data.aggregate(platform_pipeline):
-        by_platform[doc["_id"]] = {
-            "spend": doc["spend"],
-            "revenue": doc["revenue"],
-            "campaigns": doc["campaigns"],
-            "roas": round((doc["revenue"] / doc["spend"]) if doc["spend"] > 0 else 0, 2)
-        }
-    
+    for key, rs in groups.items():
+        sp, rv = _t(rs, "spend"), _t(rs, "revenue")
+        by_platform[key] = {"spend": round(sp, 2), "revenue": round(rv, 2), "campaigns": len(rs),
+                            "roas": round((rv / sp) if sp > 0 else 0, 2)}
+
     return success_response(data={
         "total_spend": stats["total_spend"],
         "total_revenue": stats["total_revenue"],
@@ -228,7 +219,9 @@ async def ads_summary(request: Request,
         "overall_ctr": round(overall_ctr, 2),
         "overall_cpa": round(overall_cpa, 2),
         "total_conversions": stats["total_conversions"],
-        "by_platform": by_platform
+        "by_platform": by_platform,
+        "roas_dasar": "omzet atribusi iklan ÷ biaya iklan",
+        "dibagi_rata": sum(1 for r in rows if r.get("_porsi", 1.0) < 1.0),
     }, metadata={"date_from": date_from, "date_to": date_to})
 
 @router.get("/campaigns")
@@ -288,15 +281,20 @@ async def performance_trend(
     from core import ukuran_penjualan as _ukuran
     from utils.waktu import today_wib
     today = today_wib()
-    d0, d1 = (today - timedelta(days=days)).isoformat(), today.isoformat()
+    d0, d1 = (today - timedelta(days=days - 1)).isoformat(), today.isoformat()   # M-26: N hari
     accounts = await _ukuran.toko_terlihat(db, user)
     rows = await _ukuran.baca_iklan(db, [a["id"] for a in accounts], d0, d1)
     by_day: dict = {}
     for r in rows:
-        b = by_day.setdefault(r["_tanggal"], {"spend": 0.0, "revenue": 0.0, "conversions": 0})
-        b["spend"] += float(r.get("spend") or 0)
-        b["revenue"] += float(r.get("revenue") or 0)
-        b["conversions"] += int(r.get("conversions") or 0)
+        # Q-3 — laporan berperiode dibagi rata per hari (dulu seluruh biaya di hari pertama)
+        for day, frac in _ukuran.pecah_harian_iklan(r, d0, d1):
+            b = by_day.setdefault(day, {"spend": 0.0, "revenue": 0.0, "conversions": 0.0})
+            b["spend"] += float(r.get("spend") or 0) * frac
+            b["revenue"] += float(r.get("revenue") or 0) * frac
+            b["conversions"] += float(r.get("conversions") or 0) * frac
+    for b in by_day.values():
+        b["spend"], b["revenue"] = round(b["spend"], 2), round(b["revenue"], 2)
+        b["conversions"] = int(round(b["conversions"]))
 
     trend = []
     for day in sorted(by_day):
@@ -479,6 +477,22 @@ def _parse_ads_date(raw: str) -> datetime:
     return d
 
 
+def _jalur_of(doc: dict) -> str:
+    from core import ukuran_penjualan as _uk
+    return _uk.jalur_iklan(doc)
+
+
+async def _tolak_iklan_dobel(db, account_id, campaign_name, date_value, *,
+                             kecuali_id=None, jalur: str = "manual") -> None:
+    """M-09 — entri manual tidak boleh menumpuk biaya kampanye & hari yang sudah diimpor."""
+    from core import ukuran_penjualan as _uk
+    day = _uk.kunci_tanggal(date_value)
+    hits = await _uk.bentrok_iklan(db, account_id, [(campaign_name, day, day)], jalur=jalur,
+                                   kecuali_id=kecuali_id)
+    if hits:
+        raise HTTPException(409, _uk.pesan_bentrok_iklan(hits, saat="Simpan"))
+
+
 @router.get("/campaigns/{entry_id}")
 async def get_ads_entry(entry_id: str, request: Request):
     await require_auth(request)
@@ -506,6 +520,7 @@ async def create_ads_entry(body: AdsEntryIn, request: Request):
     doc = body.dict()
     doc.pop("account_id", None)
     doc["date"] = _parse_ads_date(body.date)
+    await _tolak_iklan_dobel(db, account["id"], body.campaign_name, doc["date"])
     doc["id"] = str(uuid.uuid4())
     doc["campaign_id"] = body.campaign_id or f"CMP-{uuid.uuid4().hex[:8].upper()}"
     _scope.stamp_account(doc, account)
@@ -536,6 +551,10 @@ async def update_ads_entry(entry_id: str, body: AdsEntryUpdate, request: Request
     if "status" in upd and upd["status"] not in AD_STATUSES:
         raise HTTPException(400, f"status harus salah satu: {', '.join(AD_STATUSES)}")
     merged = {**existing, **upd}
+    if "date" in upd or "campaign_name" in upd:
+        await _tolak_iklan_dobel(db, existing.get("account_id"), merged.get("campaign_name"),
+                                 merged.get("date"), kecuali_id=entry_id,
+                                 jalur=_jalur_of(existing))
     _ads_derived(merged)
     for k in ("ctr", "cpc", "cpa", "roas", "cvr"):
         upd[k] = merged[k]

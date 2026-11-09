@@ -168,6 +168,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
     coa_revenue_code: '',
     coa_cash_code: '',
     revenue_basis: 'produk_setelah_diskon',
+    sales_input_mode: '',
     platform_warehouse_name: '',
     platform_shop_id: '',
   });
@@ -197,6 +198,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         coa_revenue_code: account.coa_revenue_code || fallbackRevenue(account.platform) || '',
         coa_cash_code: account.coa_cash_code || '',
         revenue_basis: account.revenue_basis || 'produk_setelah_diskon',
+        sales_input_mode: account.sales_input_mode || '',
         platform_warehouse_name: account.platform_warehouse_name || '',
         platform_shop_id: account.platform_shop_id || '',
       });
@@ -215,6 +217,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         coa_revenue_code: AUTO_REVENUE,
         coa_cash_code: coa.default_cash || '',
         revenue_basis: 'produk_setelah_diskon',
+        sales_input_mode: '',
         platform_warehouse_name: '',
         platform_shop_id: '',
       });
@@ -242,6 +245,11 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
   const basisOptions = coa.revenue_basis_options || [
     { value: 'produk_setelah_diskon', label: 'Omzet produk (setelah diskon penjual)' },
     { value: 'order_amount', label: 'Order Amount (dibayar pembeli)' },
+  ];
+  // Q-5 (keputusan owner 9 Nov 2026) — cara input omzet per toko
+  const modeOptions = coa.sales_input_mode_options || [
+    { value: 'impor_pesanan', label: 'Impor pesanan (omzet dari pesanan Seller Center)' },
+    { value: 'rekap_manual', label: 'Rekap manual (omzet harian diketik / impor rekap)' },
   ];
   const ch = channelOf(form.platform);
   const revRecommended = revenueOptions.filter(o => ch && o.channel === ch);
@@ -276,6 +284,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         coa_revenue_code: form.coa_revenue_code === AUTO_REVENUE ? null : form.coa_revenue_code,
         // coa_receivable_code tidak dikirim: akun piutang toko dibuat & diatur server (anak 1-1303).
         revenue_basis: form.revenue_basis,
+        ...(form.sales_input_mode ? { sales_input_mode: form.sales_input_mode } : {}),
         platform_warehouse_name: form.platform_warehouse_name.trim(),
         platform_shop_id: form.platform_shop_id.trim(),
       };
@@ -443,6 +452,17 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
                   ))}
                 </SelectGroup>
               )}
+            </SelectContent>
+          </Select>
+        </Isian>
+        <Isian label="Cara input omzet" petunjuk="Impor pesanan: omzet harian dari pesanan yang diimpor, tanpa tugas input manual. Rekap manual: omzet harian diketik.">
+          <Select value={form.sales_input_mode || 'otomatis'} onValueChange={v => setForm(f => ({ ...f, sales_input_mode: v === 'otomatis' ? '' : v }))}>
+            <SelectTrigger data-testid="acc-input-mode-select" className="h-auto min-h-9 whitespace-normal text-left [&>span]:line-clamp-2"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="otomatis">Belum dipilih (ikuti data toko)</SelectItem>
+              {modeOptions.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </Isian>
