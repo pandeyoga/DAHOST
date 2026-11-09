@@ -322,7 +322,8 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
     from core.attendance_rules import attendance_lock, default_shift_ids
     lock_cache: dict = {}
     # 2026-11-07 (Tahap 5): shift bawaan per karyawan (jadwal → penugasan → shift karyawan) untuk baris baru
-    default_shift = await default_shift_ids(db, emps, d, shifts)
+    sched_off: set = set()   # 2026-11-09: libur menurut Jadwal Shift terbit (entri `libur: true`)
+    default_shift = await default_shift_ids(db, emps, d, shifts, off_out=sched_off)
     rows = []
     for e in emps:
         r = by_emp.get(e["id"])
@@ -359,6 +360,7 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
             "early_leave_minutes":      (r or {}).get("early_leave_minutes", 0),
             "late_reason":              (r or {}).get("late_reason"),
             "tugas_luar":               bool((r or {}).get("tugas_luar")),
+            "jadwal_libur":             e["id"] in sched_off,
             "needs_leave_request":      bool(r and str(r.get("status") or "").lower() in ("izin", "sakit", "cuti")
                                              and not r.get("leave_request_id")),
             "locked":                   bool(lock_cache.get(e["id"])),

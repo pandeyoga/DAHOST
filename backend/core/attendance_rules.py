@@ -111,10 +111,11 @@ def _grace_of(doc: dict):
 
 
 def _shape(start, end, *, grace=None, code=None, name=None, source: str, overnight=None,
-           break_minutes=None) -> Optional[dict]:
+           break_minutes=None, break_start=None) -> Optional[dict]:
     st, en = _hhmm(start), _hhmm(end)
     if not st:
         return None
+    bs = _hhmm(break_start)
     from utils.employee_identity import DEFAULT_GRACE_MINUTES
     try:
         brk = max(0, int(float(break_minutes or 0)))
@@ -124,8 +125,10 @@ def _shape(start, end, *, grace=None, code=None, name=None, source: str, overnig
         "start_time": st.strftime("%H:%M"),
         "end_time": en.strftime("%H:%M") if en else None,
         "grace_minutes": int(grace if grace not in (None, "") else DEFAULT_GRACE_MINUTES),
-        # 2026-11-09 (Q5): lama istirahat — acuan cuti setengah hari (utils.employee_identity.half_day_points)
+        # 2026-11-09 (Q5): lama & jam mulai istirahat — acuan cuti setengah hari
+        # (utils.employee_identity.half_day_points; `istirahat_mulai` diisi di master shift oleh agen SHIFT)
         "break_minutes": brk,
+        "break_start": bs.strftime("%H:%M") if bs else None,
         "code": code, "name": name, "source": source,
         "overnight": bool(overnight) if overnight is not None else bool(en and en <= st),
     }
@@ -139,11 +142,51 @@ def _from_shift(doc: dict, source: str) -> Optional[dict]:
                   grace=_grace_of(doc), code=doc.get("code") or doc.get("shift_code"),
                   name=doc.get("name") or doc.get("shift_name"), source=source,
                   overnight=doc.get("is_overnight") if doc.get("is_overnight") else None,
-                  break_minutes=doc.get("break_duration_minutes", doc.get("break_minutes")))
+                  break_minutes=doc.get("break_duration_minutes", doc.get("break_minutes")),
+                  break_start=doc.get("istirahat_mulai") or doc.get("break_start"))
+
+
+async def published_schedule_entry(db, emp_id: Optional[str], day) -> Optional[dict]:
+    """Entri Jadwal Shift TERBIT (terbit paling baru menang) untuk karyawan pada `day`; None = tidak dijadwalkan.
+    Entri `libur: true` (pola/roster agen SHIFT) = hari libur menurut jadwal."""
+    if not emp_id:
+        return None
+    day = str(day)[:10]
+    scheds = await db.rahaza_schedules.find(
+        {"status": "published", "start_date": {"$lte": day}, "end_date": {"$gte": day}},
+        {"_id": 0, "shifts": 1, "published_at": 1}).sort("published_at", -1).to_list(20)
+    for sc in scheds:
+        for e in sc.get("shifts") or []:
+            if e.get("employee_id") == emp_id and str(e.get("date") or "")[:10] == day:
+                return e
+    return None
+
+
+async def scheduled_day_off(db, emp: Optional[dict], day) -> bool:
+    """True bila Jadwal Shift terbit menandai karyawan LIBUR pada `day` (terlambat/pulang cepat = 0)."""
+    e = await published_schedule_entry(db, (emp or {}).get("id"), day)
+    return bool(e and e.get("libur"))
+
+
+async def _shift_from_entry(db, e: dict) -> Optional[dict]:
+    """Shift satu entri jadwal: master shift lewat `shift_id` LEBIH DULU (toleransi, istirahat, jam terbaru), lalu jam
+    yang tersalin di entri (jadwal lama tanpa id). 2026-11-09 (permintaan agen SHIFT)."""
+    if e.get("shift_id") not in (None, ""):
+        master = _from_shift(await _shift_doc(db, e.get("shift_id")), "jadwal")
+        if master:
+            if _grace_of(e) is not None:
+                master["grace_minutes"] = _grace_of(e)
+            return master
+    return _shape(e.get("start_time"), e.get("end_time"), grace=_grace_of(e),
+                  code=e.get("shift_code"), name=e.get("shift_name"), source="jadwal",
+                  overnight=e.get("is_overnight") if e.get("is_overnight") else None,
+                  break_minutes=e.get("break_duration_minutes", e.get("break_minutes")),
+                  break_start=e.get("istirahat_mulai") or e.get("break_start"))
 
 
 async def resolve_day_shift(db, emp: Optional[dict], day, explicit_shift_id=None) -> Optional[dict]:
-    """Shift yang berlaku untuk karyawan pada `day` (lihat urutan di docstring modul). None = tidak diketahui."""
+    """Shift yang berlaku untuk karyawan pada `day` (lihat urutan di docstring modul). None = tidak diketahui
+    ATAU libur menurut Jadwal Shift terbit (entri `libur: true` — penugasan/shift bawaan tidak dipakai)."""
     day = str(day)[:10]
     if explicit_shift_id:
         sh = _from_shift(await _shift_doc(db, explicit_shift_id), "absensi")
@@ -153,26 +196,13 @@ async def resolve_day_shift(db, emp: Optional[dict], day, explicit_shift_id=None
     emp_id = emp.get("id")
     if emp_id:
         # Jadwal Shift yang SUDAH diterbitkan (draft belum berlaku).
-        scheds = await db.rahaza_schedules.find(
-            {"status": "published", "start_date": {"$lte": day}, "end_date": {"$gte": day}},
-            {"_id": 0, "shifts": 1, "published_at": 1}).sort("published_at", -1).to_list(20)
-        for sc in scheds:
-            for e in sc.get("shifts") or []:
-                if e.get("employee_id") == emp_id and str(e.get("date") or "")[:10] == day:
-                    sh = _shape(e.get("start_time"), e.get("end_time"), grace=_grace_of(e),
-                                code=e.get("shift_code"), name=e.get("shift_name"), source="jadwal",
-                                break_minutes=e.get("break_duration_minutes", e.get("break_minutes")))
-                    # Jadwal menyimpan shift_id (Tahap C agen shift): toleransi & istirahat ikut master shift
-                    # bila entri jadwal tidak menyimpannya sendiri.
-                    if sh and e.get("shift_id") and (_grace_of(e) is None or not sh["break_minutes"]):
-                        master = _from_shift(await _shift_doc(db, e.get("shift_id")), "jadwal")
-                        if master:
-                            if _grace_of(e) is None:
-                                sh["grace_minutes"] = master["grace_minutes"]
-                            if not sh["break_minutes"]:
-                                sh["break_minutes"] = master["break_minutes"]
-                    if sh:
-                        return sh
+        e = await published_schedule_entry(db, emp_id, day)
+        if e is not None:
+            if e.get("libur"):
+                return None
+            sh = await _shift_from_entry(db, e)
+            if sh:
+                return sh
         assign = await db.hr_shift_assignments.find_one({
             "employee_id": emp_id, "status": "active", "effective_from": {"$lte": day},
             "$or": [{"effective_until": None}, {"effective_until": ""}, {"effective_until": {"$gte": day}}],
@@ -186,7 +216,7 @@ async def resolve_day_shift(db, emp: Optional[dict], day, explicit_shift_id=None
     return None
 
 
-async def default_shift_ids(db, emps: list, day, shifts: list) -> dict:
+async def default_shift_ids(db, emps: list, day, shifts: list, off_out: Optional[set] = None) -> dict:
     """{employee_id: shift_id} — shift bawaan grid absensi HR untuk `day` (2026-11-07, Tahap 5).
 
     Urutan SAMA dengan `resolve_day_shift` (tanpa record hari itu): Jadwal Shift terbit → penugasan shift →
@@ -208,15 +238,23 @@ async def default_shift_ids(db, emps: list, day, shifts: list) -> dict:
     scheds = await db.rahaza_schedules.find(
         {"status": "published", "start_date": {"$lte": day}, "end_date": {"$gte": day}},
         {"_id": 0, "shifts": 1, "published_at": 1}).sort("published_at", -1).to_list(20)
+    off: set = set()
     for sc in scheds:   # terbit paling baru menang (sama dengan resolve_day_shift)
         for e in sc.get("shifts") or []:
             eid = e.get("employee_id")
-            if eid in out or str(e.get("date") or "")[:10] != day:
+            if eid in out or eid in off or str(e.get("date") or "")[:10] != day:
                 continue
-            sh = by_code.get(str(e.get("shift_code") or "").upper()) or by_id.get(str(e.get("shift_id")))
+            if e.get("libur"):   # 2026-11-09: libur menurut jadwal → tanpa shift bawaan (tidak jatuh ke penugasan)
+                off.add(eid)
+                continue
+            # 2026-11-09: `shift_id` entri lebih dulu, kode untuk jadwal lama
+            sh = by_id.get(str(e.get("shift_id"))) if e.get("shift_id") not in (None, "") else None
+            sh = sh or by_code.get(str(e.get("shift_code") or "").upper())
             if sh:
                 out[eid] = str(sh["id"])
-    rest = [i for i in emp_ids if i not in out]
+    if off_out is not None:
+        off_out |= off
+    rest = [i for i in emp_ids if i not in out and i not in off]
     if rest:
         async for a in db.hr_shift_assignments.find({
             "employee_id": {"$in": rest}, "status": "active", "effective_from": {"$lte": day},
@@ -226,7 +264,7 @@ async def default_shift_ids(db, emps: list, day, shifts: list) -> dict:
             if sid and a.get("employee_id") not in out:
                 out[a["employee_id"]] = sid
     for e in emps or []:
-        if e.get("id") and e["id"] not in out:
+        if e.get("id") and e["id"] not in out and e["id"] not in off:
             sid = _ok(e.get("shift_id"))
             if sid:
                 out[e["id"]] = sid

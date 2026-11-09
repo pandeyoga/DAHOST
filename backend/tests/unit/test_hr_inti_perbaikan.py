@@ -43,6 +43,7 @@ def _imp(name):
                 setattr(_fdu, n, fn)
 
 
+import core.attendance_rules as ar  # noqa: E402
 import core.leave_engine as le  # noqa: E402
 import core.tugas_luar as tl  # noqa: E402
 import routes.approval_multilevel as aml  # noqa: E402
@@ -364,6 +365,81 @@ class TestTerlambat:
         s = run(shared._compute_payslip_for_employee(db, prof, *OCT, {"id": "emp-a"}))
         late = [d for d in s["deductions"] if d["type"] == "late"]
         assert s["late_minutes"] == 10 and late[0]["amount"] == 10_000
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Permintaan agen SHIFT-AI (9 Nov): toleransi 0 sah, istirahat_mulai, shift_id entri jadwal, libur jadwal
+# ═════════════════════════════════════════════════════════════════════════════
+def _jadwal(db, entries, published_at="2026-11-01T00:00:00"):
+    db.rahaza_schedules.docs.append({"status": "published", "start_date": "2026-11-01", "end_date": "2026-11-30",
+                                     "published_at": published_at, "shifts": entries})
+
+
+class TestKontrakShiftAgenShift:
+    def test_1_toleransi_nol_dan_salinan_grace(self, db):
+        db.rahaza_shifts.docs[0].update(toleransi_menit=0, grace_minutes=0)       # agen SHIFT menyalin ke keduanya
+        out = run(ident.compute_late_minutes(db, EMP_A, _utc("2026-11-04", "08:03")))
+        assert out["grace_minutes"] == 0 and out["late_minutes"] == 3            # dulu 0 → bawaan 5 → 0 menit
+
+    def test_2_cuti_pagi_memakai_istirahat_mulai(self, db):
+        db.rahaza_shifts.docs[0].update(istirahat_mulai="12:00", break_duration_minutes=60)
+        db.rahaza_leave_requests.docs = [{"id": "lv1", "employee_id": "emp-a", "status": "approved",
+                                          "from_date": "2026-11-04", "to_date": "2026-11-04", "is_half_day": True,
+                                          "half_day_period": "AM"}]
+        out = run(ident.compute_late_minutes(db, EMP_A, _utc("2026-11-04", "13:10")))
+        assert out["shift_start"] == "13:00" and out["late_minutes"] == 5            # acuan 12:00 + 60 menit
+        assert ident.half_day_points({"start_time": "08:00", "end_time": "16:00", "break_minutes": 60,
+                                      "break_start": "12:00"}) == (240, 300)
+        db.rahaza_leave_requests.docs[0].update(from_date="2026-11-05", to_date="2026-11-05", half_day_period="PM")
+        early = run(ident.compute_early_leave_minutes(db, EMP_A, _utc("2026-11-05", "11:40"), "2026-11-05"))
+        assert early["shift_end"] == "12:00" and early["early_leave_minutes"] == 20
+
+    def test_3_entri_jadwal_shift_id_lebih_dulu_dari_jam_salinan(self, db):
+        db.rahaza_shifts.docs.append({"id": "sh-pagi", "code": "P", "name": "Pagi", "start_time": "07:00",
+                                      "end_time": "15:00", "toleransi_menit": 10, "active": True})
+        # jam tersalin di entri sudah usang (08:00) — master shift sekarang 07:00, toleransi 10
+        _jadwal(db, [{"employee_id": "emp-a", "date": "2026-11-04", "shift_id": "sh-pagi", "shift_code": "P",
+                      "start_time": "08:00", "end_time": "16:00"}])
+        out = run(ident.compute_late_minutes(db, EMP_A, _utc("2026-11-04", "07:20")))
+        assert (out["shift_start"], out["shift_source"], out["late_minutes"]) == ("07:00", "jadwal", 10)
+        ids = run(ar.default_shift_ids(db, [{"id": "emp-a", "shift_id": "sh-reg"}], "2026-11-04",
+                                       db.rahaza_shifts.docs))
+        assert ids == {"emp-a": "sh-pagi"}
+
+    def test_3b_entri_libur_tanpa_shift_terlambat_nol(self, db, monkeypatch):
+        _jadwal(db, [{"employee_id": "emp-a", "date": "2026-11-04", "libur": True}])
+        assert run(ar.resolve_day_shift(db, EMP_A, "2026-11-04")) is None             # tidak jatuh ke shift bawaan
+        out = run(ident.compute_late_minutes(db, EMP_A, _utc("2026-11-04", "10:00")))
+        assert out["late_minutes"] == 0 and out["late_reason"] == "libur menurut jadwal shift"
+        early = run(ident.compute_early_leave_minutes(db, EMP_A, _utc("2026-11-04", "11:00"), "2026-11-04"))
+        assert early["early_leave_minutes"] == 0
+        off = set()
+        assert run(ar.default_shift_ids(db, [{"id": "emp-a", "shift_id": "sh-reg"}], "2026-11-04",
+                                        db.rahaza_shifts.docs, off_out=off)) == {} and off == {"emp-a"}
+        as_user(monkeypatch, HR)
+        grid = run(att.attendance_grid(FakeRequest(), date="2026-11-04"))
+        assert {r["employee_id"]: r["jadwal_libur"] for r in grid["rows"]}["emp-a"] is True
+
+    def test_3c_jadwal_saya_mengikuti_entri_libur(self, db, monkeypatch):
+        import routes.rahaza_auto_attendance_config as cfg
+        monkeypatch.setattr(cfg, "get_db", lambda: db)
+        monkeypatch.setattr(cfg, "require_auth", lambda request: _async(dict(OPS)))
+        monkeypatch.setattr(cfg, "today_wib", lambda: date(2026, 11, 4))
+        _jadwal(db, [{"employee_id": "emp-a", "date": "2026-11-04", "libur": True}])
+        out = run(cfg.get_my_schedule(FakeRequest(), days=2))
+        d4, d5 = out["days"]
+        assert (d4["kind"], d4["label"], d4["shift"]) == ("libur", "Libur (jadwal shift)", None)
+        assert d5["kind"] == "kerja" and d5["shift"]["code"] == "REG"
+
+    def test_4_hitung_ulang_memakai_aturan_jadwal(self, db, monkeypatch):
+        as_user(monkeypatch, HR)
+        _jadwal(db, [{"employee_id": "emp-a", "date": "2026-11-04", "libur": True}])
+        db.rahaza_attendance_events.docs = [{"id": "e1", "employee_id": "emp-a", "date": "2026-11-04",
+                                             "status": "hadir", "clock_in": _utc("2026-11-04", "10:00"),
+                                             "late_minutes": 115}]
+        out = run(att.recompute_timing(FakeRequest({"from": "2026-11-01", "to": "2026-11-09"})))
+        ev = db.rahaza_attendance_events.docs[0]
+        assert out["changed"] == 1 and ev["late_minutes"] == 0 and ev["late_reason"] == "libur menurut jadwal shift"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

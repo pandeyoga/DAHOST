@@ -432,11 +432,12 @@ export default function RahazaAttendanceModule({ token, onNavigate }) {
                 <TableCell className="min-w-[11rem]">
                   <p className="font-medium text-foreground">{r.employee_name}</p>
                   <p className="text-xs text-muted-foreground tabular-nums">{r.employee_code}{!r.existing_id && ' · belum dicatat'}</p>
-                  {(r.locked || r.leave_request_id || r.tugas_luar || Number(r.late_minutes) > 0 || Number(r.early_leave_minutes) > 0) && (
+                  {(r.locked || r.leave_request_id || r.tugas_luar || r.jadwal_libur || Number(r.late_minutes) > 0 || Number(r.early_leave_minutes) > 0) && (
                     <div className="mt-0.5 flex flex-wrap gap-1">
                       {r.locked && <StatusBadge status="locked" label="Terkunci gaji final" tone="muted" testId={`att-locked-${r.employee_code}`} />}
                       {r.leave_request_id && <StatusBadge status="cuti" label={r.half_day ? 'Cuti ½ hari disetujui' : 'Cuti disetujui'} tone="info" />}
                       {r.tugas_luar && <StatusBadge status="tugas_luar" label="Tugas luar" tone="info" testId={`att-duty-${r.employee_code}`} />}
+                      {r.jadwal_libur && <StatusBadge status="libur" label="Libur menurut jadwal" tone="muted" testId={`att-sched-off-${r.employee_code}`} />}
                       {Number(r.late_minutes) > 0 && <StatusBadge status="late" label={`Terlambat ${r.late_minutes} menit`} tone="warning" />}
                       {Number(r.early_leave_minutes) > 0 && <StatusBadge status="early" label={`Pulang cepat ${r.early_leave_minutes} menit`} tone="warning" />}
                     </div>

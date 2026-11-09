@@ -208,6 +208,7 @@ DEFAULT_GRACE_MINUTES = 5
 REASON_OFF_DAY = "hari libur"
 REASON_LEAVE = "cuti/izin sehari penuh"
 REASON_DUTY = "tugas luar"
+REASON_SCHEDULE_OFF = "libur menurut jadwal shift"
 
 
 def _hm(txt) -> Optional[int]:
@@ -221,12 +222,19 @@ def _hm(txt) -> Optional[int]:
 def half_day_points(shift: dict) -> tuple:
     """(akhir paruh pagi, awal paruh siang) dalam MENIT sejak jam masuk shift — 2026-11-09 (Q5).
 
-    Istirahat diletakkan di tengah jam kerja: kerja = rentang shift − istirahat; paruh pagi = kerja ÷ 2; paruh siang
-    mulai sesudah istirahat. Istirahat tidak diatur (0) → keduanya = jam masuk + separuh rentang shift.
-    Contoh 08:00–16:00 istirahat 60 menit → pagi s.d. 11:30, siang mulai 12:30."""
+    Jam mulai istirahat diatur (`istirahat_mulai` di master shift → `break_start`) → pagi berakhir saat istirahat
+    mulai, siang mulai sesudah istirahat (mulai + lama istirahat). Tidak diatur → istirahat diletakkan di tengah jam
+    kerja: kerja = rentang shift − istirahat; paruh pagi = kerja ÷ 2; paruh siang mulai sesudah istirahat.
+    Istirahat tidak diatur (0) → keduanya = jam masuk + separuh rentang shift.
+    Contoh 08:00–16:00 istirahat 60 menit → pagi s.d. 11:30, siang mulai 12:30; istirahat 12:00 → 12:00 / 13:00."""
     st, en = _hm(shift.get("start_time")), _hm(shift.get("end_time"))
     span = 8 * 60 if st is None or en is None else ((en - st) % (24 * 60) or 24 * 60)
     brk = max(0, min(int(shift.get("break_minutes") or 0), span))
+    bs = _hm(shift.get("break_start"))
+    if bs is not None and st is not None:
+        off = (bs - st) % (24 * 60)
+        if 0 < off < span:
+            return off, min(span, off + brk)
     work = span - brk
     return work // 2, work // 2 + brk
 
@@ -309,7 +317,11 @@ async def compute_late_minutes(db, emp: dict, clock_in_utc: datetime,
     from core.attendance_rules import resolve_day_shift
     shift = await resolve_day_shift(db, emp, day, shift_id)
     if not shift:
-        # Tanpa shift → tidak bisa menyimpulkan terlambat. Jangan mengarang.
+        # Tanpa shift → tidak bisa menyimpulkan terlambat. Jangan mengarang. Libur menurut Jadwal Shift terbit
+        # (entri `libur: true`) diberi alasan supaya rekap & saran koreksi AI tahu sebabnya.
+        from core.attendance_rules import scheduled_day_off
+        if not shift_id and await scheduled_day_off(db, emp, day):
+            out["late_reason"] = REASON_SCHEDULE_OFF
         return out
 
     start_txt = shift["start_time"]
@@ -350,6 +362,9 @@ async def compute_early_leave_minutes(db, emp: dict, clock_out_utc, day: Optiona
     day = str(day or cout.astimezone(WIB).date().isoformat())[:10]
     shift = await resolve_day_shift(db, emp, day, shift_id)
     if not shift or not shift.get("end_time"):
+        from core.attendance_rules import scheduled_day_off
+        if not shift and not shift_id and await scheduled_day_off(db, emp, day):
+            out["early_leave_reason"] = REASON_SCHEDULE_OFF
         return out
     end = shift_end_utc(day, shift)
     out["shift_end"] = shift["end_time"]

@@ -132,7 +132,7 @@ async def get_my_schedule(request: Request, days: int = 8, employee_id: Optional
     from datetime import timedelta
     from core import national_holidays as nh
     from core import workdays
-    from core.attendance_rules import STATUS_LABELS, resolve_day_shift
+    from core.attendance_rules import STATUS_LABELS, published_schedule_entry, resolve_day_shift
     from utils.employee_identity import resolve_employee_for
     emp = await resolve_employee_for(db, user, employee_id)
     n = max(1, min(int(days or 8), 31))
@@ -152,7 +152,11 @@ async def get_my_schedule(request: Request, days: int = 8, employee_id: Optional
         shift = await resolve_day_shift(db, emp, iso)
         h, lv = hol.get(iso), leave.get(iso)
         note = ""
-        if h:
+        entry = await published_schedule_entry(db, emp["id"], iso)
+        if entry and entry.get("libur"):
+            # 2026-11-09: libur menurut Jadwal Shift terbit (pola/roster) — sama dengan aturan terlambat
+            kind, label = "libur", "Libur (jadwal shift)"
+        elif h:
             kind, label, note = "libur", nh.KIND_LABEL.get(h.get("kind"), "Hari libur"), h.get("name") or ""
         elif d.weekday() in cal["off_weekdays"]:
             kind, label = "libur", "Libur mingguan"
