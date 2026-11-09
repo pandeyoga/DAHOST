@@ -20,6 +20,9 @@ from core import catalog_stock as _cstock  # F7: SSOT SATU rumus stok jual (K-6a
 from core import product_master as _pm     # F3–F6: SSOT kategori/HPP/harga resmi
 from core import catalog_status as _cstatus  # F4: SSOT SATU rumus status katalog
 from core import catalog_margin as _cmargin  # sesi #37: SSOT margin + "belum bisa diukur"
+from core import product_status as _pstatus  # 2026-11-09 (D5): status produk varian di baris katalog
+from core import catalog_runs as _runs       # 2026-11-09: jejak + batalkan aksi massal katalog
+from core import catalog_tools as _tools     # 2026-11-09: aksi cepat katalog (status produk, item tersembunyi)
 
 router = APIRouter(prefix='/api/marketing/catalogs', tags=['Marketing-Catalog-items'])
 
@@ -209,6 +212,63 @@ async def _apply_fg_stock_sync(db, item: dict) -> dict:
 async def _refresh_catalog_stats(db, catalog_id: str):
     # 2026-11-06 (pola P7): satu rumus di core.catalog_stock (dulu to_list(500) → katalog besar terpotong)
     await _cstock.refresh_catalog_stats(db, catalog_id)
+
+
+# 2026-11-09 — item TERSEMBUNYI = item impor lama tanpa `catalog_id` (tidak tampil di layar mana pun yang
+# membaca per katalog). Aturan & status produk per baris: SATU tempat di core.catalog_tools.
+HIDDEN_ITEM_FILTER = _tools.HIDDEN_ITEM_FILTER
+product_status_map = _tools.product_status_map
+
+
+async def find_hidden_twin(db, account_id: str, fg_material_id: str) -> Optional[dict]:
+    """Item tersembunyi yang masih hidup untuk toko + barang jadi ini (atau None).
+
+    Yang sudah diarsipkan oleh "Rapikan item tersembunyi" (`merged_into`) tidak dihitung.
+    """
+    if not account_id or not fg_material_id:
+        return None
+    return await db.marketing_catalog_items.find_one({'$and': [
+        _tools.LIVE_HIDDEN, {'account_id': account_id},
+        {'$or': [{'fg_material_id': fg_material_id}, {'material_id': fg_material_id}]},
+    ]}, {'_id': 0, 'id': 1, 'sku': 1})
+
+
+def _parse_product_status_filter(value: Optional[str]):
+    """`stop,dead` / `belum_diisi` → set kode (None = belum diisi); kosong → None (tanpa penyaring)."""
+    if value is None or not str(value).strip():
+        return None
+    out = set()
+    for part in str(value).split(','):
+        p = part.strip()
+        if not p:
+            continue
+        if p.lower() in (_pstatus.UNSET_FILTER, _pstatus.UNSET_LABEL.lower()):
+            out.add(None)
+            continue
+        try:
+            out.add(_pstatus.parse(p))
+        except _pstatus.ProductStatusError as e:
+            raise HTTPException(400, str(e))
+    return out or None
+
+
+async def require_catalog_writer(request: Request, catalog_id: Optional[str] = None, *,
+                                 account_id: Optional[str] = None) -> dict:
+    """Gerbang SATU pintu untuk aksi TULIS katalog: ubah harga, penayangan (tayang/draf/arsip/...), aksi massal.
+
+    2026-11-09 — dulu aksi penayangan (dan aksi massal) cukup login, sedangkan ubah harga sudah dijaga peran
+    Marketing. Kini sama: izin `toko.manage`/`pricing.approve` (atau peran Marketing selama izin peran belum
+    diatur owner), dan staf berlingkup toko hanya untuk katalog tokonya.
+    """
+    user = await require_perm(request, 'toko.manage', 'pricing.approve',
+                              legacy_roles=CATALOG_WRITER_ROLES, message=CATALOG_WRITE_DENIED)
+    db = get_db()
+    if account_id is None and catalog_id:
+        cat = await db.marketing_catalogs.find_one({'id': catalog_id}, {'_id': 0, 'account_id': 1})
+        account_id = (cat or {}).get('account_id')
+    from core import marketing_account_scope as _scope
+    await _scope.assert_account_visible(db, user, account_id)
+    return user
 
 
 # Pydantic models
@@ -407,7 +467,9 @@ async def add_catalog_item(catalog_id: str, data: CatalogItemCreate, request: Re
     if _model_doc:
         _master = _pm.master_display_fields(_model_doc)
         doc.update({k: v for k, v in _master.items() if k != 'retail_price_master'})
-        doc['retail_price_master'] = _master['retail_price_master']
+        # 2026-11-09 (B1) — harga resmi per SKU dulu (FG varian), cadangan harga model
+        _fg_v = await _cstock.find_fg_by_sku(db, variant_sku) if variant_sku else {}
+        doc['retail_price_master'], doc['retail_price_source'] = _pm.official_price(_fg_v, _model_doc)
         if not doc.get('weight_gram'):
             doc['weight_gram'] = _master['weight_gram']
     else:
@@ -426,6 +488,7 @@ async def add_catalog_item(catalog_id: str, data: CatalogItemCreate, request: Re
             _cat = await _pm.resolve_category_by_text(db, data.category or '', allow_create=False)
         _pm.apply_category(doc, _cat)
         doc['retail_price_master'] = 0.0
+        doc['retail_price_source'] = 'none'
         doc.setdefault('hpp_source', 'none')
     # KEPUTUSAN #2 — normalisasi & simpan field harga terpisah (+ legacy sync)
     doc.update(_pricing_write_fields(data.dict()))
@@ -631,6 +694,12 @@ async def create_item_from_fg(db, catalog: dict, fg_material_id: str,
     })
     if existing:
         return None, (409, f"Produk '{fg.get('name')}' sudah ada di katalog ini.")
+    # 2026-11-09 (klarifikasi D7) — item impor lama TANPA katalog ("tersembunyi") untuk toko & barang jadi
+    # yang sama juga dihitung "sudah ada": dulu Isi dari Master membuat kembarannya (451 kembar di VPS).
+    hidden = await find_hidden_twin(db, catalog.get('account_id'), fg_material_id)
+    if hidden:
+        return None, (409, f"Produk '{fg.get('name')}' sudah ada sebagai item tersembunyi toko ini "
+                           f"(impor lama tanpa katalog). Rapikan dulu lewat Alat katalog › Rapikan item tersembunyi.")
 
     # F7 — stok jual SEBENARNYA lewat SSOT (semua lokasi kecuali karantina/blokir)
     stock_res = await _cstock.sellable_stock(db, fg['id'])
@@ -734,13 +803,16 @@ async def create_item_from_fg(db, catalog: dict, fg_material_id: str,
     # dulu tambah-dari-FG mendahulukan rata-rata model sehingga HPP per warna hilang.
     doc['hpp'], doc['hpp_source'] = _cmargin.resolve_catalog_hpp(fg, model)
     doc['hpp_updated_at'] = _now()
-    doc['retail_price_master'] = float(master.get('retail_price_master') or 0)
+    # 2026-11-09 (klarifikasi B1) — harga resmi PER SKU (FG) dulu, cadangan harga model. Dulu hanya harga
+    # model yang dibaca (0 dari 138 terisi) sehingga semua item lahir Rp 0 walau 583 SKU berharga.
+    doc['retail_price_master'], doc['retail_price_source'] = _pm.official_price(fg, model)
     # F4.3 — foto MASTER ikut terbawa (D13). Marketing tidak lagi memulai dari nol foto.
     doc['master_images'] = _pm.master_images(model) if model else []
 
     # K-3a — harga jual RESMI dari master jadi nilai AWAL; boleh ditimpa per platform
     price_in = _pricing_write_fields(opts)
-    if not price_in.get('harga_jual'):
+    # `price_mode='kosong'` (Isi dari master → "Kosongkan") = sengaja 0, jangan diisi harga resmi.
+    if not price_in.get('harga_jual') and opts.get('price_mode') != 'kosong':
         official = doc['retail_price_master']
         if official:
             price_in['harga_jual'] = official
@@ -954,7 +1026,9 @@ async def refresh_catalog_from_master(catalog_id: str, request: Request):
             'category_code': fg.get('category_code') or master.get('category_code') or '',
             'category_name': fg.get('category_name') or master.get('category_name') or '',
             'weight_gram': float(fg.get('weight_gram') or master.get('weight_gram') or 0),
-            'retail_price_master': float(master.get('retail_price_master') or 0),
+            # 2026-11-09 (B1) — harga resmi per SKU dulu, cadangan harga model
+            'retail_price_master': _pm.official_price(fg, model)[0],
+            'retail_price_source': _pm.official_price(fg, model)[1],
             # F4.3 — foto master ikut disegarkan: R&D menambah foto sesudah item
             # dibuat adalah kejadian normal, dan salinan tanpa penyegar akan basi.
             'master_images': _pm.master_images(model) if model else (it.get('master_images') or []),
@@ -1026,8 +1100,12 @@ class PhotoReorderBody(BaseModel):
 
 class BulkTransitionBody(BaseModel):
     item_ids: List[str] = Field(min_length=1)
-    action: str                       # unpublish | reject | preorder | unpreorder | archive | restore
+    # publish (HANYA item yang sudah punya URL sah sendiri) | unpublish | reject | preorder | unpreorder |
+    # archive | restore
+    action: str
     reason: Optional[str] = Field(default='', max_length=500)
+    # 2026-11-09 — pratinjau: hitung yang akan berubah & yang dilewati (+ alasannya) tanpa menulis apa pun
+    dry_run: bool = False
 
 
 async def _get_item_or_404(db, catalog_id: str, item_id: str) -> dict:
@@ -1084,7 +1162,7 @@ async def publish_catalog_item(catalog_id: str, item_id: str, data: PublishBody,
     benar-benar ada di toko (dan tidak ada cara membuka produknya saat komplain
     pembeli masuk). URL kosong / bukan http(s) ⇒ **400**.
     """
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     item = await _get_item_or_404(db, catalog_id, item_id)
 
@@ -1115,7 +1193,7 @@ async def publish_catalog_item(catalog_id: str, item_id: str, data: PublishBody,
 async def unpublish_catalog_item(catalog_id: str, item_id: str, data: ReasonBody,
                                  request: Request):
     """Turunkan item dari tayang (kembali **draft**) — mis. mau revisi foto/harga."""
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     item = await _get_item_or_404(db, catalog_id, item_id)
     row = await _apply_transition(db, item, {
@@ -1136,7 +1214,7 @@ async def reject_catalog_item(catalog_id: str, item_id: str, data: ReasonBody,
     (foto, klaim di deskripsi, kategori). "Ditolak" tanpa alasan hanya memindahkan
     kebingungan ke orang berikutnya.
     """
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     item = await _get_item_or_404(db, catalog_id, item_id)
     why = (data.reason or '').strip()
@@ -1162,7 +1240,7 @@ async def set_catalog_item_preorder(catalog_id: str, item_id: str, data: Preorde
     statusnya `PRE_ORDER`, bukan `HABIS`. Tanpa penanda ini, daftar "habis" penuh
     produk yang sebenarnya sedang dijual pre-order dan daftar itu berhenti dipakai.
     """
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     item = await _get_item_or_404(db, catalog_id, item_id)
     row = await _apply_transition(db, item, {
@@ -1181,7 +1259,7 @@ async def set_catalog_item_preorder(catalog_id: str, item_id: str, data: Preorde
 async def archive_catalog_item(catalog_id: str, item_id: str, data: ReasonBody,
                               request: Request):
     """Arsipkan item (NONAKTIF) — tidak dihapus, supaya riwayat pesanannya tetap utuh."""
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     item = await _get_item_or_404(db, catalog_id, item_id)
     row = await _apply_transition(db, item, {
@@ -1200,7 +1278,7 @@ async def archive_catalog_item(catalog_id: str, item_id: str, data: ReasonBody,
 async def restore_catalog_item(catalog_id: str, item_id: str, data: ReasonBody,
                               request: Request):
     """Kembalikan item dari arsip ke **draft** (harus ditayangkan ulang dengan bukti)."""
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     item = await _get_item_or_404(db, catalog_id, item_id)
     row = await _apply_transition(db, item, {
@@ -1213,59 +1291,137 @@ async def restore_catalog_item(catalog_id: str, item_id: str, data: ReasonBody,
             'message': f"'{item.get('name')}' dikembalikan dari arsip → DRAFT."}
 
 
+BULK_ACTIONS = ('publish', 'unpublish', 'reject', 'preorder', 'unpreorder', 'archive', 'restore')
+BULK_MAX_ITEMS = 2000
+
+
+def bulk_patch(action: str, item: dict, reason: str = ''):
+    """``(patch, None)`` bila item berubah, ``(None, alasan dilewati)`` bila tidak — SATU aturan untuk pratinjau
+    dan untuk aksi sebenarnya (angka di popup konfirmasi = angka yang benar-benar berubah)."""
+    state = _cstatus.publish_state_of(item)
+    stored = str(item.get('publish_state') or '').strip().lower()
+    now = _now()
+    if action == 'publish':
+        if state == 'archived':
+            return None, 'diarsipkan — kembalikan dulu'
+        if stored == 'published':
+            return None, 'sudah tayang'
+        url = str(item.get('platform_url') or '').strip()
+        if not url:
+            return None, 'belum ada URL produk'
+        if not _cstatus.is_valid_url(url):
+            return None, 'URL produk tidak sah'
+        return {'publish_state': 'published', 'published_at': now, 'rejected_reason': '',
+                'is_active': True}, None
+    if action == 'unpublish':
+        if state == 'archived':
+            return None, 'diarsipkan — pakai Kembalikan'
+        if state != 'published':
+            return None, 'belum tayang'
+        return {'publish_state': 'draft', 'unpublished_at': now}, None
+    if action == 'reject':
+        if state == 'archived':
+            return None, 'diarsipkan'
+        if state == 'rejected' and str(item.get('rejected_reason') or '') == _san(reason or '', 500):
+            return None, 'sudah ditandai ditolak'
+        return {'publish_state': 'rejected', 'rejected_reason': _san(reason or '', 500),
+                'rejected_at': now}, None
+    if action == 'preorder':
+        if state == 'archived':
+            return None, 'diarsipkan'
+        if item.get('is_preorder'):
+            return None, 'sudah pra-pesan'
+        return {'is_preorder': True, 'preorder_note': _san(reason or '', 300)}, None
+    if action == 'unpreorder':
+        if not item.get('is_preorder'):
+            return None, 'bukan pra-pesan'
+        return {'is_preorder': False, 'preorder_note': ''}, None
+    if action == 'archive':
+        if state == 'archived':
+            return None, 'sudah diarsipkan'
+        return {'publish_state': 'archived', 'is_active': False, 'archived_at': now,
+                'archived_reason': _san(reason or '', 500)}, None
+    if action == 'restore':
+        if state != 'archived':
+            return None, 'tidak diarsipkan'
+        return {'publish_state': 'draft', 'is_active': True, 'archived_at': None}, None
+    return None, 'aksi tidak dikenal'
+
+
+def skip_summary(skipped: list) -> dict:
+    out: dict = {}
+    for s in skipped:
+        out[s['why']] = out.get(s['why'], 0) + 1
+    return out
+
+
 @router.post('/{catalog_id}/items/bulk-transition')
 async def bulk_transition_items(catalog_id: str, data: BulkTransitionBody,
                                 request: Request):
-    """Aksi massal penayangan untuk baris terpilih (kecuali `publish`).
+    """Aksi massal penayangan untuk baris terpilih — pratinjau (`dry_run`) lalu jalankan.
 
-    `publish` **sengaja tidak ada di sini**: setiap produk punya URL sendiri, dan
-    aksi massal yang mengisi satu URL untuk banyak produk akan melahirkan bukti
-    tayang yang salah — lebih buruk daripada tidak ada bukti.
+    2026-11-09 (klarifikasi D3/D6) — `publish` kini ADA, dengan satu syarat keras: hanya item yang SUDAH punya
+    URL produk sah **miliknya sendiri** yang ditayangkan; item tanpa URL dilewati dan disebut alasannya. Tidak
+    ada satu URL yang diisikan ke banyak produk — bukti tayang per item tetap terjaga. Item yang tidak berubah
+    (mis. sudah diarsipkan) dilewati dengan alasan, bukan "diubah" diam-diam. Setiap aksi yang menulis dicatat
+    (`core.catalog_runs`) dan bisa DIBATALKAN dari Alat katalog › Riwayat aksi massal.
     """
-    user = await require_auth(request)
+    user = await require_catalog_writer(request, catalog_id)
     db = get_db()
     action = (data.action or '').strip().lower()
-    ALLOWED = {'unpublish', 'reject', 'preorder', 'unpreorder', 'archive', 'restore'}
-    if action not in ALLOWED:
-        raise HTTPException(400, f"action harus salah satu dari: {', '.join(sorted(ALLOWED))} "
-                                 f"(publish dilakukan per item karena URL-nya berbeda).")
-    if action == 'reject' and not (data.reason or '').strip():
+    if action not in BULK_ACTIONS:
+        raise HTTPException(400, f"Aksi massal tidak dikenal: '{action}'. Pilihan: "
+                                 'tayangkan (yang ber-URL), jadikan draf, tandai ditolak, pra-pesan, '
+                                 'lepas pra-pesan, arsipkan, kembalikan.')
+    if action == 'reject' and not data.dry_run and not (data.reason or '').strip():
         raise HTTPException(400, 'Alasan penolakan wajib diisi.')
+    ids = list(dict.fromkeys(data.item_ids))
+    if len(ids) > BULK_MAX_ITEMS:
+        raise HTTPException(400, f'Paling banyak {BULK_MAX_ITEMS} item per aksi massal ({len(ids)} dipilih).')
 
-    done, failed = [], []
-    for iid in data.item_ids[:500]:
-        item = await db.marketing_catalog_items.find_one(
-            {'id': iid, 'catalog_id': catalog_id}, {'_id': 0})
+    found = {d['id']: d for d in await db.marketing_catalog_items.find(
+        {'catalog_id': catalog_id, 'id': {'$in': ids}}, {'_id': 0}).to_list(len(ids))}
+    plan, skipped = [], []
+    for iid in ids:
+        item = found.get(iid)
         if not item:
-            failed.append({'item_id': iid, 'why': 'tidak ditemukan di katalog ini'})
+            skipped.append({'item_id': iid, 'sku': '', 'why': 'tidak ditemukan di katalog ini'})
             continue
-        patch = {}
-        if action == 'unpublish':
-            patch = {'publish_state': 'draft', 'unpublished_at': _now()}
-        elif action == 'reject':
-            patch = {'publish_state': 'rejected',
-                     'rejected_reason': _san(data.reason or '', 500),
-                     'rejected_at': _now()}
-        elif action == 'preorder':
-            patch = {'is_preorder': True, 'preorder_note': _san(data.reason or '', 300)}
-        elif action == 'unpreorder':
-            patch = {'is_preorder': False, 'preorder_note': ''}
-        elif action == 'archive':
-            patch = {'publish_state': 'archived', 'is_active': False,
-                     'archived_at': _now(),
-                     'archived_reason': _san(data.reason or '', 500)}
-        elif action == 'restore':
-            patch = {'publish_state': 'draft', 'is_active': True, 'archived_at': None}
-        row = await _apply_transition(db, item, patch, action=action,
-                                      note=data.reason or '', user=user)
-        done.append({'item_id': iid, 'sku': item.get('sku'),
-                     'catalog_status': row['catalog_status']})
+        patch, why = bulk_patch(action, item, data.reason or '')
+        if why:
+            skipped.append({'item_id': iid, 'sku': item.get('sku'), 'name': item.get('name'), 'why': why})
+        else:
+            plan.append((item, patch))
+    label = _runs.KIND_LABEL.get(f'transisi:{action}', action)
+    if data.dry_run:
+        return {'ok': True, 'dry_run': True, 'action': action, 'action_label': label,
+                'would_change': len(plan), 'skipped': len(skipped),
+                'skip_summary': skip_summary(skipped), 'skipped_items': skipped[:50],
+                'sample': [{'sku': it.get('sku'), 'name': it.get('name')} for it, _p in plan[:10]],
+                'message': f'{len(plan)} item akan diubah ({label})'
+                           + (f' · {len(skipped)} dilewati' if skipped else '')}
 
+    done, changes = [], []
+    for item, patch in plan:
+        before = _runs.snapshot(item, patch.keys())
+        row = await _apply_transition(db, item, dict(patch), action=action,
+                                      note=data.reason or '', user=user)
+        changes.append({'item_id': item['id'], 'catalog_id': catalog_id, 'sku': item.get('sku'),
+                        'before': before, 'after': dict(patch)})
+        done.append({'item_id': item['id'], 'sku': item.get('sku'),
+                     'catalog_status': row['catalog_status']})
+    run = None
+    if changes:
+        run = await _runs.record(db, kind=f'transisi:{action}', user=user, changes=changes,
+                                 catalog_ids=[catalog_id],
+                                 summary={'changed': len(done), 'skipped': len(skipped),
+                                          'skip_summary': skip_summary(skipped)})
     await _refresh_catalog_stats(db, catalog_id)
-    return {'ok': True, 'action': action, 'changed': len(done), 'failed': len(failed),
-            'results': done, 'errors': failed,
-            'message': f"{len(done)} item diperbarui ({action})"
-                       + (f" · {len(failed)} gagal" if failed else '')}
+    return {'ok': True, 'action': action, 'action_label': label, 'changed': len(done),
+            'failed': len(skipped), 'skipped': len(skipped), 'skip_summary': skip_summary(skipped),
+            'results': done, 'errors': skipped[:200], 'run_id': (run or {}).get('id'),
+            'message': f"{len(done)} item diperbarui ({label})"
+                       + (f" · {len(skipped)} dilewati" if skipped else '')}
 
 
 @router.post('/{catalog_id}/items/{item_id}/photos/reorder')
@@ -1321,7 +1477,8 @@ async def refresh_item_from_master(catalog_id: str, item_id: str, request: Reque
         'category_code': fg.get('category_code') or master.get('category_code') or '',
         'category_name': fg.get('category_name') or master.get('category_name') or '',
         'weight_gram': float(fg.get('weight_gram') or master.get('weight_gram') or 0),
-        'retail_price_master': float(master.get('retail_price_master') or 0),
+        'retail_price_master': _pm.official_price(fg, model)[0],   # 2026-11-09 (B1) per SKU dulu
+        'retail_price_source': _pm.official_price(fg, model)[1],
         'master_images': _pm.master_images(model) if model else (item.get('master_images') or []),
         'updated_at': _now(),
     }
@@ -1360,6 +1517,7 @@ async def list_catalog_items(
     order: Optional[str] = None,            # asc|desc
     skip: int = 0,
     limit: int = 100,
+    product_status: Optional[str] = None,   # 2026-11-09 (D5): stop,dead,slow,best_seller,new,belum_diisi (koma)
 ):
     """List item dalam katalog dengan filter.
 
@@ -1426,6 +1584,14 @@ async def list_catalog_items(
     # Sesi #37 — biaya FG untuk margin: `hpp_fifo_avg` → `hpp` FG → `hpp` katalog.
     # Satu kueri untuk seluruh katalog (bukan N+1), sama pola dengan `smap`.
     fgcost = await _cmargin.fg_cost_map(db, mids)
+    # 2026-11-09 (D5) — status produk varian (Baru · Best Seller · Slow · Dead · Stop), satu kueri.
+    pstat = await product_status_map(db, links)
+    # 2026-11-09 (B1) — kolom "harga resmi master" dihitung LIVE dari master (per SKU → model), bukan salinan
+    # yang lahir Rp 0 saat item dibuat dan baru benar setelah "Segarkan dari master".
+    pmap = await _pm.official_price_map(db, mids)
+    want_ps = _parse_product_status_filter(product_status)
+    by_pstatus = {c: 0 for c in _pstatus.CODES}
+    by_pstatus[_pstatus.UNSET_FILTER] = 0
 
     rows = []
     stale = unlinked = 0
@@ -1467,7 +1633,10 @@ async def list_catalog_items(
         # `hpp = 0` melahirkan margin 100% (dan `harga_jual = 0` melahirkan 0%) —
         # dua angka yang terlihat sah padahal artinya "tidak diketahui".
         hj = float(row.get('harga_jual') or 0)
-        official = float(row.get('retail_price_master') or 0)
+        if lk.get('fg_material_id') in pmap:
+            official, row['retail_price_source'] = pmap[lk['fg_material_id']]
+        else:
+            official = float(row.get('retail_price_master') or 0)
         _cmargin.decorate(row, fgcost.get(lk.get('fg_material_id')))
         row['retail_price_master'] = official
         row['price_delta_vs_master'] = round(hj - official, 2) if official else 0.0
@@ -1480,6 +1649,10 @@ async def list_catalog_items(
                                 else ((mimgs[0] or {}).get('url') if mimgs else None))
         row['image_count'] = len(imgs) + len(mimgs)
         row['has_photo'] = row['image_count'] > 0
+        ps_code = pstat.get(d['id'])
+        row['product_status'] = ps_code
+        row['product_status_label'] = _pstatus.label(ps_code)
+        by_pstatus[ps_code or _pstatus.UNSET_FILTER] += 1
         by_status[row['catalog_status']] = by_status.get(row['catalog_status'], 0) + 1
         # cache status disegarkan hanya bila BERBEDA — hasil hitung yang benar,
         # cache mengikuti (bukan sebaliknya).
@@ -1527,6 +1700,8 @@ async def list_catalog_items(
         rows = [r for r in rows if r['publish_state'] == ps]
     if has_photo is not None:
         rows = [r for r in rows if bool(r['has_photo']) is bool(has_photo)]
+    if want_ps is not None:
+        rows = [r for r in rows if (r.get('product_status') or None) in want_ps]
 
     # ── F4 — urutan bisa dipilih (default nama) ────────────────────────────────
     SORTERS = {
@@ -1550,14 +1725,19 @@ async def list_catalog_items(
             'filters_applied': {'catalog_status': want_status,
                                 'publish_state': (publish_state or '').lower() or None,
                                 'has_photo': has_photo, 'attention': att or None,
+                                'product_status': sorted(c or _pstatus.UNSET_FILTER for c in want_ps)
+                                if want_ps is not None else None,
                                 'sort': sk, 'order': (order or 'asc').lower()},
             'margin_summary': margin_summary,
             'status_options': [{'value': s, 'label': _cstatus.STATUS_LABEL[s]}
                                for s in _cstatus.CATALOG_STATUSES],
+            'product_status_options': [{'value': c, 'label': _pstatus.LABELS[c]} for c in _pstatus.CODES]
+            + [{'value': _pstatus.UNSET_FILTER, 'label': _pstatus.UNSET_LABEL}],
             'stock_summary': {'stale': stale, 'unlinked': unlinked,
                               'attention': stale + unlinked,
                               'scanned': len(all_docs),
                               'by_status': by_status,
+                              'by_product_status': by_pstatus,
                               'counts_truncated': len(all_docs) >= HARD_CAP,
                               'live_source': 'core.catalog_stock (K-6a/K-7a)',
                               'status_source': 'core.catalog_status (F4.1)'}}
@@ -1654,19 +1834,9 @@ PRICE_HISTORY_FIELDS = ('harga_jual', 'harga_coret')
 
 
 async def _log_price_change(db, item: dict, patch: dict, *, account_id, user: dict, reason: str) -> None:
-    def _old(k):
-        legacy = {'harga_jual': 'price', 'harga_coret': 'original_price'}[k]
-        v = item.get(k) if item.get(k) is not None else item.get(legacy)
-        return float(v or 0)
-    before, after = {}, {}
-    for k in PRICE_HISTORY_FIELDS:
-        if k in patch and float(patch[k] or 0) != _old(k):
-            before[k], after[k] = _old(k), float(patch[k] or 0)
-    if not after:
-        return
-    from core.marketing_cycle import log_change
-    await log_change(db, account_id=account_id, entity='catalog_item', entity_id=item.get('id'),
-                     action='price_change', before=before, after=after, reason=reason, user=user)
+    # 2026-11-09 — satu penulis riwayat harga (dipakai juga aksi massal & pembatalannya): core.catalog_runs
+    from core import catalog_runs as _runs
+    await _runs.log_price_change(db, item, patch, account_id=account_id, user=user, reason=reason)
 
 
 @router.delete('/{catalog_id}/items/{item_id}')

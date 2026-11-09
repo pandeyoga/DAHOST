@@ -241,6 +241,7 @@ REGISTRY: dict[str, str] = {
     "marketing_alert_runs": "marketing",
     "marketing_alert_settings": "marketing",
     "marketing_budgets": "marketing",
+    "marketing_catalog_bulk_runs": "marketing",   # 2026-11-09 — jejak + batalkan aksi massal katalog
     "marketing_catalog_items": "marketing",
     "marketing_catalogs": "marketing",
     "marketing_churn_scores": "marketing",
@@ -392,6 +393,7 @@ REGISTRY: dict[str, str] = {
     "rahaza_maklon_quotes": "lain",
     "rahaza_material_categories": "inventory",
     "rahaza_material_cost_history": "inventory",
+    "rahaza_sku_price_history": "inventory",   # 2026-11-09 — riwayat harga jual resmi per SKU
     "rahaza_material_issues": "inventory",
     "rahaza_material_movements": "inventory",
     "rahaza_material_reservations": "inventory",
@@ -618,7 +620,7 @@ rahaza_cash_accounts rahaza_coa_accounts rahaza_colors rahaza_cost_centers rahaz
 rahaza_defect_codes rahaza_depr_schedules rahaza_employees rahaza_expense_categories rahaza_fg_matrix
 rahaza_fingerprint_profiles rahaza_fixed_assets rahaza_handover_templates rahaza_job_postings
 rahaza_leave_balances rahaza_leave_types rahaza_line_assignments rahaza_lines rahaza_locations
-rahaza_machines rahaza_material_categories rahaza_material_cost_history rahaza_materials
+rahaza_machines rahaza_material_categories rahaza_material_cost_history rahaza_materials rahaza_sku_price_history
 rahaza_model_costing rahaza_model_process_sop rahaza_model_variants rahaza_models
 rahaza_office_locations rahaza_okr_key_results rahaza_okr_objectives rahaza_payroll_profiles
 rahaza_petty_cash_funds rahaza_processes rahaza_product_categories rahaza_production_calendar
@@ -694,7 +696,7 @@ announcements assistant_chat_history client_login_attempts comm_conversations co
 comm_read_receipts cron_runs dewi_ai_actions dewi_asset_scans dewi_scheduler_runs
 dewi_toko_channel_syncs dewi_universal_scans hr_ai_results legacy_drop_log legacy_loan_close_log
 login_attempts marketing_account_health marketing_ai_content_history marketing_alert_runs
-marketing_change_log marketing_churn_scores marketing_dynamic_pricing_suggestions
+marketing_catalog_bulk_runs marketing_change_log marketing_churn_scores marketing_dynamic_pricing_suggestions
 marketing_import_templates marketing_kol_login_attempts marketing_stock_syncs marketing_webhook_events
 notifications payroll_automation_log rahaza_ai_audit_logs rahaza_ai_chat_history rahaza_ai_usage_logs
 rahaza_alerts rahaza_audit_logs rahaza_career_chats rahaza_career_reports

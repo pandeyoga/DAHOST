@@ -12,18 +12,24 @@
  * 2 aksi (aksi penayangan + "Lainnya"). Penyaring satu baris; popup form standar; unduh Excel/CSV.
  * Tampilan kartu (grid foto) tetap ada, bawaan = tabel.
  *
- * SATU HAL YANG SENGAJA TIDAK DIBUAT MASSAL: **Tayangkan**. Setiap produk punya URL sendiri; tombol massal
- * yang mengisi satu URL untuk banyak produk akan melahirkan "bukti tayang" yang salah.
+ * AKSI CEPAT (klarifikasi owner 9 Nov 2026 §D): centang banyak baris → satu baris tombol: Isi harga dari master
+ * (kosong saja / timpa) · Tayangkan yang ber-URL · Jadikan draf · Arsipkan · Kembalikan · Lainnya. Setiap aksi
+ * massal menampilkan pratinjau (berapa berubah, berapa dilewati & alasannya) lalu bisa DIBATALKAN dari toast atau
+ * Alat katalog › Riwayat aksi massal. "Tayangkan" massal hanya untuk item yang SUDAH punya URL sah sendiri — tidak
+ * ada satu URL yang diisikan ke banyak produk, jadi bukti tayang per item tetap benar.
  */
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   ExternalLink, Image as ImageIcon, Upload, Trash2, Pencil, Rocket, Loader2, AlertTriangle,
   XCircle, Archive, RotateCcw, Clock, Link2, ChevronUp, ChevronDown, Coins, ArrowRightLeft,
-  MoreHorizontal, Search, SlidersHorizontal, Eye,
+  MoreHorizontal, Search, SlidersHorizontal, Eye, FileSpreadsheet, Tags,
 } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { PRODUCT_STATUS_OPTIONS, PRODUCT_STATUS_UNSET, productStatusLabel, productStatusTone } from '@/lib/productStatus';
+import { alatUrl, batalkanAksi, panggil, ringkasLewati } from './catalogToolsApi';
+import CatalogPriceUrlDialog from './CatalogPriceUrlDialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -69,6 +75,24 @@ const SORT_OPTIONS = [
 const statusLabel = (r) => (STATUS_CFG[r.catalog_status] || STATUS_CFG.DRAFT).label;
 const publishLabel = (r) => r.publish_state_label || PUBLISH_LABEL[r.publish_state] || r.publish_state || '—';
 const belumTerukur = (r) => r.margin_status === 'belum_bisa_diukur';
+// Sumber harga resmi master (backend core.product_master.official_price)
+const SUMBER_HARGA = { sku: 'harga per SKU', model: 'harga model (cadangan)', none: 'belum ada' };
+// Penyaring status produk: satu pilihan gabungan Stop & Dead (dipakai untuk "arsipkan yang Stop/Dead")
+const OPSI_STATUS_PRODUK = [
+  { value: 'stop,dead', label: 'Stop & Dead', kode: ['stop', 'dead'] },
+  ...PRODUCT_STATUS_OPTIONS.map((o) => ({ value: o.value, label: o.label, kode: [o.value] })),
+  { value: PRODUCT_STATUS_UNSET, label: 'Status belum diisi', kode: [PRODUCT_STATUS_UNSET] },
+];
+// Aksi massal penayangan (backend bulk-transition) — label tombol & judul konfirmasi
+const AKSI_MASSAL = {
+  publish: { judul: 'Tayangkan yang ber-URL', tombol: 'Tayangkan' },
+  unpublish: { judul: 'Jadikan draf', tombol: 'Jadikan draf' },
+  archive: { judul: 'Arsipkan', tombol: 'Arsipkan', alasan: true },
+  restore: { judul: 'Kembalikan dari arsip', tombol: 'Kembalikan' },
+  preorder: { judul: 'Tandai pra-pesan', tombol: 'Tandai pra-pesan' },
+  unpreorder: { judul: 'Lepas tanda pra-pesan', tombol: 'Lepas pra-pesan' },
+  reject: { judul: 'Tandai ditolak platform', tombol: 'Tandai ditolak', alasan: true, wajib: true },
+};
 
 function Thumb({ url, alt, besar = false }) {
   const ukuran = besar ? 'w-16 h-16' : 'w-10 h-10';
@@ -311,6 +335,7 @@ export default function CatalogItemsView({
   const [reason, setReason] = useState(null);   // {title, describe, required, run}
   const [detailId, setDetailId] = useState(null);
   const [busy, setBusy] = useState('');
+  const [unggahBuka, setUnggahBuka] = useState(false);
   const pg = useClientPagination(items, view === 'table' ? PER_HALAMAN : 12);
   const detail = detailId ? items.find((r) => r.id === detailId) || null : null;
 
@@ -327,6 +352,7 @@ export default function CatalogItemsView({
   const pickedIds = useMemo(
     () => Object.keys(picked).filter((k) => picked[k]), [picked]);
   const byStatus = stockSummary?.by_status || {};
+  const byProductStatus = stockSummary?.by_product_status || {};
 
   const call = useCallback(async (path, body, method = 'POST') => {
     const r = await fetch(`${API}/api/marketing/catalogs/${catalog.id}/${path}`,
@@ -345,15 +371,90 @@ export default function CatalogItemsView({
     } catch (e) { toast.error(e.message, { duration: 9000 }); } finally { setBusy(''); }
   };
 
-  const bulk = async (action, reasonText = '') => {
-    setBusy(`bulk-${action}`);
+  // ── AKSI MASSAL: pratinjau → konfirmasi → jalankan → toast "Batalkan" ─────────────────────────────
+  const batalkan = async (runId) => {
     try {
-      const b = await call('items/bulk-transition',
-        { item_ids: pickedIds, action, reason: reasonText });
-      toast.success(b.message, { duration: 8000 });
-      setPicked({});
+      const b = await batalkanAksi(token, runId);
+      toast.success(b.message, { duration: 9000 });
       onReload?.();
-    } catch (e) { toast.error(e.message, { duration: 9000 }); } finally { setBusy(''); }
+    } catch (e) { toast.error(e.message, { duration: 9000 }); }
+  };
+  const selesai = (b) => {
+    toast.success(b.message, {
+      duration: 12000,
+      action: b.run_id ? { label: 'Batalkan', onClick: () => batalkan(b.run_id) } : undefined,
+    });
+    setPicked({});
+    onReload?.();
+  };
+  const kalimatPratinjau = (pv) => {
+    const lewat = pv.skipped ? ` ${angka(pv.skipped)} dilewati: ${ringkasLewati(pv.skip_summary)}.` : '';
+    return `${angka(pv.would_change)} dari ${angka(pickedIds.length)} item akan diubah.${lewat}`;
+  };
+
+  /** Aksi penayangan massal (backend bulk-transition, `dry_run` dulu). */
+  const massal = async (action) => {
+    const cfg = AKSI_MASSAL[action];
+    setBusy(`bulk-${action}`);
+    let pv;
+    try {
+      pv = await call('items/bulk-transition', { item_ids: pickedIds, action, dry_run: true });
+    } catch (e) { toast.error(e.message, { duration: 9000 }); setBusy(''); return; }
+    setBusy('');
+    if (!pv.would_change) {
+      toast.info(`Tidak ada item yang berubah — ${ringkasLewati(pv.skip_summary) || 'semua dilewati'}.`, { duration: 9000 });
+      return;
+    }
+    const jalan = async (why = '') => {
+      setBusy(`bulk-${action}`);
+      try { selesai(await call('items/bulk-transition', { item_ids: pickedIds, action, reason: why })); }
+      catch (e) { toast.error(e.message, { duration: 9000 }); throw e; } finally { setBusy(''); }
+    };
+    if (cfg.alasan) {
+      setReason({
+        title: `${cfg.judul} — ${angka(pv.would_change)} item`, labelSimpan: cfg.tombol, required: !!cfg.wajib,
+        describe: `${kalimatPratinjau(pv)} Bisa dibatalkan sesudahnya.`,
+        run: (why) => jalan(why),
+      });
+      return;
+    }
+    const ok = await confirmDialog({
+      title: `${cfg.judul} — ${angka(pv.would_change)} item?`,
+      body: `${kalimatPratinjau(pv)}${action === 'publish' ? ' Hanya item yang punya URL produk sah sendiri yang ditayangkan.' : ''} Bisa dibatalkan sesudahnya.`,
+      confirmLabel: cfg.tombol,
+    });
+    if (ok) await jalan('').catch(() => {});
+  };
+
+  /** D1 — isi harga jual dari harga resmi master (per SKU, cadangan harga model). */
+  const isiHarga = async (mode) => {
+    const url = alatUrl(`/${catalog.id}/fill-price`);
+    setBusy('fill-price');
+    let pv;
+    try { pv = await panggil(token, url, { body: { item_ids: pickedIds, mode, dry_run: true } }); }
+    catch (e) { toast.error(e.message, { duration: 9000 }); setBusy(''); return; }
+    setBusy('');
+    if (!pv.would_change) {
+      toast.info(`Tidak ada harga yang diisi — ${ringkasLewati(pv.skip_summary) || 'semua dilewati'}.`, { duration: 9000 });
+      return;
+    }
+    const src = pv.by_source || {};
+    const contoh = (pv.sample || []).slice(0, 3).map((s) => `${s.sku}: ${rp(s.old)} → ${rp(s.new)}`).join('; ');
+    const ok = await confirmDialog({
+      title: `Isi harga dari master — ${angka(pv.would_change)} item?`,
+      body: [
+        kalimatPratinjau(pv),
+        `Sumber: ${angka(src.sku || 0)} harga per SKU, ${angka(src.model || 0)} harga model (cadangan).`,
+        pv.coret_below ? `${angka(pv.coret_below)} item harga coretnya lebih kecil dari harga baru — periksa sesudahnya.` : '',
+        contoh ? `Contoh: ${contoh}.` : '',
+        'Riwayat harga tercatat dan aksi ini bisa dibatalkan.',
+      ].filter(Boolean).join(' '),
+      confirmLabel: 'Isi harga',
+    });
+    if (!ok) return;
+    setBusy('fill-price');
+    try { selesai(await panggil(token, url, { body: { item_ids: pickedIds, mode } })); }
+    catch (e) { toast.error(e.message, { duration: 9000 }); } finally { setBusy(''); }
   };
 
   // ── semua aksi satu item (dipakai menu "Lainnya" di baris dan tombol di popup detail) ──
@@ -484,8 +585,20 @@ export default function CatalogItemsView({
       <div className="space-y-0.5">
         <ItemStatus row={r} />
         <p className="text-xs text-muted-foreground">{publishLabel(r)}{r.is_preorder ? ' · pra-pesan' : ''}</p>
+        {r.product_status && (
+          <span data-testid={`item-product-status-${r.sku}`}>
+            <StatusBadge status={r.product_status} label={productStatusLabel(r.product_status)} tone={productStatusTone(r.product_status)} />
+          </span>
+        )}
       </div>) },
-    { kunci: 'harga', label: 'Harga jual', rata: 'kanan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{rp(r.harga_jual)}</span> },
+    { kunci: 'harga', label: 'Harga jual', rata: 'kanan', isi: (r) => (
+      <div className="md:whitespace-nowrap">
+        <p className="tabular-nums">{rp(r.harga_jual)}</p>
+        {/* 9 Nov 2026 (B1) — harga resmi master per SKU tampil di bawahnya bila berbeda / harga toko masih 0 */}
+        {!!r.retail_price_master && Number(r.retail_price_master) !== Number(r.harga_jual) && (
+          <p className="text-xs text-muted-foreground" data-testid={`item-official-${r.sku}`}>resmi {rp(r.retail_price_master)}</p>
+        )}
+      </div>) },
     { kunci: 'hpp', label: 'HPP', rata: 'kanan', isi: (r) => (
       <div className="md:whitespace-nowrap">
         <p className="tabular-nums">{rp(r.hpp_effective ?? r.hpp)}</p>
@@ -511,6 +624,8 @@ export default function CatalogItemsView({
     { label: 'Harga jual', nilai: (r) => Number(r.harga_jual || 0) },
     { label: 'Harga coret', nilai: (r) => Number(r.harga_coret || 0) },
     { label: 'Harga resmi master', nilai: (r) => Number(r.retail_price_master || 0) },
+    { label: 'Sumber harga resmi', nilai: (r) => SUMBER_HARGA[r.retail_price_source] || '' },
+    { label: 'Status produk', nilai: (r) => (r.product_status ? productStatusLabel(r.product_status) : '') },
     { label: 'HPP', nilai: (r) => Number(r.hpp_effective ?? r.hpp ?? 0) },
     { label: 'Sumber HPP', nilai: (r) => r.hpp_source_label || 'belum ada' },
     { label: 'Marjin (Rp)', nilai: (r) => (belumTerukur(r) ? 'Belum bisa diukur' : Number(r.margin || 0)) },
@@ -565,6 +680,15 @@ export default function CatalogItemsView({
             <option value="rejected">Ditolak</option>
             <option value="archived">Diarsipkan</option>
           </SmartNativeSelect>
+          {/* D5 — status produk varian (Stop = tidak direncanakan cutting); angka dari seluruh katalog */}
+          <SmartNativeSelect className="w-44" data-testid="catalog-filter-product-status" title="Status produk dari Master Produk"
+            value={filters.productStatus || ''} onChange={(e) => onFilterChange({ productStatus: e.target.value })}>
+            <option value="">Semua status produk</option>
+            {OPSI_STATUS_PRODUK.map((o) => {
+              const n = o.kode.reduce((t, k) => t + Number(byProductStatus[k] || 0), 0);
+              return <option key={o.value} value={o.value}>{o.label} ({angka(n)})</option>;
+            })}
+          </SmartNativeSelect>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" data-testid="catalog-filter-more">
@@ -592,6 +716,10 @@ export default function CatalogItemsView({
         tools={<>
           <TombolUnduh namaBerkas={`katalog-${catalog?.name || 'item'}`} namaLembar="Item katalog" baris={items}
             kolom={unduhKolom} testId="catalog-export" />
+          {/* D4 — unduh daftar → isi harga & URL per SKU → unggah dengan pratinjau */}
+          <Button variant="outline" onClick={() => setUnggahBuka(true)} data-testid="catalog-price-url-open">
+            <FileSpreadsheet />Unggah harga &amp; URL
+          </Button>
           <ViewToggle value={view} onChange={setView} testId="catalog-view" />
         </>} />
 
@@ -669,29 +797,60 @@ export default function CatalogItemsView({
       {/* ── aksi massal ─────────────────────────────────────────────────────── */}
       {pickedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2" data-testid="catalog-bulk-bar">
-          <span className="text-sm font-medium">{pickedIds.length} item dipilih</span>
+          <span className="text-sm font-medium" data-testid="bulk-count">{angka(pickedIds.length)} item dipilih</span>
+          {semuaHalamanDipilih && pickedIds.length < items.length && (
+            <Button size="sm" variant="link" className="px-0" data-testid="bulk-select-all-filtered"
+              onClick={() => setPicked(Object.fromEntries(items.map((r) => [r.id, true])))}>
+              Pilih semua {angka(items.length)} hasil saring
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={!!busy} data-testid="bulk-fill-price">
+                {busy === 'fill-price' ? <Loader2 className="animate-spin" /> : <Tags />}Isi harga dari master<ChevronDown />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-72">
+              <DropdownMenuLabel>Harga resmi per SKU (cadangan harga model)</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => isiHarga('kosong')} data-testid="bulk-fill-price-empty">
+                Hanya yang harga jualnya masih kosong
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => isiHarga('timpa')} data-testid="bulk-fill-price-overwrite">
+                Timpa semua yang berbeda dari harga resmi
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-publish"
+            title="Hanya item yang sudah punya URL produk sah sendiri" onClick={() => massal('publish')}>
+            <Rocket />Tayangkan yang ber-URL
+          </Button>
           <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-unpublish"
-            onClick={() => bulk('unpublish')}>Turunkan</Button>
-          <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-preorder"
-            onClick={() => bulk('preorder')}>Tandai pra-pesan</Button>
-          <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-unpreorder"
-            onClick={() => bulk('unpreorder')}>Lepas pra-pesan</Button>
+            onClick={() => massal('unpublish')}>Jadikan draf</Button>
           <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-archive"
-            onClick={() => setReason({
-              title: `Arsipkan ${pickedIds.length} item`, labelSimpan: 'Arsipkan',
-              describe: 'Item tidak ditawarkan lagi (nonaktif) tetapi tidak dihapus.',
-              required: false,
-              run: (why) => bulk('archive', why),
-            })}>Arsipkan</Button>
-          <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-reject"
-            onClick={() => setReason({
-              title: `Tandai ${pickedIds.length} item ditolak platform`, labelSimpan: 'Tandai ditolak',
-              describe: 'Alasan wajib — dipakai tim untuk memperbaiki listing.',
-              required: true,
-              run: (why) => bulk('reject', why),
-            })}>Tandai ditolak</Button>
+            onClick={() => massal('archive')}><Archive />Arsipkan</Button>
+          <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-restore"
+            onClick={() => massal('restore')}><RotateCcw />Kembalikan</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" disabled={!!busy} data-testid="bulk-more">
+                <MoreHorizontal />Lainnya
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onSelect={() => massal('preorder')} data-testid="bulk-preorder">
+                <Clock className="mr-2 h-4 w-4" />Tandai pra-pesan
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => massal('unpreorder')} data-testid="bulk-unpreorder">
+                <Clock className="mr-2 h-4 w-4" />Lepas pra-pesan
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => massal('reject')} data-testid="bulk-reject"
+                className="text-[hsl(var(--danger-text))]">
+                <XCircle className="mr-2 h-4 w-4" />Tandai ditolak platform
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button size="sm" variant="link" onClick={() => setPicked({})} data-testid="bulk-clear">Batalkan pilihan</Button>
-          <span className="text-xs text-muted-foreground">"Tayangkan" tidak ada di aksi massal: setiap produk punya URL sendiri.</span>
         </div>
       )}
 
@@ -745,8 +904,16 @@ export default function CatalogItemsView({
             </BarisDetail>
             <BarisDetail label="Harga jual">{rp(detail.harga_jual)}</BarisDetail>
             <BarisDetail label="Harga coret">{detail.harga_coret ? rp(detail.harga_coret) : '—'}</BarisDetail>
+            <BarisDetail label="Status produk">
+              {detail.product_status
+                ? <StatusBadge status={detail.product_status} label={productStatusLabel(detail.product_status)} tone={productStatusTone(detail.product_status)} />
+                : <span className="text-muted-foreground">Belum diisi di Master Produk</span>}
+            </BarisDetail>
             <BarisDetail label="Harga resmi master">
               {detail.retail_price_master ? rp(detail.retail_price_master) : '—'}
+              {detail.retail_price_source && detail.retail_price_source !== 'none' && (
+                <span className="text-muted-foreground"> ({SUMBER_HARGA[detail.retail_price_source]})</span>
+              )}
               {!!detail.price_delta_vs_master && (
                 <span className={detail.price_delta_vs_master > 0 ? 'text-[hsl(var(--success-text))]' : 'text-[hsl(var(--danger-text))]'}>
                   {' '}({detail.price_delta_vs_master > 0 ? '+' : ''}{rp(detail.price_delta_vs_master)} dari harga jual)
@@ -784,6 +951,10 @@ export default function CatalogItemsView({
       <ReasonDialog open={!!reason} onOpenChange={(o) => !o && setReason(null)}
         title={reason?.title} describe={reason?.describe} required={reason?.required} labelSimpan={reason?.labelSimpan}
         onSubmit={async (why) => { await reason.run(why); }} />
+      {unggahBuka && (
+        <CatalogPriceUrlDialog open catalog={catalog} token={token} onClose={() => setUnggahBuka(false)}
+          onDone={(b) => { setUnggahBuka(false); selesai(b); }} />
+      )}
     </div>
   );
 }

@@ -19,6 +19,7 @@ from routes.shared import require_perm  # T-01 2.3
 from core import catalog_stock as _cstock   # F7: SSOT satu rumus stok jual
 from core import product_master as _pm      # F3–F6: SSOT kategori/HPP/harga resmi
 from core import product_status as _pstatus  # status produk SKU: Stop tidak diusulkan restock
+from core import catalog_tools as _tools     # 2026-11-09: status produk per SKU + item tersembunyi
 
 router = APIRouter(prefix='/api/marketing/catalogs', tags=['Marketing-Catalog-mgmt'])
 
@@ -474,6 +475,7 @@ async def list_master_products_for_catalog(
         {'_id': 0}).sort('code', 1).to_list(2000)
 
     in_catalog: set = set()
+    in_hidden: set = set()
     catalog_id = None
     if account_id:
         cat = await db.marketing_catalogs.find_one(
@@ -484,6 +486,18 @@ async def list_master_products_for_catalog(
                     {'catalog_id': catalog_id}, {'_id': 0, 'fg_material_id': 1}):
                 if it.get('fg_material_id'):
                     in_catalog.add(it['fg_material_id'])
+        # 2026-11-09 (D7) — item impor lama TANPA katalog untuk toko ini juga dihitung "sudah ada"
+        async for it in db.marketing_catalog_items.find(
+                {'$and': [_tools.LIVE_HIDDEN, {'account_id': account_id}]},
+                {'_id': 0, 'fg_material_id': 1, 'material_id': 1}):
+            fid = it.get('fg_material_id') or it.get('material_id')
+            if fid:
+                in_hidden.add(fid)
+
+    # 2026-11-09 (B1/D7) — status produk & harga resmi PER SKU ikut tampil supaya staf tidak memilih SKU Stop/Dead
+    # tanpa sadar, dan tahu harga awal item yang akan dibuat.
+    vstatus = await _tools.status_by_sku(db, (fg.get('code') for fg in fgs))
+    model_by_id = {m['id']: m for m in models}
 
     by_model: dict = {}
     for fg in fgs:
@@ -491,7 +505,14 @@ async def list_master_products_for_catalog(
         sellable = float(stock['available'])
         if only_sellable and sellable <= 0:
             continue
+        price, price_src = _pm.official_price(fg, model_by_id.get(fg['model_id']))
+        ps_code = vstatus.get(str(fg.get('code') or '').upper())
         by_model.setdefault(fg['model_id'], []).append({
+            'retail_price_master': price,
+            'retail_price_source': price_src,
+            'product_status': ps_code,
+            'product_status_label': _pstatus.label(ps_code),
+            'in_catalog_hidden': fg['id'] in in_hidden,
             'fg_material_id': fg['id'],
             'code': fg.get('code') or '',
             'name': fg.get('name') or '',
@@ -508,7 +529,7 @@ async def list_master_products_for_catalog(
             'sellable_stock': sellable,
             'onhand': float(stock['onhand']),
             'reserved': float(stock['reserved']),
-            'in_catalog': fg['id'] in in_catalog,
+            'in_catalog': fg['id'] in in_catalog or fg['id'] in in_hidden,
         })
 
     out = []
@@ -535,6 +556,11 @@ async def list_master_products_for_catalog(
             'hpp_source': master.get('hpp_source') or 'none',
             'retail_price_master': float(master.get('retail_price_master')
                                          or m.get('retail_price') or 0),
+            # 2026-11-09 (B1) — rentang harga resmi per SKU varian (cadangan harga model sudah termasuk)
+            'retail_price_min': min([v['retail_price_master'] for v in variants if v['retail_price_master']] or [0]),
+            'retail_price_max': max([v['retail_price_master'] for v in variants] or [0]),
+            'priced_variant_count': sum(1 for v in variants if v['retail_price_source'] == 'sku'),
+            'stop_dead_count': sum(1 for v in variants if v['product_status'] in SKIP_PRODUCT_STATUSES),
             'variant_count': len(variants),
             'in_catalog_count': sum(1 for v in variants if v['in_catalog']),
             'variants': variants,
@@ -555,6 +581,12 @@ class AssignFromMasterBody(BaseModel):
     price_mode: str = 'master'
     stock_alert_threshold: Optional[float] = Field(default=10, ge=0)
     catalog_name: Optional[str] = None
+    # 2026-11-09 (klarifikasi D7) — SKU berstatus produk Stop/Dead DILEWATI (bawaan); True = tetap ditambahkan
+    include_stop_dead: bool = False
+
+
+# Status produk yang bawaannya tidak ditambahkan ke katalog lewat "Isi dari master" (D7)
+SKIP_PRODUCT_STATUSES = ('stop', 'dead')
 
 
 @router.post('/assign-from-master')
@@ -579,8 +611,12 @@ async def assign_from_master(data: AssignFromMasterBody, request: Request):
         supaya staf tidak harus tahu bahwa "katalog" adalah lapisan tersendiri.
       * HPP & harga resmi **selalu** dari master (bukan diketik), lewat
         `create_item_from_fg` yang sama dengan jalur satuan.
+      * 2026-11-09 (D7) — SKU berstatus produk Stop/Dead dilewati (bisa dimatikan), item tersembunyi toko
+        yang sama dihitung "sudah ada", dan harga awal = harga resmi PER SKU (cadangan harga model).
     """
-    user = await require_auth(request)
+    # 2026-11-09 — gerbang tulis katalog yang sama dengan "Ubah item" + lingkup toko per tujuan
+    from routes.marketing_catalog_items import require_catalog_writer  # lazy: hindari impor siklik
+    user = await require_catalog_writer(request)
     db = get_db()
 
     if data.price_mode not in ('master', 'kosong'):
@@ -593,13 +629,24 @@ async def assign_from_master(data: AssignFromMasterBody, request: Request):
     if missing:
         raise HTTPException(404, f"{len(missing)} toko tujuan tidak ditemukan — "
                                  'muat ulang daftar toko lalu coba lagi.')
+    for a in accounts:
+        await _scope.assert_account_visible(db, user, a['id'])
 
     from routes.marketing_catalog_items import (          # lazy: hindari impor siklik
         create_item_from_fg as _create_item, _refresh_catalog_stats as _refresh_stats,
     )
 
+    # D7 — status produk per SKU (FG code = SKU varian). Dibaca sekali untuk semua pilihan.
+    stopped: dict = {}
+    if not data.include_stop_dead:
+        fg_codes = {f['id']: f.get('code') for f in await db.rahaza_materials.find(
+            {'id': {'$in': data.fg_material_ids}}, {'_id': 0, 'id': 1, 'code': 1}).to_list(len(data.fg_material_ids))}
+        st_by_sku = await _tools.status_by_sku(db, fg_codes.values())
+        stopped = {fid: st_by_sku.get(str(code or '').upper()) for fid, code in fg_codes.items()
+                   if st_by_sku.get(str(code or '').upper()) in SKIP_PRODUCT_STATUSES}
+
     results = []
-    tot_created = tot_skipped = tot_rejected = 0
+    tot_created = tot_skipped = tot_rejected = tot_status = 0
     for acc in accounts:
         catalog = await db.marketing_catalogs.find_one(
             {'account_id': acc['id']}, {'_id': 0})
@@ -626,10 +673,16 @@ async def assign_from_master(data: AssignFromMasterBody, request: Request):
             catalog.pop('_id', None)
             catalog_created = True
 
-        created = skipped = rejected = 0
+        created = skipped = rejected = by_status = 0
         notes = []
         for fg_id in data.fg_material_ids:
-            opts = {'stock_alert_threshold': data.stock_alert_threshold}
+            if fg_id in stopped:
+                by_status += 1
+                notes.append({'fg_material_id': fg_id, 'action': 'dilewati',
+                              'why': f"status produk {_pstatus.label(stopped[fg_id])} — tidak ditambahkan "
+                                     "(centang 'Tetap tambahkan SKU Stop/Dead' bila memang dijual)"})
+                continue
+            opts = {'stock_alert_threshold': data.stock_alert_threshold, 'price_mode': data.price_mode}
             if data.price_mode == 'kosong':
                 opts['harga_jual'] = 0
             doc, err = await _create_item(db, catalog, fg_id, opts, user)
@@ -653,6 +706,7 @@ async def assign_from_master(data: AssignFromMasterBody, request: Request):
         tot_created += created
         tot_skipped += skipped
         tot_rejected += rejected
+        tot_status += by_status
         results.append({
             'account_id': acc['id'],
             'account_code': acc.get('account_code'),
@@ -661,6 +715,7 @@ async def assign_from_master(data: AssignFromMasterBody, request: Request):
             'catalog_name': catalog.get('name'),
             'catalog_created': catalog_created,
             'created': created, 'skipped': skipped, 'rejected': rejected,
+            'skipped_status': by_status,
             'notes': notes[:200],
         })
 
@@ -669,18 +724,19 @@ async def assign_from_master(data: AssignFromMasterBody, request: Request):
         'assign_from_master', 'marketing_catalog_items',
         f"Isi katalog dari master produk: {len(accounts)} toko × "
         f"{len(data.fg_material_ids)} varian ⇒ {tot_created} item baru, "
-        f"{tot_skipped} sudah ada, {tot_rejected} ditolak")
+        f"{tot_skipped} sudah ada, {tot_rejected} ditolak, {tot_status} dilewati (Stop/Dead)")
 
     return {
         'ok': True,
         'summary': {'accounts': len(accounts), 'products': len(data.fg_material_ids),
                     'created': tot_created, 'skipped': tot_skipped,
-                    'rejected': tot_rejected},
+                    'rejected': tot_rejected, 'skipped_status': tot_status},
         'results': results,
         'message': (f"{tot_created} item katalog dibuat di {len(accounts)} toko"
                     + (f", {tot_skipped} sudah ada" if tot_skipped else '')
                     + (f", {tot_rejected} ditolak" if tot_rejected else '')
-                    + '. HPP & harga resmi diambil dari master produk.'),
+                    + (f", {tot_status} dilewati karena status produk Stop/Dead" if tot_status else '')
+                    + '. HPP & harga resmi (per SKU) diambil dari master produk.'),
     }
 
 
