@@ -6,6 +6,8 @@ Lapisan HTTP tipis di atas `core/scan_out.py` (semua aturan & angka ada di sana)
   GET  /api/wh/scan-out/stores               toko/platform (opsional per scan)
   GET  /api/wh/scan-out/today?location_id=   lembar hari ini + baris + daftar merah + lembar lain yang terbuka
   POST /api/wh/scan-out/scan                 {location_id, code, client_scan_id, multiplier?, kind?, account_id?}
+  POST /api/wh/scan-out/pick                 {location_id, kind?, account_id?, items:[{material_id, qty, client_scan_id}]}
+                                             "Pilih tanpa scan" (10 Nov 2026) — tiap barang lewat mesin scan
   POST /api/wh/scan-out/lines/{id}/void      {reason?} — salah scan sebelum Tutup Hari
   GET  /api/wh/scan-out/retry-queue          ?location_id=&sheet_id= antrean scan gagal di server (Tahap 2)
   POST /api/wh/scan-out/lines/{id}/retry     kirim ulang baris gagal (id sama → tidak dobel)
@@ -156,6 +158,25 @@ async def post_scan(request: Request):
                             user=user)
     except so.ScanOutError as e:
         raise _err(e)
+    return serialize_doc(out)
+
+
+@router.post("/pick")
+async def post_pick(request: Request):
+    """2026-11-10 (owner): "Pilih tanpa scan" — banyak barang jadi sekaligus dari daftar cari.
+    Hak sama dengan scan; setiap barang lewat mesin scan yang sama (`core.scan_out.pick`)."""
+    user = await _require(request, so.SCAN_ROLES, "warehouse.manage", "hanya peran gudang/packing yang boleh scan")
+    body = await request.json()
+    try:
+        out = await so.pick(get_db(), location_id=body.get("location_id"), items=body.get("items"),
+                            kind=body.get("kind") or so.KIND_SCAN, account_id=body.get("account_id") or "",
+                            user=user)
+    except so.ScanOutError as e:
+        raise _err(e)
+    if out["accepted"]:
+        await log_activity(user["id"], user.get("name", ""), "pick", "wh.scan_out",
+                           f"tanpa scan: {out['accepted']} barang {out['pcs']} pcs "
+                           f"({body.get('kind') or so.KIND_SCAN}); ditolak {out['rejected']}, gagal {out['failed']}")
     return serialize_doc(out)
 
 

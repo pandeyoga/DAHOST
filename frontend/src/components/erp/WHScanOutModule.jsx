@@ -19,10 +19,15 @@
  * konfirmasi & alasan = confirmDialog (dulu window.confirm/prompt), tanggal = DatePicker, semua tabel laporan =
  * TabelData + unduh Excel/CSV, kotak pemberitahuan = Notice. Daftar baris scan hari ini sengaja tetap baris
  * ringkas (bukan kartu) karena layar ini dipakai di HP sambil men-scan.
+ *
+ * 2026-11-10 (owner: "tanpa scan bisa dicari dan bisa pilih multiple"): tombol "Pilih tanpa scan" membuka FormPopup
+ * berisi pencarian barang jadi (PilihProdukJadi) + jumlah per barang. Server mencatat SETIAP barang lewat mesin scan
+ * yang sama (POST /pick → core.scan_out.scan): lembar, stok, HPP, batal baris, Tutup Hari tidak berubah. Barisnya
+ * bertanda "Tanpa scan" (bukan daftar merah); hak & aturan stok sama dengan scan (keputusan owner 10 Nov).
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  MapPin, Store, Lock, AlertTriangle, RefreshCw, Undo2, Scale, CheckCircle2, RotateCw,
+  MapPin, Store, Lock, AlertTriangle, RefreshCw, Undo2, Scale, CheckCircle2, RotateCw, ListChecks, X,
 } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
@@ -34,7 +39,9 @@ import UniversalScanner from './scanner/UniversalScanner';
 import { scanFeedback } from './scanner/scanCode';
 import { toScanResult } from './scanner/ScanResult';
 import PageLayout from './layout/PageLayout';
-import { EmptyState, Notice, StatTile } from './moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import FormPopup from '@/components/ui/form-popup';
+import PilihProdukJadi, { kolomBarang } from './warehouse/PilihProdukJadi';
 import HubTabs from './hubs/HubTabs';
 import DatePicker from '@/components/ui/date-picker';
 import TabelData from '@/components/ui/tabel-data';
@@ -195,6 +202,57 @@ function ScanTab({ token }) {
     send(payload);
   };
 
+  // ── Pilih tanpa scan (10 Nov 2026) ──────────────────────────────────────────
+  // Id pilihan (= client_scan_id) dibuat SAAT barang dicentang: Simpan yang terkirim dua kali (jaringan putus)
+  // tidak memotong stok dua kali — server mengenali id yang sama, persis seperti "Kirim ulang" scan.
+  const [pilihBuka, setPilihBuka] = useState(false);
+  const [pilihan, setPilihan] = useState([]);              // [{ item, qty, csid }]
+  const [pilihGalat, setPilihGalat] = useState('');
+  const [pilihSimpan, setPilihSimpan] = useState(false);
+  const bukaPilih = () => { setPilihan([]); setPilihGalat(''); setPilihBuka(true); };
+  const ubahPilih = (item, centang) => setPilihan((p) => (centang
+    ? (p.some((x) => x.item.id === item.id) ? p : [...p, { item, qty: '1', csid: newScanId() }])
+    : p.filter((x) => x.item.id !== item.id)));
+  const ubahQty = (id, qty) => setPilihan((p) => p.map((x) => (x.item.id === id ? { ...x, qty } : x)));
+  const terpilihMap = useMemo(() => Object.fromEntries(pilihan.map((p) => [p.item.id, true])), [pilihan]);
+  const qtySah = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 500; };
+  const pilihPcs = pilihan.reduce((a, p) => a + (qtySah(p.qty) ? Number(p.qty) : 0), 0);
+  const pilihSalah = pilihan.find((p) => !qtySah(p.qty));
+  const simpanPilih = async () => {
+    setPilihSimpan(true);
+    setPilihGalat('');
+    const payload = {
+      location_id: loc, kind: mode, account_id: store,
+      items: pilihan.map((p) => ({ material_id: p.item.id, qty: Number(p.qty), client_scan_id: p.csid, code: p.item.code })),
+    };
+    try {
+      const r = await apiFetch(`${API}/pick`, { method: 'POST', headers: jsonH, body: JSON.stringify(payload) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setPilihGalat(d.detail || `Gagal menyimpan (${r.status}).`); return; }
+      const hasil = d.results || [];
+      const tidak = hasil.filter((x) => x.result !== 'accepted');
+      const merah = hasil.filter((x) => x.result === 'accepted' && (x.line?.flags || []).length);
+      const verb = mode === 'batal_kirim' ? 'Batal kirim' : 'Keluar';
+      scanFeedback(tidak.length ? 'error' : merah.length ? 'dup' : 'ok');
+      setLast({
+        tone: tidak.length || merah.length ? 'red' : 'green',
+        text: `${verb} tanpa scan: ${d.accepted} barang · ${d.pcs} pcs tercatat${tidak.length ? ` · ${tidak.length} tidak tercatat` : ''}.`,
+        detail: [
+          ...tidak.map((x) => (x.result === 'rejected'
+            ? `Ditolak: ${x.reject?.reason || 'barang tidak dikenal'}`
+            : `${x.error || 'Gagal diproses'} — kirim ulang dari antrean di bawah.`)),
+          ...merah.map((x) => x.line.warning
+            || `${x.line.sku}: ${(x.line.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')} — tetap tercatat.`),
+        ].join(' ') || undefined,
+      });
+      setPilihBuka(false);
+      setPilihan([]);
+      await loadToday();
+    } catch (_) {
+      setPilihGalat('Jaringan putus — belum pasti tercatat. Tekan simpan lagi tanpa mengubah pilihan: barang yang sudah tercatat tidak dihitung dua kali.');
+    } finally { setPilihSimpan(false); }
+  };
+
   // Antrean server: kirim ulang / batalkan baris yang gagal diproses (id baris sama → tidak dobel).
   const retryServer = async (ln) => {
     setBusy(true);
@@ -310,6 +368,11 @@ function ScanTab({ token }) {
               onChange={(e) => setMult(Math.max(1, Math.min(500, parseInt(e.target.value, 10) || 1)))}
               className="h-8 w-16 text-sm" />
           </div>
+          <Button type="button" size="sm" variant="outline" className="sm:ml-auto" onClick={bukaPilih}
+            disabled={!loc || data?.can_scan === false} data-testid="scan-out-pilih"
+            title={loc ? 'Cari dan pilih banyak barang sekaligus, tanpa scan' : 'Pilih lokasi asal dulu'}>
+            <ListChecks className="w-4 h-4" /> Pilih tanpa scan
+          </Button>
         </div>
         <div className={mode === 'batal_kirim' ? 'rounded-lg ring-2 ring-[hsl(var(--warning)/0.35)] p-1' : ''}>
           <UniversalScanner variant="inline" onScan={onScan} continuous keepFocus autoFocus disabled={!loc}
@@ -368,6 +431,7 @@ function ScanTab({ token }) {
         )}
         <div className="text-xs text-muted-foreground">
           Khusus penjualan <b>marketplace</b>. Barang nota Portal Penjualan <b>tidak</b> di-scan di sini.
+          {' '}Barcode rusak atau banyak SKU sekaligus? Pakai <b>Pilih tanpa scan</b>.
           {mult > 1 && <span className="ml-1 font-semibold text-[hsl(var(--primary))]">Scan berikutnya dihitung ×{mult} pcs.</span>}
           {inflight > 0 && <span className="ml-1">Mengirim {inflight}…</span>}
         </div>
@@ -459,6 +523,7 @@ function ScanTab({ token }) {
                 { label: 'Jam', nilai: (l) => fmtTime(l.scanned_at) },
                 { label: 'Jenis', nilai: (l) => (l.kind === 'batal_kirim' ? 'Batal kirim' : 'Keluar') },
                 { label: 'SKU', nilai: (l) => l.sku },
+                { label: 'Cara input', nilai: (l) => (l.tanpa_scan ? 'Tanpa scan' : 'Scan') },
                 { label: 'Qty', nilai: (l) => Number(l.qty || 0) },
                 { label: 'HPP (WAC)', nilai: (l) => Number(l.value || 0) },
                 { label: 'Petugas', nilai: (l) => l.operator_name || '' },
@@ -485,6 +550,7 @@ function ScanTab({ token }) {
                         : null}
                       <span className="tabular-nums font-semibold truncate">{l.sku}</span>
                       <span className="font-bold">×{l.qty}</span>
+                      {l.tanpa_scan && <StatusBadge status="tanpa_scan" label="Tanpa scan" tone="info" testId="scan-out-line-tanpa-scan" />}
                     </div>
                     <div className="text-muted-foreground truncate">
                       {fmtTime(l.scanned_at)} · {l.operator_name || '-'}{l.store?.account_name ? ` · ${l.store.account_name}` : ''}
@@ -505,6 +571,59 @@ function ScanTab({ token }) {
           </div>
         </GlassCard>
       )}
+
+      {/* Pilih tanpa scan — form = popup (Revisi 3 #2). Setiap barang dicatat server lewat mesin scan yang sama. */}
+      <FormPopup open={pilihBuka} onClose={() => { setPilihBuka(false); setPilihan([]); }} ukuran="panjang"
+        testId="scan-out-pilih-form"
+        judul={mode === 'batal_kirim' ? 'Batal kirim tanpa scan' : 'Barang keluar tanpa scan'}
+        keterangan={`Lokasi asal ${locObj ? `${locObj.code}${locObj.name ? ` · ${locObj.name}` : ''}` : '-'}`
+          + `${store ? ` · toko ${(stores.find((x) => x.id === store) || {}).account_name || ''}` : ''}. `
+          + 'Centang barang, isi jumlahnya, lalu simpan. Setiap barang dicatat seperti satu scan, bertanda "Tanpa scan", dan bisa dibatalkan per baris.'}
+        onSimpan={simpanPilih} menyimpan={pilihSimpan} bisaSimpan={pilihan.length > 0 && !pilihSalah}
+        galat={pilihGalat /* jumlah salah ditulis di barisnya; kaki popup hanya galat server/jaringan */}
+        labelSimpan={mode === 'batal_kirim'
+          ? `Catat batal kirim${pilihan.length ? ` · ${num(pilihPcs)} pcs` : ''}`
+          : `Keluarkan${pilihan.length ? ` · ${num(pilihPcs)} pcs` : ''}`}>
+        {pilihBuka && (
+          <PilihProdukJadi lokasiId={loc} terpilih={terpilihMap} onUbah={ubahPilih}
+            alasanTolak={(it) => it.masalah || null} testId="scan-out-pilih-cari" />
+        )}
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Dipilih ({pilihan.length} barang · {num(pilihPcs)} pcs)</div>
+          <TabelData baris={pilihan} kunci={(p) => p.item.id} testId="scan-out-pilih-dipilih"
+            kosong={<EmptyState title="Belum ada barang dipilih" description="Centang barang dari hasil cari di atas." />}
+            kolom={[
+              ...kolomBarang((p) => p.item),
+              { kunci: 'stok', label: 'Stok lokasi', rata: 'kanan', isi: (p) => <span className="tabular-nums">{num(p.item.stok_lokasi)}</span> },
+              { kunci: 'qty', label: 'Jumlah (pcs)', rata: 'kanan', isi: (p) => {
+                const lebih = mode !== 'batal_kirim' && qtySah(p.qty) && Number(p.qty) > Number(p.item.stok_lokasi || 0);
+                return (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <Input type="number" min={1} max={500} value={p.qty} aria-label={`Jumlah ${p.item.code}`}
+                      onChange={(e) => ubahQty(p.item.id, e.target.value)} className="h-8 w-20 text-right text-sm"
+                      data-testid={`scan-out-pilih-qty-${p.item.code}`} />
+                    {!qtySah(p.qty) && (
+                      <span className="block max-w-[9rem] whitespace-normal text-right text-xs text-[hsl(var(--danger-text))]">
+                        Isi angka bulat 1–500 pcs
+                      </span>
+                    )}
+                    {lebih && (
+                      <span className="block max-w-[9rem] whitespace-normal text-right text-xs text-[hsl(var(--danger-text))]">
+                        Melebihi stok — tetap dicatat, ditandai merah
+                      </span>
+                    )}
+                  </div>
+                );
+              } },
+              { kunci: 'hapus', label: '', hp: 'aksi', lebar: 'w-10', isi: (p) => (
+                <Button type="button" size="icon-sm" variant="ghost" onClick={() => ubahPilih(p.item, false)}
+                  aria-label={`Hapus ${p.item.code} dari pilihan`} title="Hapus dari pilihan">
+                  <X className="w-4 h-4" />
+                </Button>
+              ) },
+            ]} />
+        </div>
+      </FormPopup>
     </div>
   );
 }
@@ -622,10 +741,21 @@ function ReportTab({ token }) {
             ]} />
             <TabelLaporan judul="Per petugas" namaBerkas={`scan-keluar-per-petugas-${day}`} baris={berkunci(rep.per_operator)} kolom={[
               { label: 'Petugas', nilai: (r) => r.operator },
-              { label: 'Scan', nilai: (r) => r.scans, rata: 'kanan' },
+              { label: 'Baris', nilai: (r) => r.scans, rata: 'kanan' },
+              { label: 'Tanpa scan', nilai: (r) => r.tanpa_scan || 0, rata: 'kanan' },
               { label: 'Neto', nilai: (r) => r.net, rata: 'kanan' },
             ]} />
           </div>
+          {/* 2026-11-10 (owner): jejak audit barang yang dicatat tanpa scan — bukan daftar merah. */}
+          <TabelLaporan judul={`Dicatat tanpa scan (${num(s.tanpa_scan_lines)} baris · ${num(s.tanpa_scan_pcs)} pcs)`}
+            testId="scan-out-report-tanpa-scan" namaBerkas={`scan-keluar-tanpa-scan-${day}`} kosong="Tidak ada."
+            baris={berkunci(rep.tanpa_scan)} kolom={[
+              { label: 'SKU', nilai: (l) => l.sku },
+              { label: 'Jenis', nilai: (l) => (l.kind === 'batal_kirim' ? 'Batal kirim' : 'Keluar') },
+              { label: 'Qty', nilai: (l) => Number(l.qty || 0), rata: 'kanan' },
+              { label: 'Petugas', nilai: (l) => l.operator_name || '-' },
+              { label: 'Jam', nilai: (l) => fmtTime(l.scanned_at), rata: 'kanan' },
+            ]} />
           <TabelLaporan judul="Keluar via nota Portal Penjualan (pembanding — tidak di-scan, tidak dijumlah)"
             testId="scan-out-report-nota" namaBerkas={`scan-keluar-nota-${day}`} kosong="Tidak ada nota hari ini."
             baris={berkunci(rep.direct_sales?.per_sku)} kolom={[
