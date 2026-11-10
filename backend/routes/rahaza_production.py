@@ -302,14 +302,60 @@ async def update_model(mid: str, request: Request):
     return out
 
 
+async def hapus_model_permanen(db, mid: str, user: dict) -> dict:
+    """Hapus permanen satu model BESERTA konfigurasi miliknya — varian (SKU), barang jadi & potongan otomatis
+    (stok 0), BOM, SOP proses, dan costing model — bila model maupun varian/barangnya BELUM dipakai PO, job,
+    cutting, WIP, katalog/pesanan marketing, stok, dll. (`routes.rahaza_variants.pemakaian_produk`).
+    Bila sudah dipakai → 409 dengan rinciannya (layar menawarkan Nonaktifkan)."""
+    from core.hapus_master import tolak_bila_dipakai
+    from routes.rahaza_variants import hapus_barang_milik, pemakaian_produk
+    model = await db.rahaza_models.find_one({"id": mid}, {"_id": 0, "id": 1, "code": 1, "name": 1})
+    if not model:
+        raise HTTPException(404, "Model tidak ditemukan.")
+    variants = await db.rahaza_model_variants.find({"model_id": mid}, {"_id": 0, "id": 1, "sku": 1}).to_list(5000)
+    vids = [v["id"] for v in variants if v.get("id")]
+    skus = [v.get("sku") for v in variants if v.get("sku")]
+    fg_ids = [f["id"] for f in await db.rahaza_materials.find(
+        {"type": "fg", "$or": [{"model_id": mid}, {"variant_id": {"$in": vids}}]}, {"_id": 0, "id": 1}).to_list(5000)
+        if f.get("id")]
+    panel_ids = [p["id"] for p in await db.rahaza_materials.find(
+        {"is_cut_panel": True, "model_id": mid}, {"_id": 0, "id": 1}).to_list(5000) if p.get("id")]
+    nama = f"{model.get('code') or ''} {model.get('name') or ''}".strip()
+    tolak_bila_dipakai("Model", nama, await pemakaian_produk(
+        db, model_id=mid, variant_ids=vids, skus=skus, fg_ids=fg_ids, material_ids=panel_ids))
+    removed = {
+        "barang": await hapus_barang_milik(db, [*fg_ids, *panel_ids]),
+        "varian": (await db.rahaza_model_variants.delete_many({"model_id": mid})).deleted_count,
+        "bom": (await db.rahaza_boms.delete_many({"model_id": mid})).deleted_count,
+        "sop": (await db.rahaza_model_process_sop.delete_many({"model_id": mid})).deleted_count,
+        "costing": (await db.rahaza_model_costing.delete_many({"model_id": mid})).deleted_count,
+    }
+    await db.rahaza_models.delete_one({"id": mid})
+    await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.model",
+                       f"id={mid} kode={model.get('code')} " + " ".join(f"{k}={v}" for k, v in removed.items()))
+    return {
+        "status": "deleted", "deleted": True,
+        "model": {"id": mid, "code": model.get("code"), "name": model.get("name")},
+        "removed": removed,
+        "message": f"Model {nama} dihapus beserta {removed['varian']} varian dan {removed['bom']} BOM.",
+    }
+
+
 @router.delete("/models/{mid}")
-async def deactivate_model(mid: str, request: Request):
+async def deactivate_model(mid: str, request: Request, hard: bool = False):
     """Nonaktifkan produk. **K-9a**: item katalog yang menawarkannya ikut
     dinonaktifkan, dan DAFTAR TERDAMPAK dikembalikan supaya staf tahu apa yang
     berubah (bukan perubahan senyap).
+
+    `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"): hapus permanen bila belum dipakai
+    (`hapus_model_permanen`); bila sudah → 409. Jalur ini dijaga peran (`izinkan_hapus_permanen`).
     """
     user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from routes.rahaza_variants import izinkan_hapus_permanen
+        izinkan_hapus_permanen(user)
+        return await hapus_model_permanen(db, mid, user)
     model = await db.rahaza_models.find_one({"id": mid}, {"_id": 0, "id": 1, "code": 1, "name": 1})
     if not model:
         raise HTTPException(404, "Model tidak ditemukan.")
@@ -572,10 +618,55 @@ async def update_size(sid: str, request: Request):
     return serialize_doc(await db.rahaza_sizes.find_one({"id": sid}, {"_id": 0}))
 
 
+async def pemakaian_ukuran(db, size: dict) -> dict:
+    """Di mana satu ukuran master dipakai. Rujukan ber-id selalu dihitung; rujukan lewat KODE (katalog maklon)
+    hanya bila tidak ada ukuran lain berkode sama."""
+    from core.hapus_master import hitung_pemakaian
+    sid = size.get("id")
+    code = (size.get("code") or "").strip()
+    if code and await db.rahaza_sizes.count_documents({"code": code, "id": {"$ne": sid}}):
+        code = ""
+    cek = [
+        ("varian produk", "rahaza_model_variants", {"size_id": sid}),
+        ("barang jadi / potongan", "rahaza_materials", {"size_id": sid}),
+        ("BOM", "rahaza_boms", {"size_id": sid}),
+        ("baris PO produksi", "po_items", {"size_id": sid}),
+        ("job produksi", "production_job_items", {"size_id": sid}),
+        ("order produksi", "rahaza_orders", {"items.size_id": sid}),
+        ("penugasan line", "rahaza_line_assignments", {"size_id": sid}),
+        ("catatan WIP", "rahaza_wip_events", {"size_id": sid}),
+        ("pengeluaran material", "rahaza_material_issues", {"size_id": sid}),
+        ("order cutting", "cutting_orders", {"$or": [{"size_id": sid}, {"outputs.size_id": sid}]}),
+        ("lapisan biaya barang jadi", "fg_cost_layers", {"size_id": sid}),
+        ("HPP per ukuran produk", "rahaza_models", {f"hpp_bom_by_size.{sid}": {"$exists": True}}),
+        ("riwayat penerapan HPP", "product_cost_snapshots",
+         {"$or": [{"applied_sizes.size_id": sid}, {"skipped_sizes.size_id": sid}]}),
+        ("style R&D", "dewi_rnd_styles", {"size_map.size_id": sid}),
+    ]
+    if code:
+        cek.append(("artikel katalog maklon", "dewi_maklon_buyer_catalog",
+                    {"$or": [{"size_options": code}, {"variants.size": code}]}))
+    return await hitung_pemakaian(db, cek)
+
+
 @router.delete("/sizes/{sid}")
-async def deactivate_size(sid: str, request: Request):
-    await _require_admin(request)
+async def deactivate_size(sid: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026): hapus permanen bila ukuran belum
+    dipakai varian/BOM/PO/order/cutting/WIP/HPP/R&D/katalog maklon; bila sudah → 409 dengan rinciannya."""
+    user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        from routes.rahaza_variants import izinkan_hapus_permanen
+        izinkan_hapus_permanen(user)
+        size = await db.rahaza_sizes.find_one({"id": sid}, {"_id": 0})
+        if not size:
+            raise HTTPException(404, "Ukuran tidak ditemukan.")
+        nama = size.get("code") or size.get("name") or ""
+        tolak_bila_dipakai("Ukuran", nama, await pemakaian_ukuran(db, size))
+        await db.rahaza_sizes.delete_one({"id": sid})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.size", f"id={sid} kode={nama}")
+        return {"status": "deleted", "deleted": True, "message": f"Ukuran {nama} dihapus."}
     await db.rahaza_sizes.update_one({"id": sid}, {"$set": {"active": False, "updated_at": _now()}})
     return {"status": "deactivated"}
 

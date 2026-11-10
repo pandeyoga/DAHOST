@@ -171,16 +171,9 @@ async def next_roll_no(db) -> str:
     return await issue_number(db, ROLL_NUMBER_KEY)
 
 
-async def issue_roll_no(db, requested: str = "") -> str:
-    """Nomor roll untuk jalur yang MENERIMA ketikan pemakai (layar Roll Kain).
-
-    Bedanya dengan `next_roll_no`: fungsi ini meneruskan nomor yang diketik ke
-    kebijakan penomoran. Mode `auto` (bawaan) MENOLAK nomor ketikan dengan pesan
-    yang menyebut nomor yang akan dipakai; mode `manual` memeriksa polanya. Jadi
-    tidak ada jalur diam-diam yang bisa memasukkan nomor gulungan berpola bebas.
-    """
-    from core.doc_number_policy import issue_number
-    return await issue_number(db, ROLL_NUMBER_KEY, requested=(requested or "").strip())
+# 2026-11-10: `issue_roll_no` (nomor untuk roll MANUAL layar Roll Kain) dihapus — input roll manual ditutup
+# (`POST /api/wms/fabric-rolls` → 410). Semua roll kini lahir lewat `next_roll_no` (penerimaan, penerimaan
+# tanpa roll, impor stok awal).
 
 
 async def create_rolls_from_receipt(db, receipt: dict, item: dict, material: dict,
@@ -215,7 +208,10 @@ async def create_rolls_from_receipt(db, receipt: dict, item: dict, material: dic
             "qc_status": "pass" if (item.get("inspection_status") == "passed"
                                     and not _f(item.get("rejected_qty"))) else "pending",
             "status": "in_stock",
-            "position_id": receipt.get("location_id") or "",
+            # `position_id` = posisi RAK (`wh_positions.id`) — terisi saat roll disimpan ke posisi. Dulu diisi id
+            # LOKASI penerimaan (2026-11-10): roll terlihat "punya posisi" padahal belum dirak, dan saringan roll
+            # per posisi / cek pemakaian rak membandingkan dua jenis id yang berbeda. Lokasi ada di `location_id`.
+            "position_id": "",
             "position_barcode": "",
             "location_id": receipt.get("location_id") or "",
             "location_name": receipt.get("location_name") or "",

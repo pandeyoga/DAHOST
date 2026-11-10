@@ -676,6 +676,27 @@ ROLE_LABELS_BY_EVENT[("production_permak_cost", "debit_wip")] = "Persediaan WIP 
 ROLE_LABELS_BY_EVENT[("production_permak_cost", "credit_accrued")] = (
     "Hutang biaya permak — dibayar lewat Pengeluaran ke penjahit/workshop (Cr)")
 
+# ── 2026-11-10 (permintaan owner): DENDA saat Tutup PO, dua arah (`core.denda_po`). Klien mendenda DA (PO maklon,
+# CV Sukma): Dr potongan maklon / Cr piutang klien. DA mendenda CMT: Dr hutang vendor CMT / Cr biaya CMT (keputusan
+# M-04: denda mengurangi biaya CMT, bukan pendapatan lain). Akun hutang/piutang = sub-ledger vendor/klien yang sama
+# dengan tagihan/piutang PO; profil ini hanya mengatur lawannya.
+DEFAULT_PROFILES.append({
+    "event_type": "po_denda",
+    "description": "Denda saat Tutup PO → klien: Dr potongan maklon / Cr piutang klien · CMT: Dr hutang vendor / Cr biaya CMT",
+    "mapping": {
+        "debit_denda_klien": "4-1590",
+        "credit_denda_cmt_maklon": "5-4200",
+        "credit_denda_cmt_internal": "5-1960",
+    },
+})
+EVENT_LABELS["po_denda"] = "Denda saat Tutup PO (dari klien / ke vendor CMT)"
+ROLE_LABELS_BY_EVENT[("po_denda", "debit_denda_klien")] = (
+    "Potongan tagihan maklon karena denda klien (Dr) — lawan: piutang klien PO")
+ROLE_LABELS_BY_EVENT[("po_denda", "credit_denda_cmt_maklon")] = (
+    "Pengurang biaya vendor CMT PO maklon karena denda ke CMT (Cr) — lawan: hutang vendor CMT")
+ROLE_LABELS_BY_EVENT[("po_denda", "credit_denda_cmt_internal")] = (
+    "Pengurang biaya PO internal karena denda ke CMT (Cr) — lawan: hutang vendor CMT")
+
 
 def event_label(event_type: str) -> str:
     return EVENT_LABELS.get(event_type) or (event_type or "").replace("_", " ")
@@ -718,6 +739,7 @@ _FAMILY_ROLES = {
                   "debit_accrued", "control_ap_supplier", "control_ap_cmt"),
     "equity": ("credit_opening_equity", "credit_retained_earnings", "credit_retained_earnings_balancing"),
     "revenue": ("credit_revenue", "credit_revenue_maklon", "debit_sales_discount", "debit_revenue", "debit_returns",
+                "debit_denda_klien",
                 "debit_discount", "debit_platform_fee", "credit_purchase_discount", "credit_interest_income",
                 "credit_gain_on_disposal", "credit_variance_income", "credit_other_income", "debit_penalty_income",
                 "credit_other_deduction"),
@@ -730,7 +752,7 @@ _FAMILY_ROLES = {
                 "debit_variance_loss", "debit_variance", "debit_depr_expense", "debit_bad_debt_expense",
                 "debit_bank_charges", "debit_service_fee", "debit_loss_on_disposal", "debit_scrap_expense",
                 "scrap_expense", "debit_ads_default", "debit_ads_shopee", "debit_ads_tiktok", "debit_ads_tokopedia",
-                "debit_other_expense", "debit_travel_expense"),
+                "debit_other_expense", "debit_travel_expense", "credit_denda_cmt_maklon", "credit_denda_cmt_internal"),
 }
 ROLE_FAMILY = {r: fam for fam, roles in _FAMILY_ROLES.items() for r in roles}
 

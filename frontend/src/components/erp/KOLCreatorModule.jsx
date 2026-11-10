@@ -7,11 +7,14 @@
  * popup; form kreator & sesi = FormPopup (dulu jendela buatan sendiri); tolak permintaan = confirmDialog berisi alasan
  * (dulu prompt peramban); bulan peringkat = pilihan bulan (dulu input bulan bawaan); setiap tabel bisa diunduh.
  * Panggilan API, isian, dan isi yang dikirim tidak berubah.
+ * 10 Nov 2026: kolom Aksi daftar kreator = Insentif · Ubah · Hapus (hapus permanen hanya bila kreator belum punya
+ * riwayat; bila sudah, server menolak 409 dan layar menawarkan Nonaktifkan). Rincian: Nonaktifkan + Hapus.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Users, Video, ShoppingBag, Trophy, BarChart2, Plus, Pencil, Trash2, Check, X, Target, Package, Search, UserPlus } from 'lucide-react';
+import { Users, Video, ShoppingBag, Trophy, BarChart2, Plus, Pencil, Trash2, Check, X, Target, Package, Search, UserPlus, PowerOff } from 'lucide-react';
 import { toast } from 'sonner';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -379,6 +382,30 @@ export default function KOLCreatorModule({ token }) {
       load();
     } catch (err) { toast.error(err.message); }
   }
+  // 10 Nov 2026 — hapus permanen hanya bila kreator belum punya riwayat (sesi, pesanan, sampel, target, insentif, …);
+  // bila sudah, server menolak (409) dan layar menawarkan Nonaktifkan (DELETE tanpa `hard` = perilaku lama).
+  async function hapusKreator(c) {
+    const kirim = async (hard) => {
+      const r = await fetch(`${API}/api/marketing/kol/creators/${c.id}${hard ? '?hard=true' : ''}`, { method: 'DELETE', headers });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        const e = new Error((typeof d.detail === 'string' && d.detail) || (hard ? 'Gagal menghapus kreator' : 'Gagal menonaktifkan kreator'));
+        e.status = r.status;
+        throw e;
+      }
+    };
+    const aktif = c.status !== 'inactive';
+    const hasil = await hapusMaster({
+      jenis: 'kreator', nama: c.name,
+      keterangan: 'Kreator dan akun portalnya dihapus permanen. Bila kreator sudah punya riwayat (sesi live, pesanan, sampel, '
+        + 'target, insentif, jadwal konten), penghapusan ditolak' + (aktif ? ' dan Anda bisa menonaktifkannya saja.' : '.'),
+      hapus: () => kirim(true),
+      nonaktifkan: aktif ? () => kirim(false) : null,
+    });
+    if (!hasil) return;
+    setDetailCreator(null);
+    load();
+  }
   async function handleDeactivateCreator(id) {
     if (!(await confirmDialog({ title: 'Nonaktifkan kreator ini?', body: 'Kreator tidak tampil lagi di daftar aktif.', confirmLabel: 'Nonaktifkan', danger: true }))) return;
     try {
@@ -436,11 +463,13 @@ export default function KOLCreatorModule({ token }) {
       ? <StatusBadge status="siap" label="Siap" tone="success" />
       : <span data-testid={`creator-no-portal-${c.creator_code}`}><StatusBadge status="belum" label="Belum ada" tone="warning" /></span>) },
     { kunci: 'status', label: 'Status', isi: (c) => <Lencana s={c.status} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (c) => (
       <div className="flex justify-end gap-1">
+        <Button size="sm" variant="outline" data-testid={`creator-incentive-btn-${c.creator_code}`} onClick={() => setIncentiveCreator(c)}><Target />Insentif</Button>
         <Button size="icon-sm" variant="ghost" data-testid="edit-creator-btn" title="Ubah kreator" aria-label="Ubah kreator"
           onClick={() => { setEditCreator(c); setShowCreatorForm(true); }}><Pencil /></Button>
-        <Button size="sm" variant="outline" data-testid={`creator-incentive-btn-${c.creator_code}`} onClick={() => setIncentiveCreator(c)}><Target />Insentif</Button>
+        <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--danger-text))]" data-testid={`creator-row-delete-${c.id}`}
+          title="Hapus kreator" aria-label="Hapus kreator" onClick={() => hapusKreator(c)}><Trash2 /></Button>
       </div>) },
   ];
   const kolomSesi = [
@@ -605,7 +634,14 @@ export default function KOLCreatorModule({ token }) {
             aksi={<>
               <Button size="sm" variant="outline" onClick={() => { setDetailCreator(null); setEditCreator(c); setShowCreatorForm(true); }}><Pencil />Ubah</Button>
               <Button size="sm" variant="outline" onClick={() => { setDetailCreator(null); setIncentiveCreator(c); }}><Target />Insentif</Button>
-              <Button size="sm" variant="destructive" onClick={() => handleDeactivateCreator(c.id)}><Trash2 />Nonaktifkan</Button>
+              {c.status !== 'inactive' && (
+                <Button size="sm" variant="outline" onClick={() => handleDeactivateCreator(c.id)} data-testid={`creator-deactivate-${c.id}`}>
+                  <PowerOff />Nonaktifkan
+                </Button>
+              )}
+              <Button size="sm" variant="destructive" onClick={() => hapusKreator(c)} data-testid={`creator-delete-${c.id}`}>
+                <Trash2 />Hapus
+              </Button>
             </>}>
             <dl className="divide-y divide-[var(--glass-border)]">
               <BarisDetail label="Toko">{(c.assigned_account_ids || []).map(namaAkun).filter(Boolean).join(', ') || 'Belum ditugaskan ke toko'}</BarisDetail>

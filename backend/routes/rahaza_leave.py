@@ -214,13 +214,28 @@ async def update_leave_type(lt_id: str, request: Request):
 
 
 @router.delete("/leave-types/{lt_id}")
-async def deactivate_leave_type(lt_id: str, request: Request):
-    """Nonaktifkan jenis cuti (tidak dihapus — riwayat pengajuan harus tetap terbaca)."""
-    await _require_hr_admin(request)
+async def deactivate_leave_type(lt_id: str, request: Request, hard: bool = False):
+    """Nonaktifkan jenis cuti (tidak dihapus — riwayat pengajuan harus tetap terbaca).
+
+    `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"): hapus permanen bila BELUM ada pengajuan cuti
+    (status apa pun) dan saldo cuti jenis ini belum terpakai; saldo kosong (dibuat otomatis saat saldo dilihat) ikut
+    terhapus. Selain itu 409 dan layar menawarkan Nonaktifkan."""
+    user = await _require_hr_admin(request)
     db = get_db()
     lt = await db.rahaza_leave_types.find_one({"id": lt_id}, {"_id": 0})
     if not lt:
-        raise HTTPException(404, "Leave type tidak ditemukan.")
+        raise HTTPException(404, "Jenis cuti tidak ditemukan.")
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        tolak_bila_dipakai("Jenis cuti", lt.get("name") or lt.get("code") or "", await hitung_pemakaian(db, [
+            ("pengajuan cuti", "rahaza_leave_requests", {"leave_type_id": lt_id}),
+            ("saldo cuti terpakai", "rahaza_leave_balances", {"leave_type_id": lt_id, "used": {"$gt": 0}}),
+        ]))
+        saldo = await db.rahaza_leave_balances.delete_many({"leave_type_id": lt_id})
+        await db.rahaza_leave_types.delete_one({"id": lt_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.leave_type",
+                           f"{lt.get('code')} saldo_kosong={saldo.deleted_count}")
+        return {"status": "deleted", "deleted": True, "ok": True}
     # 2026-11-06 (pola P4): status menunggu = core.leave_engine.PENDING_STATUSES (termasuk
     # `pending_hr_approval` tahap HR — dulu terlewat sehingga jenis cuti bisa dimatikan di tengah alur)
     from core.leave_engine import PENDING_STATUSES

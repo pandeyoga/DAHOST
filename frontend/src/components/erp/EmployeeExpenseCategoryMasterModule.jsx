@@ -28,12 +28,9 @@ import {
 } from '@/components/ui/table';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel,
-  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 
 const API = process.env.REACT_APP_BACKEND_URL || import.meta?.env?.REACT_APP_BACKEND_URL;
 
@@ -142,7 +139,6 @@ export default function EmployeeExpenseCategoryMasterModule() {
   const [showInactive, setShowInactive] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
 
   // 2026-11-08: kode peran Keuangan ATAU izin finance.manage — sama dengan server `_is_category_admin`.
   const canEdit = checkPerm({ user: getStoredUser(), roles: ADMIN_ROLES, keys: FINANCE_BOOK_PERMS });
@@ -202,26 +198,16 @@ export default function EmployeeExpenseCategoryMasterModule() {
     setDialogOpen(true);
   };
 
-  const handleDeactivate = async () => {
-    if (!deleteTarget) return;
-    try {
-      const token = getToken();
-      const res = await fetch(`${API}/api/hr/expenses/master-categories/${deleteTarget.id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        toast.success(data.message);
-        await fetchCategories();
-      } else {
-        toast.error(data.detail || 'Gagal menonaktifkan kategori');
-      }
-    } catch (err) {
-      toast.error('Koneksi bermasalah');
-    } finally {
-      setDeleteTarget(null);
-    }
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): tombol tempat sampah dulu hanya menonaktifkan (lewat dialog
+  // konfirmasi buatan layar ini sendiri). Kini Hapus sungguhan lewat lib/hapusMaster: bila nama kategori sudah dipakai klaim, penyelesaian
+  // perjalanan dinas, atau pemetaan akun, server menjawab 409 dan dialog kedua menawarkan Nonaktifkan.
+  const handleDelete = async (cat) => {
+    const hasil = await hapusMaster({
+      jenis: 'kategori', nama: cat.name,
+      hapus: () => apiDelete(`/api/hr/expenses/master-categories/${cat.id}?hard=true`),
+      nonaktifkan: cat.is_active === false ? null : () => apiDelete(`/api/hr/expenses/master-categories/${cat.id}`),
+    });
+    if (hasil) await fetchCategories();
   };
 
   const filtered = categories.filter(c =>
@@ -369,19 +355,17 @@ export default function EmployeeExpenseCategoryMasterModule() {
                         >
                           <Pencil size={13} />
                         </Button>
-                        {cat.is_active !== false && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Nonaktifkan"
-                            aria-label="Nonaktifkan"
-                            className="text-destructive hover:text-destructive"
-                            data-testid={`category-delete-${cat.id}`}
-                            onClick={() => setDeleteTarget(cat)}
-                          >
-                            <Trash2 size={13} />
-                          </Button>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Hapus"
+                          aria-label={`Hapus kategori ${cat.name}`}
+                          className="text-destructive hover:text-destructive"
+                          data-testid={`category-delete-${cat.id}`}
+                          onClick={() => handleDelete(cat)}
+                        >
+                          <Trash2 size={13} />
+                        </Button>
                       </div>
                     </TableCell>
                   )}
@@ -399,29 +383,6 @@ export default function EmployeeExpenseCategoryMasterModule() {
         category={editingCat}
         onSaved={() => fetchCategories()}
       />
-
-      {/* Deactivate Confirm Dialog */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Nonaktifkan kategori?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Kategori <strong>{deleteTarget?.name}</strong> akan dinonaktifkan dan tidak akan muncul di pilihan klaim baru.
-              Data klaim yang sudah ada tidak terpengaruh. Kategori dapat diaktifkan kembali kapan saja.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Batal</AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="category-deactivate-confirm"
-              onClick={handleDeactivate}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Nonaktifkan
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </PageLayout>
   );
 }

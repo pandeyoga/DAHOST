@@ -58,6 +58,8 @@ export default function RahazaEmployeesModule({ token }) {
       endpoint="/api/rahaza/employees"
       token={token}
       testIdPrefix="rahaza-employee"
+      hapusPermanen
+      jenis="karyawan"
       ieKey="employees"
       columns={[
         { key: 'employee_code', label: 'Kode' },

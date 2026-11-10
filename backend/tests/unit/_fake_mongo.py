@@ -16,6 +16,20 @@ def _get(doc, dotted):
     for part in dotted.split("."):
         if isinstance(cur, dict) and part in cur:
             cur = cur[part]
+        elif isinstance(cur, list) and part.isdigit():
+            if int(part) >= len(cur):
+                return _MISSING
+            cur = cur[int(part)]
+        elif isinstance(cur, list):
+            # semantik Mongo: 'items.x' pada array dokumen = kumpulan nilai x tiap elemen (10 Nov 2026)
+            vals = []
+            for el in cur:
+                if isinstance(el, dict) and part in el:
+                    v = el[part]
+                    vals.extend(v if isinstance(v, list) else [v])
+            if not vals:
+                return _MISSING
+            cur = vals
         else:
             return _MISSING
     return cur
@@ -97,8 +111,27 @@ def _set_path(doc, dotted, value):
     parts = dotted.split(".")
     cur = doc
     for p in parts[:-1]:
-        cur = cur.setdefault(p, {})
-    cur[parts[-1]] = value
+        cur = cur[int(p)] if isinstance(cur, list) and p.isdigit() else cur.setdefault(p, {})
+    if isinstance(cur, list) and parts[-1].isdigit():
+        cur[int(parts[-1])] = value
+    else:
+        cur[parts[-1]] = value
+
+
+def _positional(doc, q, key):
+    """Operator posisi Mongo `arr.$.f`: ganti `$` dengan indeks elemen PERTAMA `arr` yang cocok dengan syarat
+    `arr.x` di kueri (10 Nov 2026 — FakeDB kini memadankan `arr.x` pada array dokumen)."""
+    if ".$" not in key:
+        return key
+    head, tail = key.split(".$", 1)
+    arr = _get(doc, head)
+    if not isinstance(arr, list):
+        return key
+    conds = {k[len(head) + 1:]: v for k, v in (q or {}).items() if k.startswith(head + ".")}
+    for i, el in enumerate(arr):
+        if isinstance(el, dict) and match(el, conds):
+            return f"{head}.{i}{tail}"
+    return key
 
 
 def _unset_path(doc, dotted):
@@ -182,15 +215,16 @@ class FakeCollection:
         return _Result()
 
     @staticmethod
-    def _apply(d, upd, *, inserted=False):
+    def _apply(d, upd, *, inserted=False, q=None):
         if inserted:
             for k, v in (upd.get("$setOnInsert") or {}).items():
                 _set_path(d, k, copy.deepcopy(v))
         for k, v in (upd.get("$set") or {}).items():
-            _set_path(d, k, copy.deepcopy(v))
+            _set_path(d, _positional(d, q, k), copy.deepcopy(v))   # `arr.$.f` = elemen pertama yang cocok kueri
         for k in (upd.get("$unset") or {}):
             _unset_path(d, k)
         for k, v in (upd.get("$inc") or {}).items():
+            k = _positional(d, q, k)
             _set_path(d, k, (_get(d, k) if _get(d, k) is not _MISSING else 0) + v)
         for op, better in (("$max", lambda cur, v: v > cur), ("$min", lambda cur, v: v < cur)):
             for k, v in (upd.get(op) or {}).items():
@@ -210,7 +244,7 @@ class FakeCollection:
     async def update_one(self, q, upd, upsert=False):
         for d in self.docs:
             if match(d, q):
-                self._apply(d, upd)
+                self._apply(d, upd, q=q)
                 return _Result(matched=1, modified=1)
         if upsert:   # 2026-11-10 (Monitoring Staf): upsert + $setOnInsert/$max/$min
             d = {k: copy.deepcopy(v) for k, v in (q or {}).items()

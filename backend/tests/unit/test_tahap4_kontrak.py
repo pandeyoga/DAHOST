@@ -99,7 +99,7 @@ def test_cutting_varian_dibaca_dari_kunci_variants(monkeypatch):
     # field yang dipakai onPickVariant ada di dokumen varian
     assert v["color_name"] == "HITAM" and v["size_code"] == "M" and v["size_id"] == "s-1"
 
-    src = jsx("cutting/CuttingOrdersModule.jsx")
+    src = jsx("cutting/CuttingOrderForm.jsx")   # 2026-11-10: form buat/ubah cutting pindah ke berkas sendiri
     block = src[src.index("/api/rahaza/models/${id}/variants"):][:600]
     assert "d?.variants" in block and "d?.items" not in block
 

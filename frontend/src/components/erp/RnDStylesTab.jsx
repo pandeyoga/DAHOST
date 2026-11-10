@@ -26,6 +26,7 @@ import {
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { formatDateID } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import PageLayout from './layout/PageLayout';
@@ -241,15 +242,19 @@ export default function RnDStylesTab({ token, user }) {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!(await confirmDialog({ title: 'Hapus style ini?', confirmLabel: 'Hapus', danger: true }))) return;
-    try {
-      await apiFetch(`/dewi/rnd/styles/${id}`, { method: 'DELETE' });
-      toast.success('Style berhasil dihapus');
-      fetchStyles();
-    } catch (e) {
-      if (e instanceof ApiError && !e.isUnauthorized) toast.error(e.userMessage || 'Gagal menghapus style');
-    }
+  // 10 Nov 2026 (owner "master data bisa dihapus"): server kini menolak (409) style yang sudah punya tech pack,
+  // HPP, sampel, atau sudah jadi produk; dialog kedua menawarkan Nonaktifkan = Arsipkan (status draft/aktif saja — status
+  // keputusan owner tidak bisa diubah dari sini).
+  const handleDelete = async (s) => {
+    const bisaArsip = s.status === 'draft' || s.status === 'active';
+    const hasil = await hapusMaster({
+      jenis: 'style', nama: [s.style_code, s.style_name].filter(Boolean).join(' '),
+      keterangan: 'Style dihapus permanen beserta varian warna dan riwayat revisinya. Bila sudah punya tech pack, '
+        + 'HPP, sampel, atau sudah jadi produk, penghapusan ditolak' + (bisaArsip ? ' dan Anda bisa menonaktifkannya (arsipkan) saja.' : '.'),
+      hapus: () => apiFetch(`/dewi/rnd/styles/${s.id}`, { method: 'DELETE' }),
+      nonaktifkan: bisaArsip ? () => apiFetch(`/dewi/rnd/styles/${s.id}`, { method: 'PUT', body: { status: 'archived' } }) : null,
+    });
+    if (hasil) fetchStyles();
   };
 
   // GAP-R2: Ajukan ke owner
@@ -372,7 +377,7 @@ export default function RnDStylesTab({ token, user }) {
       return n > 0 ? <span className="tabular-nums">{n}</span> : <span className="text-muted-foreground">—</span>;
     } },
     { kunci: 'status', label: 'Status', isi: (s) => <StyleStatusBadge status={s.status} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (s) => (
       <div className="flex items-center justify-end gap-1">
         {aksiAlur(s)}
         <DropdownMenu>
@@ -390,7 +395,7 @@ export default function RnDStylesTab({ token, user }) {
               <Pencil className="mr-2 h-4 w-4" />Ubah
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => handleDelete(s.id)} data-testid={`delete-style-${s.id}`}
+            <DropdownMenuItem onSelect={() => handleDelete(s)} data-testid={`delete-style-${s.id}`}
               className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]">
               <Trash2 className="mr-2 h-4 w-4" />Hapus
             </DropdownMenuItem>

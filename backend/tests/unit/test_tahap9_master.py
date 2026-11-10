@@ -119,7 +119,7 @@ def test_hitungan_dan_pengaman_dari_ssot_produksi(vp):
     # hapus permanen vendor yang sudah dipakai PO/job → ditolak (dulu hanya cek vendor_jobs yang selalu 0)
     with pytest.raises(HTTPException) as e:
         run(mod.delete_partner("v1", fm.FakeRequest(), hard=True))
-    assert e.value.status_code == 400 and "PO" in e.value.detail
+    assert e.value.status_code == 409 and "PO" in e.value.detail and "Nonaktifkan" in e.value.detail
     # nonaktifkan vendor dengan job berjalan → ditolak
     with pytest.raises(HTTPException) as e:
         run(mod.delete_partner("v1", fm.FakeRequest(), hard=False))

@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth, check_role, log_activity
 
 router = APIRouter(prefix="/api/rahaza/salary-grades", tags=["rahaza-salary-grades"])
 
@@ -105,9 +105,24 @@ async def update_grade(grade_id: str, request: Request):
 
 
 @router.delete("/{grade_id}")
-async def delete_grade(grade_id: str, request: Request):
-    await _require_admin(request)
+async def delete_grade(grade_id: str, request: Request, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"):
+    hapus permanen bila golongan belum dipakai karyawan atau jabatan (Struktur Organisasi menyimpan KODE golongan);
+    selain itu 409 dan layar menawarkan Nonaktifkan."""
+    user = await _require_admin(request)
     db = get_db()
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        g = await db.rahaza_salary_grades.find_one({"id": grade_id}, {"_id": 0})
+        if not g:
+            raise HTTPException(404, "Golongan gaji tidak ditemukan.")
+        cek = [("karyawan", "rahaza_employees", {"salary_grade_id": grade_id})]
+        if g.get("grade_code"):
+            cek.append(("jabatan", "dewi_org_positions", {"salary_grade": g["grade_code"]}))
+        tolak_bila_dipakai("Golongan gaji", g.get("grade_name") or g.get("grade_code") or "", await hitung_pemakaian(db, cek))
+        await db.rahaza_salary_grades.delete_one({"id": grade_id})
+        await log_activity(user.get("id") or "", user.get("name") or "", "delete", "rahaza.salary_grade", g.get("grade_code") or grade_id)
+        return {"ok": True, "deleted": True}
     # Soft delete
     res = await db.rahaza_salary_grades.update_one(
         {"id": grade_id}, {"$set": {"is_active": False, "updated_at": _now()}}

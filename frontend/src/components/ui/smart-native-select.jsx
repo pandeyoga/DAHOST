@@ -44,6 +44,11 @@ import { cn } from "@/lib/utils"
  * macet 1–15 detik saat dibuka di dalam jendela, karena SEMUA opsi digambar sekaligus. Kini paling banyak
  * MAX_RENDER opsi yang digambar (opsi terpilih selalu ikut); sisanya diringkas jadi baris "ketik untuk
  * mempersempit". Pencarian tetap atas seluruh daftar.
+ *
+ * 2026-11-10 (owner: "dropdownnya terlalu kecil jadi sulit untuk dicari", form PO): panel daftar yang bisa dicari
+ * kini SELEBAR ISINYA (minimal selebar tombol, maksimal ±40 rem / lebar layar), nama panjang tidak dipotong lagi
+ * (dibungkus ke baris berikut, judul lengkap di `title`), daftar lebih tinggi, dan pencarian per KATA dalam urutan
+ * bebas ("opp plastik 25" menemukan "Plastik OPP 25 x 35") — dulu satu potongan teks utuh harus persis berurutan.
  */
 const MAX_RENDER = 300
 function nodeText(node) {
@@ -103,9 +108,12 @@ export default function SmartNativeSelect({
   const ph = placeholder || emptyOpt?.label || "— Pilih —"
 
   const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return options
-    return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
+    const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (!words.length) return options
+    return options.filter((o) => {
+      const hay = `${o.label} ${o.value}`.toLowerCase()
+      return words.every((w) => hay.includes(w))
+    })
   }, [options, query])
 
   // Yang digambar: paling banyak MAX_RENDER opsi; opsi terpilih tetap tampil walau di luar batas.
@@ -178,13 +186,17 @@ export default function SmartNativeSelect({
               e.preventDefault()
               if (enabled) requestAnimationFrame(() => inputRef.current?.focus())
             }}
-            style={{ width: "var(--radix-popover-trigger-width)", minWidth: 160 }}
+            style={enabled
+              // daftar bisa dicari = biasanya daftar master panjang → panel selebar isinya (dibatasi layar)
+              ? { minWidth: "max(var(--radix-popover-trigger-width), 18rem)", width: "max-content",
+                  maxWidth: "min(40rem, calc(100vw - 16px))" }
+              : { width: "var(--radix-popover-trigger-width)", minWidth: 160 }}
             className="z-[9999] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg outline-none"
             data-testid={dataTestId ? `${dataTestId}-panel` : undefined}
           >
             {enabled && (
-              <div className="flex items-center gap-2 border-b border-border/60 bg-popover px-2 py-1.5">
-                <Search className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+              <div className="flex items-center gap-2 border-b border-border/60 bg-popover px-3 py-2">
+                <Search className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                 <input
                   ref={inputRef}
                   type="text"
@@ -207,7 +219,7 @@ export default function SmartNativeSelect({
               </div>
             )}
             <div className="overflow-y-auto p-1" role="listbox"
-              style={{ maxHeight: "min(240px, calc(var(--radix-popover-content-available-height, 300px) - 48px))" }}
+              style={{ maxHeight: `min(${enabled ? 360 : 240}px, calc(var(--radix-popover-content-available-height, 300px) - 48px))` }}
               data-testid={dataTestId ? `${dataTestId}-list` : "select-option-list"}>
               {filtered.length === 0 ? (
                 <div className="px-2 py-3 text-center text-sm text-muted-foreground">Tidak ada hasil</div>
@@ -228,7 +240,7 @@ export default function SmartNativeSelect({
                       o.value === String(value) && "bg-accent/60 font-medium"
                     )}
                   >
-                    <span className="truncate">{o.label}</span>
+                    <span className={enabled ? "whitespace-normal break-words" : "truncate"} title={o.label}>{o.label}</span>
                   </button>
                 ))
               )}

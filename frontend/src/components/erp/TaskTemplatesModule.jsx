@@ -3,10 +3,13 @@
  *
  * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub), daftar = tabel (dulu kartu per templat)
  * + unduh, form = FormPopup panjang, pilihan = SmartNativeSelect, label Indonesia. Isi yang dikirim tidak berubah.
+ * 10 Nov 2026: kolom Aksi = Ubah · Nonaktifkan/Aktifkan · Hapus (hapus permanen hanya bila templat belum pernah
+ * menerbitkan tugas; bila sudah, layar menawarkan Nonaktifkan).
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Pencil, Power, PowerOff, X } from 'lucide-react';
+import { Plus, RefreshCw, Pencil, Power, PowerOff, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -374,6 +377,28 @@ export default function TaskTemplatesModule({ token }) {
     }
   };
 
+  // 10 Nov 2026 — Hapus permanen hanya bila templat belum pernah menerbitkan tugas; bila sudah (409) tawarkan
+  // Nonaktifkan (DELETE tanpa `hard` = perilaku lama: is_active=false).
+  const hapusTemplat = async (tpl) => {
+    const kirim = async (hard) => {
+      const res = await fetch(`/api/marketing/task-templates/${tpl.id}${hard ? '?hard=true' : ''}`, { method: 'DELETE', headers });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        const e = new Error((typeof d.detail === 'string' && d.detail) || (hard ? 'Gagal menghapus templat' : 'Gagal menonaktifkan'));
+        e.status = res.status;
+        throw e;
+      }
+    };
+    const hasil = await hapusMaster({
+      jenis: 'templat', nama: tpl.template_name,
+      keterangan: 'Templat dihapus permanen. Bila templat sudah pernah menerbitkan tugas, penghapusan ditolak'
+        + (tpl.is_active ? ' dan Anda bisa menonaktifkannya saja (tugas tidak dibuat lagi).' : '.'),
+      hapus: () => kirim(true),
+      nonaktifkan: tpl.is_active ? () => kirim(false) : null,
+    });
+    if (hasil) fetchTemplates();
+  };
+
   const recurrenceLabel = (tpl) => {
     const cfg = tpl.recurrence_config || {};
     const hari = (cfg.days_of_week || []).map((d) => DAYS.find((x) => x.value === d)?.label || d).join(', ');
@@ -404,12 +429,16 @@ export default function TaskTemplatesModule({ token }) {
       </span>) },
     { kunci: 'status', label: 'Status', isi: (tpl) => (tpl.is_active
       ? <StatusBadge status="aktif" label="Aktif" tone="success" /> : <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (tpl) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (tpl) => (
       <div className="flex justify-end gap-1">
-        <Button size="sm" variant="outline" onClick={() => { setEditTpl(tpl); setDialogOpen(true); }} data-testid={`edit-tpl-${tpl.id}`}><Pencil />Ubah</Button>
-        <Button size="sm" variant="outline" onClick={() => toggleActive(tpl)} data-testid={`toggle-tpl-${tpl.id}`}>
-          {tpl.is_active ? <><PowerOff />Nonaktifkan</> : <><Power />Aktifkan</>}
+        <Button size="icon-sm" variant="ghost" onClick={() => { setEditTpl(tpl); setDialogOpen(true); }}
+          title="Ubah templat" aria-label="Ubah templat" data-testid={`edit-tpl-${tpl.id}`}><Pencil /></Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => toggleActive(tpl)} data-testid={`toggle-tpl-${tpl.id}`}
+          title={tpl.is_active ? 'Nonaktifkan templat' : 'Aktifkan templat'} aria-label={tpl.is_active ? 'Nonaktifkan templat' : 'Aktifkan templat'}>
+          {tpl.is_active ? <PowerOff /> : <Power />}
         </Button>
+        <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--danger-text))]" onClick={() => hapusTemplat(tpl)}
+          title="Hapus templat" aria-label="Hapus templat" data-testid={`delete-tpl-${tpl.id}`}><Trash2 /></Button>
       </div>) },
   ];
 

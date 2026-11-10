@@ -63,8 +63,12 @@ async def _resolve_position(db, bin_id: str = "", barcode: str = ""):
 # ─────────────────────────────────────────────────────────────────────────────
 class SessionCreateIn(BaseModel):
     location_id: str = ""
-    sub_scope_type: str = Field("", description="'' (seluruh lokasi) | zone | rack | bin")
-    sub_scope_id: str = ""
+    # 2026-11-10 (owner: cakupan opname bertingkat, bisa pilih beberapa rak): 'area' = beberapa zona anak gudang
+    # (stok + penempatan); zone/rack/bin = beberapa zona/rak/bin rak (penempatan saja).
+    sub_scope_type: str = Field("", description="'' (seluruh lokasi) | area | zone | rack | bin")
+    sub_scope_id: str = Field("", description="kompat pemanggil lama: satu id")
+    sub_scope_ids: List[str] = Field(default_factory=list, description="banyak zona/rak/bin sekaligus")
+    with_areas: bool = Field(False, description="True = gudang beserta zona (lokasi anak) di bawahnya")
     kinds: List[str] = Field(default_factory=list, description="bahan | aksesoris | fg")
     material_ids: List[str] = Field(default_factory=list)
     material_codes: List[str] = Field(default_factory=list, description="cycle count: kode/SKU barang")
@@ -130,9 +134,10 @@ async def create_session(data: SessionCreateIn, request: Request):
     user = await require_auth(request)
     db = get_db()
     doc = await eng.create_session(db, user, location_id=data.location_id, sub_type=data.sub_scope_type,
-                                   sub_id=data.sub_scope_id, kinds=data.kinds, material_ids=data.material_ids,
-                                   material_codes=data.material_codes, notes=data.notes, source=data.source,
-                                   opening=data.opening)
+                                   sub_id=data.sub_scope_id, sub_ids=data.sub_scope_ids, kinds=data.kinds,
+                                   material_ids=data.material_ids, material_codes=data.material_codes,
+                                   notes=data.notes, source=data.source, opening=data.opening,
+                                   with_areas=data.with_areas)
     await log_activity(user.get("id", ""), user.get("name", ""), "opname_create", SESS,
                        f"Opname {doc['session_no']} {doc['scope_label']} ({len(doc['lines'])} baris, {doc['level']})")
     return {"id": doc["id"], "session_no": doc["session_no"], "level": doc["level"], "mode": doc["mode"],

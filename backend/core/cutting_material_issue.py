@@ -143,8 +143,16 @@ async def doc_for_progress(db, order: dict, progress: dict, user: dict,
     if qty <= 0:
         raise ValueError("progres tanpa kain terpakai — tidak ada arus keluar untuk didokumentasikan")
 
-    material_id = order.get("input_material_id")
-    if not material_id:
+    # 2026-11-10: order banyak kain → satu baris dokumen PER KAIN (`progress.inputs[]`). Progres lama /
+    # satu kain → satu baris dari kain order (dinormalkan `core.cutting_lines`).
+    from core import cutting_lines
+    lines = [x for x in (progress.get("inputs") or []) if _f(x.get("input_consumed")) > 0]
+    if not lines:
+        first = (cutting_lines.inputs_of(order) or [{}])[0]
+        lines = [{"input_material_id": order.get("input_material_id") or first.get("input_material_id"),
+                  "input_consumed": qty, "roll_consumption": list(progress.get("roll_consumption") or [])}]
+    material_id = lines[0].get("input_material_id")
+    if not material_id or any(not x.get("input_material_id") for x in lines):
         raise ValueError("order cutting tanpa material kain — dokumen MI tidak bisa dibuat")
 
     # Lokasi: yang dicatat di progres (sejak H-6b) ⇒ tepat. Untuk progres LAMA
@@ -154,12 +162,22 @@ async def doc_for_progress(db, order: dict, progress: dict, user: dict,
     loc_source = "progress" if progress.get("location_id") else "order"
 
     cons, roll_numbers = _roll_summary(progress)
-    mat = await db.rahaza_materials.find_one(
-        {"id": material_id}, {"_id": 0, "code": 1, "name": 1, "unit": 1}) or {}
-
-    item_notes = f"Cutting {order.get('number', '')}".strip()
-    if roll_numbers:
-        item_notes += " · gulungan " + ", ".join(roll_numbers)
+    items, parts = [], []
+    for ln in lines:
+        mat = await db.rahaza_materials.find_one(
+            {"id": ln["input_material_id"]}, {"_id": 0, "code": 1, "name": 1, "unit": 1}) or {}
+        q = round(_f(ln.get("input_consumed")), 4)
+        nos = [str(p.get("roll_no") or "") for p in (ln.get("roll_consumption") or []) if p.get("roll_no")]
+        if len(lines) == 1 and not nos:
+            nos = roll_numbers
+        item_notes = f"Cutting {order.get('number', '')}".strip()
+        if nos:
+            item_notes += " · gulungan " + ", ".join(nos)
+        items.append({"id": _uid(), "material_id": ln["input_material_id"], "qty_required": q, "qty_issued": q,
+                      "location_id": loc_id, "notes": item_notes})
+        parts.append(f"{q:g} {mat.get('unit') or ''} {mat.get('code') or ''}".strip())
+    out_codes = ", ".join(x.get("output_material_code") or "" for x in (progress.get("outputs") or [])
+                          if x.get("output_material_code")) or order.get("output_material_code") or ""
 
     mi_number = await _gen_mi_number(db)
     doc = {
@@ -177,21 +195,14 @@ async def doc_for_progress(db, order: dict, progress: dict, user: dict,
         "cutting_order_number": order.get("number", ""),
         "cutting_progress_id": pid,
         "cutting_style_name": order.get("style_name") or order.get("style_sku") or "",
-        "cutting_output_material_code": order.get("output_material_code") or "",
+        "cutting_output_material_code": out_codes,
         "cutting_output_qty": round(_f(progress.get("output_qty")), 4),
         "cutting_waste_qty": round(_f(progress.get("waste_qty")), 4),
         "roll_numbers": roll_numbers,
         "roll_consumption": cons,
         "location_source": loc_source,
         # ── baris material ──────────────────────────────────────────────────
-        "items": [{
-            "id": _uid(),
-            "material_id": material_id,
-            "qty_required": qty,
-            "qty_issued": qty,
-            "location_id": loc_id,
-            "notes": item_notes,
-        }],
+        "items": items,
         # ── status & alasan (dibaca layar) ──────────────────────────────────
         "status": "issued",
         "issued_at": progress.get("created_at") or _now(),
@@ -204,8 +215,8 @@ async def doc_for_progress(db, order: dict, progress: dict, user: dict,
         "backfilled": bool(backfilled),
         "notes": (
             f"Otomatis dari Portal Cutting {order.get('number', '')} — "
-            f"{qty:g} {mat.get('unit') or ''} {mat.get('code') or ''} dipotong menjadi "
-            f"{_f(progress.get('output_qty')):g} pcs {order.get('output_material_code') or 'potongan'}"
+            f"{' + '.join(parts)} dipotong menjadi "
+            f"{_f(progress.get('output_qty')):g} pcs {out_codes or 'potongan'}"
             + (f" (gulungan {', '.join(roll_numbers)})" if roll_numbers else "")
             + (" · diterbitkan retroaktif (FASE H-6b)" if backfilled else " (FASE H-6b)")
         ).strip(),
@@ -230,13 +241,14 @@ async def doc_for_progress(db, order: dict, progress: dict, user: dict,
     # Kartu stok (`rahaza_material_movements`) — sebelum H-6b arus keluar Cutting
     # tidak pernah muncul di kartu stok sama sekali.
     if loc_id:
-        await _log_movement(
-            db, {"id": doc["created_by"], "name": doc["created_by_name"]},
-            type="issue", material_id=material_id, qty=qty,
-            from_location_id=loc_id, to_location_id=None,
-            ref_type=REF_TYPE, ref_id=doc["id"],
-            notes=f"MI {mi_number} · Cutting {order.get('number', '')}".strip(" ·"),
-        )
+        for it in items:
+            await _log_movement(
+                db, {"id": doc["created_by"], "name": doc["created_by_name"]},
+                type="issue", material_id=it["material_id"], qty=it["qty_issued"],
+                from_location_id=loc_id, to_location_id=None,
+                ref_type=REF_TYPE, ref_id=doc["id"],
+                notes=f"MI {mi_number} · Cutting {order.get('number', '')}".strip(" ·"),
+            )
 
     await db[PROGRESS].update_one({"id": pid}, {"$set": {
         "material_issue_id": doc["id"],
@@ -309,6 +321,10 @@ async def progress_without_doc(db, *, limit: int = 200,
             "unit": o.get("input_unit", ""),
             "location_name": o.get("location_name", ""),
             "input_consumed": round(_f(r.get("input_consumed")), 4),
+            # 2026-11-10: order banyak kain — rincian per kain (satuannya bisa berbeda)
+            "inputs": [{"material_code": x.get("input_material_code", ""), "unit": x.get("input_unit", ""),
+                        "input_consumed": round(_f(x.get("input_consumed")), 4)}
+                       for x in (r.get("inputs") or [])],
             "output_qty": round(_f(r.get("output_qty")), 4),
             "roll_numbers": [x for x in (r.get("roll_numbers") or []) if x],
             "created_at": r.get("created_at"),

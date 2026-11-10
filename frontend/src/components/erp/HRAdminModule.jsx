@@ -10,7 +10,7 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import { Plus, Pencil, Power, MoreHorizontal, MapPin, FileText, RefreshCw, Sparkles, AlertTriangle } from 'lucide-react';
+import { Plus, Pencil, Power, MoreHorizontal, MapPin, FileText, RefreshCw, Sparkles, AlertTriangle, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +30,7 @@ import { formatTanggalID } from '@/components/ui/date-picker';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
@@ -128,6 +129,16 @@ function SalaryGradesTab({ token, pasang }) {
       toast.success('Golongan dinonaktifkan'); load();
     } catch (e) { toast.error(e.response?.data?.detail || 'Gagal menonaktifkan golongan'); }
   };
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen bila golongan belum dipakai karyawan atau
+  // jabatan; bila sudah, server menjawab 409 dan dialog kedua menawarkan Nonaktifkan.
+  const hapus = async (g) => {
+    const hasil = await hapusMaster({
+      jenis: 'golongan gaji', nama: g.grade_name || g.grade_code,
+      hapus: () => axios.delete(`${API}/api/rahaza/salary-grades/${g.id}?hard=true`, { headers }),
+      nonaktifkan: g.is_active === false ? null : () => axios.delete(`${API}/api/rahaza/salary-grades/${g.id}`, { headers }),
+    });
+    if (hasil) load();
+  };
 
   const kolomUnduh = [
     { label: 'Kode', nilai: (g) => g.grade_code },
@@ -157,15 +168,18 @@ function SalaryGradesTab({ token, pasang }) {
     { kunci: 'min', label: 'Gaji minimum', rata: 'kanan', isi: (g) => <span className="tabular-nums">{fmtIDR(g.min_salary)}</span> },
     { kunci: 'mid', label: 'Gaji tengah', rata: 'kanan', isi: (g) => <span className="tabular-nums">{fmtIDR(g.mid_salary)}</span> },
     { kunci: 'max', label: 'Gaji maksimum', rata: 'kanan', isi: (g) => <span className="tabular-nums">{fmtIDR(g.max_salary)}</span> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (g) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (g) => (
       <div className="flex items-center justify-end gap-1">
-        <Button size="sm" variant="outline" onClick={() => setEditing(g)}><Pencil />Ubah</Button>
+        <Button size="sm" variant="outline" onClick={() => setEditing(g)} data-testid={`grade-edit-${g.id}`}><Pencil />Ubah</Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya"><MoreHorizontal /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={() => del(g)} className="text-[hsl(var(--danger-text))]"><Power className="mr-2 h-4 w-4" />Nonaktifkan</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => hapus(g)} className="text-[hsl(var(--danger-text))]" data-testid={`grade-delete-${g.id}`}>
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>) },

@@ -393,7 +393,10 @@ def test_kain_kg_dan_yard_tidak_dijumlah():
 
 
 class _AggCollection:
-    """Koleksi palsu dengan `aggregate` $match + $group sederhana (khusus uji ini)."""
+    """Koleksi palsu dengan `aggregate` $match + $group sederhana (khusus uji ini).
+
+    2026-11-10 (order cutting banyak kain): kain per satuan dibaca dari `unit_totals` order (dokumen lama:
+    field tingkat atas) lewat `$unwind`, dan total pcs dihitung pipeline terpisah (`_id: None`) — ditiru di sini."""
 
     def __init__(self, docs):
         self.docs = docs
@@ -403,16 +406,21 @@ class _AggCollection:
         self.pipelines.append(copy.deepcopy(pipeline))
         docs = [d for d in self.docs if match(d, pipeline[0].get("$match", {}))]
         grp = pipeline[-1]["$group"]
-        key = grp["_id"].lstrip("$")
-        out: dict = {}
-        for d in docs:
-            r = out.setdefault(d.get(key), {"_id": d.get(key)})
-            for f, spec in grp.items():
-                if f == "_id":
-                    continue
-                v = spec["$sum"]
-                r[f] = r.get(f, 0) + (v if isinstance(v, (int, float)) else (d.get(v.lstrip("$")) or 0))
-        rows = list(out.values())
+        if grp["_id"] is None:
+            rows = [{"_id": None, "planned": sum(d.get("planned_output_qty") or 0 for d in docs),
+                     "produced": sum(d.get("produced_qty") or 0 for d in docs)}]
+        else:
+            assert grp["_id"] == "$ut.unit" and any("$unwind" in st for st in pipeline)
+            out: dict = {}
+            for d in docs:
+                for ut in d.get("unit_totals") or [{"unit": d.get("input_unit"), "consumed": d.get("consumed_input_qty"),
+                                                     "waste": d.get("waste_qty")}]:
+                    r = out.setdefault(ut["unit"], {"_id": ut["unit"], "n": 0, "produced": 0, "consumed": 0, "waste": 0})
+                    r["n"] += 1
+                    r["produced"] += d.get("produced_qty") or 0
+                    r["consumed"] += ut.get("consumed") or 0
+                    r["waste"] += ut.get("waste") or 0
+            rows = list(out.values())
 
         class _Cur:
             async def to_list(self, _n=None):
@@ -439,6 +447,13 @@ def test_order_cutting_batal_tidak_masuk_rencana():
     tot = run(cutting.cutting_unit_totals(db))
     assert tot["planned_output"] == 100 and tot["produced"] == 40
     assert db.orders.pipelines[0][0] == {"$match": {"status": {"$ne": cutting.STATUS_CANCELLED}}}
+    assert db.orders.pipelines[1][0] == {"$match": {"status": {"$ne": cutting.STATUS_CANCELLED}}}
+    # 2026-11-10: order banyak kain beda satuan (kg + m) — kain per satuan, pcs total TIDAK dobel
+    db.orders.docs.append({"status": "completed", "planned_output_qty": 50, "produced_qty": 50,
+                           "unit_totals": [{"unit": "kg", "consumed": 4, "waste": 0}, {"unit": "m", "consumed": 10, "waste": 0}]})
+    tot = run(cutting.cutting_unit_totals(db))
+    assert tot["planned_output"] == 150 and tot["produced"] == 90
+    assert {u["unit"]: u["consumed"] for u in tot["by_unit"]} == {"kg": 12, "m": 10}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

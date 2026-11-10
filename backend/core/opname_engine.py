@@ -20,6 +20,11 @@ Aturan mesin ini:
   1. Cakupan WAJIB satu lokasi `rahaza_locations` (+ zona `wh_*` yang tertaut ke lokasi itu lewat
      `wh_location_migration_map` / field `location_id`). Opsional sub-cakupan zona/rak/bin,
      filter jenis (bahan/aksesoris/fg), dan daftar material (cycle count).
+     2026-11-10 (owner: "harus jelas mau pilih all gudang, atau hanya zona atau rak … bisa pilih beberapa rak"):
+     cakupan BERTINGKAT. Gudang = lokasi teratas; lokasi anak (`parent_id`, jenis zona, mis. Ruang Aksesoris)
+     = ZONA gudang itu. `with_areas=True` → "seluruh gudang" ikut semua zona anak (karantina tidak);
+     sub-cakupan `area` = beberapa zona anak sekaligus (tetap hitung STOK, sama dengan dulu memilih zona itu
+     sebagai lokasi); `zone`/`rack`/`bin` = beberapa zona/rak/bin `wh_*` sekaligus (`sub_ids`, penempatan saja).
   2. Level LOKASI: snapshot = saldo `rahaza_material_stock` per (material, lokasi). Semua barang
      di lokasi dihitung (sudah dirak maupun belum); hasilnya MENIMPA saldo (set absolut lewat
      `stock_service.adjust`, jadi baris minus otomatis hilang) dan sekaligus memperbarui
@@ -77,7 +82,10 @@ def _claim_stale(at) -> bool:
 ENGINE = "k9"
 
 LEVEL_LOKASI, LEVEL_RAK = "lokasi", "rak"
-SUB_TYPES = ("zone", "rack", "bin")
+SUB_TYPES = ("zone", "rack", "bin")      # bagian `wh_*` lokasi → level RAK (penempatan saja)
+SUB_AREA = "area"                        # 2026-11-10: zona = lokasi anak gudang → level LOKASI (stok + penempatan)
+SUB_WORD = {SUB_AREA: "Zona", "zone": "Zona", "rack": "Rak", "bin": "Bin"}
+KIND_ROLE = {"bahan": "bahan", "aksesoris": "aksesoris", "fg": "fg"}   # jenis barang → peran lokasi simpannya
 KINDS = ("bahan", "aksesoris", "fg")
 KIND_LABELS = {"bahan": "Kain / Bahan", "aksesoris": "Aksesoris", "fg": "Barang Jadi"}
 ST_BELUM, ST_DIHITUNG, ST_NOL = "belum", "dihitung", "nol"
@@ -431,33 +439,126 @@ def kind_of(mat: Optional[dict]) -> str:
 
 
 # ═════════════════════════════ CAKUPAN LOKASI ═════════════════════════════
-async def location_scope(db, location_id: str) -> dict:
+def _is_kantor(loc: Optional[dict]) -> bool:
+    """Kantor (lokasi kerja SDM) tidak menyimpan stok — tidak pernah jadi gudang/zona opname."""
+    return str((loc or {}).get("type") or "").lower() == "kantor"
+
+
+def descendants(locs: Iterable[dict], root_id: str) -> list:
+    """Lokasi anak-cucu `root_id` lewat `parent_id` (bukan kantor), urut kode. Fungsi murni; aman bila
+    data induknya berputar."""
+    by_parent: dict = defaultdict(list)
+    for x in locs or []:
+        if x.get("parent_id") and not _is_kantor(x):
+            by_parent[x["parent_id"]].append(x)
+    out, stack, seen = [], [root_id], {root_id}
+    while stack:
+        for c in by_parent.get(stack.pop(), []):
+            if c["id"] not in seen:
+                seen.add(c["id"])
+                out.append(c)
+                stack.append(c["id"])
+    return sorted(out, key=lambda x: (x.get("code") or "", x["id"]))
+
+
+def top_of(by_id: dict, loc_id: str) -> str:
+    """Lokasi teratas (gudang) sebuah lokasi: naik lewat `parent_id` selama induknya aktif & bukan kantor."""
+    cur, seen = loc_id, {loc_id}
+    while True:
+        parent = (by_id.get(cur) or {}).get("parent_id")
+        if not parent or parent not in by_id or parent in seen:
+            return cur
+        seen.add(parent)
+        cur = parent
+
+
+def scope_from(members: list, links: dict, zones_by_id: dict, racks_by_zone: dict, pos_by_zone: dict) -> dict:
+    """Cakupan gabungan beberapa lokasi (fungsi murni). `links` = {location_id: {wh_zone_id}}.
+    `zone_home` = zona `wh_*` → lokasi tempat zona itu tertaut (untuk menaruh barang baru di zona yang benar)."""
+    zone_home: dict = {}
+    for m in members:
+        for zid in sorted(links.get(m["id"]) or ()):
+            zone_home.setdefault(zid, m["id"])
+    zids = sorted(zone_home)
+    return {"zones": [zones_by_id[z] for z in zids if z in zones_by_id],
+            "racks": [r for z in zids for r in racks_by_zone.get(z, [])],
+            "positions": [p for z in zids for p in pos_by_zone.get(z, [])],
+            "zone_home": zone_home,
+            "location_ids": list(dict.fromkeys([m["id"] for m in members])) + zids}
+
+
+async def _zone_links(db) -> dict:
+    """{location_id: {wh_zone_id}} — peta migrasi aktif (`wh_location_migration_map`) + field
+    `location_id`/`rahaza_location_id` di zona (dua sumber tautan yang sama dengan dulu)."""
+    out: dict = defaultdict(set)
+    async for e in db.wh_location_migration_map.find({"active": {"$ne": False}},
+                                                     {"_id": 0, "rahaza_location_id": 1, "wh_zone_id": 1}):
+        if e.get("rahaza_location_id") and e.get("wh_zone_id"):
+            out[e["rahaza_location_id"]].add(e["wh_zone_id"])
+    async for z in db.wh_zones.find({}, {"_id": 0, "id": 1, "location_id": 1, "rahaza_location_id": 1}):
+        for k in ("location_id", "rahaza_location_id"):
+            if z.get(k):
+                out[z[k]].add(z["id"])
+    return out
+
+
+async def _wh_index(db, zone_ids: Iterable[str]) -> tuple:
+    """(zona per id, rak per zona, bin per zona) untuk `zone_ids`."""
+    zids = sorted(set(zone_ids))
+    if not zids:
+        return {}, {}, {}
+    zones = {z["id"]: z for z in await db.wh_zones.find({"id": {"$in": zids}}, {"_id": 0}).to_list(2000)}
+    racks: dict = defaultdict(list)
+    for r in await db.wh_racks.find({"zone_id": {"$in": zids}}, {"_id": 0}).to_list(10000):
+        racks[r.get("zone_id")].append(r)
+    pos: dict = defaultdict(list)
+    for p in await db[POS].find({"zone_id": {"$in": zids}}, {"_id": 0}).to_list(50000):
+        pos[p.get("zone_id")].append(p)
+    return zones, racks, pos
+
+
+async def _members_scope(db, members: list, links: dict) -> dict:
+    zids = {z for m in members for z in (links.get(m["id"]) or ())}
+    return scope_from(members, links, *(await _wh_index(db, zids)))
+
+
+async def location_scope(db, location_id: str, *, with_areas: bool = False, tanpa_produksi: bool = False) -> dict:
     """Lokasi + zona/rak/bin `wh_*` yang tertaut. Zona tertaut = peta migrasi
     (`wh_location_migration_map.rahaza_location_id`) atau field `location_id`/`rahaza_location_id`
-    di zona. `location_ids` = id yang boleh dipakai baris stok lokasi ini (lokasi + zona tertaut)."""
+    di zona. `location_ids` = id yang boleh dipakai baris stok lokasi ini (lokasi + zona tertaut).
+
+    2026-11-10: `with_areas=True` = GUDANG beserta zona anaknya (lokasi ber-`parent_id`, bukan kantor; zona
+    karantina tidak ikut). `areas` = semua zona anak (karantina ditandai lewat `_is_quarantine`)."""
     loc = await db.rahaza_locations.find_one({"id": location_id}, {"_id": 0})
     if not loc:
         raise HTTPException(404, "Lokasi tidak ditemukan")
-    zone_ids = set()
-    async for e in db.wh_location_migration_map.find(
-            {"rahaza_location_id": location_id, "active": {"$ne": False}}, {"_id": 0, "wh_zone_id": 1}):
-        if e.get("wh_zone_id"):
-            zone_ids.add(e["wh_zone_id"])
-    async for z in db.wh_zones.find({"$or": [{"location_id": location_id},
-                                             {"rahaza_location_id": location_id}]}, {"_id": 0, "id": 1}):
-        zone_ids.add(z["id"])
-    zones = await db.wh_zones.find({"id": {"$in": sorted(zone_ids)}}, {"_id": 0}).to_list(500) if zone_ids else []
-    racks = await db.wh_racks.find({"zone_id": {"$in": sorted(zone_ids)}}, {"_id": 0}).to_list(2000) \
-        if zone_ids else []
-    positions = await db[POS].find({"zone_id": {"$in": sorted(zone_ids)}}, {"_id": 0}).to_list(20000) \
-        if zone_ids else []
-    return {"location": loc, "zones": zones, "racks": racks, "positions": positions,
-            "location_ids": [location_id] + sorted(zone_ids)}
+    links = await _zone_links(db)
+    locs, areas = [], []
+    if with_areas:
+        locs = await db.rahaza_locations.find({"active": {"$ne": False}}, {"_id": 0}).to_list(5000)
+        areas = descendants(locs, location_id)
+    # 10 Nov 2026 (keputusan owner): "Seluruh gudang" = area PENYIMPANAN saja — area produksi (cutting/jahit/QC/packing)
+    # tidak ikut, supaya barang setengah jadi yang tidak dihitung tidak ter-"anggap 0". Area produksi tetap bisa dipilih
+    # lewat "Zona tertentu" (`tanpa_produksi=False`).
+    produksi = [a for a in areas if tanpa_produksi and _is_production_area(a)]
+    members = [loc] + [a for a in areas if not _is_quarantine(a) and a not in produksi]
+    return {"location": loc, "areas": areas, "members": members, "links": links, "locs": locs,
+            "excluded_production": produksi,
+            **(await _members_scope(db, members, links))}
 
 
 def _is_quarantine(loc: dict) -> bool:
     from core.location_resolver import role_of_location
     return role_of_location(loc) == "karantina"
+
+
+PRODUCTION_AREA_ROLES = ("cutting", "sewing", "qc", "packing")
+
+
+def _is_production_area(loc: dict) -> bool:
+    """Area produksi (barang setengah jadi): jenis lokasi 'produksi' atau peran gudang cutting/jahit/QC/packing."""
+    from core.location_resolver import role_of_location
+    return str((loc or {}).get("type") or "").lower() == "produksi" or role_of_location(loc) in PRODUCTION_AREA_ROLES
 
 
 def _pos_label(p: dict) -> str:
@@ -466,21 +567,71 @@ def _pos_label(p: dict) -> str:
 
 
 def _in_sub_scope(pos: dict, sub: Optional[dict]) -> bool:
-    if not sub:
+    """Bin di dalam sub-cakupan sesi. 2026-11-10: `ids` = banyak zona/rak/bin (dulu satu `id`)."""
+    if not sub or sub.get("type") not in SUB_TYPES:
         return True
     key = {"zone": "zone_id", "rack": "rack_id", "bin": "id"}[sub["type"]]
-    return pos.get(key) == sub["id"]
+    return pos.get(key) in (sub.get("ids") or [sub.get("id")])
+
+
+def join_names(names: Iterable[str], limit: int = 6) -> str:
+    """'A, B, C' — lebih dari `limit` nama diringkas '… (+N lainnya)'."""
+    names = [str(n) for n in names if n]
+    if len(names) <= limit:
+        return ", ".join(names)
+    return ", ".join(names[:limit]) + f" (+{len(names) - limit} lainnya)"
+
+
+def sub_label(sub_type: str, docs: list, *, zones_by_id: Optional[dict] = None, home: Optional[dict] = None) -> str:
+    """Teks sub-cakupan: 'Zona Ruang Aksesoris, Area Rak Stok' · 'Rak A1, A2, B3' · 'Bin …'.
+    Zona anak memakai NAMA (kode lokasinya panjang); zona/rak/bin `wh_*` memakai kode. Kode rak yang sama di
+    zona berbeda diberi awalan kode zonanya."""
+    zones_by_id = zones_by_id or {}
+    if sub_type == SUB_AREA:
+        luar = bool(home) and any(d["id"] == home["id"] for d in docs)
+        names = [d.get("name") or d.get("code") for d in docs if not (home and d["id"] == home["id"])]
+        parts = (["di luar zona"] if luar else []) + ([f"{SUB_WORD[SUB_AREA]} {join_names(names)}"] if names else [])
+        return " + ".join(parts)
+    if sub_type == "rack":
+        codes = [d.get("code") or d.get("name") or d["id"] for d in docs]
+        dup = {c for c in codes if codes.count(c) > 1}
+        names = [f"{(zones_by_id.get(d.get('zone_id')) or {}).get('code') or d.get('zone_code') or '?'}/{c}"
+                 if c in dup else c for d, c in zip(docs, codes)]
+    elif sub_type == "bin":
+        names = [d.get("barcode") or _pos_label(d) for d in docs]
+    else:
+        names = [d.get("code") or d.get("name") or d["id"] for d in docs]
+    return f"{SUB_WORD[sub_type]} {join_names(names)}"
 
 
 async def list_locations(db) -> list:
-    """Pilihan lokasi untuk layar: lokasi aktif (karantina ditandai), zona/rak/bin tertautnya."""
+    """Pilihan lokasi untuk layar: lokasi aktif (karantina ditandai), zona/rak/bin tertautnya.
+
+    2026-11-10 (cakupan bertingkat): kantor tidak ikut; tiap lokasi membawa `parent_id`, `top_id` (gudang
+    teratasnya), `top` (lokasi ini gudang teratas), `areas` (zona anak, karantina ditandai) dan
+    zona/rak/bin seluruh gudang beserta zona anaknya (zona karantina tidak) — `zones[].area_id` = zona anak
+    (atau gudang itu sendiri) tempat zona `wh_*` tertaut."""
+    locs = [x for x in await db.rahaza_locations.find({"active": {"$ne": False}}, {"_id": 0}).sort("code", 1)
+            .to_list(5000) if not _is_kantor(x)]
+    by_id = {x["id"]: x for x in locs}
+    links = await _zone_links(db)
+    zones_by_id, racks_by_zone, pos_by_zone = await _wh_index(
+        db, {z for lid in by_id for z in (links.get(lid) or ())})
     out = []
-    async for loc in db.rahaza_locations.find({"active": {"$ne": False}}, {"_id": 0}).sort("code", 1):
-        sc = await location_scope(db, loc["id"])
+    for loc in locs:
+        areas = descendants(locs, loc["id"])
+        sc = scope_from([loc] + [a for a in areas if not _is_quarantine(a)], links, zones_by_id, racks_by_zone,
+                        pos_by_zone)
+        top_id = top_of(by_id, loc["id"])
         out.append({
             "id": loc["id"], "code": loc.get("code"), "name": loc.get("name"), "type": loc.get("type"),
             "storage_role": loc.get("storage_role") or "", "quarantine": _is_quarantine(loc),
-            "zones": [{"id": z["id"], "code": z.get("code"), "name": z.get("name")} for z in sc["zones"]],
+            "parent_id": loc.get("parent_id") or "", "top_id": top_id, "top": top_id == loc["id"],
+            "areas": [{"id": a["id"], "code": a.get("code"), "name": a.get("name"), "parent_id": a.get("parent_id"),
+                       "type": a.get("type") or "", "storage_role": a.get("storage_role") or "",
+                       "quarantine": _is_quarantine(a), "production": _is_production_area(a)} for a in areas],
+            "zones": [{"id": z["id"], "code": z.get("code"), "name": z.get("name"),
+                       "area_id": sc["zone_home"].get(z["id"])} for z in sc["zones"]],
             "racks": [{"id": r["id"], "code": r.get("code"), "name": r.get("name"), "zone_id": r.get("zone_id")}
                       for r in sc["racks"]],
             "bins": [{"id": p["id"], "barcode": p.get("barcode"), "label": _pos_label(p),
@@ -534,16 +685,62 @@ async def resolve_materials_by_codes(db, codes: Iterable[str]) -> tuple:
     return found, unknown
 
 
+async def _resolve_areas(db, sc: dict, ids: list) -> tuple:
+    """Sub-cakupan ZONA ANAK (level lokasi): ([zona terpilih], cakupan gabungan). Id gudang itu sendiri =
+    "di luar zona" (stok yang tercatat langsung di gudang + zona `wh_*` yang tertaut langsung ke gudang)."""
+    loc = sc["location"]
+    by_id = {a["id"]: a for a in sc["areas"]}
+    chosen, bad = [], []
+    for i in ids:
+        if i == loc["id"]:
+            chosen.append(loc)
+        elif i in by_id:
+            if _is_quarantine(by_id[i]):
+                raise HTTPException(400, f"Zona {by_id[i].get('code')} adalah lokasi KARANTINA — stoknya dikelola "
+                                         "dokumen karantina, tidak diopname di sini.")
+            chosen.append(by_id[i])
+        else:
+            bad.append(i)
+    if bad:
+        raise HTTPException(400, f"{len(bad)} zona yang dipilih bukan bagian gudang {loc.get('code')}")
+    chosen.sort(key=lambda a: (a["id"] != loc["id"], a.get("code") or ""))
+    members = []
+    for a in chosen:
+        members.append(a)
+        if a["id"] != loc["id"]:
+            members += [d for d in descendants(sc["locs"], a["id"]) if not _is_quarantine(d)]
+    members = list({m["id"]: m for m in members}.values())
+    return chosen, await _members_scope(db, members, sc["links"])
+
+
 async def create_session(db, user: dict, *, location_id: str, sub_type: str = "", sub_id: str = "",
-                         kinds: Iterable[str] = (), material_ids: Iterable[str] = (),
+                         sub_ids: Iterable[str] = (), kinds: Iterable[str] = (), material_ids: Iterable[str] = (),
                          material_codes: Iterable[str] = (), notes: str = "", source: str = "gudang",
-                         opening: bool = False, extra: Optional[dict] = None) -> dict:
+                         opening: bool = False, with_areas: bool = False, extra: Optional[dict] = None) -> dict:
+    """Sesi opname baru.
+
+    Cakupan (2026-11-10, bertingkat):
+      * `sub_type=''`                → seluruh lokasi; `with_areas=True` = gudang + semua zona anaknya.
+      * `sub_type='area'` + `sub_ids` → beberapa zona anak gudang (level LOKASI: stok + penempatan).
+      * `sub_type='zone'|'rack'|'bin'` + `sub_ids` → beberapa zona/rak/bin `wh_*` (level RAK: penempatan saja).
+    `sub_id` tunggal (pemanggil lama) tetap diterima dan digabung ke `sub_ids`."""
     from utils.counters import gen_prefixed_number
     if not location_id:
         raise HTTPException(400, "Lokasi wajib dipilih (Sesi Opname per lokasi)")
-    if opening and sub_type:
+    sub_type = (sub_type or "").strip()
+    ids = list(dict.fromkeys(str(x).strip() for x in [sub_id, *(sub_ids or [])] if x and str(x).strip()))
+    if sub_type and sub_type not in SUB_TYPES + (SUB_AREA,):
+        raise HTTPException(400, "Cakupan harus seluruh gudang, zona, rak, atau bin")
+    if sub_type and not ids:
+        raise HTTPException(400, f"Pilih minimal satu {SUB_WORD[sub_type].lower()} untuk cakupan ini")
+    if ids and not sub_type:
+        raise HTTPException(400, "Jenis cakupan (zona/rak/bin) wajib diisi bila memilih zona/rak/bin")
+    level = LEVEL_RAK if sub_type in SUB_TYPES else LEVEL_LOKASI
+    if opening and level == LEVEL_RAK:
         raise HTTPException(400, "Opname stok awal = hitung seluruh lokasi (tanpa sub-cakupan zona/rak/bin).")
-    sc = await location_scope(db, location_id)
+    with_areas = bool(with_areas or sub_type == SUB_AREA)
+    sc = await location_scope(db, location_id, with_areas=with_areas,
+                              tanpa_produksi=bool(with_areas and not sub_type))
     loc = sc["location"]
     if _is_quarantine(loc):
         raise HTTPException(400, f"Lokasi {loc.get('code')} adalah lokasi KARANTINA — stoknya dikelola dokumen "
@@ -560,16 +757,22 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
         mids += more
     mids = list(dict.fromkeys(mids))
     sub = None
-    if sub_type:
-        if sub_type not in SUB_TYPES or not sub_id:
-            raise HTTPException(400, "Sub-cakupan harus zone/rack/bin beserta id-nya")
-        pool = {"zone": sc["zones"], "rack": sc["racks"], "bin": sc["positions"]}[sub_type]
-        doc = next((x for x in pool if x["id"] == sub_id), None)
-        if not doc:
-            raise HTTPException(400, f"{sub_type} itu tidak tertaut ke lokasi {loc.get('code')}")
-        label = _pos_label(doc) if sub_type == "bin" else f"{doc.get('code', '')} - {doc.get('name', '')}".strip(" -")
-        sub = {"type": sub_type, "id": sub_id, "label": label}
-    level = LEVEL_RAK if sub else LEVEL_LOKASI
+    home, floor_code = loc, loc.get("code")
+    if sub_type == SUB_AREA:
+        chosen, area_sc = await _resolve_areas(db, sc, ids)
+        sc = {**sc, **area_sc}
+        home = chosen[0]
+        floor_code = home.get("code") if len(chosen) == 1 else loc.get("code")
+        sub = {"type": SUB_AREA, "id": chosen[0]["id"], "ids": [a["id"] for a in chosen],
+               "label": sub_label(SUB_AREA, chosen, home=loc)}
+    elif sub_type:
+        pool = {x["id"]: x for x in {"zone": sc["zones"], "rack": sc["racks"], "bin": sc["positions"]}[sub_type]}
+        bad = [i for i in ids if i not in pool]
+        if bad:
+            raise HTTPException(400, f"{len(bad)} {SUB_WORD[sub_type].lower()} yang dipilih tidak tertaut ke lokasi "
+                                     f"{loc.get('code')}")
+        sub = {"type": sub_type, "id": ids[0], "ids": ids,
+               "label": sub_label(sub_type, [pool[i] for i in ids], zones_by_id={z["id"]: z for z in sc["zones"]})}
     snapshot_at = _now()
     lines = []
     if level == LEVEL_LOKASI:
@@ -601,16 +804,23 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
                                          snapshot_qty=float(p.get("qty") or 0)))
     session_no = await gen_prefixed_number(db, SESS, "session_no", f"OPN-{fmt_wib('%Y%m', _now())}-", 4)
     scope_label = (("Stok awal · " if opening else "") + f"{loc.get('code')} — {loc.get('name')}"
-                   + (f" · {sub['label']}" if sub else ""))
+                   + (f" · {sub['label']}" if sub else (" · seluruh gudang" if with_areas else ""))
+                   + (" (tanpa area produksi: " + ", ".join(a.get("code") or "" for a in sc.get("excluded_production") or [])
+                      + ")" if not sub and sc.get("excluded_production") else ""))
     if kinds:
         scope_label += " · " + ", ".join(KIND_LABELS[k] for k in kinds)
     if mids:
         scope_label += f" · {len(mids)} barang (cycle count)"
+    zone_home = dict(sc.get("zone_home") or {})
     doc = {
         "id": _uid(), "session_no": session_no, "engine": ENGINE, "level": level,
         "mode": MODE_OPENING if opening else ("cycle" if (mids or kinds or sub) else "full"),
         "location_id": loc["id"], "location_code": loc.get("code"), "location_name": loc.get("name"),
         "location_ids": sc["location_ids"], "zone_ids": [z["id"] for z in sc["zones"]],
+        # 2026-11-10: lokasi rumah barang baru (tanpa saldo) + zona `wh_*` → lokasi tautannya + label lantai
+        "home_location_id": home["id"], "floor_code": floor_code, "with_areas": with_areas,
+        "zone_home": zone_home,
+        "area_ids": [i for i in sc["location_ids"] if i != loc["id"] and i not in zone_home],
         "sub_scope": sub, "kinds": kinds, "material_ids": mids, "source": source or "gudang",
         "scope_label": scope_label, "status": "counting", "snapshot_at": snapshot_at,
         "lines": lines, "notes": notes or "",
@@ -644,6 +854,7 @@ async def resolve_count_bin(db, sess: dict, *, bin_id: str = "", code: str = "")
     """(bin_id, label) konteks hitung. '' = lantai / belum dirak (hanya level lokasi).
     Bisa scan label LOKASI (kode lokasi) → konteks lantai lokasi itu."""
     rak = sess.get("level") == LEVEL_RAK
+    floor = f"{sess.get('floor_code') or sess.get('location_code')} · lantai / belum dirak"
     pos = None
     if bin_id:
         pos = await db[POS].find_one({"id": bin_id}, {"_id": 0})
@@ -655,17 +866,19 @@ async def resolve_count_bin(db, sess: dict, *, bin_id: str = "", code: str = "")
             raise HTTPException(404, f"Kode '{code}' bukan bin/lokasi yang dikenal")
         if res["subtipe"] == "lokasi":
             if res["id"] not in (sess.get("location_ids") or [sess.get("location_id")]):
-                raise HTTPException(400, f"Lokasi {res['kode']} bukan lokasi sesi ini ({sess.get('location_code')})")
+                raise HTTPException(400, f"Lokasi {res['kode']} di luar cakupan sesi ini "
+                                         f"({sess.get('scope_label') or sess.get('location_code')})")
             if rak:
                 raise HTTPException(400, "Hitung level rak: scan label BIN, bukan label lokasi")
-            return "", f"{sess.get('location_code')} · lantai / belum dirak"
+            return "", floor
         pos = res["_doc"]
     if not pos:
         if rak:
             raise HTTPException(400, "Hitung level rak: bin wajib di-scan/dipilih")
-        return "", f"{sess.get('location_code')} · lantai / belum dirak"
+        return "", floor
     if pos.get("zone_id") not in (sess.get("zone_ids") or []):
-        raise HTTPException(400, f"Bin {pos.get('barcode')} bukan bagian lokasi {sess.get('location_code')}")
+        raise HTTPException(400, f"Bin {pos.get('barcode')} di luar cakupan sesi ini "
+                                 f"({sess.get('scope_label') or sess.get('location_code')})")
     if rak and not _in_sub_scope(pos, sess.get("sub_scope")):
         raise HTTPException(400, f"Bin {pos.get('barcode')} di luar cakupan {sess['sub_scope']['label']}")
     return pos["id"], _pos_label(pos)
@@ -1034,6 +1247,39 @@ async def _post_session_je(db, user: dict, sess: dict, valued: list, je_date: st
     return await rp._create_posted_je(db, _date.fromisoformat(je_date), memo, event, ref, lines, user)
 
 
+async def session_scope(db, sess: dict) -> dict:
+    """Bin & dokumen lokasi SESI — dibekukan saat sesi dibuat (`zone_ids`, `location_ids`), sehingga sesi
+    seluruh gudang / beberapa zona tetap memakai cakupan yang dipilih saat mulai (2026-11-10; dulu dihitung
+    ulang dari lokasi utama sesi)."""
+    zids = sess.get("zone_ids") or []
+    positions = await db[POS].find({"zone_id": {"$in": zids}}, {"_id": 0}).to_list(50000) if zids else []
+    loc_ids = list(dict.fromkeys([sess["location_id"], *(sess.get("location_ids") or [])]))
+    docs = {d["id"]: d async for d in db.rahaza_locations.find({"id": {"$in": loc_ids}}, {"_id": 0})}
+    loc = docs.get(sess["location_id"]) or {"id": sess["location_id"], "code": sess.get("location_code"),
+                                            "name": sess.get("location_name")}
+    return {"location": loc, "positions": positions, "loc_docs": docs}
+
+
+def home_location_for(line: dict, *, default: str, zone_home: dict, pos_zone: dict, loc_ids: Iterable[str],
+                      loc_docs: dict) -> str:
+    """Lokasi rumah satu barang saat approve (dipakai `plan_stock_writes`: baris penyerap selisih / baris baru
+    bagi barang tanpa saldo). Urutan: 1) zona `wh_*` bin tempat barang dihitung → lokasi tautan zona itu;
+    2) lokasi dalam cakupan yang berperan sama dengan jenis barangnya (kain → bahan, aksesoris, barang jadi → fg);
+    3) lokasi rumah sesi. Sesi satu lokasi (pemanggil lama) selalu jatuh ke 3)."""
+    locs = list(loc_ids or [])
+    for e in line.get("entries") or []:
+        h = (zone_home or {}).get(pos_zone.get(e.get("bin_id") or ""))
+        if h and h in locs:
+            return h
+    role = KIND_ROLE.get(line.get("kind") or "")
+    if role:
+        from core.location_resolver import role_of_location
+        cands = [i for i in locs if i in loc_docs and role_of_location(loc_docs[i]) == role]
+        if cands and default not in cands:
+            return cands[0]
+    return default
+
+
 async def approve(db, user: dict, sess: dict) -> dict:
     """GERBANG SUPERVISOR. Level lokasi: set saldo = hitung (+ mutasi sesudah dihitung), penempatan,
     satu jurnal. Level rak: penempatan saja. Aman diulang bila gagal di tengah (baris yang sudah
@@ -1051,7 +1297,7 @@ async def approve(db, user: dict, sess: dict) -> dict:
     mids = sorted({x["material_id"] for x in ev["lines"]})
     rows = await _stock_rows(db, mids, loc_ids)
     meta = await _material_meta(db, mids)
-    sc = await location_scope(db, sess["location_id"])
+    sc = await session_scope(db, sess)
     applied = set(sess.get("applied_keys") or [])
     plans, errors = [], []
     if level == LEVEL_LOKASI:
@@ -1119,8 +1365,15 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
     if not je.get("ok"):
         raise HTTPException(400, f"Approve ditolak: jurnal selisih opname gagal — {je.get('error')}. "
                                  "Stok belum diubah; bereskan penyebabnya lalu setujui ulang.")
+    # 2026-11-10: sesi seluruh gudang / beberapa zona — barang tanpa saldo ditaruh di zona tempat ia dihitung
+    # (atau zona yang berperan sama dengan jenisnya), bukan selalu di lokasi utama sesi.
+    loc_docs = sc.get("loc_docs") or {}
+    pos_zone = {p["id"]: p.get("zone_id") for p in sc["positions"]}
+    default_home = sess.get("home_location_id") or sess["location_id"]
     for x, cur, target in plans:
         mat = meta.get(x["material_id"]) or {"id": x["material_id"]}
+        home = home_location_for(x, default=default_home, zone_home=sess.get("zone_home") or {}, pos_zone=pos_zone,
+                                 loc_ids=sess.get("location_ids") or [sess["location_id"]], loc_docs=loc_docs)
         m_meta = stock_meta(mat, sc["location"])
         if x["kind"] == "fg":
             m_meta.update({"inventory_category": "fg_internal", "ownership": "cv_da"})
@@ -1130,14 +1383,20 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
             ident = stock_service.derive_identity(mat, None)
             m_meta.update({k: ident[k] for k in ("inventory_category", "ownership") if ident.get(k)})
         row_qty = {r.get("location_id"): _r(r.get("qty")) for r in rows.get(x["material_id"], [])}
-        for loc_id, q in plan_stock_writes(rows.get(x["material_id"], []), target, sess["location_id"]):
+        mine = []
+        for loc_id, q in plan_stock_writes(rows.get(x["material_id"], []), target, home):
             # 2026-11-06 (Tahap 1): tulis SELISIH (hasil rencana − qty yang dibaca saat approve) secara
             # atomik, bukan qty absolut — mutasi transaksi lain di sela baca & tulis tidak terhapus.
             delta = _r(q - row_qty.get(loc_id, 0.0))
             if delta:
-                await stock_service.adjust_by(x["material_id"], loc_id, delta, meta=m_meta, ref=ref,
+                w_meta = {**m_meta, "location_code": (loc_docs.get(loc_id) or sc["location"]).get("code")}
+                await stock_service.adjust_by(x["material_id"], loc_id, delta, meta=w_meta, ref=ref,
                                               actor=actor, db=db)
             writes.append({"material_id": x["material_id"], "location_id": loc_id, "qty": q, "delta": delta})
+            mine.append((abs(delta), loc_id))
+        # lokasi mutasi = lokasi (rahaza) yang paling banyak berubah; selain itu lokasi rumah barang ini
+        mv_loc = next((lid for _d, lid in sorted(mine, key=lambda t: -t[0]) if _d and lid in loc_docs), None) \
+            or (home if home in loc_docs else sess["location_id"])
         opening = is_opening(sess)
         if opening and x["kind"] == "fg" and float(x.get("unit_cost") or 0) > 0 and (x["variance_qty"] or 0) > 0:
             # 2026-11-09: WAC awal FG = harga stok awal (WAC berjalan / HPP standar); lapisan → jurnal sesi.
@@ -1158,8 +1417,8 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
             "movement_type": "opening" if opening else "opname", "material_id": x["material_id"],
             "material_name": x.get("material_name"), "material_code": x.get("material_code"),
             "qty": x["variance_qty"], "qty_signed": x["variance_qty"], "unit_cost": x.get("unit_cost"),
-            "adjustment_reason": x.get("reason") or "opname", "location_id": sess["location_id"],
-            "to_location_id": sess["location_id"], "ref_type": "opname", "ref_id": sess["id"],
+            "adjustment_reason": x.get("reason") or "opname", "location_id": mv_loc,
+            "to_location_id": mv_loc, "ref_type": "opname", "ref_id": sess["id"],
             "reference_type": "opname", "reference_id": sess["id"],
             "notes": f"Opname {sess.get('session_no')}: sistem {x['system_qty']} → hitung {x['counted_qty']}",
             "created_by": user.get("id", ""), "created_by_name": user.get("name", ""),

@@ -167,14 +167,43 @@ async def update_creator(creator_id: str, data: CreatorUpdate, request: Request)
     return serialize_doc({'message': 'Creator berhasil diupdate', 'creator': updated})
 
 
+def creator_usage_checks(creator_id: str) -> list:
+    """Riwayat kreator (10 Nov 2026): dokumen yang menunjuk kreator ini (grep `creator_id`/`kreator_id`)."""
+    q = {'creator_id': creator_id}
+    return [
+        ('sesi live kreator', 'marketing_creator_sessions', q),
+        ('sesi live', 'marketing_live_sessions', q),
+        ('pesanan', 'marketing_orders', q),
+        ('kiriman sampel', 'marketing_samples', q),
+        ('permintaan produk', 'marketing_creator_item_requests', q),
+        ('permintaan kreator', 'dewi_kreator_requests', {'kreator_id': creator_id}),
+        ('jadwal konten', 'marketing_content_calendar', q),
+        # 10 Nov 2026 (keputusan owner): target bulanan bukan riwayat — ikut terhapus bersama kreator.
+        ('catatan insentif', 'marketing_creator_incentive_entries', q),
+        ('rapor mingguan', 'marketing_creator_weekly_reports', q),
+    ]
+
+
 @router.delete('/kol/creators/{creator_id}')
-async def deactivate_creator(creator_id: str, request: Request):
-    await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
-                       message='Akses ditolak: Anda tidak berhak menonaktifkan kreator.')  # T-01 2.3
+async def deactivate_creator(creator_id: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard` = nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026) = hapus permanen bila kreator belum
+    punya riwayat (`creator_usage_checks`); bila sudah → 409 dan layar menawarkan Nonaktifkan."""
+    user = await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
+                              message='Akses ditolak: Anda tidak berhak menonaktifkan atau menghapus kreator.')  # T-01 2.3
     db = get_db()
     creator = await db.marketing_kol_creators.find_one({'id': creator_id}, {'_id': 0})
     if not creator:
         raise HTTPException(404, 'Creator tidak ditemukan')
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        pakai = await hitung_pemakaian(db, creator_usage_checks(creator_id))
+        tolak_bila_dipakai('Kreator', creator.get('name') or '', pakai)
+        target = await db.marketing_creator_targets.delete_many({'creator_id': creator_id})
+        await db.marketing_kol_creators.delete_one({'id': creator_id})
+        await log_activity(user.get('id', 'system'), user.get('name') or user.get('email', 'system'),
+                           'delete', 'marketing_kol_creator',
+                           f"Hapus kreator {creator.get('name', '')} (target bulanan {target.deleted_count})")
+        return {'ok': True, 'deleted': True, 'message': 'Kreator dihapus'}
     await db.marketing_kol_creators.update_one({'id': creator_id}, {'$set': {'status': 'inactive', 'updated_at': _now()}})
     user = _get_user(request)
     await log_activity(user.get('id', 'system'), user.get('name') or user.get('email', 'system'),

@@ -9,7 +9,7 @@
  * di HP) dengan unduh Excel/CSV; form ubah tarif = FormPopup pendek dengan DatePicker. Data yang dikirim sama.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Pencil, RefreshCw } from 'lucide-react';
+import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -21,6 +21,8 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -133,6 +135,19 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
 
   useEffect(() => { fetchRates(); }, [fetchRates]);
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): baris tarif yang sudah diatur bisa dihapus. Perjalanan dinas
+  // menyalin nilai tarif saat diajukan, jadi riwayat tidak berubah; tanpa tarif aktif dipakai tarif bawaan.
+  const hapus = async (r) => {
+    const hasil = await hapusMaster({
+      jenis: 'tarif uang harian', nama: namaJenis(r),
+      keterangan: 'Baris tarif dihapus permanen. Perjalanan dinas yang sudah diajukan tidak berubah; bila jenis perjalanan '
+        + 'ini tidak punya tarif aktif lagi, pengajuan baru memakai tarif bawaan.',
+      hapus: () => apiDelete(`/api/hr/expenses/per-diem-rates/${r.id}?hard=true`),
+      nonaktifkan: r.is_active === false ? null : () => apiDelete(`/api/hr/expenses/per-diem-rates/${r.id}`),
+    });
+    if (hasil) fetchRates();
+  };
+
   const kolom = [
     { kunci: 'jenis', label: 'Jenis perjalanan', hp: 'judul', isi: (r) => (
       <div className="min-w-0">
@@ -145,10 +160,16 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
     { kunci: 'total', label: 'Total per hari', rata: 'kanan', isi: (r) => <span className="font-semibold tabular-nums">{fmt(totalHarian(r))}</span> },
     { kunci: 'berlaku', label: 'Berlaku sejak', isi: (r) => (r.effective_date ? formatTanggalID(r.effective_date) || r.effective_date : '—') },
     { kunci: 'status', label: 'Status', isi: (r) => { const k = keadaan(r); return <StatusBadge status={k.label} label={k.label} tone={k.tone} />; } },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
-      <Button size="sm" variant="outline" onClick={() => setEditing(r)} data-testid={`per-diem-edit-${r.destination_type}`}>
-        <Pencil />{r.is_default ? 'Atur' : 'Ubah'}
-      </Button>) },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => setEditing(r)} data-testid={`per-diem-edit-${r.destination_type}`}>
+          <Pencil />{r.is_default ? 'Atur' : 'Ubah'}
+        </Button>
+        {r.id && !r.is_default && (
+          <Button size="icon-sm" variant="ghost" onClick={() => hapus(r)} title="Hapus" aria-label={`Hapus tarif ${namaJenis(r)}`}
+            data-testid={`per-diem-delete-${r.id}`}><Trash2 /></Button>
+        )}
+      </div>) },
   ];
 
   return (
@@ -173,7 +194,7 @@ export default function EmployeePerDiemAdminModule({ token, user }) {
       {loading && rates.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Memuat tarif…</p>
       ) : (
-        <TabelData kolom={kolom} baris={rates} kunci={(r) => r.destination_type} onKlikBaris={setEditing}
+        <TabelData kolom={kolom} baris={rates} kunci={(r) => r.id || r.destination_type} onKlikBaris={setEditing}
           testId="per-diem-table"
           kosong={<EmptyState title="Belum ada tarif" description="Server tidak mengirim tarif uang harian. Muat ulang atau hubungi admin." />} />
       )}

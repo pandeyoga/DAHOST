@@ -9,6 +9,10 @@ export default function RahazaSizesModule({ token }) {
       token={token}
       testIdPrefix="rahaza-size"
       ieKey="sizes"
+      // 10 Nov 2026 (owner "master data bisa dihapus"): DELETE /sizes/{id}?hard=true menghapus bila belum dipakai,
+      // 409 bila sudah (dialog menawarkan Nonaktifkan).
+      hapusPermanen
+      jenis="ukuran"
       columns={[
         { key: 'code', label: 'Kode' },
         { key: 'name', label: 'Nama' },

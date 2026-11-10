@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Plus, Edit2, Trash2, Palette } from 'lucide-react';
+import { Plus, Pencil, Ban, Trash2, Palette } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -10,6 +10,8 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
+import { apiDelete } from '../../lib/api';
+import { hapusMaster } from '../../lib/hapusMaster';
 
 // Nilai awal pemilih warna (data, bukan gaya layar).
 const DEFAULT_FORM = { code: '', name: '', hex: '#3B82F6', order_seq: 50, active: true };
@@ -76,6 +78,17 @@ export function RahazaColorsModule({ token }) {
     }
   };
 
+  // 10 Nov 2026 (owner "master data bisa dihapus"): hapus permanen bila warna belum dipakai; bila sudah (409)
+  // dialog kedua menampilkan alasannya dan menawarkan Nonaktifkan.
+  const handleHapus = async (row) => {
+    const hasil = await hapusMaster({
+      jenis: 'warna', nama: `${row.name} (${row.code})`,
+      hapus: () => apiDelete(`/rahaza/colors/${row.id}?hard=true`),
+      nonaktifkan: row.active !== false ? () => apiDelete(`/rahaza/colors/${row.id}`) : null,
+    });
+    if (hasil) fetchRows();
+  };
+
   // Standar UI/UX v2 (8 Nov 2026): PageLayout (di hub judul tersembunyi), TabelData + unduh, form = FormPopup.
   const kolom = [
     { kunci: 'warna', label: 'Warna', hp: false, isi: (row) => (
@@ -85,12 +98,13 @@ export function RahazaColorsModule({ token }) {
     { kunci: 'hex', label: 'Kode warna', isi: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.hex}</span> },
     { kunci: 'status', label: 'Status', isi: (row) => (row.active === false
       ? <StatusBadge status="inactive" tone="muted" label="Nonaktif" /> : <StatusBadge status="active" tone="success" label="Aktif" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (row) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (row) => (
       <div className="inline-flex items-center gap-1">
-        <Button type="button" variant="ghost" size="icon-sm" onClick={() => openEdit(row)} title="Ubah" aria-label="Ubah" data-testid={`color-edit-${row.code}`}><Edit2 className="w-3.5 h-3.5" /></Button>
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => openEdit(row)} title="Ubah" aria-label={`Ubah warna ${row.name}`} data-testid={`color-edit-${row.code}`}><Pencil className="w-3.5 h-3.5" /></Button>
         {row.active !== false && (
-          <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(row)} title="Nonaktifkan" aria-label="Nonaktifkan" data-testid={`color-delete-${row.code}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(row)} title="Nonaktifkan" aria-label={`Nonaktifkan warna ${row.name}`} data-testid={`color-deactivate-${row.code}`}><Ban className="w-3.5 h-3.5" /></Button>
         )}
+        <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleHapus(row)} title="Hapus" aria-label={`Hapus warna ${row.name}`} data-testid={`color-delete-${row.code}`}><Trash2 className="w-3.5 h-3.5" /></Button>
       </div>) },
   ];
   return (

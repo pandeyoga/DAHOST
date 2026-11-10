@@ -2,7 +2,7 @@
 Dewi Accessories - Items
 Items CRUD (SSOT: rahaza_materials)
 """
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 import re
 import uuid
@@ -339,12 +339,23 @@ async def update_item(item_id: str, request: Request):
 
 
 @router.delete("/items/{item_id}")
-async def delete_item(item_id: str, request: Request):
+async def delete_item(item_id: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, permintaan owner): hapus permanen
+    bila aksesoris BELUM dipakai — satu aturan dengan Master Item (`rahaza_inventory_materials.material_usage`:
+    stok bersaldo, kartu stok, BOM, PR/PO/penerimaan, opname, dll.); bila sudah → 409 dan layar menawarkan
+    Nonaktifkan. Dulu layar berjanji "ditolak bila masih berstok / di BOM" padahal server tidak memeriksa apa pun."""
     from routes.shared import require_perm
-    await require_perm(request, 'accessories.approve', 'warehouse.manage',
-                       legacy_roles=('admin_aksesoris', 'spv_aksesoris', 'admin_gudang', 'owner', 'admin', 'superadmin'),
-                       message='Akses ditolak: Anda tidak berhak menonaktifkan aksesoris.')  # T-01 2.3
+    user = await require_perm(request, 'accessories.approve', 'warehouse.manage',
+                              legacy_roles=('admin_aksesoris', 'spv_aksesoris', 'admin_gudang', 'owner', 'admin', 'superadmin'),
+                              message='Akses ditolak: Anda tidak berhak menonaktifkan aksesoris.')  # T-01 2.3
     db = get_db()
+    if hard:
+        mat = await db.rahaza_materials.find_one({"id": item_id, "type": "accessory"}, {"_id": 0})
+        if not mat:
+            raise HTTPException(404, "Aksesoris tidak ditemukan")
+        from routes.rahaza_inventory_materials import hapus_material_permanen
+        out = await hapus_material_permanen(db, mat, user or {}, "Aksesoris")
+        return {"ok": True, **out}
     res = await db.rahaza_materials.update_one(
         {"id": item_id, "type": "accessory"},
         {"$set": {"active": False, "updated_at": _now_iso()}},

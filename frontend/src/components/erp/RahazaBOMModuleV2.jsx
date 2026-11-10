@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import PageLayout from './layout/PageLayout';
 import FormPopup from '@/components/ui/form-popup';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Edit2, X, Copy, Package, Scale, Save, FileText, Search, Layers, Link2, Unlink, Wrench } from 'lucide-react';
+import { Plus, Edit2, Pencil, Trash2, X, Copy, Package, Scale, Save, FileText, Search, Layers, Link2, Unlink, Wrench } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -20,6 +20,8 @@ import { RequirementsPreviewCard } from './bom/RequirementsPreviewCard';
 import { BomShortcuts } from './bom/BomShortcuts';
 import { typeToCategory, categoryToStoredType, isKgLike } from '@/lib/itemTaxonomy';
 import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
+import { apiDelete } from '../../lib/api';
+import { hapusMaster } from '../../lib/hapusMaster';
 
 /* ─── PT Rahaza · BOM Multi-Version (Phase 7A Fase 1 — unified materials[]) ─────
    - Satu daftar materials[] generik (bukan lagi yarn/accessory terpisah)
@@ -352,6 +354,21 @@ export default function RahazaBOMModuleV2({ token }) {
     if (version) setSelectedVersion(version);
   };
 
+  // 10 Nov 2026 (owner "master data bisa dihapus"): hapus permanen versi BOM baris ini bila belum menjadi dasar
+  // HPP; bila sudah (409) dialog kedua menawarkan Nonaktifkan (perilaku lama DELETE tanpa `hard`).
+  const handleHapus = async (row) => {
+    if (!row.bom_id) return;
+    const hasil = await hapusMaster({
+      jenis: 'BOM', nama: [matrix?.model?.code, row.size_code, row.color_code || row.color, row.version ? `v${row.version}` : '']
+        .filter(Boolean).join(' '),
+      keterangan: 'Versi BOM ini dihapus permanen; versi lain ukuran & warna yang sama tidak disentuh. Bila sudah '
+        + 'menjadi dasar HPP, penghapusan ditolak dan Anda bisa menonaktifkannya saja.',
+      hapus: () => apiDelete(`/rahaza/boms/${row.bom_id}?hard=true`),
+      nonaktifkan: () => apiDelete(`/rahaza/boms/${row.bom_id}`),
+    });
+    if (hasil) { loadMatrix(); loadVersions(); }
+  };
+
   const openCopy = (row) => {
     if (!row.bom_id) return;
     setCopyModal({ bom_id: row.bom_id, source_size_code: row.size_code, target_ids: [], overwrite: false });
@@ -552,7 +569,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                 onClick={() => openEditorForSize(row.size_id, row.bom_id)}
                                 data-testid={`bom-open-${row.size_code}${row.color_code ? `-${row.color_code}` : ''}`}
                               >
-                                {row.bom_id ? <Edit2 className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                                {row.bom_id ? <Pencil className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                               </Button>
                               {row.bom_id && (
                                 <Button type="button"
@@ -562,6 +579,16 @@ export default function RahazaBOMModuleV2({ token }) {
                                   data-testid={`bom-copy-${row.size_code}${row.color_code ? `-${row.color_code}` : ''}`}
                                 >
                                   <Copy className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                              {row.bom_id && (
+                                <Button type="button"
+                                  variant="ghost" size="icon-sm"
+                                  title="Hapus" aria-label={`Hapus BOM ukuran ${row.size_code}${row.color_code ? ` warna ${row.color_code}` : ''}`}
+                                  onClick={() => handleHapus(row)}
+                                  data-testid={`bom-delete-${row.size_code}${row.color_code ? `-${row.color_code}` : ''}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
                                 </Button>
                               )}
                             </div>

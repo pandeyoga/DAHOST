@@ -528,14 +528,55 @@ async def update_supplier(supplier_id: str, request: Request):
     return serialize_doc(out)
 
 
+async def supplier_usage(db, supplier_id: str) -> dict:
+    """Di mana supplier dipakai (label → jumlah) — hapus permanen (10 Nov 2026, permintaan owner). Daftar harga
+    milik supplier itu BUKAN pemakaian: ia anak konfigurasi supplier dan ikut terhapus."""
+    from core.hapus_master import hitung_pemakaian
+    s = supplier_id
+    cek = [
+        ("PO pembelian", "rahaza_purchase_orders", {"supplier_id": s}),
+        ("penerimaan barang", "warehouse_receiving", {"supplier_id": s}),
+        ("faktur pemasok", "rahaza_ap_invoices", {"supplier_id": s}),
+        ("retur pembelian", "rahaza_purchase_returns", {"supplier_id": s}),
+        ("permintaan pembelian", "dewi_procurement_requests", {"items.suggested_supplier_id": s}),
+        ("permintaan pembelian aksesoris", ACC_PR_COLLECTION, {"supplier_id": s}),
+        ("aset tetap", "rahaza_fixed_assets", {"supplier_id": s}),
+        # 10 Nov 2026 (keputusan owner): barang yang hanya mencatat supplier ini sebagai PEMASOK UTAMA bukan pemakaian —
+        # tautannya dilepas saat supplier dihapus (lihat `deactivate_supplier`).
+    ]
+    codes = [a.get("code") async for a in db.rahaza_coa_accounts.find(
+        {"flags.subledger_entity_id": s}, {"_id": 0, "code": 1}) if a.get("code")]
+    if codes:
+        cek.append(("baris jurnal", "rahaza_journal_lines", {"account_code": {"$in": codes}}))
+    return await hitung_pemakaian(db, cek)
+
+
 @router.delete("/suppliers/{supplier_id}")
-async def deactivate_supplier(supplier_id: str, request: Request):
-    """Nonaktifkan supplier (soft delete). Ditolak bila masih ada PO berjalan."""
+async def deactivate_supplier(supplier_id: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard`: nonaktifkan supplier (soft delete). Ditolak bila masih ada PO berjalan.
+    `?hard=true` (10 Nov 2026, permintaan owner "master data bisa dihapus"): hapus permanen bila supplier BELUM
+    dipakai PO/penerimaan/faktur/retur/PR/aset/barang/jurnal (`supplier_usage`) — 409 bila sudah. Ikut terhapus:
+    daftar harga supplier itu dan akun hutang otomatisnya (dipastikan belum pernah dijurnal)."""
     user = await _require_procurement(request)
     db = get_db()
     sup = await db.rahaza_suppliers.find_one({"id": supplier_id}, {"_id": 0})
     if not sup:
         raise HTTPException(404, "Supplier tidak ditemukan.")
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        tolak_bila_dipakai("Supplier", sup.get("name") or sup.get("code") or "", await supplier_usage(db, supplier_id))
+        harga = await db.rahaza_supplier_price_lists.delete_many({"supplier_id": supplier_id})
+        # pemasok utama barang dilepas (keputusan owner 10 Nov 2026) — barangnya tetap, hanya tanpa pemasok utama
+        utama = await db.rahaza_materials.update_many({"supplier_id": supplier_id}, {"$set": {
+            "supplier_id": "", "supplier_name": "", "updated_at": _now()}})
+        akun = await db.rahaza_coa_accounts.delete_many({"flags.subledger_entity_id": supplier_id,
+                                                         "flags.subledger_entity_type": "supplier"})
+        await db.rahaza_suppliers.delete_one({"id": supplier_id})
+        await log_activity(user["id"], user.get("name", ""), "delete", "rahaza_suppliers",
+                           f"Hapus permanen supplier {sup.get('code')} — {sup.get('name')} "
+                           f"(baris harga {harga.deleted_count}, akun hutang {akun.deleted_count}, "
+                           f"pemasok utama dilepas dari {utama.modified_count} barang)")
+        return {"ok": True, "id": supplier_id, "deleted": True}
     open_po = await db.rahaza_purchase_orders.count_documents({
         "supplier_id": supplier_id,
         "status": {"$in": ["draft", "pending_approval", "approved", "partially_received"]},

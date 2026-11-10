@@ -2,7 +2,7 @@
 from datetime import datetime
 from fastapi import Depends, HTTPException, Query
 from database import get_db
-from auth import require_auth
+from auth import log_activity, require_auth
 from routes.dewi_rnd_shared import router, now_utc, sid, serialize
 from routes.dewi_rnd_samples import RND_APPROVER_ROLES
 from routes.shared import assert_can_act
@@ -223,14 +223,39 @@ async def update_variant(variant_id: str, body: dict, user: dict = Depends(requi
     return {'ok': True}
 
 
+async def rnd_variant_usage(db, v: dict) -> dict:
+    """Varian R&D dipakai bila sudah menjadi SKU master produk: ukurannya tertaut `rahaza_model_variants`
+    (`sizes[].variant_id`, ditulis `core.master_sync`) atau style-nya sudah dipromosikan dan model hasil promosi
+    punya varian berwarna sama. Tidak ada dokumen R&D lain yang menyimpan id varian R&D."""
+    from core.hapus_master import hitung_pemakaian
+    linked = [s.get('variant_id') for s in (v.get('sizes') or []) if isinstance(s, dict) and s.get('variant_id')]
+    style = await db.dewi_rnd_styles.find_one({'id': v.get('style_id')}, {'_id': 0, 'promoted_to_model_id': 1}) \
+        if v.get('style_id') else None
+    promoted = (style or {}).get('promoted_to_model_id')
+    syarat = ([{'id': {'$in': linked}}] if linked else []) + (
+        [{'model_id': promoted, 'color_id': v['color_id']}] if promoted and v.get('color_id') else [])
+    if not syarat:
+        return {}
+    return await hitung_pemakaian(db, [('SKU master produk', 'rahaza_model_variants',
+                                        syarat[0] if len(syarat) == 1 else {'$or': syarat})])
+
+
 @router.delete('/variants/{variant_id}')
 async def delete_variant(variant_id: str, user: dict = Depends(require_auth)):
+    """Hapus permanen satu varian R&D. 10 Nov 2026 (owner "master data bisa dihapus"): dulu tanpa cek; kini
+    ditolak 409 bila varian sudah menjadi SKU master produk (`rnd_variant_usage`) — layar menawarkan Nonaktifkan (status Diarsipkan)."""
     assert_can_act(user, 'rnd.manage', portal='rnd', what='menghapus data R&D')  # T-01 2.3
+    from core.hapus_master import tolak_bila_dipakai
     db = get_db()
-    res = await db.dewi_rnd_variants.delete_one({'id': variant_id})
-    if res.deleted_count == 0:
+    v = await db.dewi_rnd_variants.find_one({'id': variant_id}, {'_id': 0})
+    if not v:
         raise HTTPException(404, 'Variant tidak ditemukan')
-    return {'ok': True}
+    nama = f"{v.get('style_code') or ''} {v.get('color') or ''}".strip()
+    tolak_bila_dipakai('Varian', nama, await rnd_variant_usage(db, v))   # layar: Nonaktifkan = status Diarsipkan
+    await db.dewi_rnd_variants.delete_one({'id': variant_id})
+    await log_activity(user.get('id') or '', user.get('name') or '', 'delete', 'rnd.variant',
+                       f"id={variant_id} {nama}")
+    return {'ok': True, 'deleted': True}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -31,6 +31,7 @@ import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { withFileAuth } from '@/lib/fileUrl';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
@@ -248,6 +249,20 @@ export default function HREmployeeModule({ token }) {
     } catch { toast.error('Gagal menonaktifkan karyawan'); }
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen hanya untuk data salah input — server menolak
+  // (409) karyawan yang sudah punya riwayat apa pun, lalu dialog kedua menawarkan Nonaktifkan.
+  const hapus = async (emp) => {
+    const aktif = emp.active !== false;
+    const hasil = await hapusMaster({
+      jenis: 'karyawan', nama: emp.name,
+      keterangan: 'Hanya untuk data yang salah input. Karyawan yang sudah punya riwayat (absensi, gaji, kasbon, cuti, '
+        + `akun login, dokumen) tidak bisa dihapus${aktif ? ' dan Anda bisa menonaktifkannya saja.' : '.'}`,
+      hapus: () => axios.delete(`${API}/api/rahaza/employees/${emp.id}?hard=true`, { headers }),
+      nonaktifkan: aktif ? () => axios.delete(`${API}/api/rahaza/employees/${emp.id}`, { headers }) : null,
+    });
+    if (hasil) { setDetail(null); load(); }
+  };
+
   const handleSave = async (form) => {
     const isEdit = !!form.id;
     const url = isEdit
@@ -317,7 +332,7 @@ export default function HREmployeeModule({ token }) {
     } },
     { kunci: 'kontak', label: 'Telepon', isi: (e) => <span className="text-sm tabular-nums">{e.phone || '—'}</span> },
     { kunci: 'lengkap', label: 'Kelengkapan', isi: (e) => <Kelengkapan pct={kelengkapan(e).pct} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (e) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (e) => (
       <div className="flex items-center justify-end gap-1">
         <Button size="sm" variant="outline" onClick={() => ubah(e)} data-testid={`employee-edit-${e.id}`}>
           <Pencil />Ubah
@@ -332,8 +347,15 @@ export default function HREmployeeModule({ token }) {
             <DropdownMenuItem onSelect={() => openLinkUser(e)} data-testid={`employee-link-${e.id}`}>
               <Link2 className="mr-2 h-4 w-4" />{e.user_id ? 'Ganti tautan akun login' : 'Tautkan akun login'}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => handleDelete(e)} className="text-[hsl(var(--danger-text))]">
-              <Power className="mr-2 h-4 w-4" />Nonaktifkan
+            {e.active !== false && (
+              <DropdownMenuItem onSelect={() => handleDelete(e)} className="text-[hsl(var(--danger-text))]"
+                data-testid={`employee-deactivate-${e.id}`}>
+                <Power className="mr-2 h-4 w-4" />Nonaktifkan
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => hapus(e)} className="text-[hsl(var(--danger-text))]"
+              data-testid={`employee-delete-${e.id}`}>
+              <Trash2 className="mr-2 h-4 w-4" />Hapus
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -6,7 +6,7 @@
  * (Excel & CSV dari server). Isian, validasi, dan panggilan server tidak berubah.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Ban, Contact, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
+import { Ban, Contact, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -20,6 +20,7 @@ import ImportExportToolbar from '../ImportExportToolbar';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { apiGet, apiPost, apiPut, apiDelete, getToken } from '../../../lib/api';
+import { hapusMaster } from '../../../lib/hapusMaster';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
 
 export const TERMS = [
@@ -60,6 +61,14 @@ export default function SalesCustomersModule() {
     if (!(await confirmDialog({ title: `Nonaktifkan pelanggan ${r.name}?`, body: 'Pelanggan tidak bisa dipilih di nota baru. Riwayat tetap ada.', confirmLabel: 'Nonaktifkan', danger: true }))) return;
     try { await apiDelete(`/sales/customers/${r.id}`); toast.success('Dinonaktifkan'); load(); } catch (e) { toast.error(e.message); }
   };
+  // 10 Nov 2026 (permintaan owner): Hapus sungguhan. Server menolak (409) bila pelanggan sudah dipakai pesanan,
+  // nota, pengiriman, piutang, atau jurnal → dialog kedua menawarkan Nonaktifkan (lib/hapusMaster).
+  const hapus = async (r) => {
+    const hasil = await hapusMaster({ jenis: 'pelanggan', nama: r.name,
+      hapus: () => apiDelete(`/sales/customers/${r.id}?hard=true`),
+      nonaktifkan: r.active !== false ? () => apiDelete(`/sales/customers/${r.id}`) : null });
+    if (hasil) load();
+  };
   const reactivate = async (r) => {
     try { await apiPut(`/sales/customers/${r.id}`, { active: true }); toast.success(`${r.name} diaktifkan lagi`); load(); } catch (e) { toast.error(e.message); }
   };
@@ -82,12 +91,15 @@ export default function SalesCustomersModule() {
     { kunci: 'status', label: 'Status', isi: (r) => (r.active === false
       ? <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />
       : <StatusBadge status="aktif" label="Aktif" tone="success" />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="flex justify-end gap-1.5" data-testid={`cust-row-${r.code}`}>
-        <Button size="sm" variant="outline" onClick={() => setForm({ ...EMPTY, ...r })} data-testid={`cust-edit-${r.code}`}><Pencil />Ubah</Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => setForm({ ...EMPTY, ...r })} title="Ubah" aria-label={`Ubah ${r.name}`}
+          data-testid={`cust-edit-${r.code}`}><Pencil /></Button>
         {r.active !== false
           ? <Button size="icon-sm" variant="ghost" onClick={() => deactivate(r)} title="Nonaktifkan" aria-label="Nonaktifkan" data-testid={`cust-deactivate-${r.code}`}><Ban /></Button>
           : <Button size="sm" variant="outline" onClick={() => reactivate(r)} data-testid={`cust-reactivate-${r.code}`}>Aktifkan</Button>}
+        <Button size="icon-sm" variant="ghost" onClick={() => hapus(r)} title="Hapus" aria-label={`Hapus ${r.name}`}
+          data-testid={`cust-delete-${r.code}`}><Trash2 /></Button>
       </div>) },
   ];
 

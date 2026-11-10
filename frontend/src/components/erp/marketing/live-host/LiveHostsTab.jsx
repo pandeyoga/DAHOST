@@ -2,10 +2,13 @@
  * Host live (Live Selling › Host live) — daftar host live.
  * Standar UI/UX v2 (8 Nov 2026): PageLayout, penyaring satu baris (akun aktif kini pilihan di baris penyaring, dulu bar
  * lebar), tabel + unduh, form = FormPopup (AddEditHostModal), label Indonesia.
+ * 10 Nov 2026: "Hapus host" dulu hanya menonaktifkan (label bohong). Kini hapus permanen bila host belum punya
+ * riwayat (shift, sesi live, pelatihan yang dikerjakan); bila sudah, server menolak (409) dan layar menawarkan
+ * Nonaktifkan.
  */
-import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { hapusMaster } from '@/lib/hapusMaster';
 import { useState, useEffect, useCallback } from 'react';
-import { Users, Plus, Edit, Trash2, RefreshCw, Search } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -73,22 +76,27 @@ export default function LiveHostsTab({ authH }) {
   }, [fetchHosts, fetchAccounts]);
 
   const handleDelete = async (host) => {
-    if (!(await confirmDialog({ title: `Hapus host live "${host.name}"?`, confirmLabel: 'Hapus', danger: true }))) return;
-    try {
-      const res = await fetch(`${API}/api/marketing/livehost/${host.id}`, {
+    const kirim = async (hard) => {
+      const res = await fetch(`${API}/api/marketing/livehost/${host.id}${hard ? '?hard=true' : ''}`, {
         method: 'DELETE',
         headers: authH,
       });
-      if (res.ok) {
-        toast.success('Host live dihapus.');
-        fetchHosts();
-      } else {
-        const err = await res.json();
-        toast.error(err.detail || 'Gagal menghapus host live');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const e = new Error((typeof err.detail === 'string' && err.detail) || (hard ? 'Gagal menghapus host live' : 'Gagal menonaktifkan host live'));
+        e.status = res.status;
+        throw e;
       }
-    } catch (e) {
-      toast.error('Gagal menghapus host live');
-    }
+    };
+    const aktif = host.status !== 'inactive';
+    const hasil = await hapusMaster({
+      jenis: 'host live', nama: host.name,
+      keterangan: 'Host dan tugas pelatihan yang belum dimulai dihapus permanen. Bila host sudah punya jadwal shift, sesi live, '
+        + 'atau pelatihan yang dikerjakan, penghapusan ditolak' + (aktif ? ' dan Anda bisa menonaktifkannya saja.' : '.'),
+      hapus: () => kirim(true),
+      nonaktifkan: aktif ? () => kirim(false) : null,
+    });
+    if (hasil) fetchHosts();
   };
 
   const displayedHosts = filterAccountId
@@ -105,10 +113,10 @@ export default function LiveHostsTab({ authH }) {
     { kunci: 'tarif', label: 'Tarif per jam', rata: 'kanan', isi: (h) => <span className="tabular-nums">{fmtRp(h.hourly_rate)}</span> },
     { kunci: 'toko', label: 'Toko yang ditugaskan', isi: (h) => <span className="text-sm">{namaToko(h) || <span className="text-muted-foreground">Belum ditugaskan</span>}</span> },
     { kunci: 'status', label: 'Status', isi: (h) => <StatusBadge status={h.status} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (h) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (h) => (
       <div className="flex justify-end gap-1">
         <Button variant="ghost" size="icon-sm" onClick={() => { setEditingHost(h); setShowAddEditModal(true); }}
-          data-testid={`edit-host-${h.id}`} title="Ubah host" aria-label="Ubah host"><Edit /></Button>
+          data-testid={`edit-host-${h.id}`} title="Ubah host" aria-label="Ubah host"><Pencil /></Button>
         <Button variant="ghost" size="icon-sm" className="text-[hsl(var(--danger-text))]" onClick={() => handleDelete(h)}
           data-testid={`delete-host-${h.id}`} title="Hapus host" aria-label="Hapus host"><Trash2 /></Button>
       </div>) },

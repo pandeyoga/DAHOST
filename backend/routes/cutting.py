@@ -40,6 +40,15 @@ KEPUTUSAN DESAIN (hasil pemetaan database — bukan tebakan)
    = (qty kain terpakai × unit_cost kain) / qty potongan jadi, lalu ditulis ke
    `unit_cost` master potongan supaya jurnal persediaan & HPP hilir tetap benar.
 
+5. BANYAK KAIN × BANYAK HASIL (keputusan owner 10 Nov 2026, SSOT `core.cutting_lines`):
+   satu order = `inputs[]` (kain dari master + gulungan, boleh beberapa kain) dan `outputs[]` (model × varian ×
+   target pcs + baris PO opsional, masing-masing master potongannya sendiri, `roll_ids` = gulungan yang dipakai
+   untuk hasil itu — ketelusuran, bukan dasar HPP). Lapor progres: pemakaian & gulungan PER KAIN, pcs PER HASIL;
+   stok tiap kain dipotong sekali, stok potongan bertambah per hasil. HPP potongan per pcs = Σ(kain terpakai ×
+   harga satuan kain) ÷ total pcs hasil SEMUA baris (sama untuk semua baris; order satu-baris = angka lama).
+   Dokumen lama satu-kain/satu-hasil tetap terbaca (dinormalkan saat dibaca) dan field lama tingkat atas tetap
+   diisi (`cutting_lines.compat_fields`).
+
 STATE MACHINE
 -------------
    draft ──start──▶ in_progress ──complete──▶ completed
@@ -68,6 +77,7 @@ from core import cut_panel_health   # SESI #32: penjaga & pembersih potongan yat
 from core import cut_panel_master   # 2026-09-12: SSOT identitas potongan = model × warna × ukuran (BOM potongan)
 from core import bom_uom as _bom_uom  # cakupan lebar: kemasan + global + kain (gsm & lebar)
 from core import product_costing  # BOM → kebutuhan kain per pcs (rencana tidak lagi ditebak)
+from core import cutting_lines  # 2026-11-10: banyak kain × banyak hasil per order (SSOT bentuk baris)
 from core.stock_service import InsufficientStock
 from core import doc_lock
 from database import get_db
@@ -108,6 +118,10 @@ async def ensure_cutting_indexes():
     await db[ORDERS].create_index("status")
     await db[ORDERS].create_index("input_material_id")
     await db[ORDERS].create_index("output_material_id")
+    # 2026-11-10: order banyak baris dicari lewat barisnya (pemakaian master, kesehatan potongan, ketelusuran roll)
+    await db[ORDERS].create_index("inputs.input_material_id")
+    await db[ORDERS].create_index("outputs.output_material_id")
+    await db[ORDERS].create_index("inputs.roll_ids.roll_id")
     await db[PROGRESS].create_index("id", unique=True)
     await db[PROGRESS].create_index("cutting_order_id")
     # FASE H-6b — satu laporan progres = MAKSIMAL satu dokumen Pengeluaran Material.
@@ -228,15 +242,36 @@ async def _default_location(db, location_id: Optional[str] = None,
 
 async def _enrich(db, o: dict) -> dict:
     o["progress_count"] = await db[PROGRESS].count_documents({"cutting_order_id": o["id"]})
+    # 2026-11-10: dokumen lama dinormalkan saat dibaca (`inputs[0]`/`outputs[0]`) — tidak dimigrasi paksa.
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
+    for i in ins:
+        i["input_remaining"] = round(max(_f(i.get("planned_input_qty")) - _f(i.get("consumed_input_qty")), 0), 4)
+        i["label"] = cutting_lines.input_label(i)
+    for x in outs:
+        p = _f(x.get("planned_output_qty"))
+        x["output_remaining"] = round(max(p - _f(x.get("produced_qty")), 0), 4)
+        x["progress_pct"] = round(_f(x.get("produced_qty")) / p * 100, 1) if p > 0 else 0.0
+        x["label"] = cutting_lines.output_label(x)
+    o["inputs"], o["outputs"] = ins, outs
+    o["multi"] = len(ins) > 1 or len(outs) > 1
     planned_in = _f(o.get("planned_input_qty"))
     consumed = _f(o.get("consumed_input_qty"))
-    planned_out = _f(o.get("planned_output_qty"))
-    produced = _f(o.get("produced_qty"))
+    planned_out = sum(_f(x.get("planned_output_qty")) for x in outs) if outs else _f(o.get("planned_output_qty"))
+    produced = sum(_f(x.get("produced_qty")) for x in outs) if outs else _f(o.get("produced_qty"))
     o["input_remaining"] = round(max(planned_in - consumed, 0), 4)
     o["output_remaining"] = round(max(planned_out - produced, 0), 4)
     o["progress_pct"] = round((produced / planned_out * 100), 1) if planned_out > 0 else 0.0
     o["yield_per_input"] = round(produced / consumed, 3) if consumed > 0 else 0.0
+    o["roll_usage"] = cutting_lines.roll_usage(o)
     return o
+
+
+async def _save_lines(db, oid: str, inputs: list, outputs: list, extra: Optional[dict] = None,
+                      cond: Optional[dict] = None):
+    """Tulis baris + field lama tingkat atas (kompatibel) dalam SATU update. `cond` = syarat tambahan (kunci)."""
+    patch = {"inputs": inputs, "outputs": outputs, **cutting_lines.compat_fields(inputs, outputs),
+             "updated_at": _now(), **(extra or {})}
+    return await db[ORDERS].update_one({"id": oid, **(cond or {})}, {"$set": patch})
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -466,6 +501,36 @@ async def panels_cleanup(request: Request):
     return serialize_doc(res)
 
 
+@router.delete("/panels/{panel_id}")
+async def delete_panel(panel_id: str, request: Request):
+    """Hapus PERMANEN satu master potongan (tombol Hapus per baris, 10 Nov 2026).
+
+    Pemeriksaannya SAMA dengan pembersihan massal: `core.cut_panel_health.inspect` (order cutting yang menunjuknya,
+    buku besar & kartu stok, `REFERENCE_CHECKS`: BOM, pengeluaran/permintaan material, opname, PO, penerimaan) —
+    daftar cek tidak disalin. Bedanya: potongan yang tidak yatim pun boleh dihapus selama memang belum dipakai.
+    Bila sudah dipakai → 409 dengan rinciannya, dan layar menawarkan Nonaktifkan (Master Item).
+    """
+    user = await _require_cutting_user(request)
+    db = get_db()
+    panel = await db.rahaza_materials.find_one({"id": panel_id, "is_cut_panel": True}, {"_id": 0})
+    if not panel:
+        raise HTTPException(404, "Master potongan tidak ditemukan.")
+    row = await cut_panel_health.inspect(db, panel)
+    from core.hapus_master import tolak_bila_dipakai, SARAN_NONAKTIF
+    pakai = {label: n for label, n in (("order cutting", row["orders_referencing"]),
+                                        ("baris buku besar stok", row["ledger_rows"]),
+                                        ("baris kartu stok", row["card_rows"])) if n}
+    pakai.update(row["references"])
+    kode = row["code"] or row["name"]
+    if row["stock_qty"] > 0:
+        raise HTTPException(409, f'Master potongan "{kode}" tidak bisa dihapus karena masih ada stok '
+                                 f'{row["stock_qty"]:g} {row["unit"]} di gudang. {SARAN_NONAKTIF}')
+    tolak_bila_dipakai("Master potongan", kode, pakai)
+    await db.rahaza_materials.delete_one({"id": panel_id, "is_cut_panel": True})
+    await log_activity(user["id"], user.get("name", ""), "delete", "cutting.panels", kode)
+    return {"ok": True, "deleted": True, "message": f"Master potongan {kode} dihapus."}
+
+
 async def _input_material(db, material_id: str) -> dict:
     return await db.rahaza_materials.find_one(
         {"id": material_id},
@@ -503,20 +568,20 @@ async def _assert_rolls_available(db, mat: dict, label: str) -> list[dict]:
     return rolls
 
 
-async def _plan_roll_consumption(db, o: dict, body: dict, input_used: float) -> tuple[list, dict]:
-    """Rencana pemakaian gulungan untuk SATU laporan progres (H-6).
+async def _plan_roll_consumption(db, o: dict, line: dict, body: dict, input_used: float) -> tuple[list, dict]:
+    """Rencana pemakaian gulungan SATU KAIN (`line` = baris `inputs[]`) untuk satu laporan progres (H-6).
 
     Dihitung SEBELUM stok dipotong: kalau gulungan yang dipilih tidak cukup atau
     tidak dipilih, laporan ditolak tanpa menyisakan stok yang sudah turun sebagian.
     Kembalian `plan` kosong HANYA bila materialnya memang tidak dilacak per gulungan
     (mis. potongan bersatuan pcs) — bukan karena rollnya lupa dipilih.
     """
-    mat = await _input_material(db, o["input_material_id"])
-    label = f"{o.get('input_material_code', '')} — {o.get('input_material_name', '')}".strip(" —")
+    mat = await _input_material(db, line["input_material_id"])
+    label = cutting_lines.input_label(line)
     if not fabric_roll_engine.is_roll_material(mat):
         return [], {"tracked": False}
 
-    open_rolls = await fabric_roll_engine.open_rolls(db, o["input_material_id"])
+    open_rolls = await fabric_roll_engine.open_rolls(db, line["input_material_id"])
     if not open_rolls:
         raise HTTPException(400, (
             f"Kain {label} belum punya satu pun gulungan bersisa di sistem, jadi tidak bisa "
@@ -565,7 +630,8 @@ async def _plan_roll_consumption(db, o: dict, body: dict, input_used: float) -> 
     unit_label = f" {chosen[0].get('uom', '')}" if chosen else ""
     plan = fabric_roll_engine.allocate(chosen, input_used, unit_label)
     return plan, {"tracked": True, "picked": [r["id"] for r in chosen],
-                  "available": len(open_rolls)}
+                  "available": len(open_rolls),
+                  "lots": {r["id"]: (r.get("color_lot") or r.get("color") or "") for r in chosen}}
 
 
 async def _ensure_output_material(db, o: dict, user: dict) -> dict:
@@ -756,6 +822,12 @@ async def list_orders(request: Request, status: Optional[str] = None,
             {"style_sku": {"$regex": q, "$options": "i"}},
             {"input_material_name": {"$regex": q, "$options": "i"}},
             {"output_material_code": {"$regex": q, "$options": "i"}},
+            # 2026-11-10: order banyak baris — cari juga di baris kain & hasil
+            {"inputs.input_material_name": {"$regex": q, "$options": "i"}},
+            {"inputs.input_material_code": {"$regex": q, "$options": "i"}},
+            {"outputs.style_name": {"$regex": q, "$options": "i"}},
+            {"outputs.output_material_code": {"$regex": q, "$options": "i"}},
+            {"outputs.variant_sku": {"$regex": q, "$options": "i"}},
         ]
     rows = await db[ORDERS].find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(500)
     for r in rows:
@@ -763,13 +835,16 @@ async def list_orders(request: Request, status: Optional[str] = None,
     return serialize_doc(rows)
 
 
-def summarize_cutting_units(rows: list) -> dict:
+def summarize_cutting_units(rows: list, totals: Optional[dict] = None) -> dict:
     """Ringkas hasil `$group` per satuan kain (murni; dipakai dashboard Cutting & Produksi).
 
     Tahap 1 (6 Nov 2026): dulu kain terpakai, sisa, dan yield seluruh order DIJUMLAH
     walau satuannya berbeda (kg + yard + meter = angka tanpa arti), dan order BATAL ikut
     masuk rencana. Sekarang angka kain per satuan (`by_unit`); angka tunggal hanya diisi
-    bila semua order memakai satu satuan, selain itu None. Potongan (pcs) tetap dijumlah."""
+    bila semua order memakai satu satuan, selain itu None. Potongan (pcs) tetap dijumlah.
+
+    2026-11-10: order banyak kain berbeda satuan muncul di tiap satuannya (pcs per satuan kain), jadi total
+    rencana/hasil pcs dikirim terpisah lewat `totals` ({planned, produced}) supaya tidak terhitung dua kali."""
     units: dict = {}
     planned = produced = 0.0
     for r in rows or []:
@@ -788,6 +863,8 @@ def summarize_cutting_units(rows: list) -> dict:
                         "produced": round(x["produced"], 2),
                         "yield": round(x["produced"] / x["consumed"], 3) if x["consumed"] > 0 else None})
     single = by_unit[0] if len(by_unit) == 1 else None
+    if totals is not None:
+        planned, produced = _f(totals.get("planned")), _f(totals.get("produced"))
     return {"planned_output": round(planned, 2), "produced": round(produced, 2), "by_unit": by_unit,
             "consumed": single["consumed"] if single else None,
             "waste": single["waste"] if single else None,
@@ -795,16 +872,29 @@ def summarize_cutting_units(rows: list) -> dict:
 
 
 async def cutting_unit_totals(db) -> dict:
-    """Total order cutting yang TIDAK batal, dipisah per satuan kain."""
+    """Total order cutting yang TIDAK batal, dipisah per satuan kain.
+
+    2026-11-10: kain per satuan dibaca dari `unit_totals` order (satu entri per satuan, ditulis
+    `cutting_lines.compat_fields`); dokumen lama tanpa `unit_totals` memakai field tingkat atasnya."""
+    match = {"$match": {"status": {"$ne": STATUS_CANCELLED}}}
     rows = await db[ORDERS].aggregate([
-        {"$match": {"status": {"$ne": STATUS_CANCELLED}}},
-        {"$group": {"_id": "$input_unit", "n": {"$sum": 1},
-                    "planned": {"$sum": "$planned_output_qty"},
-                    "produced": {"$sum": "$produced_qty"},
-                    "consumed": {"$sum": "$consumed_input_qty"},
-                    "waste": {"$sum": "$waste_qty"}}},
+        match,
+        {"$project": {"produced": {"$ifNull": ["$produced_qty", 0]},
+                      "ut": {"$ifNull": ["$unit_totals", [{"unit": "$input_unit",
+                                                           "consumed": "$consumed_input_qty",
+                                                           "waste": "$waste_qty"}]]}}},
+        {"$unwind": "$ut"},
+        {"$group": {"_id": "$ut.unit", "n": {"$sum": 1},
+                    "produced": {"$sum": "$produced"},
+                    "consumed": {"$sum": "$ut.consumed"},
+                    "waste": {"$sum": "$ut.waste"}}},
     ]).to_list(50)
-    return summarize_cutting_units(rows)
+    tot = await db[ORDERS].aggregate([
+        match,
+        {"$group": {"_id": None, "planned": {"$sum": "$planned_output_qty"},
+                    "produced": {"$sum": "$produced_qty"}}},
+    ]).to_list(1)
+    return summarize_cutting_units(rows, totals=(tot[0] if tot else {"planned": 0, "produced": 0}))
 
 
 @router.get("/dashboard")
@@ -882,6 +972,46 @@ async def backfill_issue_docs(request: Request):
     return serialize_doc(res)
 
 
+@router.get("/rolls/{roll_id}/usage")
+async def roll_usage(roll_id: str, request: Request):
+    """Satu gulungan dipakai untuk hasil potongan apa (2026-11-10, permintaan owner: "roll kain ini dipakai buat
+    membuat potongan apa"). Read-only; dipakai rincian order cutting dan bisa dipanggil layar Roll Kain."""
+    await require_auth(request)
+    db = get_db()
+    rows = await db[ORDERS].find(
+        {"$or": [{"inputs.roll_ids.roll_id": roll_id}, {"roll_ids.roll_id": roll_id}]}, {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+    items = []
+    for o in rows:
+        for u in cutting_lines.roll_usage(o):
+            if u["roll_id"] == roll_id:
+                items.append({**u, "cutting_order_id": o.get("id"), "cutting_number": o.get("number", ""),
+                              "status": o.get("status", ""), "dipakai_untuk": cutting_lines.roll_usage_text(u)})
+    return serialize_doc({"roll_id": roll_id, "items": items, "total": len(items),
+                          "dipakai_untuk": "; ".join(f"{x['cutting_number']}: {x['dipakai_untuk']}" for x in items)})
+
+
+async def _hpp_summary(db, o: dict) -> dict:
+    """Ringkasan HPP order: biaya kain nyata ÷ pcs jadi, dan perkiraan dari rencana (harga kain sekarang)."""
+    totals = await cut_panel_value.order_value_totals(db, o["id"])
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
+    produced = sum(_f(x.get("produced_qty")) for x in outs)
+    planned_pcs = sum(_f(x.get("planned_output_qty")) for x in outs)
+    est, missing = 0.0, []
+    for i in ins:
+        m = await db.rahaza_materials.find_one({"id": i.get("input_material_id")}, {"_id": 0, "unit_cost": 1}) or {}
+        cost = _f(m.get("unit_cost")) or _f(i.get("input_unit_cost"))
+        if cost <= 0:
+            missing.append(i.get("input_material_code") or i.get("input_material_name") or "")
+        est += _f(i.get("planned_input_qty")) * cost
+    value_total = _f(totals.get("value_total"))
+    return {"value_total": round(value_total, 2), "produced": round(produced, 4),
+            "per_pcs": cutting_lines.cost_per_pcs(value_total, produced),
+            "estimate_total": round(est, 2), "planned_pcs": round(planned_pcs, 4),
+            "estimate_per_pcs": cutting_lines.cost_per_pcs(est, planned_pcs),
+            "missing_price": [x for x in missing if x]}
+
+
 @router.get("/orders/{oid}")
 async def get_order(oid: str, request: Request):
     await require_auth(request)
@@ -891,6 +1021,17 @@ async def get_order(oid: str, request: Request):
     o["progress"] = await db[PROGRESS].find(
         {"cutting_order_id": oid}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
+    # 2026-11-10: stok per baris kain & per baris hasil
+    for i in o["inputs"]:
+        if i.get("input_material_id"):
+            i["input_stock"] = round(_f(await stock_service.get_onhand(i["input_material_id"], db=db)), 4)
+    for x in o["outputs"]:
+        if x.get("output_material_id"):
+            om = await db.rahaza_materials.find_one(
+                {"id": x["output_material_id"]}, {"_id": 0, "id": 1, "unit_cost": 1, "value_status": 1})
+            if om:
+                x["output_stock"] = round(_f(await stock_service.get_onhand(om["id"], db=db)), 4)
+                x["panel_unit_cost"] = round(_f(om.get("unit_cost")), 2)
     if o.get("output_material_id"):
         om = await db.rahaza_materials.find_one({"id": o["output_material_id"]}, {"_id": 0})
         if om:
@@ -898,114 +1039,232 @@ async def get_order(oid: str, request: Request):
             o["output_stock"] = round(_f(await stock_service.get_onhand(om["id"], db=db)), 4)
     if o.get("input_material_id"):
         o["input_stock"] = round(_f(await stock_service.get_onhand(o["input_material_id"], db=db)), 4)
+    o["hpp_summary"] = await _hpp_summary(db, o)
     return serialize_doc(o)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-11-10 — BARIS KAIN & BARIS HASIL (dipakai buat & ubah order)
+# ═════════════════════════════════════════════════════════════════════════════
+_OUTPUT_KEYS = ("model_id", "variant_id", "size_id", "po_item_id", "output_color", "output_material_code")
+_LEGACY_IDENTITY_KEYS = ("model_id", "variant_id", "size_id", "po_item_id")
+
+
+def _body_lines(body: dict) -> tuple[list, list]:
+    """Body baru (`inputs[]`/`outputs[]`) atau body LAMA (satu kain + satu hasil di tingkat atas) → daftar baris."""
+    ins = body.get("inputs") if isinstance(body.get("inputs"), list) else None
+    outs = body.get("outputs") if isinstance(body.get("outputs"), list) else None
+    if ins is None:
+        ins = ([{"input_material_id": body.get("input_material_id"),
+                 "planned_input_qty": body.get("planned_input_qty"),
+                 "roll_ids": body.get("roll_ids") or []}]
+               if (body.get("input_material_id") or "").strip() else [])
+    if outs is None:
+        outs = [{**{k: body.get(k) for k in _OUTPUT_KEYS if k in body},
+                 "planned_output_qty": body.get("planned_output_qty")}]
+    return ins, outs
+
+
+def _prefixed(e: HTTPException, prefix: str) -> HTTPException:
+    return HTTPException(e.status_code, f"{prefix}{e.detail}") if prefix else e
+
+
+async def _build_inputs(db, raw: list, loc_id: str, loc_name: str) -> list[dict]:
+    """Validasi & susun baris KAIN: kain wajib dari master, satuan kain roll, rencana > 0, gulungan bersisa wajib
+    untuk kain yang dilacak per gulungan, gulungan terpilih harus milik kain itu & di gudang order."""
+    if not raw:
+        raise HTTPException(400, "Material kain (input) wajib dipilih.")
+    many = len(raw) > 1
+    out, seen = [], set()
+    for n, r in enumerate(raw, 1):
+        pre = f"Kain baris {n}: " if many else ""
+        mid = str((r or {}).get("input_material_id") or "").strip()
+        if not mid:
+            raise HTTPException(400, f"{pre}Material kain (input) wajib dipilih.")
+        mat = await db.rahaza_materials.find_one({"id": mid, "active": True}, {"_id": 0})
+        if not mat:
+            raise HTTPException(404, f"{pre}Material kain tidak ditemukan / tidak aktif.")
+        if mid in seen:
+            raise HTTPException(400, (
+                f"Kain {mat.get('code') or ''} dipilih dua kali — gabungkan jadi satu baris kain "
+                "(gulungannya boleh dicentang lebih dari satu)."))
+        seen.add(mid)
+        if mat.get("is_cut_panel"):
+            raise HTTPException(400, f"{pre}Material yang dipilih adalah POTONGAN, bukan kain roll.")
+        unit = (mat.get("unit") or "").lower()
+        if unit not in INPUT_UNITS:
+            raise HTTPException(
+                400, f"{pre}Satuan material '{unit}' bukan satuan kain roll ({sorted(INPUT_UNITS)}).")
+        planned = _f(r.get("planned_input_qty"))
+        if planned <= 0:
+            raise HTTPException(400, f"{pre}Rencana pemakaian kain harus > 0.")
+        avail_total = _f(await stock_service.get_onhand(mat["id"], db=db))
+        stock_here = next((x["qty"] for x in await _stock_locations(db, mat["id"])
+                           if x["location_id"] == loc_id), 0.0)
+        # FASE H-6: kain yang dilacak per gulungan harus punya gulungan bersisa SEBELUM
+        # order dibuat — gagal cepat lebih baik daripada order yang mentok saat progres.
+        open_rolls = await _assert_rolls_available(db, mat, f"{mat.get('code')} — {mat.get('name')}")
+        roll_docs: list = []
+        rolls_in = r.get("roll_ids") or []
+        if rolls_in:
+            by_id = {x["id"]: x for x in open_rolls}
+            by_no = {str(x.get("roll_no", "")): x for x in open_rolls}
+            unknown = []
+            for rid in rolls_in:
+                rid = rid.get("roll_id") if isinstance(rid, dict) else rid
+                x = by_id.get(str(rid)) or by_no.get(str(rid))
+                if not x:
+                    unknown.append(str(rid))
+                    continue
+                if any(d["roll_id"] == x["id"] for d in roll_docs):
+                    continue
+                roll_docs.append({
+                    "roll_id": x["id"], "roll_no": x.get("roll_no", ""),
+                    "uom": x.get("uom", ""), "color_lot": x.get("color_lot") or x.get("color") or "",
+                    "remaining": round(fabric_roll_engine.remaining_of(x), 3),
+                    "consumed_qty": 0.0,
+                })
+            if unknown:
+                raise HTTPException(400, (
+                    f"{pre}Gulungan {', '.join(unknown)} bukan milik kain {mat.get('code')} atau sudah "
+                    f"habis. Gulungan yang bisa dipilih: {_roll_hint(open_rolls)}"))
+            far = await _roll_location_errors(db, [by_id[d["roll_id"]] for d in roll_docs], loc_id)
+            if far:
+                raise HTTPException(400, (
+                    f"{pre}Gulungan {', '.join(far)} tercatat di gudang lain, bukan di "
+                    f"{loc_name or 'gudang sumber kain'}. Pindahkan gulungannya dulu (transfer) atau pilih "
+                    "gulungan di gudang ini."))
+            picked_total = sum(d["remaining"] for d in roll_docs)
+            if picked_total + 0.0001 < planned:
+                raise HTTPException(400, (
+                    f"{pre}Sisa gulungan terpilih {picked_total:,.2f} {roll_docs[0]['uom']} lebih kecil "
+                    f"dari rencana pemakaian {planned:,.2f} {unit}. Tambah gulungan atau "
+                    "turunkan rencana pemakaiannya."))
+        out.append({
+            "line_id": f"in-{n}",
+            "input_material_id": mat["id"],
+            "input_material_code": mat.get("code", ""),
+            "input_material_name": mat.get("name", ""),
+            "input_unit": unit,
+            "input_color": mat.get("color", ""),
+            "input_unit_cost": _f(mat.get("unit_cost")),
+            "planned_input_qty": round(planned, 4),
+            "consumed_input_qty": 0.0, "waste_qty": 0.0, "leftover_qty": 0.0,
+            # tidak memilih gulungan di awal masih boleh (dipilih saat lapor progres), tetapi order
+            # menyimpan pengingat bahwa gulungan WAJIB ditunjuk nanti (`roll_required`).
+            "roll_ids": roll_docs,
+            "roll_required": bool(open_rolls),
+            "stock_at_create": round(stock_here, 4),
+            "stock_total_at_create": round(avail_total, 4),
+        })
+    return out
+
+
+def _link_rolls(raw_ids, inputs: list[dict], prefix: str = "") -> list[str]:
+    """Gulungan yang dipakai untuk satu baris hasil = bagian dari gulungan yang dipilih di baris kain order."""
+    pool = {rr["roll_id"]: rr for i in inputs for rr in (i.get("roll_ids") or [])}
+    by_no = {str(rr.get("roll_no") or ""): rid for rid, rr in pool.items()}
+    out, unknown = [], []
+    for v in raw_ids or []:
+        rid = str(v.get("roll_id") if isinstance(v, dict) else v or "").strip()
+        if not rid:
+            continue
+        rid = rid if rid in pool else by_no.get(rid, "")
+        if not rid:
+            unknown.append(str(v))
+        elif rid not in out:
+            out.append(rid)
+    if unknown:
+        raise HTTPException(400, (
+            f"{prefix}Gulungan {', '.join(unknown)} tidak dipilih di bagian Kain & gulungan order ini — "
+            "centang dulu gulungannya di baris kain."))
+    return out
+
+
+async def _build_outputs(db, raw: list, inputs: list[dict]) -> list[dict]:
+    """Validasi & susun baris HASIL: model wajib dari master, ukuran wajib, target > 0, baris PO opsional,
+    tidak ada dua baris hasil yang sama, gulungan dipakai ⊆ gulungan order (satu baris hasil = semua gulungan)."""
+    raw = raw or [{}]
+    many = len(raw) > 1
+    fabric = {}
+    if inputs:
+        fabric = await db.rahaza_materials.find_one({"id": inputs[0]["input_material_id"]}, {"_id": 0}) or {}
+    out, seen = [], set()
+    for n, r in enumerate(raw, 1):
+        r = r or {}
+        pre = f"Hasil baris {n}: " if many else ""
+        planned = _f(r.get("planned_output_qty"))
+        if planned <= 0:
+            raise HTTPException(400, f"{pre}Rencana hasil potongan (pcs) harus > 0.")
+        try:
+            ident = await _resolve_identity(db, model_id=str(r.get("model_id") or "").strip(),
+                                            body=r, fabric=fabric)
+        except HTTPException as e:
+            raise _prefixed(e, pre)
+        key = (ident["model_id"], ident["variant_id"], ident["size_id"],
+               (ident["output_color"] or "").lower(), ident["po_item_id"])
+        if key in seen:
+            raise HTTPException(400, (
+                f"{pre}Hasil yang sama (model · varian · ukuran · baris PO) sudah ada di baris lain — "
+                "gabungkan target pcs-nya di satu baris."))
+        seen.add(key)
+        out.append({"line_id": f"out-{n}", **ident, "planned_output_qty": round(planned, 4),
+                    "produced_qty": 0.0, "output_unit_cost": 0.0,
+                    "roll_ids": _link_rolls(r.get("roll_ids"), inputs, pre)})
+    if len(out) == 1:   # satu hasil: semua gulungan order memang dipakai untuk hasil itu
+        out[0]["roll_ids"] = [rr["roll_id"] for i in inputs for rr in (i.get("roll_ids") or [])]
+    return out
+
+
+def _relink_outputs(outputs: list[dict], inputs: list[dict]) -> list[dict]:
+    """Setelah baris kain berubah: buang tautan ke gulungan yang tidak lagi dipilih (satu hasil = semua)."""
+    pool = [rr["roll_id"] for i in inputs for rr in (i.get("roll_ids") or [])]
+    for x in outputs:
+        x["roll_ids"] = list(pool) if len(outputs) == 1 else [r for r in (x.get("roll_ids") or []) if r in pool]
+    return outputs
+
+
+def _source_fabric_id(line: dict, inputs: list[dict]) -> str:
+    """Kain asal sebuah hasil (dicatat di master potongan): kain dari gulungan yang ditautkan, selain itu kain pertama."""
+    linked = set(line.get("roll_ids") or [])
+    for i in inputs:
+        if linked & {rr.get("roll_id") for rr in (i.get("roll_ids") or [])}:
+            return i.get("input_material_id") or ""
+    return (inputs[0].get("input_material_id") or "") if inputs else ""
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CRUD ORDER (lanjutan)
+# ═════════════════════════════════════════════════════════════════════════════
 @router.post("/orders")
 async def create_order(request: Request):
+    """Buat order cutting (draf). 2026-11-10: `inputs[]` (kain + gulungan, boleh banyak) dan `outputs[]` (model ×
+    varian × target pcs + baris PO opsional, boleh banyak); body lama satu-kain/satu-hasil tetap diterima."""
     user = await _require_cutting_user(request)
     db = get_db()
     body = await request.json()
-
-    input_material_id = (body.get("input_material_id") or "").strip()
-    if not input_material_id:
+    raw_in, raw_out = _body_lines(body)
+    if not raw_in:
         raise HTTPException(400, "Material kain (input) wajib dipilih.")
-    mat = await db.rahaza_materials.find_one({"id": input_material_id, "active": True}, {"_id": 0})
-    if not mat:
-        raise HTTPException(404, "Material kain tidak ditemukan / tidak aktif.")
-    if mat.get("is_cut_panel"):
-        raise HTTPException(400, "Material yang dipilih adalah POTONGAN, bukan kain roll.")
-    unit = (mat.get("unit") or "").lower()
-    if unit not in INPUT_UNITS:
-        raise HTTPException(
-            400, f"Satuan material '{unit}' bukan satuan kain roll ({sorted(INPUT_UNITS)}).")
-
-    planned_input = _f(body.get("planned_input_qty"))
-    planned_output = _f(body.get("planned_output_qty"))
-    if planned_input <= 0:
-        raise HTTPException(400, "Rencana pemakaian kain harus > 0.")
-    if planned_output <= 0:
-        raise HTTPException(400, "Rencana hasil potongan (pcs) harus > 0.")
-
     # ── STYLE/PRODUK WAJIB DARI MASTER (keputusan pemilik 2026-08-21) ─────────
     # 2026-11-06 (Tahap 2): model × varian × UKURAN (wajib) × warna + potongan BOM + baris PO
     # (opsional) diselesaikan satu fungsi `_resolve_identity` (dipakai juga oleh ubah order).
-    ident = await _resolve_identity(db, model_id=(body.get("model_id") or "").strip(), body=body, fabric=mat)
-
-    loc_id, loc_name = await _default_location(db, body.get("location_id"), mat["id"])
-    avail_here = _f(await stock_service.get_onhand(mat["id"], db=db))
-    stock_here = next((x["qty"] for x in await _stock_locations(db, mat["id"])
-                       if x["location_id"] == loc_id), 0.0)
-
-    rolls_in = body.get("roll_ids") or []
-    roll_docs = []
-    # FASE H-6: kain yang dilacak per gulungan harus punya gulungan bersisa SEBELUM
-    # order dibuat — gagal cepat lebih baik daripada order yang mentok saat progres.
-    open_rolls = await _assert_rolls_available(db, mat, f"{mat.get('code')} — {mat.get('name')}")
-    if rolls_in:
-        by_id = {r["id"]: r for r in open_rolls}
-        by_no = {str(r.get("roll_no", "")): r for r in open_rolls}
-        unknown = []
-        for rid in rolls_in:
-            r = by_id.get(str(rid)) or by_no.get(str(rid))
-            if not r:
-                unknown.append(str(rid))
-                continue
-            if any(x["roll_id"] == r["id"] for x in roll_docs):
-                continue
-            roll_docs.append({
-                "roll_id": r["id"], "roll_no": r.get("roll_no", ""),
-                "uom": r.get("uom", ""),
-                "remaining": round(fabric_roll_engine.remaining_of(r), 3),
-                "consumed_qty": 0.0,
-            })
-        if unknown:
-            raise HTTPException(400, (
-                f"Gulungan {', '.join(unknown)} bukan milik kain {mat.get('code')} atau sudah "
-                f"habis. Gulungan yang bisa dipilih: {_roll_hint(open_rolls)}"))
-        far = await _roll_location_errors(db, [by_id[x["roll_id"]] for x in roll_docs], loc_id)
-        if far:
-            raise HTTPException(400, (
-                f"Gulungan {', '.join(far)} tercatat di gudang lain, bukan di {loc_name or 'gudang sumber kain'}. "
-                "Pindahkan gulungannya dulu (transfer) atau pilih gulungan di gudang ini."))
-        picked_total = sum(x["remaining"] for x in roll_docs)
-        if picked_total + 0.0001 < planned_input:
-            raise HTTPException(400, (
-                f"Sisa gulungan terpilih {picked_total:,.2f} {roll_docs[0]['uom']} lebih kecil "
-                f"dari rencana pemakaian {planned_input:,.2f} {unit}. Tambah gulungan atau "
-                "turunkan rencana pemakaiannya."))
-    elif open_rolls:
-        # Tidak memilih di awal masih boleh (gulungan dipilih saat lapor progres),
-        # tetapi order menyimpan pengingat bahwa gulungan WAJIB ditunjuk nanti.
-        roll_docs = []
+    loc_id, loc_name = await _default_location(db, body.get("location_id"))
+    inputs = await _build_inputs(db, raw_in, loc_id, loc_name)
+    outputs = await _build_outputs(db, raw_out, inputs)
 
     number = await gen_prefixed_number(db, ORDERS, "number", f"CUT-{_now():%Y}-", 4)
     doc = {
         "id": _uid(),
         "number": number,
         "status": STATUS_DRAFT,
-        # input
-        "input_material_id": mat["id"],
-        "input_material_code": mat.get("code", ""),
-        "input_material_name": mat.get("name", ""),
-        "input_unit": unit,
-        "input_color": mat.get("color", ""),
-        "input_unit_cost": _f(mat.get("unit_cost")),
-        "planned_input_qty": round(planned_input, 4),
-        "consumed_input_qty": 0.0,
-        "roll_ids": roll_docs,
-        "roll_required": bool(open_rolls),
         "location_id": loc_id,
         "location_name": loc_name,
-        "stock_at_create": round(stock_here, 4),
-        "stock_total_at_create": round(avail_here, 4),
-        # output — identitasnya DARI MASTER (model + varian + ukuran), bukan ketikan
-        **ident,
+        "inputs": inputs,
+        "outputs": outputs,
+        # field lama tingkat atas (kompatibel) — order satu baris persis seperti dulu
+        **cutting_lines.compat_fields(inputs, outputs),
         "output_unit": OUTPUT_UNIT,
-        "planned_output_qty": round(planned_output, 4),
-        "produced_qty": 0.0,
-        "waste_qty": 0.0,
-        "leftover_qty": 0.0,
         "output_unit_cost": 0.0,
         # meta
         "target_date": body.get("target_date") or None,
@@ -1028,49 +1287,76 @@ async def update_order(oid: str, request: Request):
     if o["status"] != STATUS_DRAFT:
         raise HTTPException(400, "Hanya cutting berstatus draft yang bisa diubah.")
     body = await request.json()
-    patch: dict = {"updated_at": _now()}
-    # Style/produk hanya boleh berganti lewat MASTER (model + varian) — bukan
-    # ketikan bebas, agar order draft tidak bisa "lepas" dari master produk.
-    # 2026-11-06 (Tahap 2): ganti model/varian/ukuran/baris PO = identitas DAN output dihitung
-    # ulang (dulu output model lama tertinggal ⇒ hasil potong masuk potongan model lama).
-    if any(k in body for k in ("model_id", "variant_id", "size_id", "po_item_id")):
-        merged = {"variant_id": o.get("variant_id"), "size_id": o.get("size_id"),
-                  "po_item_id": o.get("po_item_id"), "output_color": o.get("output_color"),
-                  **{k: body.get(k) for k in ("variant_id", "size_id", "po_item_id", "output_color",
-                                             "output_material_code") if k in body}}
-        if "model_id" in body and (body.get("model_id") or "") != (o.get("model_id") or ""):
-            # model berganti: varian/ukuran/baris PO lama tidak berlaku lagi kecuali dikirim ulang
-            for k in ("variant_id", "size_id", "po_item_id"):
-                if k not in body:
-                    merged[k] = ""
-        fabric = await db.rahaza_materials.find_one({"id": o.get("input_material_id")}, {"_id": 0}) or {}
-        ident = await _resolve_identity(
-            db, model_id=(body.get("model_id") if "model_id" in body else o.get("model_id")) or "",
-            body=merged, fabric=fabric)
-        patch.update(ident)
-    elif any(k in body for k in ("style_name", "style_sku", "output_material_code")):
-        raise HTTPException(400, (
-            "Nama style / kode potongan tidak bisa diketik langsung — kirim `model_id` dari Master "
-            "Produk supaya BOM & produksi tetap mengenali produknya."))
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
+    extra: dict = {}
+    if "location_id" in body:
+        extra["location_id"], extra["location_name"] = await _default_location(db, body.get("location_id"))
+    loc_id = extra.get("location_id", o.get("location_id") or "")
+    loc_name = extra.get("location_name", o.get("location_name") or "")
+    if isinstance(body.get("inputs"), list) or isinstance(body.get("outputs"), list):
+        # 2026-11-10: ubah lewat daftar baris (form yang sama dengan buat order)
+        if isinstance(body.get("inputs"), list):
+            ins = await _build_inputs(db, body["inputs"], loc_id, loc_name)
+        if isinstance(body.get("outputs"), list):
+            outs = await _build_outputs(db, body["outputs"], ins)
+        else:
+            outs = _relink_outputs(outs, ins)
+    else:
+        # Style/produk hanya boleh berganti lewat MASTER (model + varian) — bukan
+        # ketikan bebas, agar order draft tidak bisa "lepas" dari master produk.
+        # 2026-11-06 (Tahap 2): ganti model/varian/ukuran/baris PO = identitas DAN output dihitung
+        # ulang (dulu output model lama tertinggal ⇒ hasil potong masuk potongan model lama).
+        if any(k in body for k in _LEGACY_IDENTITY_KEYS):
+            if len(outs) != 1:
+                raise HTTPException(400, "Order ini punya beberapa baris hasil — ubah lewat daftar baris hasil.")
+            cur = outs[0]
+            merged = {"variant_id": cur.get("variant_id"), "size_id": cur.get("size_id"),
+                      "po_item_id": cur.get("po_item_id"), "output_color": cur.get("output_color"),
+                      **{k: body.get(k) for k in ("variant_id", "size_id", "po_item_id", "output_color",
+                                                 "output_material_code") if k in body}}
+            if "model_id" in body and (body.get("model_id") or "") != (cur.get("model_id") or ""):
+                # model berganti: varian/ukuran/baris PO lama tidak berlaku lagi kecuali dikirim ulang
+                for k in ("variant_id", "size_id", "po_item_id"):
+                    if k not in body:
+                        merged[k] = ""
+            fabric = (await db.rahaza_materials.find_one({"id": ins[0]["input_material_id"]}, {"_id": 0})
+                      if ins else None) or {}
+            ident = await _resolve_identity(
+                db, model_id=(body.get("model_id") if "model_id" in body else cur.get("model_id")) or "",
+                body=merged, fabric=fabric)
+            cur.update(ident)
+        elif any(k in body for k in ("style_name", "style_sku", "output_material_code")):
+            raise HTTPException(400, (
+                "Nama style / kode potongan tidak bisa diketik langsung — kirim `model_id` dari Master "
+                "Produk supaya BOM & produksi tetap mengenali produknya."))
+        if "planned_input_qty" in body:
+            if len(ins) != 1:
+                raise HTTPException(400, "Order ini memakai beberapa kain — ubah rencana lewat daftar baris kain.")
+            v = _f(body["planned_input_qty"])
+            if v <= 0:
+                raise HTTPException(400, "Rencana pemakaian kain harus > 0.")
+            ins[0]["planned_input_qty"] = round(v, 4)
+        if "planned_output_qty" in body:
+            if len(outs) != 1:
+                raise HTTPException(400, "Order ini punya beberapa baris hasil — ubah target lewat daftar baris hasil.")
+            v = _f(body["planned_output_qty"])
+            if v <= 0:
+                raise HTTPException(400, "Rencana hasil potongan harus > 0.")
+            outs[0]["planned_output_qty"] = round(v, 4)
     for k in ("notes", "target_date"):
         if k in body:
-            patch[k] = (body.get(k) or "") if isinstance(body.get(k), str) else body.get(k)
-    if "planned_input_qty" in body:
-        v = _f(body["planned_input_qty"])
-        if v <= 0:
-            raise HTTPException(400, "Rencana pemakaian kain harus > 0.")
-        patch["planned_input_qty"] = round(v, 4)
-    if "planned_output_qty" in body:
-        v = _f(body["planned_output_qty"])
-        if v <= 0:
-            raise HTTPException(400, "Rencana hasil potongan harus > 0.")
-        patch["planned_output_qty"] = round(v, 4)
-    if "location_id" in body:
-        lid, lname = await _default_location(db, body.get("location_id"), o.get("input_material_id"))
-        patch["location_id"], patch["location_name"] = lid, lname
-    await db[ORDERS].update_one({"id": oid}, {"$set": patch})
+            extra[k] = (body.get(k) or "") if isinstance(body.get(k), str) else body.get(k)
+    await _save_lines(db, oid, ins, outs, extra)
     await log_activity(user["id"], user.get("name", ""), "update", "cutting.order", o["number"])
     return serialize_doc(await _enrich(db, await _get_order(db, oid)))
+
+
+def _panel_notice(res_panel: Optional[dict]) -> str:
+    if res_panel and res_panel.get("removed"):
+        return f"Master potongan {res_panel['code']} ikut dibersihkan (belum pernah dipakai)."
+    if res_panel and res_panel.get("reason"):
+        return f"Master potongan {res_panel['code']} DIPERTAHANKAN — {res_panel['reason']}"
+    return ""
 
 
 @router.delete("/orders/{oid}")
@@ -1082,17 +1368,17 @@ async def delete_order(oid: str, request: Request):
         raise HTTPException(400, "Hanya draft yang bisa dihapus. Gunakan Batalkan untuk yang lain.")
     # SESI #32 — penjaga yang sama seperti `cancel`: draft yang (karena data lama)
     # sudah punya master potongan tidak boleh meninggalkannya jadi yatim.
-    res_panel = await cut_panel_health.remove_if_unused(
-        db, panel_id=o.get("output_material_id") or "", order_id=oid, user=user)
+    notes = []
+    for x in cutting_lines.outputs_of(o):
+        res_panel = await cut_panel_health.remove_if_unused(
+            db, panel_id=x.get("output_material_id") or "", order_id=oid, user=user)
+        if _panel_notice(res_panel):
+            notes.append(_panel_notice(res_panel))
     await db[ORDERS].delete_one({"id": oid})
     await log_activity(user["id"], user.get("name", ""), "delete", "cutting.order", o["number"])
     out = {"ok": True}
-    if res_panel and res_panel.get("removed"):
-        out["notice"] = (f"Master potongan {res_panel['code']} ikut dibersihkan "
-                         f"(belum pernah dipakai).")
-    elif res_panel and res_panel.get("reason"):
-        out["notice"] = (f"Master potongan {res_panel['code']} DIPERTAHANKAN — "
-                         f"{res_panel['reason']}")
+    if notes:
+        out["notice"] = " ".join(notes)
     return out
 
 
@@ -1101,43 +1387,60 @@ async def delete_order(oid: str, request: Request):
 # ═════════════════════════════════════════════════════════════════════════════
 @router.post("/orders/{oid}/start")
 async def start_order(oid: str, request: Request):
-    """draft ➜ in_progress. Sekalian membuat master material POTONGAN (output)."""
+    """draft ➜ in_progress. Sekalian membuat master material POTONGAN tiap baris hasil."""
     user = await _require_cutting_user(request)
     db = get_db()
     o = await _get_order(db, oid)
     if o["status"] != STATUS_DRAFT:
         raise HTTPException(400, f"Status '{o['status']}' tidak bisa di-start.")
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
 
     # VALIDASI PER-LOKASI (perbaikan bug QA-1): stok disimpan per (material, lokasi),
     # sementara dulu di sini hanya dicek TOTAL lintas lokasi. Akibatnya order lolos
     # start tapi gagal saat progress ("tersedia 0.0") karena lokasi order ternyata
     # bukan lokasi yang memegang stok. Sekarang: kalau lokasi order kosong tapi ada
     # gudang lain yang punya stok, order otomatis diarahkan ke gudang tersebut.
-    locs = await _stock_locations(db, o["input_material_id"])
-    total = sum(x["qty"] for x in locs)
-    if total <= 0:
-        raise HTTPException(
-            400, f"Stok kain {o['input_material_code']} kosong di semua gudang "
-                 f"(0 {o['input_unit']}). Catat penerimaan barang di Gudang dulu.")
-    here = next((x for x in locs if x["location_id"] == o.get("location_id")), None)
+    # 2026-11-10: diperiksa per KAIN; banyak kain harus bisa diambil dari SATU gudang yang sama.
+    spread: list = []
+    for i in ins:
+        locs = await _stock_locations(db, i["input_material_id"])
+        if sum(x["qty"] for x in locs) <= 0:
+            raise HTTPException(
+                400, f"Stok kain {i.get('input_material_code')} kosong di semua gudang "
+                     f"(0 {i.get('input_unit')}). Catat penerimaan barang di Gudang dulu.")
+        spread.append((i, locs))
     moved_to = None
-    if not here:
-        best = locs[0]
-        await db[ORDERS].update_one({"id": oid}, {"$set": {
-            "location_id": best["location_id"],
-            "location_name": best["location_name"],
-        }})
+    if any(not any(x["location_id"] == o.get("location_id") for x in locs) for _i, locs in spread):
+        if len(spread) == 1:
+            best = spread[0][1][0]
+        else:
+            common = set.intersection(*[{x["location_id"] for x in locs} for _i, locs in spread])
+            if not common:
+                where = "; ".join(
+                    f"{i.get('input_material_code')}: " + ", ".join(f"{x['location_name']} {x['qty']:g}" for x in locs)
+                    for i, locs in spread)
+                raise HTTPException(400, (
+                    f"Kain order ini tidak ada di satu gudang yang sama ({where}). Pindahkan kainnya ke satu "
+                    "gudang dulu (transfer), lalu mulai lagi."))
+            def _min_qty(lid: str) -> float:
+                return min(next(y["qty"] for y in locs if y["location_id"] == lid) for _i, locs in spread)
+            best = max((x for x in spread[0][1] if x["location_id"] in common),
+                       key=lambda x: _min_qty(x["location_id"]))
         o["location_id"], o["location_name"] = best["location_id"], best["location_name"]
         moved_to = best["location_name"]
 
-    out_mat = await _ensure_output_material(db, o, user)
-    await db[ORDERS].update_one({"id": oid}, {"$set": {
+    for x in outs:
+        out_mat = await _ensure_output_material(
+            db, {**x, "id": o["id"], "number": o["number"],
+                 "input_material_id": _source_fabric_id(x, ins)}, user)
+        x["output_material_id"] = out_mat["id"]
+        x["output_material_code"] = out_mat["code"]
+        x["output_material_name"] = out_mat["name"]
+    await _save_lines(db, oid, ins, outs, {
         "status": STATUS_IN_PROGRESS,
-        "output_material_id": out_mat["id"],
-        "output_material_code": out_mat["code"],
-        "output_material_name": out_mat["name"],
-        "started_at": _now(), "updated_at": _now(),
-    }})
+        "location_id": o.get("location_id"), "location_name": o.get("location_name"),
+        "started_at": _now(),
+    })
     await log_activity(user["id"], user.get("name", ""), "start", "cutting.order", o["number"])
     out = await _enrich(db, await _get_order(db, oid))
     if moved_to:
@@ -1151,7 +1454,11 @@ async def add_progress(oid: str, request: Request):
 
     2026-11-06 (pola P9): order DIKUNCI selama satu laporan progres dicatat. Dulu Selesai/Batal bisa
     menyalip laporan yang sedang memotong stok (order batal/selesai tetapi stoknya tetap bergerak),
-    dan dua laporan bersamaan berebut sisa gulungan yang sama."""
+    dan dua laporan bersamaan berebut sisa gulungan yang sama.
+
+    2026-11-10: body `inputs[]` = pemakaian PER KAIN ({line_id, input_consumed, input_uom, leftover_qty,
+    leftover_uom, waste_qty, waste_uom, roll_ids}) dan `outputs[]` = pcs PER HASIL ({line_id, output_qty,
+    roll_ids}). Body lama (satu kain + satu hasil di tingkat atas) tetap diterima untuk order satu baris."""
     user = await _require_cutting_user(request)
     db = get_db()
     token = await doc_lock.claim(db, ORDERS, oid, field="progress_lock", actor=user,
@@ -1164,170 +1471,285 @@ async def add_progress(oid: str, request: Request):
         await doc_lock.release(db, ORDERS, oid, token, field="progress_lock")
 
 
+_PROGRESS_INPUT_KEYS = ("input_consumed", "input_uom", "leftover_qty", "leftover_uom", "waste_qty", "waste_uom",
+                        "roll_ids", "roll_id")
+
+
+def _progress_lines(body: dict, ins: list, outs: list) -> tuple[list, list]:
+    """Pasangkan isian progres ke baris order → [(baris kain, isian)], [(baris hasil, isian)]."""
+    b_in = body.get("inputs") if isinstance(body.get("inputs"), list) else None
+    if b_in is None:
+        if len(ins) != 1:
+            raise HTTPException(400, "Order ini memakai beberapa kain — isi pemakaian per kain.")
+        b_in = [{"line_id": ins[0]["line_id"], **{k: body.get(k) for k in _PROGRESS_INPUT_KEYS if k in body}}]
+    b_out = body.get("outputs") if isinstance(body.get("outputs"), list) else None
+    if b_out is None:
+        if len(outs) != 1:
+            raise HTTPException(400, "Order ini punya beberapa baris hasil — isi pcs per baris hasil.")
+        b_out = [{"line_id": outs[0]["line_id"], "output_qty": body.get("output_qty")}]
+    pin, pout = [], []
+    for b in b_in:
+        b = b or {}
+        line = next((i for i in ins if i["line_id"] == b.get("line_id")
+                     or (b.get("input_material_id") and i["input_material_id"] == b.get("input_material_id"))), None)
+        if not line:
+            raise HTTPException(400, "Kain yang dilaporkan bukan milik order ini — muat ulang lalu ulangi.")
+        if any(p[0]["line_id"] == line["line_id"] for p in pin):
+            raise HTTPException(400, f"Kain {cutting_lines.input_label(line)} dilaporkan dua kali dalam satu progres.")
+        pin.append((line, b))
+    for b in b_out:
+        b = b or {}
+        line = next((x for x in outs if x["line_id"] == b.get("line_id")
+                     or (b.get("output_material_id") and x.get("output_material_id") == b.get("output_material_id"))),
+                    None)
+        if not line:
+            raise HTTPException(400, "Baris hasil yang dilaporkan bukan milik order ini — muat ulang lalu ulangi.")
+        if any(p[0]["line_id"] == line["line_id"] for p in pout):
+            raise HTTPException(400, f"Hasil {cutting_lines.output_label(line)} dilaporkan dua kali dalam satu progres.")
+        pout.append((line, b))
+    return pin, pout
+
+
 async def _add_progress_locked(db, oid: str, request: Request, user: dict):
     o = await _get_order(db, oid)
     if o["status"] != STATUS_IN_PROGRESS:
         raise HTTPException(400, "Progres hanya bisa diinput saat status 'in_progress'.")
 
     body = await request.json()
-    input_taken = _f(body.get("input_consumed"))
-    output_qty = _f(body.get("output_qty"))
-    leftover_in = _f(body.get("leftover_qty"))
-    waste_in = _f(body.get("waste_qty"))
-    if input_taken <= 0:
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
+    pin, pout = _progress_lines(body, ins, outs)
+    many_in = len(ins) > 1
+    pin = [(line, b) for line, b in pin if _f(b.get("input_consumed")) > 0 or not many_in]
+    pout = [(line, b) for line, b in pout if _f(b.get("output_qty")) != 0 or len(outs) == 1]
+    if not pin or all(_f(b.get("input_consumed")) <= 0 for _l, b in pin):
         raise HTTPException(400, "Kain terpakai harus > 0.")
-    if output_qty <= 0:
+    if not pout or any(_f(b.get("output_qty")) < 0 for _l, b in pout) \
+            or sum(_f(b.get("output_qty")) for _l, b in pout) <= 0:
         raise HTTPException(400, "Jumlah potongan jadi harus > 0.")
-    if leftover_in < 0 or waste_in < 0:
-        raise HTTPException(400, "Sisa kain dan limbah tidak boleh negatif.")
-
-    # ── 2026-08-05 · SATUAN HITUNG OPERATOR (opsional, `input_uom`) ───────────
-    # Kain dicatat di satuan order (`input_unit`, mis. "kg" atau "m"), tetapi
-    # operator lantai sering menghitung dalam satuan lain (rol, gram, yard).
-    # Bila `input_uom` dikirim, qty diterjemahkan DULU ke satuan order supaya
-    # stok, sisa roll, dan akumulasi progres tetap satu bahasa.
-    # 2026-11-06 (Tahap 2): sisa kain (`leftover_uom`) & limbah (`waste_uom`) juga bersatuan.
-    _order_uom = (o.get("input_unit") or "").strip().lower()
-    mat_in = await db.rahaza_materials.find_one({"id": o["input_material_id"]}, {"_id": 0}) or {}
-    input_taken, uom_applied = _to_order_unit(mat_in, input_taken, body.get("input_uom"), _order_uom)
-    _same_uom = body.get("input_uom")
-    leftover, leftover_trace = _to_order_unit(mat_in, leftover_in, body.get("leftover_uom") or _same_uom, _order_uom)
-    waste, waste_trace = _to_order_unit(mat_in, waste_in, body.get("waste_uom") or _same_uom, _order_uom)
-    if input_taken <= 0:
-        raise HTTPException(400, "Hasil konversi kain terpakai harus > 0.")
-    # Kain yang diambil = masuk potongan + limbah + sisa yang kembali ke stok. Sisa kain KEMBALI ke
-    # stok kain pada harga kain (tidak dipotong dari stok/gulungan, tidak masuk nilai potongan);
-    # limbah adalah pemakaian (ikut memotong stok & gulungan, nilainya ikut biaya potongan).
-    if leftover + waste - input_taken > 0.0001:
-        raise HTTPException(400, (
-            f"Sisa kain ({leftover:g}) + limbah ({waste:g}) melebihi kain yang diambil ({input_taken:g} "
-            f"{_order_uom}). Periksa angkanya."))
-    input_used = round(input_taken - leftover, 4)
-    if input_used <= 0:
-        raise HTTPException(400, "Kain yang benar-benar terpakai (diambil − sisa) harus > 0.")
 
     loc_id = o["location_id"]
     actor = await _actor(user)
     ref = {"type": "cutting", "id": o["id"], "no": o["number"]}
 
-    # ── FASE H-6: rencana pemakaian GULUNGAN dihitung DULU (sebelum stok dipotong) ──
-    # Kalau gulungan tidak dipilih / sisanya tidak cukup, laporan ditolak di sini —
-    # bukan setelah stok kain sudah turun tanpa gulungan yang berkurang.
-    roll_plan, roll_info = await _plan_roll_consumption(db, o, body, input_used)
+    # ── 1) KAIN PER BARIS — satuan operator, sisa yang kembali ke stok, limbah, rencana gulungan ──
+    # Semua dihitung & divalidasi DULU (sebelum stok apa pun dipotong): laporan yang ditolak tidak
+    # menyisakan stok/gulungan yang sudah turun sebagian.
+    used_lines: list[dict] = []
+    for line, b in pin:
+        pre = f"{cutting_lines.input_label(line)}: " if many_in else ""
+        taken_in = _f(b.get("input_consumed"))
+        if taken_in <= 0:
+            raise HTTPException(400, f"{pre}Kain terpakai harus > 0.")
+        leftover_in, waste_in = _f(b.get("leftover_qty")), _f(b.get("waste_qty"))
+        if leftover_in < 0 or waste_in < 0:
+            raise HTTPException(400, f"{pre}Sisa kain dan limbah tidak boleh negatif.")
+        # ── 2026-08-05 · SATUAN HITUNG OPERATOR (opsional, `input_uom`) ───────────
+        # Kain dicatat di satuan order (`input_unit`), operator boleh menghitung di satuan lain
+        # (rol, gram, yard); qty diterjemahkan DULU ke satuan order. 2026-11-06 (Tahap 2): sisa kain
+        # (`leftover_uom`) & limbah (`waste_uom`) juga bersatuan.
+        order_uom = (line.get("input_unit") or "").strip().lower()
+        mat_in = await db.rahaza_materials.find_one({"id": line["input_material_id"]}, {"_id": 0}) or {}
+        taken, uom_applied = _to_order_unit(mat_in, taken_in, b.get("input_uom"), order_uom)
+        same = b.get("input_uom")
+        leftover, leftover_trace = _to_order_unit(mat_in, leftover_in, b.get("leftover_uom") or same, order_uom)
+        waste, waste_trace = _to_order_unit(mat_in, waste_in, b.get("waste_uom") or same, order_uom)
+        if taken <= 0:
+            raise HTTPException(400, f"{pre}Hasil konversi kain terpakai harus > 0.")
+        # Kain yang diambil = masuk potongan + limbah + sisa yang kembali ke stok. Sisa kain KEMBALI ke
+        # stok kain pada harga kain (tidak dipotong dari stok/gulungan, tidak masuk nilai potongan);
+        # limbah adalah pemakaian (ikut memotong stok & gulungan, nilainya ikut biaya potongan).
+        if leftover + waste - taken > 0.0001:
+            raise HTTPException(400, (
+                f"{pre}Sisa kain ({leftover:g}) + limbah ({waste:g}) melebihi kain yang diambil ({taken:g} "
+                f"{order_uom}). Periksa angkanya."))
+        used = round(taken - leftover, 4)
+        if used <= 0:
+            raise HTTPException(400, f"{pre}Kain yang benar-benar terpakai (diambil − sisa) harus > 0.")
+        # ── FASE H-6: rencana pemakaian GULUNGAN dihitung DULU (sebelum stok dipotong) ──
+        plan, info = await _plan_roll_consumption(db, o, line, b, used)
+        used_lines.append({"line": line, "mat": mat_in, "taken": round(taken, 4), "leftover": round(leftover, 4),
+                           "waste": round(waste, 4), "used": used, "uom_applied": uom_applied,
+                           "leftover_trace": leftover_trace, "waste_trace": waste_trace,
+                           "plan": plan, "info": info})
 
-    # 1) Kurangi stok KAIN (guarded — tidak boleh minus, KECUALI mode sementara
-    #    `inventory_allow_negative` ON: klien belum opname, produksi harus jalan)
+    # Tautan gulungan → hasil yang diisi operator juga diperiksa SEBELUM stok bergerak.
+    pool = {rr["roll_id"]: rr.get("roll_no", "") for i in ins for rr in (i.get("roll_ids") or [])}
+    for u in used_lines:
+        for p in u["plan"]:
+            pool.setdefault(p["roll_id"], p.get("roll_no", ""))
+    allowed = set(pool) | {no for no in pool.values() if no}
+    for line, b in pout:
+        bad = [str(v) for v in (b.get("roll_ids") or []) if str(v) not in allowed]
+        if bad:
+            raise HTTPException(400, (
+                f"Hasil {cutting_lines.output_label(line)}: gulungan {', '.join(bad)} tidak dipilih di order "
+                "maupun di progres ini — centang dulu gulungannya di bagian kain."))
+
+    # ── 2) Kurangi stok KAIN — tiap kain SEKALI (guarded; boleh minus hanya bila mode
+    #    sementara `inventory_allow_negative` ON). Bila kain ke-2 gagal, kain ke-1 dikembalikan.
     from core import negative_stock
     _neg_ok = await negative_stock.allowed(db)
-    try:
-        _in_mat = await db.rahaza_materials.find_one({"id": o["input_material_id"]}, {"_id": 0}) if _neg_ok else None
-        _loc_doc = await db.rahaza_locations.find_one({"id": loc_id}, {"_id": 0}) if _neg_ok else None
-        await stock_service.issue(o["input_material_id"], loc_id, input_used,
-                                  ref=ref, actor=actor, db=db, allow_negative=_neg_ok,
-                                  meta=negative_stock.stock_meta(_in_mat, _loc_doc) if _neg_ok else None)
-    except InsufficientStock as e:
-        locs = await _stock_locations(db, o["input_material_id"])
-        where = ", ".join(f"{x['location_name']}: {x['qty']}" for x in locs) or "tidak ada stok di gudang manapun"
-        raise HTTPException(
-            400, f"Stok kain tidak cukup di '{o.get('location_name')}': minta {e.requested}, "
-                 f"tersedia {e.available} {o['input_unit']}. Sebaran stok — {where}.")
+    _loc_doc = await db.rahaza_locations.find_one({"id": loc_id}, {"_id": 0}) if _neg_ok else None
+    issued: list[dict] = []
+    for u in used_lines:
+        mid = u["line"]["input_material_id"]
+        try:
+            await stock_service.issue(mid, loc_id, u["used"], ref=ref, actor=actor, db=db, allow_negative=_neg_ok,
+                                      meta=negative_stock.stock_meta(u["mat"], _loc_doc) if _neg_ok else None)
+            issued.append(u)
+        except InsufficientStock as e:
+            for back in issued:   # kembalikan kain yang sudah terpotong di laporan yang sama
+                await stock_service.add(back["line"]["input_material_id"], loc_id, back["used"],
+                                        ref={**ref, "type": "cutting_reversal"}, actor=actor, db=db)
+            locs = await _stock_locations(db, mid)
+            where = ", ".join(f"{x['location_name']}: {x['qty']}" for x in locs) or "tidak ada stok di gudang manapun"
+            pre = f"{cutting_lines.input_label(u['line'])}: " if many_in else ""
+            raise HTTPException(
+                400, f"{pre}Stok kain tidak cukup di '{o.get('location_name')}': minta {e.requested}, "
+                     f"tersedia {e.available} {u['line'].get('input_unit')}. Sebaran stok — {where}.")
 
-    # 2) Tambah stok POTONGAN
-    out_mat_id = o.get("output_material_id")
-    if not out_mat_id:
-        out_mat = await _ensure_output_material(db, o, user)
-        out_mat_id = out_mat["id"]
-        await db[ORDERS].update_one({"id": oid}, {"$set": {
-            "output_material_id": out_mat["id"],
-            "output_material_code": out_mat["code"],
-            "output_material_name": out_mat["name"],
-        }})
-    # SESI #32 — stok potongan SEBELUM penambahan (dipakai rata-rata bergerak)
-    panel_qty_before = await cut_panel_value.panel_onhand(db, out_mat_id)
-    await stock_service.add(out_mat_id, loc_id, output_qty, ref=ref, actor=actor, db=db,
-                            meta={"material_code": o.get("output_material_code"),
-                                  "material_name": o.get("output_material_name"),
-                                  "material_type": "fabric", "unit": OUTPUT_UNIT,
-                                  "category": OUTPUT_CATEGORY})
+    # ── 3) Tambah stok POTONGAN per baris hasil ──
+    panels: list[dict] = []
+    for line, b in pout:
+        qty = round(_f(b.get("output_qty")), 4)
+        if not line.get("output_material_id"):
+            out_mat = await _ensure_output_material(
+                db, {**line, "id": o["id"], "number": o["number"],
+                     "input_material_id": _source_fabric_id(line, ins)}, user)
+            line.update({"output_material_id": out_mat["id"], "output_material_code": out_mat["code"],
+                         "output_material_name": out_mat["name"]})
+        # SESI #32 — stok potongan SEBELUM penambahan (dipakai rata-rata bergerak)
+        before = await cut_panel_value.panel_onhand(db, line["output_material_id"])
+        if qty > 0:
+            await stock_service.add(line["output_material_id"], loc_id, qty, ref=ref, actor=actor, db=db,
+                                    meta={"material_code": line.get("output_material_code"),
+                                          "material_name": line.get("output_material_name"),
+                                          "material_type": "fabric", "unit": OUTPUT_UNIT,
+                                          "category": OUTPUT_CATEGORY})
+        panels.append({"line": line, "body": b, "panel_id": line["output_material_id"], "qty": qty,
+                       "qty_before": before})
 
-    # ── SESI #32: NILAI KAIN YANG KELUAR **BERPINDAH** JADI NILAI POTONGAN ────
-    # Dulu master potongan tetap Rp0 sampai order di-complete, dan angka complete
-    # memakai harga kain yang di-snapshot saat order DIBUAT (harga basi). Sekarang
-    # nilainya lahir di sini, dengan harga kain SAAT INI, lewat rata-rata bergerak
-    # (SSOT core.accessory_valuation) supaya stok potongan lama tidak terhapus
-    # angkanya. `panel_qty_before` WAJIB dibaca SEBELUM `stock_service.add` di
-    # atas — kalau dibaca sesudahnya, qty masuk ikut jadi penyebut (pelajaran GR
-    # sesi #30). Kain yang belum punya harga TIDAK dipaksa jadi 0 yang seolah
-    # benar: potongannya ditandai `unvalued` dan alasannya dikembalikan ke layar.
-    value_trace = await cut_panel_value.apply_progress_value(
-        db, fabric_id=o["input_material_id"], panel_id=out_mat_id,
-        input_consumed=input_used, output_qty=output_qty,
-        qty_before=panel_qty_before, actor=actor,
-        reference=o.get("number", ""))
+    # ── SESI #32 + 2026-11-10: NILAI KAIN YANG KELUAR **BERPINDAH** JADI NILAI POTONGAN ────
+    # HPP masuk/pcs = Σ(kain terpakai × harga kain SAAT INI) ÷ Σ pcs hasil — SAMA untuk semua baris hasil;
+    # tiap master potongan dirata-rata bergerak (SSOT core.accessory_valuation). `qty_before` dibaca
+    # SEBELUM `stock_service.add` (pelajaran GR sesi #30). Kain tanpa harga → `unvalued` + alasannya.
+    value_trace = await cut_panel_value.apply_progress_value_multi(
+        db, fabrics=[{"fabric_id": u["line"]["input_material_id"], "qty": u["used"]} for u in used_lines],
+        panels=[{"panel_id": p["panel_id"], "qty": p["qty"], "qty_before": p["qty_before"]} for p in panels],
+        actor=actor, reference=o.get("number", ""))
 
-    # 3) Roll fisik — SATU pintu pemakaian gulungan (`fabric_roll_engine.consume_rolls`)
-    #    FIFO menurut nomor roll. Sebelum H-6 blok ini mengurangi roll secara manual dan
-    #    hanya kalau `roll_id` dikirim; kini rencananya sudah tervalidasi di atas.
-    roll_consumption: list = []
-    if roll_plan:
-        roll_consumption = await fabric_roll_engine.consume_rolls(
-            db, roll_plan,
-            {"type": "cutting", "id": o["id"], "number": o["number"],
-             "notes": f"Cutting {o['number']} — {o.get('style_name', '')}".strip(" —")},
-            user)
-        for p in roll_consumption:
-            hit = await db[ORDERS].update_one(
-                {"id": oid, "roll_ids.roll_id": p["roll_id"]},
-                {"$inc": {"roll_ids.$.consumed_qty": round(p["qty"], 3)},
-                 "$set": {"roll_ids.$.remaining": p["remaining_after"]}},
-            )
-            if not hit.matched_count:
+    # ── 4) Roll fisik — SATU pintu pemakaian gulungan (`fabric_roll_engine.consume_rolls`), per kain ──
+    all_consumption: list = []
+    roll_required = False
+    for u in used_lines:
+        line = u["line"]
+        roll_required = roll_required or bool(u["info"].get("tracked"))
+        if not u["plan"]:
+            u["consumption"] = []
+            continue
+        planned_ids = {p["roll_id"] for p in u["plan"]}
+        for_whom = [x for x in outs if planned_ids & set(x.get("roll_ids") or [])] or [p["line"] for p in panels]
+        notes = (f"Cutting {o['number']} — untuk "
+                 + ", ".join(cutting_lines.output_label(x) for x in for_whom)).strip(" —")
+        cons = await fabric_roll_engine.consume_rolls(
+            db, u["plan"], {"type": "cutting", "id": o["id"], "number": o["number"], "notes": notes}, user)
+        for p in cons:
+            p["input_line_id"] = line["line_id"]
+            p["material_code"] = line.get("input_material_code") or ""
+            p["color_lot"] = u["info"].get("lots", {}).get(p["roll_id"], "")
+            hit = next((rr for rr in line["roll_ids"] if rr.get("roll_id") == p["roll_id"]), None)
+            if hit:
+                hit["consumed_qty"] = round(_f(hit.get("consumed_qty")) + round(p["qty"], 3), 3)
+                hit["remaining"] = p["remaining_after"]
+                hit.setdefault("color_lot", p["color_lot"])
+            else:
                 # Gulungan yang baru dipilih saat progres ikut dicatat di order supaya
                 # riwayat "gulungan mana dipakai order ini" tetap lengkap.
-                await db[ORDERS].update_one({"id": oid}, {"$push": {"roll_ids": {
-                    "roll_id": p["roll_id"], "roll_no": p.get("roll_no", ""),
-                    "uom": p.get("uom", ""), "remaining": p["remaining_after"],
-                    "consumed_qty": round(p["qty"], 3),
-                }}})
-    roll_id = (roll_consumption[0]["roll_id"] if roll_consumption
-               else ((body.get("roll_id") or "").strip() or None))
+                line["roll_ids"].append({"roll_id": p["roll_id"], "roll_no": p.get("roll_no", ""),
+                                         "uom": p.get("uom", ""), "color_lot": p["color_lot"],
+                                         "remaining": p["remaining_after"],
+                                         "consumed_qty": round(p["qty"], 3)})
+        u["consumption"] = cons
+        all_consumption.extend(cons)
 
+    # ── 5) Tautan gulungan → hasil (ketelusuran): isian per hasil, selain itu tautan order ∩ gulungan
+    #    progres ini, selain itu semua gulungan progres ini. Satu baris hasil = semua gulungan order. ──
+    used_roll_ids = [p["roll_id"] for p in all_consumption]
+    for p in panels:
+        line, b = p["line"], p["body"]
+        if len(outs) == 1:
+            links = [rr["roll_id"] for i in ins for rr in (i.get("roll_ids") or [])]
+        elif b.get("roll_ids"):
+            links = _link_rolls(b.get("roll_ids"), ins, f"Hasil {cutting_lines.output_label(line)}: ")
+        else:
+            links = [r for r in used_roll_ids if r in (line.get("roll_ids") or [])] or list(used_roll_ids)
+        p["roll_ids"] = links if len(outs) > 1 else [r for r in used_roll_ids]
+        line["roll_ids"] = list(dict.fromkeys([*(line.get("roll_ids") or []), *links]))
+
+    # ── 6) Catat progres (jejak lengkap per kain & per hasil) ──
+    single_in = used_lines[0] if len(used_lines) == 1 else None
+    single_panel = (value_trace.get("panels") or [{}])[0] if len(panels) == 1 else {}
+    fab_trace = {f.get("fabric_id"): f for f in value_trace.get("fabrics") or []}
+    pan_trace = {f.get("panel_id"): f for f in value_trace.get("panels") or []}
+    input_used = round(sum(u["used"] for u in used_lines), 4)
+    output_qty = round(sum(p["qty"] for p in panels), 4)
+    waste = round(sum(u["waste"] for u in used_lines), 4)
+    leftover = round(sum(u["leftover"] for u in used_lines), 4)
     prog = {
         "id": _uid(),
         "cutting_order_id": oid,
         "cutting_number": o["number"],
-        "input_consumed": round(input_used, 4),
+        "input_consumed": input_used,
         # 2026-11-06 (Tahap 2): jejak kain diambil, sisa yang kembali ke stok, dan limbah (satuan order)
-        "input_taken": round(input_taken, 4),
-        "leftover_qty": round(leftover, 4),
-        "leftover_input": leftover_trace,
-        "waste_input": waste_trace,
-        "output_qty": round(output_qty, 4),
-        "waste_qty": round(waste, 4),
-        "roll_id": roll_id,
+        "input_taken": round(sum(u["taken"] for u in used_lines), 4),
+        "leftover_qty": leftover,
+        "leftover_input": single_in["leftover_trace"] if single_in else None,
+        "waste_input": single_in["waste_trace"] if single_in else None,
+        "output_qty": output_qty,
+        "waste_qty": waste,
+        "roll_id": (all_consumption[0]["roll_id"] if all_consumption
+                    else (str(body.get("roll_id") or "").strip() or None)),
         # Jejak audit H-6: gulungan mana dipakai berapa untuk laporan progres ini.
-        "roll_ids": [p["roll_id"] for p in roll_consumption],
-        "roll_numbers": [p.get("roll_no", "") for p in roll_consumption],
-        "roll_consumption": roll_consumption,
-        "roll_required": bool(roll_info.get("tracked")),
+        "roll_ids": [p["roll_id"] for p in all_consumption],
+        "roll_numbers": [p.get("roll_no", "") for p in all_consumption],
+        "roll_consumption": all_consumption,
+        "roll_required": roll_required,
         "note": body.get("note") or "",
         # FASE H-6b: lokasi ASAL kain dicatat DI progres (bukan hanya di order)
-        # supaya dokumen Pengeluaran Material menyebut gudang yang sebenarnya
-        # dipotong, walau lokasi order berubah setelahnya.
         "location_id": loc_id,
         "location_name": o.get("location_name", ""),
-        "uom_applied": uom_applied,   # jejak konversi satuan operator (bila ada)
-        # SESI #32 — jejak NILAI: harga kain saat itu, nilai kain yang keluar,
-        # dan HPP potongan sebelum→sesudah. Inilah yang membuat `complete` tidak
-        # perlu lagi menebak dengan harga basi, dan yang dibaca gate INV-F37.
+        "uom_applied": single_in["uom_applied"] if single_in else None,
+        # SESI #32 — jejak NILAI (dibaca `complete` & gate INV-F37)
         "fabric_unit_cost": value_trace.get("fabric_unit_cost", 0.0),
         "value_out": value_trace.get("value_out", 0.0),
         "cost_per_pcs_in": value_trace.get("cost_per_pcs_in", 0.0),
-        "panel_unit_cost_before": value_trace.get("panel_unit_cost_before", 0.0),
-        "panel_unit_cost_after": value_trace.get("panel_unit_cost_after", 0.0),
-        "panel_qty_before": value_trace.get("panel_qty_before", 0.0),
+        "panel_unit_cost_before": single_panel.get("panel_unit_cost_before", 0.0),
+        "panel_unit_cost_after": single_panel.get("panel_unit_cost_after", 0.0),
+        "panel_qty_before": single_panel.get("panel_qty_before", 0.0),
         "value_status": value_trace.get("value_status", "unvalued"),
         "value_note": value_trace.get("value_note", ""),
+        # 2026-11-10 — rincian per kain & per hasil
+        "inputs": [{
+            "line_id": u["line"]["line_id"], "input_material_id": u["line"]["input_material_id"],
+            "input_material_code": u["line"].get("input_material_code", ""),
+            "input_material_name": u["line"].get("input_material_name", ""),
+            "input_unit": u["line"].get("input_unit", ""),
+            "input_taken": u["taken"], "leftover_qty": u["leftover"], "input_consumed": u["used"],
+            "waste_qty": u["waste"], "uom_applied": u["uom_applied"],
+            "leftover_input": u["leftover_trace"], "waste_input": u["waste_trace"],
+            "roll_consumption": u.get("consumption") or [],
+            "fabric_unit_cost": fab_trace.get(u["line"]["input_material_id"], {}).get("fabric_unit_cost", 0.0),
+            "value_out": fab_trace.get(u["line"]["input_material_id"], {}).get("value_out", 0.0),
+        } for u in used_lines],
+        "outputs": [{
+            "line_id": p["line"]["line_id"], "output_material_id": p["panel_id"],
+            "output_material_code": p["line"].get("output_material_code", ""),
+            "label": cutting_lines.output_label(p["line"]), "output_qty": p["qty"],
+            "roll_ids": p["roll_ids"],
+            "panel_qty_before": pan_trace.get(p["panel_id"], {}).get("panel_qty_before", p["qty_before"]),
+            "panel_unit_cost_before": pan_trace.get(p["panel_id"], {}).get("panel_unit_cost_before", 0.0),
+            "panel_unit_cost_after": pan_trace.get(p["panel_id"], {}).get("panel_unit_cost_after", 0.0),
+        } for p in panels],
         "created_by": user["id"], "created_by_name": user.get("name", ""),
         "created_at": _now(),
     }
@@ -1335,58 +1757,65 @@ async def _add_progress_locked(db, oid: str, request: Request, user: dict):
 
     # ── FASE H-6b: TERBITKAN DOKUMEN "PENGELUARAN MATERIAL" (`cutting_issue`) ──
     # Stok & gulungan sudah dipotong di atas — modul ini HANYA membuat dokumen +
-    # baris kartu stok supaya arus keluar Cutting ikut tampil di satu daftar
-    # "Pengeluaran Material". Kegagalannya TIDAK membatalkan potong kain (barang
-    # sudah keluar), tetapi juga tidak boleh hilang diam-diam: progres tanpa
-    # dokumen muncul di `GET /api/cutting/issue-docs/missing` + bisa diterbitkan
-    # ulang lewat `POST /api/cutting/issue-docs/backfill`.
+    # baris kartu stok (satu baris per kain). Kegagalannya TIDAK membatalkan potong kain,
+    # tetapi tidak hilang diam-diam: muncul di `GET /api/cutting/issue-docs/missing`.
     mi_doc = None
     mi_error = ""
     try:
         mi_doc = await cutting_material_issue.doc_for_progress(db, o, prog, user)
     except Exception as e:  # noqa: BLE001
         mi_error = str(e)
-        log.exception("H-6b: dokumen MI gagal diterbitkan untuk progres cutting %s",
-                      prog["id"])
+        log.exception("H-6b: dokumen MI gagal diterbitkan untuk progres cutting %s", prog["id"])
     if mi_doc:
         prog["material_issue_id"] = mi_doc["id"]
         prog["material_issue_number"] = mi_doc.get("mi_number", "")
-    await db[ORDERS].update_one({"id": oid}, {
-        "$inc": {"consumed_input_qty": round(input_used, 4),
-                 "produced_qty": round(output_qty, 4),
-                 "waste_qty": round(waste, 4),
-                 "leftover_qty": round(leftover, 4)},
-        "$set": {"updated_at": _now()},
-    })
+
+    # ── 7) Akumulasi ke baris order (order DIKUNCI selama progres ⇒ tulis-ulang baris aman) ──
+    for u in used_lines:
+        line = u["line"]
+        line["consumed_input_qty"] = round(_f(line.get("consumed_input_qty")) + u["used"], 4)
+        line["waste_qty"] = round(_f(line.get("waste_qty")) + u["waste"], 4)
+        line["leftover_qty"] = round(_f(line.get("leftover_qty")) + u["leftover"], 4)
+    for p in panels:
+        p["line"]["produced_qty"] = round(_f(p["line"].get("produced_qty")) + p["qty"], 4)
+    await _save_lines(db, oid, ins, outs)
     await log_activity(user["id"], user.get("name", ""), "progress", "cutting.order", o["number"])
     out = await _enrich(db, await _get_order(db, oid))
     # Umpan balik langsung ke layar: gulungan mana berkurang berapa & sisanya.
     out["last_progress"] = {
-        "input_consumed": round(input_used, 4),
-        "output_qty": round(output_qty, 4),
-        "roll_consumption": roll_consumption,
-        "roll_required": bool(roll_info.get("tracked")),
-        # FASE H-6b — nomor dokumen arus keluar kain (Pengeluaran Material)
+        "input_consumed": input_used,
+        "output_qty": output_qty,
+        "roll_consumption": all_consumption,
+        "roll_required": roll_required,
         "material_issue_id": (mi_doc or {}).get("id"),
         "material_issue_number": (mi_doc or {}).get("mi_number", ""),
-        # SESI #32 — nilai yang berpindah (kain → potongan)
-        "fabric_unit_cost": value_trace.get("fabric_unit_cost", 0.0),
-        "value_out": value_trace.get("value_out", 0.0),
-        "cost_per_pcs_in": value_trace.get("cost_per_pcs_in", 0.0),
-        "panel_unit_cost_before": value_trace.get("panel_unit_cost_before", 0.0),
-        "panel_unit_cost_after": value_trace.get("panel_unit_cost_after", 0.0),
-        "value_status": value_trace.get("value_status", "unvalued"),
-        "value_note": value_trace.get("value_note", ""),
+        "fabric_unit_cost": prog["fabric_unit_cost"],
+        "value_out": prog["value_out"],
+        "cost_per_pcs_in": prog["cost_per_pcs_in"],
+        "panel_unit_cost_before": prog["panel_unit_cost_before"],
+        "panel_unit_cost_after": prog["panel_unit_cost_after"],
+        "value_status": prog["value_status"],
+        "value_note": prog["value_note"],
+        "inputs": prog["inputs"],
+        "outputs": prog["outputs"],
     }
     notices = []
     if leftover > 0:
         notices.append(
-            f"Sisa kain {leftover:g} {_order_uom} tetap di stok kain (harga kain), tidak ikut nilai potongan.")
+            f"Sisa kain {leftover:g} {used_lines[0]['line'].get('input_unit', '') if single_in else ''}".rstrip()
+            + " tetap di stok kain (harga kain), tidak ikut nilai potongan.")
     if value_trace.get("value_status") == "valued":
-        notices.append(
-            f"Nilai kain {value_trace.get('value_out', 0):,.0f} berpindah ke potongan ⇒ HPP "
-            f"potongan {value_trace.get('panel_unit_cost_before', 0):,.0f} → "
-            f"{value_trace.get('panel_unit_cost_after', 0):,.0f}/pcs (rata-rata bergerak).")
+        if len(panels) == 1:
+            notices.append(
+                f"Nilai kain {prog['value_out']:,.0f} berpindah ke potongan ⇒ HPP "
+                f"potongan {prog['panel_unit_cost_before']:,.0f} → "
+                f"{prog['panel_unit_cost_after']:,.0f}/pcs (rata-rata bergerak).")
+        else:
+            notices.append(
+                f"Nilai kain {prog['value_out']:,.0f} ÷ {output_qty:g} pcs = {prog['cost_per_pcs_in']:,.0f}/pcs "
+                "masuk ke semua baris hasil (rata-rata bergerak tiap master potongan).")
+        if "belum punya harga" in (value_trace.get("value_note") or ""):
+            out["value_warning"] = value_trace.get("value_note")
     else:
         out["value_warning"] = value_trace.get("value_note") or ""
         if out["value_warning"]:
@@ -1401,10 +1830,10 @@ async def _add_progress_locked(db, oid: str, request: Request, user: dict):
             f"gagal diterbitkan: {mi_error}. Buka Portal Cutting → kartu 'Progres "
             "tanpa dokumen MI' lalu tekan 'Terbitkan dokumen' untuk melengkapinya.")
         notices.append(out["mi_warning"])
-    if roll_consumption:
+    if all_consumption:
         notices.append("Gulungan dipakai: " + ", ".join(
             f"{p.get('roll_no')} −{p['qty']:,.2f} (sisa {p['remaining_after']:,.2f})"
-            for p in roll_consumption))
+            for p in all_consumption))
     if notices:
         out["notice"] = " ".join(notices)
     return serialize_doc(out)
@@ -1421,55 +1850,65 @@ async def complete_order(oid: str, request: Request):
     Order LAMA (progresnya dilaporkan sebelum sesi #32, jadi tidak punya jejak
     nilai) tetap dilayani: dipakai cara lama sebagai cadangan, dan master yang
     masih Rp0 diisi supaya nilai persediaannya tidak nol selamanya.
+
+    2026-11-10: HPP potongan per pcs = total biaya kain ÷ total pcs hasil SEMUA baris (sama untuk semua baris).
     """
     user = await _require_cutting_user(request)
     db = get_db()
     o = await _get_order(db, oid)
     if o["status"] != STATUS_IN_PROGRESS:
         raise HTTPException(400, f"Status '{o['status']}' tidak bisa di-complete.")
-    produced = _f(o.get("produced_qty"))
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
+    produced = sum(_f(x.get("produced_qty")) for x in outs) if outs else _f(o.get("produced_qty"))
     if produced <= 0:
         raise HTTPException(400, "Belum ada progres. Input hasil potong dulu sebelum menyelesaikan.")
 
-    consumed = _f(o.get("consumed_input_qty"))
-    mat = await db.rahaza_materials.find_one({"id": o["input_material_id"]}, {"_id": 0}) or {}
     totals = await cut_panel_value.order_value_totals(db, oid)
     value_source = "progress_trace"
     total_cost = _f(totals.get("value_total"))
-    unit_cost_in = _f(mat.get("unit_cost")) or _f(o.get("input_unit_cost"))
+    fallback_bits: list[str] = []
+    unit_cost_in = 0.0
     if not totals.get("complete") or total_cost <= 0:
-        # cadangan untuk order lama / kain belum bernilai
+        # cadangan untuk order lama / kain belum bernilai: Σ kain terpakai × harga kain sekarang
         value_source = "fallback_unit_cost"
-        total_cost = consumed * unit_cost_in
-    out_unit_cost = round(total_cost / produced, 2) if produced > 0 else 0.0
+        total_cost = 0.0
+        for i in ins:
+            mat = await db.rahaza_materials.find_one({"id": i.get("input_material_id")}, {"_id": 0}) or {}
+            cost = _f(mat.get("unit_cost")) or _f(i.get("input_unit_cost"))
+            consumed = _f(i.get("consumed_input_qty"))
+            total_cost += consumed * cost
+            unit_cost_in = cost if len(ins) == 1 else unit_cost_in
+            fallback_bits.append(f"{i.get('input_material_code') or 'kain'} {cost:,.0f}/{i.get('input_unit')} × "
+                                 f"{consumed:g}")
+    out_unit_cost = cutting_lines.cost_per_pcs(total_cost, produced)
 
-    panel = await db.rahaza_materials.find_one(
-        {"id": o.get("output_material_id")}, {"_id": 0}) if o.get("output_material_id") else None
-    panel_cost = _f((panel or {}).get("unit_cost"))
-    panel_filled = False
-    if panel and panel_cost <= 0 < out_unit_cost:
-        # Order LAMA: nilainya belum pernah berpindah per progres ⇒ isi sekali di
-        # sini supaya persediaan potongan tidak bernilai nol selamanya.
-        await db.rahaza_materials.update_one(
-            {"id": panel["id"]},
-            {"$set": {"unit_cost": out_unit_cost, "value_status": "valued",
-                      "value_source": "cutting_complete_backfill",
-                      "value_note": (f"Diisi saat order {o.get('number')} diselesaikan "
-                                     f"(progres lama tanpa jejak nilai)."),
-                      "updated_at": _now()}},
-        )
-        panel_filled = True
+    filled: list[str] = []
+    for x in outs:
+        x["output_unit_cost"] = out_unit_cost
+        panel = await db.rahaza_materials.find_one(
+            {"id": x.get("output_material_id")}, {"_id": 0}) if x.get("output_material_id") else None
+        if panel and _f(panel.get("unit_cost")) <= 0 < out_unit_cost:
+            # Order LAMA: nilainya belum pernah berpindah per progres ⇒ isi sekali di
+            # sini supaya persediaan potongan tidak bernilai nol selamanya.
+            await db.rahaza_materials.update_one(
+                {"id": panel["id"]},
+                {"$set": {"unit_cost": out_unit_cost, "value_status": "valued",
+                          "value_source": "cutting_complete_backfill",
+                          "value_note": (f"Diisi saat order {o.get('number')} diselesaikan "
+                                         f"(progres lama tanpa jejak nilai)."),
+                          "updated_at": _now()}},
+            )
+            filled.append(panel.get("code") or "")
 
     # 2026-11-06 (pola P9): selesai hanya bila MASIH berjalan & tidak ada laporan progres yang sedang
     # dicatat (nilai order dihitung dari progres yang sudah lengkap).
-    _res = await db[ORDERS].update_one(
-        {"id": oid, "status": STATUS_IN_PROGRESS, **doc_lock.lock_free("progress_lock")}, {"$set": {
-            "status": STATUS_COMPLETED,
-            "output_unit_cost": out_unit_cost,
-            "total_input_cost": round(total_cost, 2),
-            "value_source": value_source,
-            "completed_at": _now(), "updated_at": _now(),
-        }})
+    _res = await _save_lines(db, oid, ins, outs, {
+        "status": STATUS_COMPLETED,
+        "output_unit_cost": out_unit_cost,
+        "total_input_cost": round(total_cost, 2),
+        "value_source": value_source,
+        "completed_at": _now(),
+    }, cond={"status": STATUS_IN_PROGRESS, **doc_lock.lock_free("progress_lock")})
     doc_lock.require_matched(_res, "Order ini sedang mencatat progres / baru saja diubah pengguna lain. "
                                    "Muat ulang lalu selesaikan lagi.")
     await log_activity(user["id"], user.get("name", ""), "complete", "cutting.order", o["number"])
@@ -1477,21 +1916,21 @@ async def complete_order(oid: str, request: Request):
     notes = []
     if value_source == "progress_trace":
         notes.append(
-            f"Nilai potongan order ini {total_cost:,.0f} (Σ nilai kain yang keluar) ⇒ "
+            f"Nilai potongan order ini {total_cost:,.0f} (Σ nilai kain yang keluar) ÷ {produced:g} pcs ⇒ "
             f"{out_unit_cost:,.0f}/pcs. HPP master potongan tidak ditimpa karena sudah "
             f"dihitung rata-rata bergerak tiap progres.")
-    elif unit_cost_in <= 0:
+    elif total_cost <= 0:
+        codes = ", ".join(i.get("input_material_code") or "" for i in ins) or o.get("input_material_code") or ""
         notes.append(
-            f"HPP potongan = 0 karena harga satuan kain {o.get('input_material_code')} belum "
+            f"HPP potongan = 0 karena harga satuan kain {codes} belum "
             f"ada. Harga kain lahir dari pembelian: buat PO lalu terima barang di Gudang, "
             f"atau perbaiki lewat Gudang → Valuasi HPP.")
     else:
         notes.append(
             f"Progres order ini dilaporkan sebelum jejak nilai ada, jadi nilai dihitung dari "
-            f"harga kain sekarang ({unit_cost_in:,.0f}/{o.get('input_unit')}) × "
-            f"{consumed:g} = {total_cost:,.0f}.")
-    if panel_filled:
-        notes.append(f"HPP master potongan diisi {out_unit_cost:,.0f}/pcs (sebelumnya kosong).")
+            f"harga kain sekarang ({'; '.join(fallback_bits)}) = {total_cost:,.0f}.")
+    if filled:
+        notes.append(f"HPP master potongan {', '.join(filled)} diisi {out_unit_cost:,.0f}/pcs (sebelumnya kosong).")
     out["notice"] = " ".join(notes)
     return serialize_doc(out)
 
@@ -1527,27 +1966,25 @@ async def cancel_order(oid: str, request: Request):
         }})
     doc_lock.require_matched(_res, "Order ini sedang mencatat progres / baru saja diubah pengguna lain — muat ulang.")
     # ── SESI #32 · PENJAGA ANTI-POTONGAN-YATIM ───────────────────────────────
-    # `start` melahirkan master POTONGAN. Sebelum ini, membatalkan order (sah
-    # selama belum ada progres) meninggalkan master itu tanpa induk SELAMANYA:
-    # muncul di Master Item & daftar Master Potongan, nilainya Rp0, menunjuk order
-    # yang statusnya dibatalkan. Sekarang master yang BELUM PERNAH BERGERAK
-    # (0 stok, 0 buku besar, 0 kartu stok, tidak dirujuk dokumen apa pun) ikut
-    # dibuang, dan yang sudah pernah bergerak DIPERTAHANKAN dengan alasan yang
-    # dikatakan — bukan dihapus diam-diam (stok tidak boleh jadi hantu).
-    panel_note = ""
-    res_panel = await cut_panel_health.remove_if_unused(
-        db, panel_id=o.get("output_material_id") or "", order_id=oid, user=user)
-    if res_panel and res_panel.get("removed"):
-        await db[ORDERS].update_one({"id": oid}, {"$unset": {"output_material_id": "",
-                                                            "output_material_code": "",
-                                                            "output_material_name": ""}})
-        panel_note = (f"Master potongan {res_panel['code']} ikut dibersihkan karena belum "
-                      f"pernah dipakai (0 stok, tanpa kartu stok).")
-    elif res_panel and res_panel.get("reason"):
-        panel_note = (f"Master potongan {res_panel['code']} DIPERTAHANKAN — "
-                      f"{res_panel['reason']}")
+    # `start` melahirkan master POTONGAN (2026-11-10: satu per baris hasil). Master yang BELUM
+    # PERNAH BERGERAK (0 stok, 0 buku besar, 0 kartu stok, tidak dirujuk dokumen apa pun) ikut
+    # dibuang, dan yang sudah pernah bergerak DIPERTAHANKAN dengan alasan yang dikatakan.
+    ins, outs = cutting_lines.inputs_of(o), cutting_lines.outputs_of(o)
+    notes, removed_any = [], False
+    for x in outs:
+        res_panel = await cut_panel_health.remove_if_unused(
+            db, panel_id=x.get("output_material_id") or "", order_id=oid, user=user)
+        if res_panel and res_panel.get("removed"):
+            removed_any = True
+            x["output_material_id"], x["output_material_code"], x["output_material_name"] = "", "", ""
+            notes.append(f"Master potongan {res_panel['code']} ikut dibersihkan karena belum "
+                         f"pernah dipakai (0 stok, tanpa kartu stok).")
+        elif res_panel and res_panel.get("reason"):
+            notes.append(f"Master potongan {res_panel['code']} DIPERTAHANKAN — {res_panel['reason']}")
+    if removed_any:
+        await _save_lines(db, oid, ins, outs)
     await log_activity(user["id"], user.get("name", ""), "cancel", "cutting.order", o["number"])
     out = await _enrich(db, await _get_order(db, oid))
-    if panel_note:
-        out["notice"] = panel_note
+    if notes:
+        out["notice"] = " ".join(notes)
     return serialize_doc(out)

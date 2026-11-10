@@ -5,8 +5,10 @@
  * hijau/kuning), tombol "Ubah" per baris membuka popup form, unduh Excel/CSV. Dulu kalimat berisi istilah
  * "mapping ke Chart of Accounts (COA) untuk integrasi finance".
  */
-import { Pencil, RefreshCw } from 'lucide-react';
+import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import PageLayout from '../../layout/PageLayout';
@@ -19,6 +21,14 @@ const akun = (kode) => (kode
   : <span className="text-muted-foreground">Belum diatur</span>);
 
 export function CategoriesTab({ categories, loading, onMuatUlang, onEditCategory }) {
+  // 10 Nov 2026 (permintaan owner "master data bisa dihapus"): kategori yang belum dipakai aset dihapus permanen;
+  // yang sudah dipakai ditolak server (409) dengan alasannya — kategori tidak punya status nonaktif.
+  const hapus = async (c) => {
+    const hasil = await hapusMaster({ jenis: 'kategori aset', nama: c.name,
+      keterangan: 'Kategori dihapus permanen. Bila masih dipakai aset, penghapusan ditolak.',
+      hapus: () => apiDelete(`/assets/categories/${c.id}`) });
+    if (hasil) onMuatUlang?.();
+  };
   return (
     <PageLayout testId="asset-categories" title="Kategori"
       subtitle="Umur manfaat, metode penyusutan, dan akun Bagan Akun tiap kategori aset."
@@ -48,10 +58,13 @@ export function CategoriesTab({ categories, loading, onMuatUlang, onEditCategory
           { kunci: 'metode', label: 'Metode penyusutan', isi: metode },
           { kunci: 'akun', label: 'Akun aset', isi: (c) => akun(c.coa_asset_account) },
           { kunci: 'akum', label: 'Akun akumulasi penyusutan', isi: (c) => akun(c.coa_depreciation_account) },
-          { kunci: 'aksi', label: '', rata: 'kanan', hp: false, isi: (c) => (
-            <Button size="sm" variant="outline" onClick={() => onEditCategory?.(c)} data-testid={`edit-cat-btn-${c.id}`}>
-              <Pencil />Ubah
-            </Button>) },
+          { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (c) => (
+            <div className="inline-flex items-center gap-1">
+              <Button size="icon-sm" variant="ghost" onClick={() => onEditCategory?.(c)} title="Ubah" aria-label={`Ubah kategori ${c.name}`}
+                data-testid={`edit-cat-btn-${c.id}`}><Pencil /></Button>
+              <Button size="icon-sm" variant="ghost" onClick={() => hapus(c)} title="Hapus" aria-label={`Hapus kategori ${c.name}`}
+                data-testid={`delete-cat-btn-${c.id}`}><Trash2 /></Button>
+            </div>) },
         ]} />
     </PageLayout>
   );

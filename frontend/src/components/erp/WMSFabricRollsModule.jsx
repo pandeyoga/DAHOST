@@ -4,18 +4,23 @@
  *
  * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu kepala bergradien "Fabric Roll Tracking" dengan ikon,
  * tab bar abu, tampilan kartu besar); tab status → pil penyaring; daftar = TabelData dengan pilihan urutan dan
- * unduhan Excel + CSV; aksi baris maks 2 (sisanya "Lainnya"); semua form (roll baru, simpan ke posisi, keluarkan,
+ * unduhan Excel + CSV; aksi baris maks 2 (sisanya "Lainnya"); semua form (simpan ke posisi, keluarkan,
  * terbitkan gulungan) = FormPopup; detail roll & hasil analisis AI = DetailPopup.
  * Perbaikan ikut: daftar dulu hanya memuat 50 roll pertama (bawaan server) lalu diurutkan/diunduh/dijumlah
  * seolah-olah semua — kini semua halaman dimuat (200 per permintaan).
+ *
+ * 10 Nov 2026 (keputusan owner): input roll MANUAL dihapus (tombol di kepala dan di tampilan kosong, beserta
+ * popup isiannya; server `POST /api/wms/fabric-rolls` → 410). Roll manual berstatus Tersedia tanpa
+ * menambah stok bahan dan tanpa jurnal ⇒ roll tanpa stok / dobel. Roll lahir dari Penerimaan Barang (rincian
+ * gulungan), tab "Penerimaan tanpa roll", atau Impor roll stok awal. "Simpan ke posisi" kini memilih posisi dari
+ * master struktur gudang (gudang → zona → rak → posisi) atau scan barcode — dulu dua kotak ketik bebas.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Package, Plus, RefreshCw, Search, CheckCircle2, Loader2, MoreHorizontal, Printer, Truck, Brain, MapPin, FileSpreadsheet,
+  Package, Plus, RefreshCw, Search, CheckCircle2, Loader2, MoreHorizontal, Printer, Brain, MapPin, FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
@@ -26,7 +31,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { materialOptionLabel } from '@/lib/materialFields';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout from './layout/PageLayout';
@@ -35,6 +39,7 @@ import { EmptyState, StatusBadge } from './moduleAtoms';
 // penerimaan lama yang belum punya gulungan (backfill).
 import RollLinesEditor from './warehouse/RollLinesEditor';
 import RollImportPopup from './warehouse/RollImportPopup';
+import RollPutawayPopup from './warehouse/RollPutawayPopup';
 import { rollLinesState, fmtQty } from './warehouse/rollLines';
 
 // Satuan roll ADA DI DATANYA (`uom`) — layar tidak boleh menebak "meter" dari
@@ -90,7 +95,6 @@ const TAB = [
   { key: 'partly_issued', label: 'Sebagian terpakai' }, { key: 'fully_issued', label: 'Habis' },
   { key: 'pending_opening', label: 'Menunggu stok awal' },
 ];
-const ROLL_BARU = { color_lot: '', uom: 'meter', length_m: '0', weight_kg: '0', notes: '' };
 
 export default function WMSFabricRollsModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -101,23 +105,7 @@ export default function WMSFabricRollsModule({ token }) {
   const [filters, setFilters] = useState({ qc_status: 'all', status: '' });
   const [sort, setSort] = useState({ key: 'qty_remaining', dir: 'asc' });
   const [viewDialog, setViewDialog] = useState(null); // {roll, movements}
-  const [createDialog, setCreateDialog] = useState(false);
-  // Unit cost dialog Buat Roll = MoneyInput terkendali (teks tampilannya bertitik ribuan).
-  // Kembali ke 0 setiap dialog dibuka.
-  const [createUnitCost, setCreateUnitCost] = useState('0');
-  // 2026-11-07 (Tahap 5): roll baru menunjuk MASTER — material kain, supplier, dan PO dipilih dari daftar.
-  // Dulu semua teks bebas dan `material_id` tidak pernah terisi (form tidak punya isiannya), sehingga roll
-  // manual tidak pernah tertaut ke material: tidak ikut stok/HPP per kain dan tidak bisa dipakai Cutting.
-  const [createPick, setCreatePick] = useState({ material_id: '', supplier_name: '', po_no: '', color: '' });
-  const [createForm, setCreateForm] = useState(ROLL_BARU);
-  const [rollMasters, setRollMasters] = useState({ materials: [], suppliers: [], pos: [], loaded: false });
-  useEffect(() => { if (createDialog) { setCreateUnitCost('0'); setCreateForm(ROLL_BARU); } }, [createDialog]);
-  const [issueDialog, setIssueDialog] = useState(null); // roll
-  const [issueForm, setIssueForm] = useState({ qty: '', reference_type: 'wo', reference_no: '', notes: '' });
-  const [putawayDialog, setPutawayDialog] = useState(null); // roll
-  const [putawayForm, setPutawayForm] = useState({ position_id: '', position_barcode: '', notes: '' });
-  const [formErr, setFormErr] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [putawayDialog, setPutawayDialog] = useState(null); // roll → RollPutawayPopup (posisi dari master / scan)
   const [aiAnalysisDialog, setAiAnalysisDialog] = useState(null); // AI insights
   const [aiLoading, setAiLoading] = useState(false);
   // ── FASE H-5 ───────────────────────────────────────────────────────────────
@@ -153,7 +141,7 @@ export default function WMSFabricRollsModule({ token }) {
         if (!d.pagination?.has_next) break;
       }
       setRolls(semua);
-    } catch (e) {
+    } catch {
       toast.error('Gagal memuat data roll');
     } finally {
       setLoading(false);
@@ -254,123 +242,7 @@ export default function WMSFabricRollsModule({ token }) {
     }
   };
 
-  useEffect(() => {
-    if (!createDialog || rollMasters.loaded) return undefined;
-    let alive = true;
-    const get = (u) => fetch(`${API}${u}`, { headers }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    Promise.all([
-      get('/api/rahaza/materials?type=bahan'),
-      get('/api/procurement/suppliers/options'),
-      get('/api/rahaza/purchase-orders?status=approved'),
-      get('/api/rahaza/purchase-orders?status=partially_received'),
-      get('/api/rahaza/purchase-orders?status=fully_received'),
-    ]).then(([m, s, a, b, c]) => {
-      if (!alive) return;
-      const list = (x) => (Array.isArray(x) ? x : (x?.items || []));
-      setRollMasters({
-        materials: list(m).filter((x) => x.type === 'fabric' || x.type === 'kain'),
-        suppliers: s?.items || [],
-        pos: [...list(a), ...list(b), ...list(c)],
-        loaded: true,
-      });
-    });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [createDialog]);
-  const pickedMat = rollMasters.materials.find((m) => m.id === createPick.material_id) || null;
-
-  const handleCreateRoll = async () => {
-    if (!createPick.material_id) { toast.error('Pilih material kain dari master.'); return; }
-    const data = {
-      // FASE H-5: `roll_no` TIDAK dikirim — nomor diterbitkan server (mode otomatis).
-      material_id: createPick.material_id,
-      material_code: pickedMat?.code || '',
-      material_name: pickedMat?.name || '',
-      color: createPick.color || pickedMat?.color || '',
-      color_lot: createForm.color_lot || '',
-      supplier_name: createPick.supplier_name || '',
-      uom: createForm.uom || 'meter',
-      length_m: parseFloat(createForm.length_m) || 0,
-      weight_kg: parseFloat(createForm.weight_kg) || 0,
-      po_no: createPick.po_no || '',
-      unit_cost: parseFloat(createUnitCost) || 0,
-      notes: createForm.notes || '',
-    };
-    setSaving(true);
-    try {
-      const r = await fetch(`${API}/api/wms/fabric-rolls`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(data),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-      toast.success(`Roll ${d?.roll?.roll_no || ''} dibuat`);
-      setCreatePick({ material_id: '', supplier_name: '', po_no: '', color: '' });
-      setCreateDialog(false);
-      load();
-    } catch (e2) {
-      toast.error(e2.message || 'Gagal membuat roll', { duration: 8000 });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const bukaPutaway = (roll) => { setFormErr(''); setPutawayForm({ position_id: '', position_barcode: '', notes: '' }); setPutawayDialog(roll); };
-  const bukaIssue = (roll) => { setFormErr(''); setIssueForm({ qty: '', reference_type: 'wo', reference_no: '', notes: '' }); setIssueDialog(roll); };
-
-  const handlePutaway = async () => {
-    if (!putawayForm.position_id.trim()) { setFormErr('ID posisi wajib diisi.'); return; }
-    setSaving(true); setFormErr('');
-    try {
-      const r = await fetch(`${API}/api/wms/fabric-rolls/${putawayDialog.id}/putaway`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          position_id: putawayForm.position_id,
-          position_barcode: putawayForm.position_barcode || '',
-          notes: putawayForm.notes || '',
-        }),
-      });
-      if (!r.ok) throw new Error();
-      toast.success('Roll berhasil dipindahkan ke posisi');
-      setPutawayDialog(null);
-      load();
-    } catch {
-      toast.error('Gagal menyimpan roll ke posisi');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleIssue = async () => {
-    if (!(parseFloat(issueForm.qty) > 0)) { setFormErr('Qty wajib diisi.'); return; }
-    setSaving(true); setFormErr('');
-    try {
-      const r = await fetch(`${API}/api/wms/fabric-rolls/${issueDialog.id}/issue`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          qty: parseFloat(issueForm.qty),
-          unit: rollUom(issueDialog),
-          reference_type: issueForm.reference_type || 'wo',
-          reference_no: issueForm.reference_no || '',
-          notes: issueForm.notes || '',
-        }),
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.detail || d.error || `HTTP ${r.status}`);
-      }
-      toast.success('Roll berhasil dikeluarkan');
-      setIssueDialog(null);
-      load();
-    } catch (err) {
-      toast.error(`Gagal mengeluarkan roll: ${err.message || err}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const bukaPutaway = (roll) => setPutawayDialog(roll);
 
   const handleAIAnalysis = async () => {
     setAiLoading(true);
@@ -444,9 +316,6 @@ export default function WMSFabricRollsModule({ token }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={roll.status === 'fully_issued'} onSelect={() => bukaIssue(roll)} data-testid={`issue-btn-${roll.roll_no}`}>
-            <Truck className="mr-2 h-4 w-4" />Keluarkan roll
-          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => printRollLabel(roll)} data-testid={`label-btn-${roll.roll_no}`}>
             <Printer className="mr-2 h-4 w-4" />Cetak label barcode
           </DropdownMenuItem>
@@ -505,9 +374,6 @@ export default function WMSFabricRollsModule({ token }) {
           </Button>
           <Button variant="outline" onClick={() => setImportDialog(true)} data-testid="import-roll-btn">
             <FileSpreadsheet />Impor roll
-          </Button>
-          <Button onClick={() => setCreateDialog(true)} data-testid="create-roll-btn">
-            <Plus />Roll baru
           </Button>
         </>
       )}
@@ -615,90 +481,17 @@ export default function WMSFabricRollsModule({ token }) {
         <p className="py-6 text-center text-sm text-muted-foreground" data-testid="loading-rolls">Memuat roll…</p>
       ) : (
         <TabelData kolom={kolomRoll} baris={paged} onKlikBaris={handleView} testId="rolls-table"
-          kosong={<EmptyState icon={Package}
+          kosong={<EmptyState icon={Package} testId="rolls-empty"
             title={search ? 'Tidak ada hasil pencarian' : 'Belum ada data roll'}
             description={search
               ? `Tidak ditemukan roll dengan kata kunci "${search}".`
-              : 'Gulungan lahir otomatis dari Penerimaan Barang: isi "Rincian gulungan" pada baris kain, dan nomor roll diterbitkan sistem. Untuk penerimaan yang sudah lewat, buka "Penerimaan tanpa roll".'}
-            action={{ label: 'Buat roll manual', onClick: () => setCreateDialog(true), icon: Plus }} />} />
+              : 'Roll tidak dibuat manual — roll lahir dari Penerimaan Barang (isi rincian gulungan pada baris kain), dari tab "Penerimaan tanpa roll" untuk penerimaan yang sudah lewat, atau dari Impor roll stok awal untuk kain yang sudah ada di gudang.'}
+            action={search ? undefined : (missingTotal > 0
+              ? { label: 'Lihat penerimaan tanpa roll', onClick: () => setTab('missing') }
+              : { label: 'Impor roll stok awal', onClick: () => setImportDialog(true), icon: FileSpreadsheet })} />} />
       )}
 
       <RollImportPopup open={importDialog} onClose={() => setImportDialog(false)} onDone={() => load()} />
-
-      {/* ── Roll baru (manual) ───────────────────────────────────────────────── */}
-      <FormPopup open={createDialog} onClose={() => setCreateDialog(false)} ukuran="panjang" testId="create-roll-dialog"
-        judul="Roll baru"
-        keterangan={`Nomor roll otomatis: ${rollPolicy?.next_number || 'RL-…'} (pola ${rollPolicy?.format || 'RL-{YYYY}{MM}-{SEQ:4}'}, diatur di Administrasi Sistem › Penomoran Dokumen).`}
-        onSimpan={handleCreateRoll} menyimpan={saving} labelSimpan="Simpan">
-        <span className="sr-only" data-testid="roll-no-auto">{rollPolicy?.next_number || 'RL-…'}</span>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Isian label="Material kain" wajib htmlFor="roll-material">
-            <SmartNativeSelect id="roll-material" value={createPick.material_id}
-              onChange={(e) => {
-                const m = rollMasters.materials.find((x) => x.id === e.target.value);
-                setCreatePick((p) => ({ ...p, material_id: e.target.value, color: m?.color || '' }));
-              }}
-              data-testid="input-material">
-              <option value="">{rollMasters.loaded ? 'Pilih kain dari master' : 'Memuat material…'}</option>
-              {rollMasters.materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Warna" htmlFor="roll-warna">
-            <Input id="roll-warna" value={createPick.color} onChange={(e) => setCreatePick((p) => ({ ...p, color: e.target.value }))}
-              placeholder={pickedMat?.color ? '' : 'mis. Navy'} data-testid="input-color" />
-          </Isian>
-          <Isian label="Lot warna" htmlFor="roll-lot">
-            <Input id="roll-lot" value={createForm.color_lot} onChange={(e) => setCreateForm((f) => ({ ...f, color_lot: e.target.value }))}
-              data-testid="input-color-lot" />
-          </Isian>
-          <Isian label="Supplier" htmlFor="roll-supplier">
-            <SmartNativeSelect id="roll-supplier" value={createPick.supplier_name}
-              onChange={(e) => setCreatePick((p) => ({ ...p, supplier_name: e.target.value }))}
-              data-testid="input-supplier">
-              <option value="">Tanpa supplier</option>
-              {rollMasters.suppliers.map((s) => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="No. PO" htmlFor="roll-po">
-            <SmartNativeSelect id="roll-po" value={createPick.po_no}
-              onChange={(e) => {
-                const po = rollMasters.pos.find((x) => x.po_number === e.target.value);
-                setCreatePick((p) => ({ ...p, po_no: e.target.value,
-                  supplier_name: po ? (po.supplier_name || po.vendor_name || p.supplier_name) : p.supplier_name }));
-              }}
-              data-testid="input-po-no">
-              <option value="">Tanpa PO</option>
-              {rollMasters.pos.map((po) => <option key={po.id} value={po.po_number}>{`${po.po_number} · ${po.supplier_name || po.vendor_name || ''}`}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Satuan" htmlFor="roll-satuan">
-            <SmartNativeSelect id="roll-satuan" value={createForm.uom} onChange={(e) => setCreateForm((f) => ({ ...f, uom: e.target.value }))}
-              data-testid="input-uom">
-              <option value="meter">Meter</option>
-              <option value="yard">Yard</option>
-              <option value="rol">Rol</option>
-              <option value="gulung">Gulung</option>
-              <option value="kg">Kilogram</option>
-              <option value="bal">Bal</option>
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Panjang / jumlah (sesuai satuan)" htmlFor="roll-panjang">
-            <Input id="roll-panjang" type="number" step="0.01" value={createForm.length_m}
-              onChange={(e) => setCreateForm((f) => ({ ...f, length_m: e.target.value }))} data-testid="input-length" />
-          </Isian>
-          <Isian label="Berat (kg)" htmlFor="roll-berat">
-            <Input id="roll-berat" type="number" step="0.01" value={createForm.weight_kg}
-              onChange={(e) => setCreateForm((f) => ({ ...f, weight_kg: e.target.value }))} data-testid="input-weight" />
-          </Isian>
-          <Isian label="Harga per satuan (Rp)" htmlFor="roll-harga">
-            <MoneyInput id="roll-harga" decimals={2} value={createUnitCost} onChange={(e) => setCreateUnitCost(e.target.value)} data-testid="input-unit-cost" />
-          </Isian>
-        </div>
-        <Isian label="Catatan" htmlFor="roll-catatan">
-          <Input id="roll-catatan" value={createForm.notes} onChange={(e) => setCreateForm((f) => ({ ...f, notes: e.target.value }))}
-            data-testid="input-notes" />
-        </Isian>
-      </FormPopup>
 
       {/* ── FASE H-5: terbitkan gulungan untuk penerimaan yang sudah lewat ───── */}
       {issueRollsDialog && (
@@ -734,10 +527,6 @@ export default function WMSFabricRollsModule({ token }) {
               <Button size="sm" variant="outline" onClick={() => { const r = viewDialog.roll; setViewDialog(null); bukaPutaway(r); }}>
                 <MapPin />Simpan ke posisi
               </Button>
-              <Button size="sm" variant="outline" disabled={viewDialog.roll.status === 'fully_issued'}
-                onClick={() => { const r = viewDialog.roll; setViewDialog(null); bukaIssue(r); }}>
-                <Truck />Keluarkan
-              </Button>
               <Button size="sm" variant="outline" onClick={() => printRollLabel(viewDialog.roll)}>
                 <Printer />Cetak label
               </Button>
@@ -761,12 +550,15 @@ export default function WMSFabricRollsModule({ token }) {
             {!viewDialog.roll?.is_weight && viewDialog.roll?.weight_kg > 0 && (
               <BarisDetail label="Berat">{fmt(viewDialog.roll.remaining_kg)} / {fmt(viewDialog.roll.weight_kg)} kg</BarisDetail>
             )}
+            {viewDialog.roll?.location_name && <BarisDetail label="Lokasi gudang">{viewDialog.roll.location_name}</BarisDetail>}
             <BarisDetail label="Posisi">{viewDialog.roll?.position_barcode || 'Belum disimpan ke posisi'}</BarisDetail>
-            {/* FASE H-5: asal gulungan — jejak balik ke penerimaan yang melahirkannya */}
+            {/* FASE H-5: asal gulungan — jejak balik ke penerimaan / impor stok awal yang melahirkannya */}
             <BarisDetail label="Asal gulungan">
               {viewDialog.roll?.source_receipt_number
                 ? <span className="tabular-nums">Penerimaan {viewDialog.roll.source_receipt_number}</span>
-                : 'Dibuat manual di layar Roll Kain'}
+                : viewDialog.roll?.opening_import_no
+                  ? <span className="tabular-nums">Impor stok awal {viewDialog.roll.opening_import_no}</span>
+                  : 'Dibuat manual (jalur lama, sudah ditutup)'}
             </BarisDetail>
           </dl>
           <div>
@@ -799,61 +591,8 @@ export default function WMSFabricRollsModule({ token }) {
         </DetailPopup>
       )}
 
-      {/* ── Simpan roll ke posisi (put-away) ──────────────────────────────────── */}
-      {putawayDialog && (
-        <FormPopup open onClose={() => setPutawayDialog(null)} ukuran="pendek" testId="putaway-dialog"
-          judul={`Simpan roll ${putawayDialog.roll_no} ke posisi`}
-          onSimpan={handlePutaway} menyimpan={saving} galat={formErr} labelSimpan="Simpan">
-          <Isian label="ID posisi" wajib htmlFor="pa-roll-posisi">
-            <Input id="pa-roll-posisi" value={putawayForm.position_id}
-              onChange={(e) => setPutawayForm((f) => ({ ...f, position_id: e.target.value }))} data-testid="input-position-id" />
-          </Isian>
-          <Isian label="Barcode posisi" htmlFor="pa-roll-barcode">
-            <Input id="pa-roll-barcode" value={putawayForm.position_barcode}
-              onChange={(e) => setPutawayForm((f) => ({ ...f, position_barcode: e.target.value }))} data-testid="input-position-barcode" />
-          </Isian>
-          <Isian label="Catatan" htmlFor="pa-roll-catatan">
-            <Input id="pa-roll-catatan" value={putawayForm.notes}
-              onChange={(e) => setPutawayForm((f) => ({ ...f, notes: e.target.value }))} data-testid="input-putaway-notes" />
-          </Isian>
-        </FormPopup>
-      )}
-
-      {/* ── Keluarkan roll (issue) ────────────────────────────────────────────── */}
-      {issueDialog && (
-        <FormPopup open onClose={() => setIssueDialog(null)} ukuran="pendek" testId="issue-dialog"
-          judul={`Keluarkan roll ${issueDialog.roll_no}`}
-          keterangan={`Sisa ${fmt(rollRemaining(issueDialog))} ${rollUom(issueDialog)}.`}
-          onSimpan={handleIssue} menyimpan={saving} galat={formErr} labelSimpan="Keluarkan">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Isian label="Qty" wajib htmlFor="iss-qty">
-              <Input id="iss-qty" type="number" step="0.01" value={issueForm.qty}
-                onChange={(e) => setIssueForm((f) => ({ ...f, qty: e.target.value }))} data-testid="input-issue-qty" />
-            </Isian>
-            {/* Gulungan hanya bisa dikeluarkan dalam satuannya sendiri — dulu pilihan meter/kg di sini
-                membuat gulungan yard terkurangi dengan label yang salah. */}
-            <Isian label="Satuan gulungan" htmlFor="iss-satuan">
-              <Input id="iss-satuan" value={rollUom(issueDialog)} readOnly className="tabular-nums" data-testid="input-issue-unit" />
-            </Isian>
-          </div>
-          <Isian label="Jenis referensi" htmlFor="iss-jenis">
-            <SmartNativeSelect id="iss-jenis" value={issueForm.reference_type}
-              onChange={(e) => setIssueForm((f) => ({ ...f, reference_type: e.target.value }))} data-testid="input-ref-type">
-              <option value="wo">Perintah kerja (WO)</option>
-              <option value="cmt">CMT</option>
-              <option value="manual">Manual</option>
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="No. referensi" htmlFor="iss-ref">
-            <Input id="iss-ref" value={issueForm.reference_no}
-              onChange={(e) => setIssueForm((f) => ({ ...f, reference_no: e.target.value }))} data-testid="input-ref-no" />
-          </Isian>
-          <Isian label="Catatan" htmlFor="iss-catatan">
-            <Input id="iss-catatan" value={issueForm.notes}
-              onChange={(e) => setIssueForm((f) => ({ ...f, notes: e.target.value }))} data-testid="input-issue-notes" />
-          </Isian>
-        </FormPopup>
-      )}
+      {/* ── Simpan roll ke posisi (put-away): posisi dari master struktur gudang atau scan barcode ── */}
+      <RollPutawayPopup roll={putawayDialog} onClose={() => setPutawayDialog(null)} onDone={load} />
 
       {/* ── Hasil analisis AI ─────────────────────────────────────────────────── */}
       {aiAnalysisDialog && (

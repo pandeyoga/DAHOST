@@ -18,11 +18,11 @@ import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { toast } from '../ui/sonner';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import { hapusMaster } from '@/lib/hapusMaster';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const PER_HALAMAN = 25;
@@ -452,20 +452,29 @@ export default function RnDVariantModule({ token }) {
     finally { setSaving(false); }
   };
 
+  // 10 Nov 2026 (owner "master data bisa dihapus"): server menolak (409) varian yang sudah menjadi SKU master
+  // produk; dialog kedua menawarkan Nonaktifkan = Arsipkan. Galat membawa `status` supaya lib/hapusMaster mengenali 409.
+  const kirim = async (url, opts) => {
+    const res = await fetch(url, { headers: h, ...opts });
+    if (!res.ok) {
+      const e = new Error(await readErr(res, `Gagal (HTTP ${res.status})`));
+      e.status = res.status;
+      throw e;
+    }
+  };
   const handleDelete = async (v) => {
-    const ok = await confirmDialog({
-      title: 'Hapus varian ini?',
-      body: `${v.color || 'Varian'} · ${v.style_code || ''} dihapus permanen.`,
-      confirmLabel: 'Hapus', danger: true,
+    const hasil = await hapusMaster({
+      jenis: 'varian', nama: [v.style_code, v.color].filter(Boolean).join(' '),
+      keterangan: 'Varian dihapus permanen. Bila sudah menjadi SKU master produk, penghapusan ditolak'
+        + (v.status !== 'archived' ? ' dan Anda bisa menonaktifkannya (arsipkan) saja.' : '.'),
+      hapus: () => kirim(`${API}/api/dewi/rnd/variants/${v.id}`, { method: 'DELETE' }),
+      nonaktifkan: v.status !== 'archived'
+        ? () => kirim(`${API}/api/dewi/rnd/variants/${v.id}`, { method: 'PUT', body: JSON.stringify({ status: 'archived' }) })
+        : null,
     });
-    if (!ok) return;
-    try {
-      const res = await fetch(`${API}/api/dewi/rnd/variants/${v.id}`, { method: 'DELETE', headers: h });
-      if (!res.ok) { toast.error(await readErr(res, 'Gagal menghapus')); return; }
-      toast.success('Varian dihapus');
-      setDetail(null);
-      loadVariants(); loadAudit();
-    } catch { toast.error('Gagal menghapus'); }
+    if (!hasil) return;
+    setDetail(null);
+    loadVariants(); loadAudit();
   };
 
   const fixSku = async (vid) => {
@@ -530,7 +539,7 @@ export default function RnDVariantModule({ token }) {
       return q > 0 ? <span className="tabular-nums">{q} pcs</span> : <span className="text-muted-foreground">—</span>;
     } },
     { kunci: 'status', label: 'Status', isi: (v) => <StatusBadge status={v.status} label={statusOf(v.status).label} tone={statusOf(v.status).tone} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (v) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (v) => (
       <div className="flex items-center justify-end gap-1">
         <Button variant="ghost" size="icon-sm" onClick={() => openEdit(v)} title="Ubah varian" aria-label="Ubah varian"
           data-testid={`rnd-variant-edit-${v.id}`}>

@@ -1,6 +1,6 @@
 """rahaza_inventory — Materials Master CRUD."""
 # ruff: noqa: E741
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, Query
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
@@ -300,10 +300,82 @@ async def update_material(mid: str, request: Request):
     return out
 
 
+async def baris_stok_bersaldo(db, filt: dict) -> int:
+    """Jumlah baris `rahaza_material_stock` (filter `filt`) yang saldonya bukan 0 — semua skema qty
+    (`core.stock_schema.read_qty`). Dipakai hapus permanen bahan/aksesoris dan rak/zona/gedung."""
+    from core.stock_schema import read_qty
+    rows = await db.rahaza_material_stock.find(filt, {"_id": 0}).to_list(5000)
+    return sum(1 for r in rows if abs(read_qty(r)) > 1e-9)
+
+
+async def material_usage(db, material_id: str) -> dict:
+    """Di mana bahan/aksesoris dipakai (label → jumlah). Dipakai hapus permanen Master Item (tab Bahan &
+    aksesoris) DAN Master Aksesoris (`routes.dewi_accessories_items.delete_item`) — 10 Nov 2026, permintaan
+    owner "master data bisa dihapus". Stok bersaldo, kartu stok/buku besar stok, BOM, dokumen pengadaan,
+    gudang (rak, gulungan, opname, karantina), cutting, dan barang/katalog yang menunjuk barang ini."""
+    from core.hapus_master import hitung_pemakaian
+    m = material_id
+    pakai = await hitung_pemakaian(db, [
+        ("kartu stok", "rahaza_material_movements", {"material_id": m}),
+        ("buku besar stok", "rahaza_stock_ledger", {"material_id": m}),
+        ("reservasi stok", "rahaza_material_reservations", {"material_id": m}),
+        ("BOM produksi", "rahaza_boms", {"$or": [{"materials.material_id": m}, {"yarn_materials.material_id": m},
+                                                 {"accessory_materials.material_id": m}, {"panel_material_id": m}]}),
+        ("templat BOM maklon", "dewi_maklon_bom_templates", {"materials.material_id": m}),
+        ("permintaan pembelian", "dewi_procurement_requests", {"items.material_id": m}),
+        ("permintaan pembelian aksesoris", "acc_purchase_requests", {"items.acc_id": m}),
+        ("PO pembelian", "rahaza_purchase_orders", {"items.material_id": m}),
+        ("penerimaan barang", "warehouse_receiving", {"items.material_id": m}),
+        ("retur pembelian", "rahaza_purchase_returns", {"lines.material_id": m}),
+        # 10 Nov 2026 (keputusan owner): baris DAFTAR HARGA pemasok bukan pemakaian — ikut terhapus bersama barang.
+        ("pengeluaran material", "rahaza_material_issues", {"items.material_id": m}),
+        ("opname stok", "wh_opname3_sessions", {"lines.material_id": m}),
+        ("karantina QC", "wh_quarantine_items", {"material_id": m}),
+        ("gulungan kain", "wh_fabric_rolls", {"material_id": m}),
+        ("posisi rak", "wh_positions", {"material_id": m}),
+        ("riwayat penempatan rak", "wh_placement_movements", {"material_id": m}),
+        ("order cutting", "cutting_orders", {"$or": [{"input_material_id": m}, {"output_material_id": m},
+                                              # 2026-11-10: order banyak kain × banyak hasil
+                                              {"inputs.input_material_id": m},
+                                              {"outputs.output_material_id": m}]}),
+        ("barang turunan", "rahaza_materials", {"id": {"$ne": m}, "$or": [{"source_material_id": m},
+                                                                          {"linked_material_id": m},
+                                                                          {"fg_material_id": m}]}),
+        ("produk katalog", "marketing_catalog_items", {"fg_material_id": m}),
+    ])
+    n = await baris_stok_bersaldo(db, {"material_id": m})
+    if n:
+        pakai = {"lokasi stok bersaldo": n, **pakai}
+    return pakai
+
+
+async def hapus_material_permanen(db, mat: dict, user: dict, jenis: str = "Barang") -> dict:
+    """Hapus permanen satu `rahaza_materials` bila belum dipakai (409 + rincian bila sudah). Baris stok bersaldo
+    0 milik barang itu ikut dihapus (tanpa riwayat — riwayat apa pun sudah menolak penghapusan)."""
+    from core.hapus_master import tolak_bila_dipakai
+    mid = mat["id"]
+    tolak_bila_dipakai(jenis, mat.get("name") or mat.get("code") or "", await material_usage(db, mid))
+    stok0 = await db.rahaza_material_stock.delete_many({"material_id": mid})
+    harga = await db.rahaza_supplier_price_lists.delete_many({"material_id": mid})
+    await db.rahaza_materials.delete_one({"id": mid})
+    await log_activity(user.get("id") or "", user.get("name") or "", "delete", "rahaza.material",
+                       f"id={mid} kode={mat.get('code')} jenis={mat.get('type')} baris_stok_0={stok0.deleted_count} "
+                       f"baris_harga={harga.deleted_count}")
+    return {"status": "deleted", "deleted": True, "message": f"{jenis} {mat.get('code') or ''} dihapus".replace("  ", " ")}
+
+
 @router.delete("/materials/{mid}")
-async def deactivate_material(mid: str, request: Request):
-    await _require_admin(request)
+async def deactivate_material(mid: str, request: Request, hard: bool = Query(False)):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, permintaan owner): hapus permanen
+    bila barang BELUM dipakai stok/BOM/dokumen pengadaan/gudang (`material_usage`); bila sudah → 409 dan layar
+    menawarkan Nonaktifkan."""
+    user = await _require_admin(request)
     db = get_db()
+    if hard:
+        mat = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0})
+        if not mat:
+            raise HTTPException(404, "Material tidak ditemukan.")
+        return await hapus_material_permanen(db, mat, user, "Material")
     await db.rahaza_materials.update_one({"id": mid}, {"$set": {"active": False, "updated_at": _now()}})
     return {"status": "deactivated"}
 

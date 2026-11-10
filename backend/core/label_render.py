@@ -216,8 +216,13 @@ def code_of(doc: dict, kind: str = "") -> str:
 
 def check_codes(kind: str, docs) -> None:
     """Tolak SEBELUM menggambar: satu kode salah = tidak ada PDF yang setengah benar."""
+    check_codes_mixed((kind, d) for d in docs)
+
+
+def check_codes_mixed(entries) -> None:
+    """`check_codes` untuk daftar campuran `(jenis, dokumen)` — mis. label bahan + label roll kain (10 Nov 2026)."""
     bad = []
-    for d in docs:
+    for kind, d in entries:
         try:
             validate_code(code_of(d, kind))
         except LabelCodeError as e:
@@ -488,38 +493,63 @@ def grid_labels_pdf(kind: str, docs, include_stock: bool = True,
     """PDF A4 berisi banyak label. `docs` sudah DIKEMBANGKAN (1 elemen = 1 label)."""
     docs = list(docs)
     check_codes(kind, docs)
-    lw_mm, lh_mm = label_size(kind)
+    return _grid_pdf([(kind, d) for d in docs], kind, include_stock,
+                     title or f"Label batch ({len(docs)})", footer)
+
+
+def grid_labels_pdf_mixed(entries, include_stock: bool = True,
+                          title: str = "", footer: bool = False) -> io.BytesIO:
+    """PDF A4 berisi label BEBERAPA JENIS yang SEUKURAN, mis. label bahan 90×50 + label roll kain 90×50.
+
+    10 Nov 2026 (Buat Barcode › Dari penerimaan barang): satu penerimaan berisi aksesoris (label bahan) dan kain
+    (label roll per gulungan) — satu PDF, satu kali cetak. `entries` = [(jenis, dokumen)], sudah DIKEMBANGKAN
+    (1 elemen = 1 label). Jenis berbeda ukuran ditolak: grid dihitung dari SATU ukuran label.
+    """
+    entries = [(k, d) for k, d in entries]
+    if not entries:
+        raise ValueError("Tidak ada label untuk dicetak.")
+    kinds = list(dict.fromkeys(k for k, _ in entries))
+    if len({label_size(k) for k in kinds}) > 1:
+        raise ValueError(f"Ukuran label berbeda tidak bisa dicampur dalam satu lembar: {', '.join(kinds)}")
+    if len(kinds) > 1 and any(k in FIXED_GRID for k in kinds):
+        raise ValueError(f"Label {', '.join(k for k in kinds if k in FIXED_GRID)} memakai grid tetap — cetak terpisah.")
+    check_codes_mixed(entries)
+    return _grid_pdf(entries, kinds[0], include_stock, title or f"Label batch ({len(entries)})", footer)
+
+
+def _grid_pdf(entries, layout_kind: str, include_stock: bool, title: str, footer: bool) -> io.BytesIO:
+    """Tata letak grid A4 (satu-satunya): ukuran & kolom/baris dari `layout_kind`, tiap label digambar sesuai jenisnya."""
+    lw_mm, lh_mm = label_size(layout_kind)
     lw, lh = lw_mm * mm, lh_mm * mm
     page_w, page_h = A4
     cols, rows, mx, my = grid_geometry(page_w, page_h, lw, lh)
-    if kind in FIXED_GRID:
-        cols, rows = FIXED_GRID[kind]
+    if layout_kind in FIXED_GRID:
+        cols, rows = FIXED_GRID[layout_kind]
         mx, my = (page_w - cols * lw) / 2, (page_h - rows * lh) / 2
     per_page = cols * rows
-    title = title or f"Label batch ({len(docs)})"
 
     def _footer(page_no: int, last: bool):
         if not footer:
             return
         c.setFont("Helvetica", 7)
         c.setFillColorRGB(0.5, 0.5, 0.5)
-        tail = f"  ·  {len(docs)} label" if last else ""
+        tail = f"  ·  {len(entries)} label" if last else ""
         c.drawString(mx, my / 2, f"{title}  ·  Hal {page_no}{tail}")
         c.setFillColorRGB(0, 0, 0)
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle(title)
-    for idx, doc in enumerate(docs):
+    for idx, (kind, doc) in enumerate(entries):
         slot = idx % per_page
         col, row = slot % cols, slot // cols
         x = mx + col * lw
         y = page_h - my - (row + 1) * lh
         _draw(c, kind, x, y, lw, lh, doc, include_stock)
-        if slot == per_page - 1 and idx + 1 < len(docs):
+        if slot == per_page - 1 and idx + 1 < len(entries):
             _footer(idx // per_page + 1, False)
             c.showPage()
-    _footer((len(docs) - 1) // per_page + 1 if docs else 1, True)
+    _footer((len(entries) - 1) // per_page + 1 if entries else 1, True)
     c.save()
     buf.seek(0)
     return buf

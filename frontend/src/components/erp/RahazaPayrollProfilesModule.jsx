@@ -6,9 +6,11 @@
  * form = FormPopup standar, pemilih tanggal seragam. API, isian, dan data yang dikirim TIDAK berubah.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Pencil, Plus, RefreshCw, Search, Trash2, Users } from 'lucide-react';
+import { Ban, Pencil, Plus, RefreshCw, Search, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiDelete } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -87,14 +89,25 @@ export default function RahazaPayrollProfilesModule({ token }) {
     } finally { setSaving(false); }
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): tombol "Hapus" dulu hanya menonaktifkan. Kini hapus permanen bila
+  // karyawannya belum pernah digaji; bila sudah, server menjawab 409 dan dialog kedua menawarkan Nonaktifkan.
   const del = async (p) => {
-    if (!(await confirmDialog({
-      title: 'Hapus profil gaji ini?', body: `${p.employee_code || ''} ${p.employee_name || ''}`.trim() || undefined,
-      confirmLabel: 'Hapus', danger: true,
-    }))) return;
     setError('');
-    const r = await fetch(`/api/rahaza/payroll-profiles/${p.id}`, { method: 'DELETE', headers });
-    if (r.ok) fetchAll(); else setError(`Gagal hapus (HTTP ${r.status})`);
+    const hasil = await hapusMaster({
+      jenis: 'profil gaji', nama: `${p.employee_code || ''} ${p.employee_name || ''}`.trim(),
+      hapus: () => apiDelete(`/api/rahaza/payroll-profiles/${p.id}?hard=true`),
+      nonaktifkan: p.active === false ? null : () => apiDelete(`/api/rahaza/payroll-profiles/${p.id}`),
+    });
+    if (hasil) fetchAll();
+  };
+  const nonaktifkan = async (p) => {
+    if (!(await confirmDialog({
+      title: `Nonaktifkan profil gaji ${p.employee_name || p.employee_code || ''}?`,
+      body: 'Karyawan ini tidak ikut proses gaji berikutnya sampai profilnya dibuat lagi. Riwayat gaji tetap tersimpan.',
+      confirmLabel: 'Nonaktifkan', danger: true,
+    }))) return;
+    try { await apiDelete(`/api/rahaza/payroll-profiles/${p.id}`); toast.success('Profil gaji dinonaktifkan'); fetchAll(); }
+    catch (e) { toast.error(e.message || 'Gagal menonaktifkan profil gaji'); }
   };
 
   const empsWithoutProfile = employees.filter(e => e.active && !profiles.some(p => p.employee_id === e.id));
@@ -125,10 +138,12 @@ export default function RahazaPayrollProfilesModule({ token }) {
       <span className="tabular-nums">{formatRupiah(p.base_rate || 0)}<span className="text-xs text-muted-foreground"> /{SCHEME_META[p.pay_scheme]?.satuan || 'bulan'}</span></span>) },
     { kunci: 'lembur', label: 'Tarif lembur', rata: 'kanan', isi: (p) => <span className="tabular-nums">{formatRupiah(p.overtime_rate || 0)}<span className="text-xs text-muted-foreground"> /jam</span></span> },
     { kunci: 'proses', label: 'Tarif per proses', isi: (p) => <span className="text-sm text-muted-foreground">{overrideLabel(p)}</span> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (p) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (p) => (
       <div className="flex items-center justify-end gap-1">
         <Button size="sm" variant="outline" onClick={() => bukaUbah(p)} data-testid={`pp-edit-${p.employee_code}`}><Pencil />Ubah</Button>
-        <Button size="icon-sm" variant="ghost" onClick={() => del(p)} title="Hapus profil" aria-label="Hapus profil"
+        <Button size="icon-sm" variant="ghost" onClick={() => nonaktifkan(p)} title="Nonaktifkan" aria-label={`Nonaktifkan profil ${p.employee_name || ''}`}
+          data-testid={`pp-off-${p.employee_code}`}><Ban /></Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => del(p)} title="Hapus" aria-label={`Hapus profil ${p.employee_name || ''}`}
           data-testid={`pp-del-${p.employee_code}`}><Trash2 /></Button>
       </div>) },
   ];

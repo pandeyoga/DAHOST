@@ -1195,10 +1195,11 @@ def test_gulungan_kain_keluar_bersamaan_sisa_tidak_tertimpa(monkeypatch):
     monkeypatch.setattr(wfr, "get_db", lambda: db)
     monkeypatch.setattr(wfr, "require_auth", _auth(SA))
     moves = counting(monkeypatch, wfr, "_log_movement")
-    stale(db, "wh_fabric_rolls", remaining_m=20.0)                # pengeluaran lain 30 m baru saja tercatat
+    # 10 Nov 2026 (owner): "Keluarkan roll" langsung dihapus — kain keluar hanya lewat Order Cutting → 410, sisa tetap.
     with pytest.raises(HTTPException) as e:
         run(wfr.issue_roll("rl1", wfr.IssueIn(qty=30, unit="meter"), FakeRequest()))
-    assert e.value.status_code == 409 and db.wh_fabric_rolls.docs[0]["remaining_m"] == 20.0 and moves == []
+    assert e.value.status_code == 410 and "Order Cutting" in e.value.detail
+    assert db.wh_fabric_rolls.docs[0]["remaining_m"] == 50.0 and moves == []
 
 
 def test_batal_retur_fisik_tidak_menimpa_keputusan_gudang(monkeypatch):

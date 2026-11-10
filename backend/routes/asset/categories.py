@@ -87,8 +87,14 @@ async def delete_category(cat_id: str, request: Request):
                        'admin_gudang', 'owner', 'admin', 'superadmin'),
                        message='Akses ditolak: Anda tidak berhak menghapus kategori aset.')  # T-01 2.3
     db = get_db()
-    cnt = await db.dewi_assets.count_documents({"category_id": cat_id})
-    if cnt > 0:
-        raise HTTPException(400, f"Tidak bisa dihapus: ada {cnt} aset menggunakan kategori ini.")
+    # 10 Nov 2026 (permintaan owner "master data bisa dihapus"): kalimat & kode penolakan diseragamkan lewat
+    # core.hapus_master (dulu 400 "ada {n} aset"). Perilaku tetap: hapus permanen bila belum dipakai aset.
+    from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+    cat = await db.dewi_asset_categories.find_one({"id": cat_id}, {"_id": 0})
+    if not cat:
+        raise HTTPException(404, "Kategori tidak ditemukan.")
+    pakai = await hitung_pemakaian(db, [("aset", "dewi_assets", {"category_id": cat_id})])
+    tolak_bila_dipakai("Kategori aset", cat.get("name") or cat.get("code") or "", pakai,
+                       "Pindahkan aset itu ke kategori lain dulu.")
     await db.dewi_asset_categories.delete_one({"id": cat_id})
     return {"ok": True}

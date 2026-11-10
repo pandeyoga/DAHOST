@@ -8,6 +8,8 @@ export default function RahazaShiftsModule({ token }) {
       endpoint="/api/rahaza/shifts"
       token={token}
       testIdPrefix="rahaza-shift"
+      hapusPermanen
+      jenis="shift"
       ieKey="shifts"
       columns={[
         { key: 'code', label: 'Kode' },

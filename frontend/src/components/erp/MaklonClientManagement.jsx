@@ -7,7 +7,10 @@
  *     akses portal klien = DetailPopup + form akun baru = FormPopup pendek (popup tidak bertumpuk), cari ± 16 rem.
  *   • Nonaktifkan/aktifkan dan aksi akun memakai confirmDialog.
  *
- *   - klien : GET/POST /api/dewi/maklon/clients · PUT /api/dewi/maklon/clients/{id}[/toggle]
+ *   • 10 Nov 2026 (owner: "klien tidak bisa diedit/dihapus"): kolom Aksi (Ubah · Hapus) di tiap baris + Hapus di rincian.
+ *     Hapus permanen hanya bila klien belum dipakai; bila sudah, server menolak (409) dan layar menawarkan Nonaktifkan.
+ *
+ *   - klien : GET/POST /api/dewi/maklon/clients · PUT /api/dewi/maklon/clients/{id}[/toggle] · DELETE …/{id}?hard=true
  *   - portal: /api/dewi/maklon/clients/{id}/portal-status · provision-portal · portal-accounts/{acc}/…
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -28,6 +31,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api';
 import { formatDateID, formatRupiah } from '@/lib/format';
+import { hapusMaster } from '../../lib/hapusMaster';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
@@ -128,7 +132,7 @@ function ClientForm({ data, onCancel, onSaved }) {
 }
 
 // ── Rincian klien — popup (DetailPanel) ───────────────────────────────────────
-function ClientDetail({ client, onClose, onEdit, onPortal, onChanged }) {
+function ClientDetail({ client, onClose, onEdit, onPortal, onChanged, onHapus }) {
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
     const off = isActive(client);
@@ -156,6 +160,10 @@ function ClientDetail({ client, onClose, onEdit, onPortal, onChanged }) {
         <Button variant="outline" onClick={toggle} disabled={busy} data-testid={`maklon-client-toggle-${client.id}`}>
           <Power className="w-4 h-4" />{isActive(client) ? 'Nonaktifkan' : 'Aktifkan'}
         </Button>
+        {onHapus && (
+          <Button variant="destructive" size="icon" onClick={onHapus} disabled={busy} title="Hapus klien" aria-label="Hapus klien"
+            data-testid={`maklon-client-delete-${client.id}`}><Trash2 className="w-4 h-4" /></Button>
+        )}
       </>}>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Info label="PIC" value={client.pic_name} />
@@ -299,13 +307,24 @@ export default function MaklonClientManagement() {
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(filtered, 25);
   const current = panel?.id ? clients.find((c) => c.id === panel.id) : null;
   const afterSave = async (id) => { await load(); setPanel(id ? { mode: 'view', id } : null); };
+  const hapus = async (c) => {
+    const hasil = await hapusMaster({ jenis: 'klien', nama: c.name,
+      keterangan: 'Klien, akun login portalnya, dan akun piutang/pendapatan otomatisnya dihapus permanen. Bila klien sudah dipakai '
+        + '(PO, artikel katalog, sampel, piutang, jurnal), penghapusan ditolak' + (isActive(c) ? ' dan Anda bisa menonaktifkannya saja.' : '.'),
+      hapus: () => apiDelete(`/dewi/maklon/clients/${c.id}?hard=true`),
+      nonaktifkan: isActive(c) ? () => apiPut(`/dewi/maklon/clients/${c.id}/toggle`, {}) : null });
+    if (hasil === 'dihapus' && panel?.id === c.id) setPanel(null);
+    if (hasil) await load();
+  };
 
   let detail = null;
   if (panel?.mode === 'new') detail = <ClientForm onCancel={() => setPanel(null)} onSaved={afterSave} />;
-  else if (panel?.mode === 'edit' && current) detail = <ClientForm data={current} onCancel={() => setPanel({ mode: 'view', id: current.id })} onSaved={afterSave} />;
-  else if (panel?.mode === 'view' && current) {
+  else if (panel?.mode === 'edit' && current) {
+    detail = <ClientForm data={current} onCancel={() => setPanel(panel.dariBaris ? null : { mode: 'view', id: current.id })}
+      onSaved={panel.dariBaris ? async () => { await load(); setPanel(null); } : afterSave} />;
+  } else if (panel?.mode === 'view' && current) {
     detail = <ClientDetail client={current} onClose={() => setPanel(null)} onEdit={() => setPanel({ mode: 'edit', id: current.id })}
-      onPortal={() => setPortalFor(current)} onChanged={afterSave} />;
+      onPortal={() => setPortalFor(current)} onChanged={afterSave} onHapus={() => hapus(current)} />;
   }
 
   return (
@@ -338,12 +357,12 @@ export default function MaklonClientManagement() {
             <TableHeader><TableRow>
               <TableHead>Klien</TableHead><TableHead>PIC</TableHead><TableHead>Kota</TableHead>
               <TableHead className="text-right">Tarif standar</TableHead><TableHead>Termin</TableHead>
-              <TableHead>Kualitas</TableHead><TableHead>Status</TableHead>
+              <TableHead>Kualitas</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {!paged.length && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={7} className="p-0 [&>div]:py-8">
+                  <TableCell colSpan={8} className="p-0 [&>div]:py-8">
                     <EmptyState icon={Users} title={clients.length ? 'Tidak ada klien yang cocok' : 'Belum ada klien terdaftar'}
                       description={clients.length ? 'Ubah kata pencarian atau penyaring status.' : 'Klik Klien baru untuk menambahkan klien maklon pertama.'}
                       action={clients.length && (search || status) ? <Button variant="outline" size="sm" onClick={() => { setSearch(''); setStatus(''); }}><X className="w-3.5 h-3.5" />Tampilkan semua</Button> : null} />
@@ -363,6 +382,12 @@ export default function MaklonClientManagement() {
                   <TableCell className="text-sm">{TERMS[c.payment_terms || 'net_30'] || c.payment_terms}</TableCell>
                   <TableCell className="text-sm">{QUALITY[c.quality_standard] || c.quality_standard || '—'}</TableCell>
                   <TableCell><ActiveBadge c={c} /></TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    <Button size="icon-sm" variant="ghost" onClick={() => setPanel({ mode: 'edit', id: c.id, dariBaris: true })} title="Ubah klien" aria-label="Ubah klien"
+                      data-testid={`maklon-client-row-edit-${c.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                    <Button size="icon-sm" variant="ghost" onClick={() => hapus(c)} title="Hapus klien" aria-label="Hapus klien"
+                      data-testid={`maklon-client-row-delete-${c.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

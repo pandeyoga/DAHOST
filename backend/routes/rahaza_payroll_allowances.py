@@ -110,12 +110,21 @@ async def update_allowance(allowance_id: str, request: Request):
 
 @router.delete("/payroll-allowances/{allowance_id}", dependencies=only(*HR_ROLES, perm="payroll.manage"))  # T-01 2.3
 async def delete_allowance(allowance_id: str, request: Request):
-    await _require_hr(request)  # Tahap 1: gerbang yang sama dengan tambah/ubah
+    """Hapus permanen (perilaku lama). 10 Nov 2026 (owner "master data bisa dihapus"): dulu tanpa cek — tunjangan
+    yang sudah tercetak di slip gaji ikut hilang dari master. Kini 409 bila sudah dipakai di slip gaji; layar
+    menawarkan Nonaktifkan (PUT is_active=false)."""
+    user = await _require_hr(request)  # Tahap 1: gerbang yang sama dengan tambah/ubah
     db = get_db()
-    res = await db.da_payroll_allowances.delete_one({"allowance_id": allowance_id})
-    if res.deleted_count == 0:
+    from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+    doc = await db.da_payroll_allowances.find_one({"allowance_id": allowance_id}, {"_id": 0})
+    if not doc:
         raise HTTPException(404, "Tunjangan tidak ditemukan.")
-    return {"ok": True}
+    tolak_bila_dipakai("Tunjangan", doc.get("name") or "", await hitung_pemakaian(db, [
+        ("slip gaji", "rahaza_payslips", {"allowances.allowance_id": allowance_id}),
+    ]))
+    await db.da_payroll_allowances.delete_one({"allowance_id": allowance_id})
+    await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.payroll_allowance", doc.get("name") or allowance_id)
+    return {"ok": True, "deleted": True}
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗

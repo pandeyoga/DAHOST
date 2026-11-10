@@ -485,11 +485,26 @@ async def update_shift(request: Request, shift_id: str, body: ShiftUpdateModel):
 
 
 @router.delete("/{shift_id}")
-async def delete_shift(request: Request, shift_id: str):
+async def delete_shift(request: Request, shift_id: str, hard: bool = False):
+    """Tanpa `hard`: nonaktifkan (perilaku lama). `?hard=true` (10 Nov 2026, owner "master data bisa dihapus"):
+    hapus permanen bila shift belum dipakai (hitungan SATU dengan `routes.rahaza_master.pemakaian_shift` — master
+    shift yang sama); selain itu 409 dan layar menawarkan Nonaktifkan. Gerbang peran sama dengan menonaktifkan."""
     user = await require_auth(request)
     if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
-        raise HTTPException(403, "Admin only.")
+        raise HTTPException(403, "Hanya admin dan owner yang boleh menonaktifkan atau menghapus shift.")
     db = get_db()
+    if hard:
+        from core.hapus_master import tolak_bila_dipakai
+        from routes.rahaza_master import pemakaian_shift
+        sid = _coerce_id(shift_id)
+        doc = await db.rahaza_shifts.find_one({"id": sid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(404, "Shift tidak ditemukan.")
+        nama = doc.get("shift_name") or doc.get("name") or doc.get("shift_code") or doc.get("code") or ""
+        tolak_bila_dipakai("Shift", nama, await pemakaian_shift(db, sid))
+        await db.rahaza_shifts.delete_one({"id": sid})
+        await log_activity(user.get("id") or "", user.get("name") or "", "delete_shift", "hr_shifts", nama)
+        return _ok(message=f"Shift {nama} dihapus.", deleted=True)
     await db.rahaza_shifts.update_one(
         {"id": _coerce_id(shift_id)},
         {"$set": {"status": "inactive", "active": False, "updated_at": _now()}},

@@ -27,9 +27,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Link2, Search, RefreshCw, Loader2, CheckCircle2, Plus,
-  Wand2, Trash2, Eye, Sparkles, ArrowRight,
+  Wand2, Trash2, Eye, Sparkles, ArrowRight, Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -120,8 +121,11 @@ function ManualPickDialog({ row, onClose, onDone }) {
   ];
 
   return (
-    <DetailPopup open onClose={onClose} testId="manual-pick-dialog" judul="Pilih barang gudang untuk SKU ini"
-      keterangan={`${row.product_name || '(tanpa nama)'} · variasi ${row.variation || '—'} · ${fmt(row.pcs)} pcs di ${fmt(row.orders)} pesanan`}>
+    <DetailPopup open onClose={onClose} testId="manual-pick-dialog"
+      judul={row.mapped_to ? 'Ganti barang gudang untuk SKU ini' : 'Pilih barang gudang untuk SKU ini'}
+      keterangan={`${row.product_name || '(tanpa nama)'} · variasi ${row.variation || '—'}`
+        + (row.pcs != null ? ` · ${fmt(row.pcs)} pcs di ${fmt(row.orders)} pesanan` : '')
+        + (row.mapped_to ? ` · sekarang: ${row.mapped_to}` : '')}>
       <KotakCari value={q} onChange={setQ} placeholder="Cari nama produk / SKU master" testId="manual-pick-search" />
       {loading && rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Mencari…</p>
@@ -327,7 +331,7 @@ function BulkPanel({ onDone }) {
 }
 
 /* ─── Bagian: pemetaan yang sudah ada ──────────────────────────────────────── */
-function MappedPanel({ reloadKey, onChanged }) {
+function MappedPanel({ reloadKey, onChanged, onUbah }) {
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -342,9 +346,20 @@ function MappedPanel({ reloadKey, onChanged }) {
 
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load, reloadKey]);
 
-  const unmap = async (psid) => {
+  // 10 Nov 2026 — dulu satu klik ikon tempat sampah langsung melepas pemetaan (tanpa konfirmasi). Melepas memang
+  // menghapus pemetaan ini, dan baris pesanannya kembali "Belum tertaut" sampai SKU-nya ditautkan lagi.
+  const unmap = async (r) => {
+    const psid = r.platform_sku_id;
+    const pesanan = r.orders_using == null ? 'Pesanan dengan nama dan variasi ini' : `${fmt(r.orders_using)} pesanan`;
+    const ok = await confirmDialog({
+      title: `Lepas pemetaan SKU ${r.sku_label || psid}?`,
+      body: `SKU ini tidak lagi ditautkan ke "${r.target_name || 'barang gudang'}". ${pesanan} kembali ke "Belum tertaut" `
+        + 'sampai SKU ini ditautkan lagi — gudang tidak bisa menyiapkan barangnya. Pesanannya sendiri tidak dihapus.',
+      confirmLabel: 'Lepas pemetaan', danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await apiDelete(`/sku-bridge/mappings/${psid}`);
+      const res = await apiDelete(`/sku-bridge/mappings/${encodeURIComponent(psid)}`);
       toast.success(res.message || 'Pemetaan dilepas');
       load(); onChanged();
     } catch (e) { toast.error(e.message); }
@@ -360,11 +375,17 @@ function MappedPanel({ reloadKey, onChanged }) {
     { kunci: 'fg', label: 'Kode FG', hp: false, isi: (r) => <span className="tabular-nums">{r.fg_code || '—'}</span> },
     { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.orders_using)}</span> },
     { kunci: 'cara', label: 'Cara', hp: false, isi: (r) => <StatusBadge tone="default" label={METHOD_LABEL[r.method || 'manual'] || r.method} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
-      <Button size="icon-sm" variant="ghost" onClick={() => unmap(r.platform_sku_id)} aria-label={`Lepas pemetaan ${r.platform_sku_id}`}
-        title="Lepas pemetaan" data-testid={`unmap-${r.platform_sku_id}`}>
-        <Trash2 className="text-[hsl(var(--danger-text))]" />
-      </Button>) },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (r) => (
+      <div className="flex justify-end gap-1">
+        <Button size="icon-sm" variant="ghost" onClick={() => onUbah?.(r)} aria-label={`Ganti barang gudang ${r.platform_sku_id}`}
+          title="Ganti barang gudang" data-testid={`remap-${r.platform_sku_id}`}>
+          <Pencil />
+        </Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => unmap(r)} aria-label={`Lepas pemetaan ${r.platform_sku_id}`}
+          title="Lepas pemetaan" data-testid={`unmap-${r.platform_sku_id}`}>
+          <Trash2 className="text-[hsl(var(--danger-text))]" />
+        </Button>
+      </div>) },
   ];
 
   return (
@@ -592,7 +613,13 @@ export default function SkuBridgeModule({ onNavigate }) {
         </div>
       )}
 
-      {tab === 'mapped' && <MappedPanel reloadKey={reloadKey} onChanged={refreshAll} />}
+      {tab === 'mapped' && (
+        <MappedPanel reloadKey={reloadKey} onChanged={refreshAll}
+          onUbah={(r) => setManualRow({
+            platform_sku_id: r.platform_sku_id, account_id: r.account_id, product_name: r.product_name_sample,
+            variation: r.variation_sample, mapped_to: r.target_name || r.fg_code || 'barang gudang',
+          })} />
+      )}
       {tab === 'bulk' && <BulkPanel onDone={refreshAll} />}
       {tab === 'onboarding' && <ProductOnboardingTab onDone={refreshAll} />}
       {tab === 'options' && <VariantOptionsTab />}

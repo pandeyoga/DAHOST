@@ -174,6 +174,8 @@ REGISTRY: dict[str, str] = {
     "dewi_maklon_qc_checks": "maklon",
     "dewi_maklon_sample_revisions": "maklon",
     "dewi_maklon_samples": "maklon",
+    # 2026-11-10 (owner): denda saat Tutup PO — klien→DA & DA→CMT (`core.denda_po`)
+    "dewi_po_denda": "produksi",
     "dewi_material_issues": "lain",
     "dewi_mgmt_alert_config": "lain",
     "dewi_onboarding_checklists": "lain",
@@ -634,7 +636,7 @@ workspace_shares workspace_versions
 """
 
 _TRANSAKSI = """
-hr_shift_requests
+hr_shift_requests dewi_po_denda
 acc_loans acc_opname_lines acc_opname_sessions acc_purchase_requests acc_stock_movements
 accessory_shipment_items accessory_shipments approval_requests bank_recon_matches bank_recon_sessions
 bank_recon_txns buyer_shipment_items buyer_shipments buyer_short_records cmt_delivery_notes

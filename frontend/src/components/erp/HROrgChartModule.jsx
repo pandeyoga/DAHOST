@@ -12,7 +12,7 @@
  * Data yang dikirim ke server dan alurnya tidak berubah.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, RefreshCw, Pencil, Trash2, MoreHorizontal, AlertCircle } from 'lucide-react';
+import { Plus, RefreshCw, Pencil, Trash2, MoreHorizontal, AlertCircle, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +28,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { OrgNode, TypeBadge, TYPE_LABEL, statusTarget } from './OrgNode';
@@ -35,6 +36,17 @@ import { EmployeeSelect, useActiveEmployees } from './hr/hrPickers';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = (path, opts = {}) => fetch(`${BACKEND_URL}/api/dewi/org${path}`, opts);
+// Galat membawa `status` (409 = unit/jabatan sudah dipakai → lib/hapusMaster menawarkan Nonaktifkan).
+const kirim = async (path, opts) => {
+  const r = await API(path, opts);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    const e = new Error(typeof d.detail === 'string' ? d.detail : `Gagal (HTTP ${r.status})`);
+    e.status = r.status;
+    throw e;
+  }
+  return r.json().catch(() => ({}));
+};
 
 const TYPE_LEVELS = ['company', 'division', 'department', 'team', 'section'];
 const UNIT_KOSONG = { name: '', code: '', type: 'department', parent_id: '', head_employee_id: '', head_employee_name: '', headcount_target: 0, color: '', description: '' };
@@ -52,6 +64,7 @@ export default function HROrgChartModule({ token }) {
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [showPosForm, setShowPosForm] = useState(false);
   const [editUnit, setEditUnit] = useState(null);
+  const [editPos, setEditPos] = useState(null);
   const [detailUnit, setDetailUnit] = useState(null);
   const [unitForm, setUnitForm] = useState(UNIT_KOSONG);
   const [posForm, setPosForm] = useState(POS_KOSONG);
@@ -110,7 +123,15 @@ export default function HROrgChartModule({ token }) {
     setShowUnitForm(true);
   };
 
-  const openPosForm = () => { setGalat(''); setShowPosForm(true); };
+  const openPosForm = (p = null) => {
+    setGalat('');
+    setEditPos(p);
+    setPosForm(p ? {
+      title: p.title || '', unit_id: p.unit_id || '', grade: p.grade ?? 1,
+      headcount_target: p.headcount_target ?? 1, salary_grade: p.salary_grade || '',
+    } : POS_KOSONG);
+    setShowPosForm(true);
+  };
 
   const handleSaveUnit = async () => {
     setSaving(true); setGalat('');
@@ -131,16 +152,40 @@ export default function HROrgChartModule({ token }) {
     } catch { setGalat('Gagal menyimpan unit'); } finally { setSaving(false); }
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): dulu server hanya memeriksa sub-unit padahal kalimat ini juga
+  // menyebut jabatan; kini server menolak (409) unit yang masih punya sub-unit, jabatan, atau karyawan, lalu dialog
+  // kedua menawarkan Nonaktifkan.
   const handleDeleteUnit = async (u) => {
-    if (!(await confirmDialog({ title: `Hapus unit ${u.name}?`, body: 'Unit yang masih punya sub-unit atau jabatan tidak bisa dihapus.', confirmLabel: 'Hapus', danger: true }))) return;
+    const aktif = u.is_active !== false;
+    const hasil = await hapusMaster({
+      jenis: 'unit', nama: u.name,
+      keterangan: 'Unit dihapus permanen. Unit yang masih punya sub-unit, jabatan, atau karyawan tidak bisa dihapus'
+        + (aktif ? ' dan Anda bisa menonaktifkannya saja.' : '.'),
+      hapus: () => kirim(`/units/${u.unit_id}`, { method: 'DELETE', headers }),
+      nonaktifkan: aktif ? () => kirim(`/units/${u.unit_id}`, { method: 'PUT', headers, body: JSON.stringify({ is_active: false }) }) : null,
+    });
+    if (hasil) { setDetailUnit(null); fetchAll(); }
+  };
+
+  const handleDeletePos = async (p) => {
+    const aktif = p.is_active !== false;
+    const hasil = await hapusMaster({
+      jenis: 'jabatan', nama: p.title,
+      keterangan: 'Jabatan dihapus permanen. Jabatan yang masih dipegang karyawan atau menjadi atasan jabatan lain tidak bisa dihapus'
+        + (aktif ? ' dan Anda bisa menonaktifkannya saja.' : '.'),
+      hapus: () => kirim(`/positions/${p.position_id}`, { method: 'DELETE', headers }),
+      nonaktifkan: aktif ? () => kirim(`/positions/${p.position_id}`, { method: 'PUT', headers, body: JSON.stringify({ is_active: false }) }) : null,
+    });
+    if (hasil) fetchAll();
+  };
+
+  const aktifkan = async (jenis, x) => {
     try {
-      const r = await API(`/units/${u.unit_id}`, { method: 'DELETE', headers });
-      const d = await r.json();
-      if (!d.ok) { toast.error(d.detail || 'Tidak bisa dihapus'); return; }
-      toast.success('Unit dihapus');
-      setDetailUnit(null);
+      if (jenis === 'unit') await kirim(`/units/${x.unit_id}`, { method: 'PUT', headers, body: JSON.stringify({ is_active: true }) });
+      else await kirim(`/positions/${x.position_id}`, { method: 'PUT', headers, body: JSON.stringify({ is_active: true }) });
+      toast.success(`${jenis === 'unit' ? 'Unit' : 'Jabatan'} ${jenis === 'unit' ? x.name : x.title} diaktifkan`);
       fetchAll();
-    } catch { toast.error('Gagal menghapus unit'); }
+    } catch (e) { toast.error(e.message || 'Gagal mengaktifkan'); }
   };
 
   const handleSavePos = async () => {
@@ -148,15 +193,18 @@ export default function HROrgChartModule({ token }) {
     try {
       const unit = units.find(u => u.unit_id === posForm.unit_id);
       const body = { ...posForm, unit_name: unit?.name || '' };
-      const r = await API(`/positions`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const r = editPos
+        ? await API(`/positions/${editPos.position_id}`, { method: 'PUT', headers, body: JSON.stringify(body) })
+        : await API(`/positions`, { method: 'POST', headers, body: JSON.stringify(body) });
       // 2026-11-06 (pola P6): dulu form ditutup walau server menolak, tanpa pesan apa pun
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         setGalat(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan jabatan');
         return;
       }
-      toast.success('Jabatan ditambahkan');
+      toast.success(editPos ? 'Jabatan disimpan' : 'Jabatan ditambahkan');
       setShowPosForm(false);
+      setEditPos(null);
       setPosForm(POS_KOSONG);
       fetchAll();
     } catch { setGalat('Gagal menyimpan jabatan'); } finally { setSaving(false); }
@@ -185,24 +233,33 @@ export default function HROrgChartModule({ token }) {
           <Button size="icon-sm" variant="ghost" aria-label="Lainnya" title="Lainnya"><MoreHorizontal /></Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => handleDeleteUnit(u)} className="text-[hsl(var(--danger-text))]">
+          {u.is_active === false && (
+            <DropdownMenuItem onSelect={() => aktifkan('unit', u)} data-testid={`org-unit-activate-${u.unit_id}`}>
+              <Power className="mr-2 h-4 w-4" />Aktifkan unit
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => handleDeleteUnit(u)} className="text-[hsl(var(--danger-text))]"
+            data-testid={`org-unit-delete-${u.unit_id}`}>
             <Trash2 className="mr-2 h-4 w-4" />Hapus unit
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
   );
+  const nonaktif = (x) => x.is_active === false && <StatusBadge status="nonaktif" label="Nonaktif" tone="muted" />;
 
   const kolomUnit = [
     { kunci: 'nama', label: 'Unit', hp: 'judul', isi: (u) => (
-      <span className="font-medium text-foreground" style={{ paddingLeft: `${(u.level || 0)}rem` }}>{u.name}</span>) },
+      <span className="flex items-center gap-2" style={{ paddingLeft: `${(u.level || 0)}rem` }}>
+        <span className="font-medium text-foreground">{u.name}</span>{nonaktif(u)}
+      </span>) },
     { kunci: 'tipe', label: 'Tipe', isi: (u) => <TypeBadge type={u.type} /> },
     { kunci: 'induk', label: 'Induk', isi: (u) => namaUnit[u.parent_id] || '—' },
     { kunci: 'kepala', label: 'Kepala', isi: (u) => u.head_employee_name || '—' },
     { kunci: 'terisi', label: 'Terisi', rata: 'kanan', isi: (u) => <span className="tabular-nums">{u.headcount_actual || 0}</span> },
     { kunci: 'target', label: 'Target', rata: 'kanan', isi: (u) => <span className="tabular-nums">{u.headcount_target || 0}</span> },
     { kunci: 'status', label: 'Keadaan', isi: (u) => { const s = statusTarget(u.headcount_actual, u.headcount_target); return <StatusBadge status="target" label={s.label} tone={s.tone} />; } },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiUnit },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: aksiUnit },
   ];
   const unduhUnit = [
     { label: 'Unit', nilai: (u) => u.name },
@@ -216,12 +273,25 @@ export default function HROrgChartModule({ token }) {
   ];
 
   const kolomPos = [
-    { kunci: 'jabatan', label: 'Jabatan', hp: 'judul', isi: (p) => <span className="font-medium text-foreground">{p.title}</span> },
+    { kunci: 'jabatan', label: 'Jabatan', hp: 'judul', isi: (p) => (
+      <span className="flex items-center gap-2"><span className="font-medium text-foreground">{p.title}</span>{nonaktif(p)}</span>) },
     { kunci: 'unit', label: 'Unit', hp: 'keterangan', isi: (p) => p.unit_name || '—' },
     { kunci: 'tingkat', label: 'Tingkat', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.grade ?? '—'}</span> },
     { kunci: 'terisi', label: 'Terisi', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.headcount_actual ?? 0}</span> },
     { kunci: 'target', label: 'Target', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.headcount_target ?? 0}</span> },
     { kunci: 'golongan', label: 'Golongan gaji', isi: (p) => p.salary_grade || '—' },
+    // 10 Nov 2026 (owner: "master data bisa diubah & dihapus"): jabatan dulu tanpa aksi sama sekali.
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (p) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openPosForm(p)} title="Ubah" aria-label={`Ubah jabatan ${p.title}`}
+          data-testid={`org-pos-edit-${p.position_id}`}><Pencil /></Button>
+        {p.is_active === false && (
+          <Button variant="ghost" size="icon-sm" onClick={() => aktifkan('jabatan', p)} title="Aktifkan" aria-label={`Aktifkan jabatan ${p.title}`}
+            data-testid={`org-pos-activate-${p.position_id}`}><Power /></Button>
+        )}
+        <Button variant="ghost" size="icon-sm" onClick={() => handleDeletePos(p)} title="Hapus" aria-label={`Hapus jabatan ${p.title}`}
+          data-testid={`org-pos-delete-${p.position_id}`}><Trash2 /></Button>
+      </div>) },
   ];
   const unduhPos = [
     { label: 'Jabatan', nilai: (p) => p.title },
@@ -283,7 +353,7 @@ export default function HROrgChartModule({ token }) {
             </Button>
           )}
           {tab === 'positions'
-            ? <Button onClick={openPosForm} data-testid="org-add-position"><Plus />Tambah jabatan</Button>
+            ? <Button onClick={() => openPosForm()} data-testid="org-add-position"><Plus />Tambah jabatan</Button>
             : <Button onClick={() => openUnitForm()} data-testid="org-add-unit"><Plus />Tambah unit</Button>}
         </>}
         filters={<>
@@ -339,7 +409,7 @@ export default function HROrgChartModule({ token }) {
           {tab === 'positions' && (
             <TabelData kolom={kolomPos} baris={positionsPg.paged} kunci={(p) => p.position_id} testId="org-positions-table"
               kosong={<EmptyState title="Belum ada jabatan" description="Tambahkan jabatan untuk tiap unit, lalu pilih jabatan di Data Karyawan."
-                action={<Button onClick={openPosForm}><Plus />Tambah jabatan</Button>} />} />
+                action={<Button onClick={() => openPosForm()}><Plus />Tambah jabatan</Button>} />} />
           )}
 
           {/* ─── Target karyawan ─── */}
@@ -369,7 +439,7 @@ export default function HROrgChartModule({ token }) {
             </dl>
             <div>
               <p className="mb-2 text-base font-semibold text-foreground">Jabatan di unit ini</p>
-              <TabelData kolom={kolomPos.filter(k => k.kunci !== 'unit')} baris={posUnitDetail} kunci={(p) => p.position_id}
+              <TabelData kolom={kolomPos.filter(k => k.kunci !== 'unit' && k.kunci !== 'aksi')} baris={posUnitDetail} kunci={(p) => p.position_id}
                 testId="org-unit-positions"
                 kosong={<EmptyState title="Belum ada jabatan di unit ini" description="Tambahkan dari tab Jabatan." className="py-6" />} />
             </div>
@@ -416,8 +486,8 @@ export default function HROrgChartModule({ token }) {
 
         {/* ─── Form jabatan ─── */}
         <FormPopup open={showPosForm} onClose={() => setShowPosForm(false)} ukuran="pendek" testId="org-pos-form"
-          judul="Tambah jabatan" keterangan="Jabatan muncul sebagai pilihan di Data Karyawan untuk unitnya."
-          onSimpan={handleSavePos} menyimpan={saving} bisaSimpan={!!posForm.title} galat={galat} labelSimpan="Tambah jabatan">
+          judul={editPos ? `Ubah jabatan ${editPos.title}` : 'Tambah jabatan'} keterangan="Jabatan muncul sebagai pilihan di Data Karyawan untuk unitnya."
+          onSimpan={handleSavePos} menyimpan={saving} bisaSimpan={!!posForm.title} galat={galat} labelSimpan={editPos ? 'Simpan perubahan' : 'Tambah jabatan'}>
           <Isian label="Nama jabatan" wajib htmlFor="org-pos-title">
             <Input id="org-pos-title" value={posForm.title} onChange={e => setPosForm(p => ({ ...p, title: e.target.value }))} data-testid="org-pos-title" />
           </Isian>

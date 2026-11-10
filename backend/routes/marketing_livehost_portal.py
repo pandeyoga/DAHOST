@@ -623,15 +623,46 @@ async def update_livehost(request: Request, data: LiveHostUpdate, host_id: str =
     return serialize_doc({'message': 'LiveHost berhasil diupdate', 'host': updated_host})
 
 
+#: Progres pelatihan yang SUDAH dikerjakan host = riwayat; tugas pelatihan yang belum dimulai ikut terhapus.
+TRAINING_DONE_STATES = ('in_progress', 'completed')
+
+
+def host_usage_checks(host_id: str) -> list:
+    """Riwayat host live (10 Nov 2026): dokumen yang menunjuk host ini (grep `host_id`)."""
+    return [
+        ('jadwal shift', 'marketing_livehost_shifts', {'host_id': host_id}),
+        ('sesi live', 'marketing_live_sessions', {'host_id': host_id}),
+        ('pelatihan yang sudah dikerjakan', 'marketing_livehost_training_progress',
+         {'host_id': host_id, 'status': {'$in': list(TRAINING_DONE_STATES)}}),
+    ]
+
+
 @router.delete('/{host_id}', dependencies=only(*MARKETING_ROLES, perm="toko.manage"))  # T-01 2.3
-async def delete_livehost(request: Request, host_id: str = Path(..., regex=UUID_PATH_REGEX)):
-    """Admin deletes LiveHost (soft delete - set status inactive)"""
+async def delete_livehost(request: Request, host_id: str = Path(..., regex=UUID_PATH_REGEX),
+                          hard: bool = Query(False)):
+    """Tanpa `hard` = nonaktifkan (status inactive, perilaku lama).
+
+    `?hard=true` (10 Nov 2026 — tombol "Hapus host" dulu hanya menonaktifkan): hapus permanen bila host belum
+    punya riwayat (`host_usage_checks`), beserta tugas pelatihan yang belum dimulai; bila sudah → 409 dan layar
+    menawarkan Nonaktifkan.
+    """
     await require_auth(request)
     db = get_db()
 
     host = await db.marketing_livehosts.find_one({'id': host_id}, {'_id': 0})
     if not host:
         raise HTTPException(404, 'LiveHost tidak ditemukan')
+
+    if hard:
+        from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
+        pakai = await hitung_pemakaian(db, host_usage_checks(host_id))
+        tolak_bila_dipakai('Host live', host.get('name') or '', pakai)
+        await db.marketing_livehost_training_progress.delete_many({'host_id': host_id})
+        await db.marketing_livehosts.delete_one({'id': host_id})
+        user = _get_user(request)
+        await log_activity(user.get('id', 'system'), user.get('name') or user.get('email', 'system'),
+                           'delete', 'marketing_livehost', f"Hapus permanen host live: {host.get('name', '')}")
+        return {'ok': True, 'deleted': True, 'message': 'Host live dihapus'}
 
     await db.marketing_livehosts.update_one(
         {'id': host_id},

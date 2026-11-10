@@ -11,8 +11,8 @@
  *
  *   GET /api/dewi/maklon/buyer-catalog?client_id&status&search · GET /api/dewi/maklon/clients
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { BookOpen, Layers, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
@@ -21,13 +21,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import { apiGet, getToken } from '../../lib/api';
+import { apiDelete, apiGet, apiPut, getToken } from '../../lib/api';
+import { hapusMaster } from '../../lib/hapusMaster';
 import { formatRupiah } from '@/lib/format';
-import PageLayout from './layout/PageLayout';
+import PageLayout, { RowDetail, RowToggle } from './layout/PageLayout';
 import { EmptyState, Notice } from './moduleAtoms';
 import ProductionGuideDialog from './ProductionGuideDialog';
 import KatalogArtikelForm, { ARTIKEL_STATUS } from './maklon/KatalogArtikelForm';
-import KatalogArtikelDetail, { ArtikelStatusBadge } from './maklon/KatalogArtikelDetail';
+import KatalogArtikelDetail, { ArtikelStatusBadge, KatalogArtikelRingkas } from './maklon/KatalogArtikelDetail';
+import TambahVarianForm from './maklon/TambahVarianForm';
 
 const fmtRp = (v) => formatRupiah(v || 0);
 
@@ -41,6 +43,8 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
   const [search, setSearch] = useState('');
   const [panel, setPanel] = useState(null); // {mode:'view'|'edit', id} | {mode:'new'}
   const [sopFor, setSopFor] = useState(null);
+  const [openRows, setOpenRows] = useState(() => new Set()); // baris yang dibuka (10 Nov 2026, owner: "catalog bisa di-expand")
+  const [varianFor, setVarianFor] = useState(null); // id artikel — popup Tambah varian
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -67,14 +71,26 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
   const afterSave = async (id) => { await load(); setPanel(id ? { mode: 'view', id } : null); };
   const resetFilters = () => { setClientId(''); setStatus(''); setSearch(''); };
   const openRnd = onNavigate ? () => onNavigate('rnd-master-product-hub') : null;
+  const toggleRow = (id) => setOpenRows((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): hapus permanen bila artikel belum dipakai PO/sampel; bila sudah,
+  // server menolak (409) dengan rinciannya dan layar menawarkan Nonaktifkan.
+  const hapus = async (it) => {
+    const hasil = await hapusMaster({ jenis: 'artikel', nama: `${it.artikel_code} ${it.product_name}`.trim(),
+      hapus: () => apiDelete(`/dewi/maklon/buyer-catalog/${it.id}?hard=true`),
+      nonaktifkan: it.status === 'active' ? () => apiPut(`/dewi/maklon/buyer-catalog/${it.id}/toggle`, {}) : null });
+    if (hasil === 'dihapus' && panel?.id === it.id) setPanel(null);
+    if (hasil) await load();
+  };
+  const varianCatalog = varianFor ? items.find((x) => x.id === varianFor) : null;
 
   let detail = null;
   if (panel?.mode === 'new') detail = <KatalogArtikelForm clients={clients} onCancel={() => setPanel(null)} onSaved={afterSave} onOpenRnd={openRnd} />;
   else if (panel?.mode === 'edit' && current) {
-    detail = <KatalogArtikelForm data={current} clients={clients} onCancel={() => setPanel({ mode: 'view', id: current.id })} onSaved={afterSave} onOpenRnd={openRnd} />;
+    detail = <KatalogArtikelForm data={current} clients={clients} onCancel={() => setPanel(panel.dariBaris ? null : { mode: 'view', id: current.id })}
+      onSaved={panel.dariBaris ? async () => { await load(); setPanel(null); } : afterSave} onOpenRnd={openRnd} />;
   } else if (panel?.mode === 'view' && current) {
     detail = <KatalogArtikelDetail catalog={current} onClose={() => setPanel(null)} onEdit={() => setPanel({ mode: 'edit', id: current.id })}
-      onSop={() => setSopFor(current)} onChanged={afterSave} />;
+      onSop={() => setSopFor(current)} onChanged={afterSave} onTambahVarian={() => setVarianFor(current.id)} onHapus={() => hapus(current)} />;
   }
 
   return (
@@ -111,22 +127,23 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
         </Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat Katalog Buyer">{error}</Notice>}
-      detail={sopFor ? null : detail /* panduan produksi menggantikan popup rincian sementara (tidak bertumpuk) */}
+      detail={sopFor || varianFor ? null : detail /* panduan produksi / tambah varian menggantikan popup rincian sementara (tidak bertumpuk) */}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !items.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat artikel…</div>
         ) : (
           <Table data-testid="buyer-catalog-table">
             <TableHeader><TableRow>
-              <TableHead>Artikel</TableHead><TableHead>Buyer</TableHead><TableHead>Kategori</TableHead>
+              <TableHead className="w-10" /><TableHead>Artikel</TableHead><TableHead>Buyer</TableHead><TableHead>Kategori</TableHead>
               <TableHead className="text-right">Upah CMT</TableHead><TableHead className="text-right">Harga jasa</TableHead>
               <TableHead className="text-right">Varian</TableHead><TableHead className="text-right">Produksi (pcs)</TableHead><TableHead>Status</TableHead>
+              <TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {!paged.length && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={8} className="p-0 [&>div]:py-8">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
                     {(clientId || status || search) ? (
                       <EmptyState icon={BookOpen} title="Tidak ada artikel yang cocok" description="Ubah atau hapus penyaring untuk melihat artikel lain."
                         action={<Button variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua artikel</Button>} />
@@ -138,9 +155,12 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
                 </TableRow>
               )}
               {paged.map((it) => (
-                <TableRow key={it.id} data-testid={`buyer-catalog-row-${it.id}`} className={panel?.id === it.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                <Fragment key={it.id}>
+                <TableRow data-testid={`buyer-catalog-row-${it.id}`} className={panel?.id === it.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell className="w-10"><RowToggle open={openRows.has(it.id)} onClick={() => toggleRow(it.id)} label="Lihat varian, BOM & sampel"
+                    testId={`buyer-catalog-expand-${it.id}`} /></TableCell>
                   <TableCell>
-                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setPanel({ mode: 'view', id: it.id })}
+                    <Button variant="link" size="sm" className="h-auto max-w-[16rem] whitespace-normal p-0 font-semibold text-left" onClick={() => setPanel({ mode: 'view', id: it.id })}
                       data-testid={`buyer-catalog-detail-${it.id}`}>{it.product_name}</Button>
                     <span className="block text-xs text-muted-foreground">{it.artikel_code}{it.buyer_ref_code ? ` · ${it.buyer_ref_code}` : ''}</span>
                   </TableCell>
@@ -151,12 +171,33 @@ export default function MaklonBuyerCatalogModule({ token, onNavigate }) {
                   <TableCell className="text-right tabular-nums">{(it.variants || []).length}</TableCell>
                   <TableCell className="text-right tabular-nums">{Number(it.total_qty_produced || 0).toLocaleString('id-ID')}</TableCell>
                   <TableCell><ArtikelStatusBadge status={it.status} /></TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    {it.status !== 'discontinued' && (
+                      <Button size="icon-sm" variant="ghost" onClick={() => setVarianFor(it.id)} title="Tambah varian" aria-label="Tambah varian"
+                        data-testid={`buyer-catalog-add-variant-${it.id}`}><Layers className="w-3.5 h-3.5" /></Button>
+                    )}
+                    <Button size="icon-sm" variant="ghost" onClick={() => setPanel({ mode: 'edit', id: it.id, dariBaris: true })} title="Ubah artikel" aria-label="Ubah artikel"
+                      data-testid={`buyer-catalog-row-edit-${it.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                    <Button size="icon-sm" variant="ghost" onClick={() => hapus(it)} title="Hapus artikel" aria-label="Hapus artikel"
+                      data-testid={`buyer-catalog-row-delete-${it.id}`}><Trash2 className="w-3.5 h-3.5" /></Button>
+                  </TableCell>
                 </TableRow>
+                {openRows.has(it.id) && (
+                  <RowDetail colSpan={10} testId={`buyer-catalog-rowdetail-${it.id}`}>
+                    <KatalogArtikelRingkas catalog={it} onTambahVarian={() => setVarianFor(it.id)}
+                      onOpenDetail={() => setPanel({ mode: 'view', id: it.id })} />
+                  </RowDetail>
+                )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
         )}
       </GlassCard>
+      {varianCatalog && (
+        <TambahVarianForm catalog={varianCatalog} onClose={() => setVarianFor(null)}
+          onSaved={async () => { const id = varianCatalog.id; setVarianFor(null); await load(); setOpenRows((prev) => new Set(prev).add(id)); }} />
+      )}
       {sopFor && (
         <ProductionGuideDialog entity={sopFor} token={token || getToken()}
           title={`Panduan produksi · ${sopFor.artikel_code || ''} — ${sopFor.product_name || ''}`}

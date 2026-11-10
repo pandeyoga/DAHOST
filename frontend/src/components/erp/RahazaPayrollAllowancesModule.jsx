@@ -23,7 +23,8 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { apiDelete, apiPut } from '@/lib/api';
+import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from './layout/PageLayout';
 import { EmptyState } from './moduleAtoms';
 import { useHrMasters, useDepartmentFilterOptions } from './hr/hrPickers';
@@ -90,12 +91,15 @@ export default function RahazaPayrollAllowancesModule({ token }) {
     return null;
   };
 
+  // 10 Nov 2026 (owner: "master data bisa dihapus"): server kini menolak (409) tunjangan yang sudah tercetak di slip
+  // gaji; dialog kedua lalu menawarkan Nonaktifkan (tunjangan berhenti dihitung di proses gaji berikutnya).
   const handleDelete = async (it) => {
-    if (!(await confirmDialog({ title: 'Hapus tunjangan ini?', body: `"${it.name}" — gaji yang sudah final tidak berubah.`, confirmLabel: 'Hapus', danger: true }))) return;
-    const r = await fetch(`${API}/api/rahaza/payroll-allowances/${it.allowance_id}`, { method: 'DELETE', headers });
-    if (!r.ok) { toast.error('Gagal hapus'); return; }
-    toast.success('Tunjangan dihapus');
-    load();
+    const hasil = await hapusMaster({
+      jenis: 'tunjangan', nama: it.name,
+      hapus: () => apiDelete(`/api/rahaza/payroll-allowances/${it.allowance_id}?hard=true`),
+      nonaktifkan: it.is_active ? () => apiPut(`/api/rahaza/payroll-allowances/${it.allowance_id}`, { is_active: false }) : null,
+    });
+    if (hasil) load();
   };
 
   const handleToggleActive = async (item) => {
@@ -137,12 +141,12 @@ export default function RahazaPayrollAllowancesModule({ token }) {
       <Switch checked={!!it.is_active} onCheckedChange={() => handleToggleActive(it)}
         aria-label={it.is_active ? `Nonaktifkan ${it.name}` : `Aktifkan ${it.name}`} title={it.is_active ? 'Aktif — klik untuk menonaktifkan' : 'Nonaktif — klik untuk mengaktifkan'}
         data-testid={`allowance-toggle-${it.allowance_id}`} />) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (it) => (
       <div className="flex items-center justify-end gap-1">
         <Button size="sm" variant="outline" onClick={() => setEditDialog(it)} data-testid={`allowance-edit-${it.allowance_id}`}>
           <Pencil />Ubah
         </Button>
-        <Button size="icon-sm" variant="ghost" onClick={() => handleDelete(it)} title="Hapus tunjangan" aria-label="Hapus tunjangan"
+        <Button size="icon-sm" variant="ghost" onClick={() => handleDelete(it)} title="Hapus" aria-label={`Hapus tunjangan ${it.name}`}
           data-testid={`allowance-delete-${it.allowance_id}`}><Trash2 /></Button>
       </div>) },
   ];

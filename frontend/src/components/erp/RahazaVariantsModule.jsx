@@ -9,7 +9,6 @@ import { Label } from '@/components/ui/label';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite from '@/components/ui/pagination-lite';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FormPopup from '@/components/ui/form-popup';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -19,6 +18,8 @@ import {
 import { toast } from 'sonner';
 import PageLayout from './layout/PageLayout';
 import { PageLayoutSatuBaris } from './engine/DataTable';
+import { apiDelete } from '../../lib/api';
+import { hapusMaster } from '../../lib/hapusMaster';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 
 const PAGE_SIZE = 25;
@@ -168,19 +169,18 @@ export function RahazaVariantsModule({ token }) {
     } finally { setSaving(false); }
   };
 
+  // 10 Nov 2026 (owner "master data bisa dihapus"): dulu tombol "Hapus varian" hanya menonaktifkan. Sekarang hapus
+  // permanen bila SKU belum dipakai; bila sudah (409) dialog kedua menampilkan alasannya dan menawarkan Nonaktifkan
+  // (item katalog yang menawarkan SKU ini ikut dinonaktifkan).
   const handleDelete = async (v) => {
-    const ok = await confirmDialog({
-      title: `Hapus varian ${v.sku}?`,
-      body: 'Varian dinonaktifkan; item katalog yang menawarkan SKU ini ikut dinonaktifkan.',
-      confirmLabel: 'Hapus', danger: true,
+    const hasil = await hapusMaster({
+      jenis: 'varian', nama: v.sku,
+      keterangan: 'Varian dan barang jadinya (bila belum punya stok) dihapus permanen. Bila SKU sudah dipakai PO, '
+        + 'cutting, katalog, pesanan, atau stok, penghapusan ditolak dan Anda bisa menonaktifkannya saja.',
+      hapus: () => apiDelete(`/rahaza/variants/${v.id}?hard=true`),
+      nonaktifkan: v.active !== false ? () => apiDelete(`/rahaza/variants/${v.id}`) : null,
     });
-    if (!ok) return;
-    const r = await fetch(`/api/rahaza/variants/${v.id}`, { method: 'DELETE', headers });
-    if (r.ok) {
-      const data = await r.json().catch(() => ({}));
-      toast.success(data.message || 'Varian dihapus');
-      loadVariants();
-    } else toast.error('Gagal menghapus varian');
+    if (hasil) loadVariants();
   };
 
   const selectedModel = models.find(m => m.id === selectedModelId);
@@ -279,7 +279,7 @@ export function RahazaVariantsModule({ token }) {
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
                     <Button type="button" variant="ghost" size="icon-sm" onClick={() => handleDelete(v)}
-                      title="Hapus varian" aria-label={`Hapus varian ${v.sku}`} data-testid={`variant-delete-${v.sku}`}>
+                      title="Hapus" aria-label={`Hapus varian ${v.sku}`} data-testid={`variant-delete-${v.sku}`}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   </TableCell>

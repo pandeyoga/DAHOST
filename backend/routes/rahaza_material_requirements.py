@@ -119,12 +119,14 @@ async def issued_for_po(db, po_id: str) -> dict:
             net = float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0)
             out[mid] = out.get(mid, 0.0) + net
     from core.cutting_material_issue import ORDERS as _CUT_ORDERS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    # 2026-11-10: order cutting banyak kain × banyak hasil — kain dibagi menurut pcs hasil yang tertaut PO ini
+    # (`core.cutting_lines.fabric_used_for_po`; order satu baris = seluruh kainnya, sama seperti dulu).
+    from core.cutting_lines import fabric_used_for_po
     async for co in db[_CUT_ORDERS].find(
-            {"po_id": po_id, "status": {"$ne": "cancelled"}},
-            {"_id": 0, "input_material_id": 1, "consumed_input_qty": 1}):
-        mid = co.get("input_material_id")
-        if mid:
-            out[mid] = out.get(mid, 0.0) + float(co.get("consumed_input_qty") or 0)
+            {"$or": [{"po_id": po_id}, {"outputs.po_id": po_id}], "status": {"$ne": "cancelled"}},
+            {"_id": 0}):
+        for mid, q in fabric_used_for_po(co, po_id).items():
+            out[mid] = out.get(mid, 0.0) + float(q or 0)
     return {k: round(max(0.0, v), 4) for k, v in out.items()}
 
 

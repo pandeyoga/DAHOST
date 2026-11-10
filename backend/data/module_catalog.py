@@ -349,7 +349,8 @@ MODULES: list[dict] = [
        {"view": ["customers.view"], "manage": ["customers.manage"]}, lookup=True),
 
     # ── SDM / HRIS ──────────────────────────────────────────────────────────
-    _m("hr", "hr_employees", "Data Karyawan & Resign", ["hr-employees"],
+    # 10 Nov 2026 (owner): "Lokasi Kerja" (lokasi kantor karyawan, master rahaza_locations) bagian Data Karyawan.
+    _m("hr", "hr_employees", "Data Karyawan & Resign", ["hr-employees", "hr-work-locations"],
        ["/api/rahaza/employees", "/api/rahaza/expiring-contracts", "/api/rahaza/resignation", "/api/rahaza/hr"], _ALL,
        {"view": ["hr.employee.view"], "manage": ["hr.employee.manage"], "approve": ["hr.approve"]}, lookup=True),
     _m("hr", "hr_attendance", "Absensi, Istirahat & Izin", ["hr-attendance-hub", "hr-attendance-sessions"],

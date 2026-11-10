@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Plus, Pencil, Ban, RefreshCw, Scan, MapPin, AlertCircle, ChevronRight, Printer, Calculator,
-  MoreHorizontal, Sparkles, Search,
+  MoreHorizontal, Sparkles, Search, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { formatDateTimeID } from '@/lib/format';
+import { hapusMaster } from '@/lib/hapusMaster';
 // Sprint A.1: UniversalScanner SSOT replaces inline ScannerInput
 import UniversalScanner from './scanner/UniversalScanner';
 import useUomOptions from '@/hooks/useUomOptions';
@@ -166,6 +167,12 @@ function StructureTab({ token }) {
     finally { setSaving(false); }
   }
 
+  const muatTipe = (type) => {
+    if (type === 'building') loadBuildings();
+    if (type === 'zone') loadZones(selectedBldg);
+    if (type === 'rack') loadRacks(selectedZone);
+  };
+
   async function handleDelete(type, row) {
     const ok = await confirmDialog({
       title: `Nonaktifkan ${JUDUL_TIPE[type]} ${row.code}?`,
@@ -178,10 +185,24 @@ function StructureTab({ token }) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail);
       toast.success(d.message || 'Berhasil');
-      if (type === 'building') loadBuildings();
-      if (type === 'zone') loadZones(selectedBldg);
-      if (type === 'rack') loadRacks(selectedZone);
+      muatTipe(type);
     } catch (e) { toast.error(e.message); }
+  }
+
+  // 10 Nov 2026 (permintaan owner): Hapus sungguhan. Server menolak (409) bila gedung/zona/rak pernah menyimpan
+  // barang atau masih punya rak/zona aktif → dialog kedua menawarkan Nonaktifkan (lib/hapusMaster).
+  const deleteReq = async (type, row, hard) => {
+    const r = await fetch(`${API}/api/wms/${type}s/${row.id}${hard ? '?hard=true' : ''}`, { method: 'DELETE', headers });
+    if (!r.ok) {
+      let msg = `Gagal (HTTP ${r.status})`;
+      try { const d = await r.clone().json(); if (d && typeof d.detail === 'string') msg = d.detail; } catch { /* body tak terbaca */ }
+      const e = new Error(msg); e.status = r.status; throw e;
+    }
+  };
+  async function hapus(type, row) {
+    const hasil = await hapusMaster({ jenis: JUDUL_TIPE[type], nama: row.code,
+      hapus: () => deleteReq(type, row, true), nonaktifkan: () => deleteReq(type, row, false) });
+    if (hasil) muatTipe(type);
   }
 
   const bukaGedung = (b) => { setSelectedBldg(b.id); loadZones(b.id); setView('zones'); };
@@ -196,8 +217,13 @@ function StructureTab({ token }) {
     { kunci: 'address', label: 'Alamat', hp: false, isi: (b) => <span className="text-muted-foreground">{b.address || '—'}</span> },
     { kunci: 'zone_count', label: 'Zona', rata: 'kanan', isi: (b) => <span className="tabular-nums">{fmt(b.zone_count)}</span> },
     { kunci: 'rack_count', label: 'Rak', rata: 'kanan', isi: (b) => <span className="tabular-nums">{fmt(b.rack_count)}</span> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (b) => (
-      <Button variant="ghost" size="icon-sm" onClick={() => openBldgModal(b)} title="Ubah gedung" aria-label={`Ubah gedung ${b.code}`}><Pencil /></Button>) },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (b) => (
+      <div className="inline-flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => openBldgModal(b)} title="Ubah gedung" aria-label={`Ubah gedung ${b.code}`}
+          data-testid={`building-edit-${b.code}`}><Pencil /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => hapus('building', b)} title="Hapus gedung" aria-label={`Hapus gedung ${b.code}`}
+          data-testid={`building-delete-${b.code}`}><Trash2 /></Button>
+      </div>) },
   ];
   const kolomZona = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (z) => <span className="tabular-nums font-medium" data-testid="zone-card">{z.code}</span> },
@@ -209,10 +235,13 @@ function StructureTab({ token }) {
       <span data-testid="zone-location" className={z.location_id ? 'text-foreground' : 'text-[hsl(var(--warning-text))]'}>
         {z.location_id ? `${z.location_code || ''} ${z.location_name || ''}`.trim() : 'Belum ditautkan — opname tidak menjangkau rak zona ini'}
       </span>) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (z) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (z) => (
       <div className="inline-flex items-center gap-1">
-        <Button variant="ghost" size="icon-sm" onClick={() => openZoneModal(z)} title="Ubah zona" aria-label={`Ubah zona ${z.code}`}><Pencil /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => openZoneModal(z)} title="Ubah zona" aria-label={`Ubah zona ${z.code}`}
+          data-testid={`zone-edit-${z.code}`}><Pencil /></Button>
         <Button variant="ghost" size="icon-sm" onClick={() => handleDelete('zone', z)} title="Nonaktifkan zona" aria-label={`Nonaktifkan zona ${z.code}`}><Ban /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => hapus('zone', z)} title="Hapus zona" aria-label={`Hapus zona ${z.code}`}
+          data-testid={`zone-delete-${z.code}`}><Trash2 /></Button>
       </div>) },
   ];
   const kolomRak = [
@@ -222,17 +251,20 @@ function StructureTab({ token }) {
     { kunci: 'total', label: 'Total posisi', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.total_positions)}</span> },
     { kunci: 'terisi', label: 'Terisi', rata: 'kanan', isi: (r) => (
       <span className="tabular-nums">{fmt(r.occupied_positions)} <span className="text-muted-foreground">({r.occupancy_pct ?? 0}%)</span></span>) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="inline-flex items-center gap-1">
         <Button variant="ghost" size="icon-sm" onClick={() => cetakLabel(r)} data-testid="print-rack-labels-btn"
           title="Cetak label barcode semua posisi di rak ini" aria-label={`Cetak label rak ${r.code}`}><Printer /></Button>
-        <Button variant="ghost" size="icon-sm" onClick={() => openRackModal(r)} title="Ubah rak" aria-label={`Ubah rak ${r.code}`}><Pencil /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => openRackModal(r)} title="Ubah rak" aria-label={`Ubah rak ${r.code}`}
+          data-testid={`rack-edit-${r.code}`}><Pencil /></Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label={`Aksi lain rak ${r.code}`}><MoreHorizontal /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={() => handleDelete('rack', r)}><Ban className="mr-2 h-4 w-4" />Nonaktifkan rak</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => hapus('rack', r)} data-testid={`rack-delete-${r.code}`}
+              className="text-[hsl(var(--danger-text))]"><Trash2 className="mr-2 h-4 w-4" />Hapus rak</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>) },
@@ -430,6 +462,29 @@ function UnitsTab({ token }) {
     load();
   };
 
+  // 10 Nov 2026 (permintaan owner): satuan & konversi bisa dihapus. Satuan yang dipakai barang atau konversi
+  // aktif ditolak server (409) → dialog kedua menawarkan Nonaktifkan (lib/hapusMaster).
+  const deleteReq = async (path, hard) => {
+    const r = await fetch(`${API}/api/wms/${path}${hard ? '?hard=true' : ''}`, { method: 'DELETE', headers });
+    if (!r.ok) {
+      let msg = `Gagal (HTTP ${r.status})`;
+      try { const d = await r.clone().json(); if (d && typeof d.detail === 'string') msg = d.detail; } catch { /* body tak terbaca */ }
+      const e = new Error(msg); e.status = r.status; throw e;
+    }
+  };
+  const hapusSatuan = async (u) => {
+    const hasil = await hapusMaster({ jenis: 'satuan', nama: u.code,
+      hapus: () => deleteReq(`units/${u.id}`, true),
+      nonaktifkan: u.active !== false ? () => deleteReq(`units/${u.id}`, false) : null });
+    if (hasil) load();
+  };
+  const hapusKonversi = async (c) => {
+    const hasil = await hapusMaster({ jenis: 'konversi', nama: `${c.from_unit_code} ke ${c.to_unit_code}`,
+      keterangan: 'Aturan konversi dihapus permanen. Kalkulator dan pilihan satuan tidak lagi memakainya.',
+      hapus: () => deleteReq(`unit-conversions/${c.id}`, true) });
+    if (hasil) load();
+  };
+
   const CATEGORIES = [...new Set(units.map(u => u.category))].sort();
   const q = cari.trim().toLowerCase();
   const unitTampil = units
@@ -445,9 +500,13 @@ function UnitsTab({ token }) {
     { kunci: 'symbol', label: 'Simbol', hp: false, isi: (u) => u.symbol || '—' },
     { kunci: 'category', label: 'Kategori', hp: false, isi: (u) => kategoriSatuan(u.category) },
     { kunci: 'is_base', label: 'Satuan dasar', hp: false, isi: (u) => (u.is_base ? <StatusBadge status="dasar" label="Dasar" tone="primary" /> : <span className="text-muted-foreground">—</span>) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (u) => (
-      <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...u }); setModal({ type: 'unit', data: u }); }}
-        title="Ubah satuan" aria-label={`Ubah satuan ${u.code}`}><Pencil /></Button>) },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (u) => (
+      <div className="inline-flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...u }); setModal({ type: 'unit', data: u }); }}
+          title="Ubah satuan" aria-label={`Ubah satuan ${u.code}`} data-testid={`unit-edit-${u.code}`}><Pencil /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => hapusSatuan(u)} title="Hapus satuan" aria-label={`Hapus satuan ${u.code}`}
+          data-testid={`unit-delete-${u.code}`}><Trash2 /></Button>
+      </div>) },
   ];
   const kolomKonversi = [
     { kunci: 'from', label: 'Dari', hp: false, isi: (c) => <span className="font-medium" data-testid="conversion-row">{c.from_unit_code}</span> },
@@ -455,9 +514,14 @@ function UnitsTab({ token }) {
     { kunci: 'factor', label: 'Faktor', hp: false, rata: 'kanan', isi: (c) => <span className="tabular-nums">{String(c.factor).replace('.', ',')}</span> },
     { kunci: 'rumus', label: 'Rumus', hp: 'judul', isi: (c) => <span className="text-muted-foreground">1 {c.from_unit_code} = {String(c.factor).replace('.', ',')} {c.to_unit_code}</span> },
     { kunci: 'notes', label: 'Catatan', hp: false, isi: (c) => <span className="text-muted-foreground">{c.notes || '—'}</span> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
-      <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...c }); setModal({ type: 'conversion', data: c }); }}
-        title="Ubah konversi" aria-label={`Ubah konversi ${c.from_unit_code} ke ${c.to_unit_code}`}><Pencil /></Button>) },
+    { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <div className="inline-flex items-center gap-1">
+        <Button variant="ghost" size="icon-sm" onClick={() => { setGalat(''); setForm({ ...c }); setModal({ type: 'conversion', data: c }); }}
+          title="Ubah konversi" aria-label={`Ubah konversi ${c.from_unit_code} ke ${c.to_unit_code}`}
+          data-testid={`conversion-edit-${c.id}`}><Pencil /></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => hapusKonversi(c)} title="Hapus konversi"
+          aria-label={`Hapus konversi ${c.from_unit_code} ke ${c.to_unit_code}`} data-testid={`conversion-delete-${c.id}`}><Trash2 /></Button>
+      </div>) },
   ];
 
   return (

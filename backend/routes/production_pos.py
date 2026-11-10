@@ -621,8 +621,21 @@ def short_lines_text(lines: list) -> str:
                      for ln in lines if ln.get('short'))
 
 
+async def _denda_tutup(db, po: dict, masukan: dict, user: dict) -> list:
+    """10 Nov 2026 (owner): denda saat Tutup PO — klien→DA (PO maklon) dan DA→CMT, qty × nominal per pcs masing-
+    masing (`core.denda_po`). Diperiksa lengkap lalu dicatat SEBELUM status PO berubah: denda yang ditolak tidak
+    meninggalkan PO tertutup tanpa dendanya."""
+    if not masukan:
+        return []
+    from core import denda_po
+    plan = await denda_po.rencana(db, po, masukan, user)
+    return [serialize_doc(d) for d in await denda_po.terapkan(db, po, plan, user)]
+
+
 async def _close_po_checked(db, po: dict, body: dict, user: dict, *, short_endpoint: bool):
     from routes.production_maklon_bridge import compute_po_fulfillment
+    from core import denda_po
+    masukan = denda_po.parse_input(body)
     po_id = po['id']
     f = await compute_po_fulfillment(db, po_id)
     qty_short = int(f['qty_short'])
@@ -633,6 +646,7 @@ async def _close_po_checked(db, po: dict, body: dict, user: dict, *, short_endpo
             raise HTTPException(400,
                 'Tidak ada kekurangan qty — setiap ukuran sudah terpenuhi. '
                 'Gunakan penutupan normal (Tutup PO), bukan tutup kurang.')
+        denda = await _denda_tutup(db, po, masukan, user)
         await db.production_pos.update_one({'id': po_id}, {'$set': {
             'status': 'Closed', 'close_reason': reason or 'full_fulfillment',
             'close_notes': notes, 'closed_by': user['name'],
@@ -645,13 +659,27 @@ async def _close_po_checked(db, po: dict, body: dict, user: dict, *, short_endpo
         wip_close = await po_wip.on_po_closed(db, po, user)
         await log_activity(user['id'], user['name'], 'Close PO', 'Production PO', f"Closed PO: {po.get('po_number')}")
         return {'success': True, 'status': 'Closed', 'qty_short': 0, 'lines': f.get('lines', []),
-                'wip_variance': serialize_doc(wip_close)}
+                'wip_variance': serialize_doc(wip_close), 'denda': denda}
     if reason not in CLOSE_SHORT_REASONS:
         raise HTTPException(400,
             f"PO masih kurang {qty_short} pcs ({short_lines_text(f.get('lines') or [])}). "
             "Pilih alasan tutup kurang: " + ', '.join(CLOSE_SHORT_REASON_LABELS[r] for r in sorted(CLOSE_SHORT_REASONS)) + '.')
     post_completion = po.get('status') == 'Completed'
-    return await _apply_close_short(db, po, f, reason, notes, user, post_completion)
+    denda = await _denda_tutup(db, po, masukan, user)
+    res = await _apply_close_short(db, po, f, reason, notes, user, post_completion)
+    res['denda'] = denda
+    return res
+
+
+@router.get("/production-pos-denda")
+async def list_po_denda(request: Request, po_id: str = '', pihak: str = '', status: str = '', business_type: str = ''):
+    """Daftar nota denda Tutup PO (klien→DA & DA→CMT) beserta potongannya ke piutang / tagihan CMT."""
+    user = await require_auth(request)
+    deny_klien(user)
+    from core import denda_po
+    rows = await denda_po.daftar(get_db(), po_id=po_id or None, pihak=pihak or None, status=status or None,
+                                 business_type=business_type or None)
+    return [serialize_doc(r) for r in rows]
 
 
 @router.post("/production-pos/{po_id}/close-short")

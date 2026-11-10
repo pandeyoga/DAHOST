@@ -13,6 +13,8 @@
  * SSOT: /api/production-pos, /api/production-pos/{id}/fulfillment (baris per ukuran),
  *       /api/production-pos/{id}/close, /api/production-pos/{id}/close-short.
  * PANDUAN_UI: PageLayout · rincian ukuran di bawah barisnya (RowDetail) · popup hanya formulir alasan.
+ * 10 Nov 2026 (owner): popup tutup punya isian DENDA dua arah (`DendaTutupPO`): denda dari klien (PO maklon) dan
+ *   denda ke CMT — qty × nominal per pcs masing-masing; rincian baris menampilkan nota dendanya.
  * Tahap 9 (7 Nov 2026): popup alasan memakai `FormDialog` (ui/dialog) — bukan lagi `engine/Modal` —
  * dan status PO tampil dengan label Indonesia (`lib/poStatus`). Daftar sudah disaring per portal.
  */
@@ -35,6 +37,7 @@ import { Input } from '@/components/ui/input';
 import { apiGet, apiPost } from '../../../lib/api';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
 import { poStatusLabel, poStatusTone } from '@/lib/poStatus';
+import DendaTutupPO, { DendaDaftarPO, dendaAwal, dendaGalat, dendaPayload } from './DendaTutupPO';
 
 const REASON_LABELS = {
   deadline_expired: 'Batas waktu terlewati',
@@ -57,6 +60,7 @@ export default function POClosureModule({ portalId }) {
   const [closing, setClosing] = useState(null); // {po, fulfillment}
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
+  const [denda, setDenda] = useState(() => dendaAwal(0));
   const [submitting, setSubmitting] = useState(false);
 
   const fetchAll = useCallback(async () => {
@@ -90,19 +94,27 @@ export default function POClosureModule({ portalId }) {
     all: rows.length,
   }), [rows]);
 
-  const openClose = (row) => { setClosing(row); setReason(''); setNotes(''); };
+  const openClose = (row) => { setClosing(row); setReason(''); setNotes(''); setDenda(dendaAwal(row.fulfillment?.total_ordered || 0)); };
+  const dendaErr = dendaGalat(denda);
+  const dendaAktif = denda.klien.aktif || denda.cmt.aktif;
   const short = closing?.fulfillment?.qty_short || 0;
 
   const submitClose = async () => {
     if (short > 0 && !reason) { toast.error('Pilih alasan tutup kurang.'); return; }
+    if (dendaErr) { toast.error(dendaErr); return; }
     setSubmitting(true);
     try {
       const path = short > 0 ? 'close-short' : 'close';
-      const res = await apiPost(`/production-pos/${closing.po.id}/${path}`, { closed_reason: reason, notes, close_notes: notes });
+      const res = await apiPost(`/production-pos/${closing.po.id}/${path}`, { closed_reason: reason, notes, close_notes: notes,
+        denda: dendaPayload(denda) });
       const fin = res.finance || {};
       if (fin.credit_note_created) toast.success(`PO ditutup kurang. Nota kredit ${fin.credit_note_number} dibuat.`);
       else if (res.status === 'Closed Short') toast.success(`PO ditutup kurang (${fmtNum(res.qty_short)} pcs). Jadwal piutang disesuaikan.`);
       else toast.success('PO ditutup.');
+      (res.denda || []).forEach((d) => toast.success(`${d.nomor}: denda Rp ${fmtNum(d.jumlah)} dicatat`
+        + (d.jumlah_dipotong > 0 ? `, Rp ${fmtNum(d.jumlah_dipotong)} memotong ${d.pihak === 'klien' ? 'piutang klien' : 'tagihan CMT'}` : '')
+        + (d.sisa > 0 ? `, sisa Rp ${fmtNum(d.sisa)} memotong tagihan berikutnya` : '')
+        + (d.kredit_klien > 0 ? `, Rp ${fmtNum(d.kredit_klien)} jadi saldo kredit klien` : '') + '.'));
       setClosing(null);
       await fetchAll();
     } catch (e) {
@@ -215,6 +227,7 @@ export default function POClosureModule({ portalId }) {
                     </TableRow>
                     {open && (
                       <RowDetail colSpan={10} testId={`po-closure-lines-${po.id}`}>
+                        <div className="space-y-3">
                         {(f?.lines || []).length === 0 ? (
                           <p className="text-sm text-muted-foreground">Rincian per ukuran tidak tersedia.</p>
                         ) : (
@@ -236,6 +249,8 @@ export default function POClosureModule({ portalId }) {
                             ))}</TableBody>
                           </Table>
                         )}
+                        {isTerminal && <DendaDaftarPO poId={po.id} />}
+                        </div>
                       </RowDetail>
                     )}
                   </Fragment>
@@ -247,9 +262,10 @@ export default function POClosureModule({ portalId }) {
       </GlassCard>
 
       {closing && (
-        <FormPopup open onClose={() => setClosing(null)} ukuran="pendek" testId="po-close-short-modal" judul={short > 0 ? 'Tutup kurang' : 'Tutup PO'}
+        <FormPopup open onClose={() => setClosing(null)} ukuran={dendaAktif ? 'panjang' : 'pendek'}
+          testId="po-close-short-modal" judul={short > 0 ? 'Tutup kurang' : 'Tutup PO'} galat={dendaAktif ? dendaErr : ''}
           keterangan={`${closing.po.po_number} · ${closing.po.customer_name || ''} · dipesan ${fmtNum(closing.fulfillment.total_ordered)} · terpenuhi ${fmtNum(closing.fulfillment.total_fulfilled)}`}
-          onSimpan={submitClose} menyimpan={submitting} bisaSimpan={!(short > 0 && !reason)} labelSimpan={short > 0 ? 'Tutup kurang' : 'Tutup PO'}>
+          onSimpan={submitClose} menyimpan={submitting} bisaSimpan={!(short > 0 && !reason) && !dendaErr} labelSimpan={short > 0 ? 'Tutup kurang' : 'Tutup PO'}>
           {short > 0 ? (
             <Notice tone="warning" icon={AlertTriangle}>
               Kurang {fmtNum(short)} pcs: {shortText(closing.fulfillment.lines)}. PO menjadi <b>Ditutup kurang</b> dan terkunci;
@@ -272,6 +288,7 @@ export default function POClosureModule({ portalId }) {
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} data-testid="po-close-short-notes"
               placeholder="mis. klien membatalkan sisa pesanan karena musim berakhir" />
           </Field>
+          <DendaTutupPO po={closing.po} qtyPesanan={closing.fulfillment?.total_ordered} value={denda} onChange={setDenda} />
         </FormPopup>
       )}
     </PageLayoutSatuBaris>

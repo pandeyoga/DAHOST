@@ -24,6 +24,8 @@ export default function RahazaMachinesModule({ token }) {
       endpoint="/api/rahaza/machines"
       token={token}
       testIdPrefix="rahaza-machine"
+      hapusPermanen
+      jenis="mesin"
       columns={[
         { key: 'code', label: 'Kode' },
         { key: 'name', label: 'Nama' },

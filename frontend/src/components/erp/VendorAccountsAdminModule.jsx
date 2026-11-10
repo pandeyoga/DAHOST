@@ -10,6 +10,8 @@
  *     server menimpa dengan ''). Kini catatan tampil & bisa diubah, dan PUT hanya mengirim isian yang
  *     berubah (server memperbarui sebagian).
  *   • Hapus & nonaktifkan memakai confirmDialog.
+ *   • 10 Nov 2026 (owner: "cmt tidak bisa diedit/dihapus"): kolom Aksi (Ubah · Hapus) di tiap baris vendor & akun.
+ *     Hapus vendor = lib/hapusMaster: ditolak (409) bila sudah dipakai PO/job/kiriman/tagihan → tawarkan Nonaktifkan.
  *
  *   - vendor : GET/POST /api/vendor-portal/partners · PUT/DELETE /api/vendor-portal/partners/{id}[?hard=true]
  *   - akun   : GET/POST /api/vendor-portal/accounts · PUT/DELETE /api/vendor-portal/accounts/{id}[?hard=true]
@@ -30,6 +32,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Input } from '@/components/ui/input';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api';
 import { formatDateTimeID } from '@/lib/format';
+import { hapusMaster } from '../../lib/hapusMaster';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { PageLayoutSatuBaris } from './engine/DataTable';
 import HubTabs from './hubs/HubTabs';
@@ -132,11 +135,19 @@ function PartnerFormFields({ form, setForm, full = true }) {
   );
 }
 
-function PartnerDetail({ partner, onClose, onChanged }) {
-  const [editing, setEditing] = useState(false);
+/** Hapus vendor (baris tabel & rincian): hapus permanen bila belum dipakai; bila sudah → tawarkan Nonaktifkan. */
+async function hapusVendor(partner) {
+  return hapusMaster({ jenis: 'vendor', nama: partner.name,
+    keterangan: 'Hanya bisa bila vendor belum pernah dipakai (tanpa PO, job, kiriman, tagihan, dan akun login). Tindakan ini tidak bisa dibatalkan.',
+    hapus: () => apiDelete(`/vendor-portal/partners/${partner.id}?hard=true`),
+    nonaktifkan: isActive(partner) ? () => apiDelete(`/vendor-portal/partners/${partner.id}`) : null });
+}
+
+function PartnerDetail({ partner, onClose, onChanged, startEditing = false }) {
+  const [editing, setEditing] = useState(startEditing);
   const [form, setForm] = useState(() => partnerForm(partner));
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setForm(partnerForm(partner)); setEditing(false); }, [partner]);
+  useEffect(() => { setForm(partnerForm(partner)); setEditing(startEditing); }, [partner]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     if (!form.name.trim()) { toast.error('Nama vendor wajib diisi'); return; }
@@ -172,21 +183,10 @@ function PartnerDetail({ partner, onClose, onChanged }) {
   };
 
   const remove = async () => {
-    const ok = await confirmDialog({
-      title: `Hapus vendor "${partner.name}" permanen?`,
-      body: 'Hanya bisa bila vendor belum pernah dipakai (tanpa PO, job, kiriman, dan akun login). Tindakan ini tidak bisa dibatalkan — '
-        + 'untuk sekadar berhenti memakai vendor, pilih Nonaktifkan.',
-      confirmLabel: 'Hapus permanen', danger: true,
-    });
-    if (!ok) return;
     setBusy(true);
-    try {
-      await apiDelete(`/vendor-portal/partners/${partner.id}?hard=true`);
-      toast.success(`Vendor "${partner.name}" dihapus`);
-      onClose();
-      await onChanged(null);
-    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
-    finally { setBusy(false); }
+    const hasil = await hapusVendor(partner);
+    setBusy(false);
+    if (hasil === 'dihapus') { onClose(); await onChanged(null); } else if (hasil) await onChanged(partner.id);
   };
 
   return (
@@ -199,7 +199,7 @@ function PartnerDetail({ partner, onClose, onChanged }) {
           <Button type="button" variant="outline" onClick={toggle} disabled={busy} data-testid="partner-toggle">
             <Power className="w-4 h-4" />{isActive(partner) ? 'Nonaktifkan' : 'Aktifkan'}
           </Button>
-          <Button type="button" variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus permanen" aria-label="Hapus permanen"
+          <Button type="button" variant="destructive" size="icon" onClick={remove} disabled={busy} title="Hapus vendor" aria-label="Hapus vendor"
             data-testid="partner-delete"><Trash2 className="w-4 h-4" /></Button>
         </>
       )}>
@@ -263,6 +263,7 @@ export function VendorPartnersTab() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  const [editFromRow, setEditFromRow] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
@@ -310,7 +311,8 @@ export function VendorPartnersTab() {
         </Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat vendor" testId="partner-error">{error}</Notice>}
-      detail={selected && <PartnerDetail partner={selected} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
+      detail={selected && <PartnerDetail key={`${selected.id}-${editFromRow}`} partner={selected} startEditing={editFromRow}
+        onClose={() => { setSelectedId(null); setEditFromRow(false); }} onChanged={afterChange} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
@@ -321,12 +323,12 @@ export function VendorPartnersTab() {
               <TableHead>Vendor</TableHead><TableHead>Kode</TableHead><TableHead>Kontak</TableHead>
               <TableHead className="text-right">Kapasitas (pcs)</TableHead><TableHead className="text-right">PO</TableHead>
               <TableHead className="text-right">Job berjalan</TableHead><TableHead className="text-right">Akun</TableHead>
-              <TableHead>Pemilik</TableHead><TableHead>Status</TableHead>
+              <TableHead>Pemilik</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {!paged.length && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={9} className="p-0 [&>div]:py-8">
+                  <TableCell colSpan={10} className="p-0 [&>div]:py-8">
                     {rows.length ? (
                       <EmptyState icon={Building2} title="Tidak ada vendor yang cocok" description="Ubah kata pencarian atau penyaring status."
                         action={<Button type="button" variant="outline" size="sm" onClick={resetFilters}><X className="w-3.5 h-3.5" />Tampilkan semua vendor</Button>} />
@@ -339,7 +341,7 @@ export function VendorPartnersTab() {
               {paged.map((p) => (
                 <TableRow key={p.id} data-testid={`partner-row-${p.id}`} className={selectedId === p.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
-                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => setSelectedId(p.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold text-left" onClick={() => { setEditFromRow(false); setSelectedId(p.id); }}
                       data-testid={`partner-open-${p.id}`}>{p.name}</Button>
                     {p.notes && <span className="block text-xs text-muted-foreground truncate max-w-[16rem]" title={p.notes}>{p.notes}</span>}
                   </TableCell>
@@ -351,6 +353,13 @@ export function VendorPartnersTab() {
                   <TableCell className="text-right tabular-nums">{fmtNum(p.account_count)}</TableCell>
                   <TableCell className="text-xs" data-testid={`partner-owner-${p.id}`}>{OWNER_LABEL[p.owner_entity || ''] || '—'}</TableCell>
                   <TableCell><ActiveBadge row={p} testId={`partner-status-${p.id}`} /></TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    <Button type="button" size="icon-sm" variant="ghost" onClick={() => { setEditFromRow(true); setSelectedId(p.id); }}
+                      title="Ubah vendor" aria-label="Ubah vendor" data-testid={`partner-row-edit-${p.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                    <Button type="button" size="icon-sm" variant="ghost" title="Hapus vendor" aria-label="Hapus vendor" data-testid={`partner-row-delete-${p.id}`}
+                      onClick={async () => { if (await hapusVendor(p)) { if (selectedId === p.id) setSelectedId(null); await load(); } }}>
+                      <Trash2 className="w-3.5 h-3.5" /></Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -365,11 +374,18 @@ export function VendorPartnersTab() {
 // ══════════════════════════════════════════════════════════════════════════════
 // Tab Akun vendor
 // ══════════════════════════════════════════════════════════════════════════════
-function AccountDetail({ account, partners, onClose, onChanged }) {
-  const [editing, setEditing] = useState(false);
+async function hapusAkun(account) {
+  return hapusMaster({ jenis: 'akun', nama: account.email,
+    keterangan: 'Akun dihapus dan tidak bisa login lagi ke Portal Vendor. Tindakan ini tidak bisa dibatalkan.',
+    hapus: () => apiDelete(`/vendor-portal/accounts/${account.id}?hard=true`),
+    nonaktifkan: isActive(account) ? () => apiPut(`/vendor-portal/accounts/${account.id}`, { is_active: false }) : null });
+}
+
+function AccountDetail({ account, partners, onClose, onChanged, startEditing = false }) {
+  const [editing, setEditing] = useState(startEditing);
   const [form, setForm] = useState({ name: account.name || '', partner_id: account.cmt_vendor_id || '', password: '' });
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setForm({ name: account.name || '', partner_id: account.cmt_vendor_id || '', password: '' }); setEditing(false); }, [account]);
+  useEffect(() => { setForm({ name: account.name || '', partner_id: account.cmt_vendor_id || '', password: '' }); setEditing(startEditing); }, [account]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     if (!form.name.trim()) { toast.error('Nama wajib diisi'); return; }
@@ -404,19 +420,10 @@ function AccountDetail({ account, partners, onClose, onChanged }) {
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!(await confirmDialog({
-      title: `Hapus akun ${account.email} permanen?`,
-      body: 'Akun dihapus dan tidak bisa login lagi. Tindakan ini tidak bisa dibatalkan.',
-      confirmLabel: 'Hapus permanen', danger: true,
-    }))) return;
     setBusy(true);
-    try {
-      await apiDelete(`/vendor-portal/accounts/${account.id}?hard=true`);
-      toast.success('Akun dihapus');
-      onClose();
-      await onChanged(null);
-    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
-    finally { setBusy(false); }
+    const hasil = await hapusAkun(account);
+    setBusy(false);
+    if (hasil === 'dihapus') { onClose(); await onChanged(null); } else if (hasil) await onChanged(account.id);
   };
 
   return (
@@ -429,7 +436,7 @@ function AccountDetail({ account, partners, onClose, onChanged }) {
           <Button type="button" variant="outline" onClick={toggle} disabled={busy} data-testid="account-toggle">
             <Power className="w-4 h-4" />{isActive(account) ? 'Nonaktifkan' : 'Aktifkan'}
           </Button>
-          <Button type="button" variant="outline" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
+          <Button type="button" variant="destructive" size="icon" onClick={remove} disabled={busy} title="Hapus akun" aria-label="Hapus akun"
             data-testid="account-delete"><Trash2 className="w-4 h-4" /></Button>
         </>
       )}>
@@ -509,6 +516,7 @@ export function VendorAccountsTab() {
   const [partnerId, setPartnerId] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [editFromRow, setEditFromRow] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -561,7 +569,8 @@ export function VendorAccountsTab() {
         </Button>
       </>}
       summary={error && <Notice tone="danger" title="Gagal memuat akun vendor">{error}</Notice>}
-      detail={selected && <AccountDetail account={selected} partners={partners} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
+      detail={selected && <AccountDetail key={`${selected.id}-${editFromRow}`} account={selected} partners={partners} startEditing={editFromRow}
+        onClose={() => { setSelectedId(null); setEditFromRow(false); }} onChanged={afterChange} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
       <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
@@ -570,12 +579,12 @@ export function VendorAccountsTab() {
           <Table data-testid="accounts-list">
             <TableHeader><TableRow>
               <TableHead>Nama</TableHead><TableHead>Email login</TableHead><TableHead>Vendor</TableHead>
-              <TableHead>Login terakhir</TableHead><TableHead>Status</TableHead>
+              <TableHead>Login terakhir</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {!paged.length && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={5} className="p-0 [&>div]:py-8">
+                  <TableCell colSpan={6} className="p-0 [&>div]:py-8">
                     <EmptyState icon={Users} title={rows.length ? 'Tidak ada akun yang cocok' : 'Belum ada akun vendor'}
                       description={rows.length ? 'Ubah kata pencarian atau penyaring.' : 'Klik Akun baru untuk membuat login Portal Vendor.'} />
                   </TableCell>
@@ -584,13 +593,20 @@ export function VendorAccountsTab() {
               {paged.map((u) => (
                 <TableRow key={u.id} data-testid={`account-row-${u.id}`} className={selectedId === u.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                   <TableCell>
-                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelectedId(u.id)}
+                    <Button type="button" variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => { setEditFromRow(false); setSelectedId(u.id); }}
                       data-testid={`account-open-${u.id}`}>{u.name}</Button>
                   </TableCell>
                   <TableCell className="text-sm">{u.email}</TableCell>
                   <TableCell className="text-sm">{u.partner_name || '—'}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{u.last_login_at ? formatDateTimeID(u.last_login_at) : 'Belum pernah'}</TableCell>
                   <TableCell><ActiveBadge row={u} /></TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    <Button type="button" size="icon-sm" variant="ghost" onClick={() => { setEditFromRow(true); setSelectedId(u.id); }}
+                      title="Ubah akun" aria-label="Ubah akun" data-testid={`account-row-edit-${u.id}`}><Pencil className="w-3.5 h-3.5" /></Button>
+                    <Button type="button" size="icon-sm" variant="ghost" title="Hapus akun" aria-label="Hapus akun" data-testid={`account-row-delete-${u.id}`}
+                      onClick={async () => { if (await hapusAkun(u)) { if (selectedId === u.id) setSelectedId(null); await load(); } }}>
+                      <Trash2 className="w-3.5 h-3.5" /></Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

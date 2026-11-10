@@ -2,7 +2,7 @@
 from datetime import datetime
 from fastapi import Depends, File, HTTPException, Query, UploadFile
 from database import get_db
-from auth import require_auth
+from auth import log_activity, require_auth
 from routes.dewi_rnd_shared import router, now_utc, sid, serialize
 from routes.shared import assert_can_act
 from core import product_master as pm  # F1/F3/F5: SSOT `active`, kategori, resolusi HPP
@@ -386,16 +386,56 @@ async def update_style(style_id: str, body: dict, user: dict = Depends(require_a
     return serialize(updated)
 
 
+async def style_usage(db, style: dict) -> dict:
+    """Di mana style dipakai (10 Nov 2026, owner "master data bisa dihapus"). Varian warna & riwayat revisi =
+    milik style sendiri (ikut terhapus), KECUALI varian yang ukurannya sudah tertaut SKU master produk."""
+    from core.hapus_master import hitung_pemakaian
+    sid_ = style['id']
+    promoted = style.get('promoted_to_model_id')
+    produk = [{'rnd_style_id': sid_}] + ([{'id': promoted}] if promoted else [])
+    return await hitung_pemakaian(db, [
+        ('produk master (hasil promosi)', 'rahaza_models', {'$or': produk}),
+        ('varian yang sudah jadi SKU', 'dewi_rnd_variants',
+         {'style_id': sid_, 'sizes': {'$elemMatch': {'variant_id': {'$nin': [None, '']}}}}),
+        ('tech pack', 'dewi_rnd_tech_packs', {'style_id': sid_}),
+        ('pola & marker', 'dewi_rnd_patterns', {'style_id': sid_}),
+        ('hitungan HPP', 'dewi_rnd_hpp', {'style_id': sid_}),
+        ('permintaan sampel', 'dewi_rnd_sample_requests', {'style_id': sid_}),
+        ('costing sampel', 'dewi_rnd_sample_costing', {'style_id': sid_}),
+        ('permintaan aksesoris', 'dewi_accessory_requests', {'style_id': sid_}),
+        ('permintaan kreator', 'dewi_kreator_requests', {'style_id': sid_}),
+        ('peluncuran produk', 'marketing_product_launches', {'style_id': sid_}),
+    ])
+
+
 @router.delete('/styles/{style_id}')
 async def delete_style(style_id: str, user: dict = Depends(require_auth)):
-    """Delete style + riwayat revisinya (cegah revisi yatim)."""
+    """Hapus permanen style + varian warna & riwayat revisinya (cegah anak yatim).
+
+    10 Nov 2026 (owner "master data bisa dihapus"): dulu terhapus TANPA cek — style yang sudah punya tech pack,
+    HPP, sampel, atau sudah dipromosikan jadi produk ikut hilang. Sekarang ditolak 409 bila sudah dipakai
+    (`style_usage`) atau sedang/sudah diputuskan owner; layar menawarkan Nonaktifkan (status Diarsipkan)."""
     assert_can_act(user, 'rnd.manage', portal='rnd', what='menghapus data R&D')  # T-01 2.3
+    from core.hapus_master import tolak_bila_dipakai
     db = get_db()
-    res = await db.dewi_rnd_styles.delete_one({'id': style_id})
-    if res.deleted_count == 0:
+    style = await db.dewi_rnd_styles.find_one({'id': style_id}, {'_id': 0})
+    if not style:
         raise HTTPException(404, 'Style tidak ditemukan')
+    nama = f"{style.get('style_code') or ''} {style.get('style_name') or ''}".strip()
+    if style.get('status') in LIFECYCLE_STATUSES:
+        keadaan = ('sedang menunggu keputusan owner' if style.get('status') == 'pending_owner_review'
+                   else 'sudah disetujui owner untuk diluncurkan')
+        raise HTTPException(409, f'Style "{nama}" tidak bisa dihapus karena {keadaan}. '
+                                 'Keputusan owner harus tetap tercatat.')
+    tolak_bila_dipakai('Style', nama, await style_usage(db, style))   # layar: Nonaktifkan = status Diarsipkan
+    variants = await db.dewi_rnd_variants.delete_many({'style_id': style_id})
     revs = await db.dewi_rnd_revisions.delete_many({'style_id': style_id})
-    return {'success': True, 'revisions_deleted': revs.deleted_count}
+    await db.dewi_rnd_styles.delete_one({'id': style_id})
+    await log_activity(user.get('id') or '', user.get('name') or '', 'delete', 'rnd.style',
+                       f"id={style_id} kode={style.get('style_code')} varian={variants.deleted_count} "
+                       f"revisi={revs.deleted_count}")
+    return {'success': True, 'deleted': True, 'revisions_deleted': revs.deleted_count,
+            'variants_deleted': variants.deleted_count}
 
 
 # ── GAP-R2: Design Selection Approval Workflow ────────────────────────────────

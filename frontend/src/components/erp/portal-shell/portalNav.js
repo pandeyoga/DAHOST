@@ -335,6 +335,9 @@ export const PORTAL_NAV = {
           { id: 'warehouse-dashboard', label: 'Dashboard Gudang',   icon: Warehouse },
           { id: 'wh-master',           label: 'Master Item',        icon: Boxes },
           { id: 'wms-stock-hub',       label: 'Stok & Akurasi',     icon: Archive },
+          // 10 Nov 2026 (owner): Roll Kain = stok per gulungan (sisa, posisi, keluarkan) → Inventori & Stok.
+          // Gulungan tetap LAHIR dari Penerimaan Barang (rincian gulungan) / "Penerimaan tanpa roll" / impor stok awal.
+          { id: 'wms-fabric-rolls',    label: 'Roll Kain',          icon: Package },
           { id: 'warehouse-smart',     label: 'Alert & Reorder',    icon: AlertTriangle },
           // SESI #33 — dua pintu baru. 'Belanja Mingguan' menjawab "minggu ini
           // beli apa?" (dari ambang stok → PR Pengadaan), 'Riwayat Harga'
@@ -357,7 +360,6 @@ export const PORTAL_NAV = {
         label: 'INBOUND — PENERIMAAN',
         items: [
           { id: 'wh-receiving',          label: 'Penerimaan Barang', icon: PackagePlus },
-          { id: 'wms-fabric-rolls',      label: 'Roll Kain',         icon: Package },
           { id: 'wh-putaway',            label: 'Penyimpanan',       icon: ArrowRightLeft },
           { id: 'wh-quarantine',         label: 'Karantina QC',      icon: ShieldAlert },
           // 2026-11-02 (K10): gudang MENERIMA retur material dari produksi (lokasi wajib) — pintasan
@@ -598,6 +600,8 @@ export const PORTAL_NAV = {
         label: 'MANAJEMEN ORGANISASI',
         items: [
           { id: 'hr-org-chart',        label: 'Struktur Organisasi', icon: LayoutGrid },
+          // 10 Nov 2026 (owner): lokasi kantor dipisah dari Gudang › Lokasi gudang
+          { id: 'hr-work-locations',   label: 'Lokasi Kerja',        icon: MapPin },
           { id: 'hr-shift-hub',        label: 'Shift',               icon: Calendar },
           { id: 'hr-recruitment',      label: 'Rekrutmen & ATS',     icon: FileText },
           { id: 'hr-resume-screening', label: 'Screening CV',        icon: FileSearch },
