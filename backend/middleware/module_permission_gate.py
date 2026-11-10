@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 
-from auth import _load_live_user, _load_portals, _load_rbac, verify_download_token, verify_token_str
+from auth import _load_live_user, _load_portal_config, _load_rbac, verify_download_token, verify_token_str
 from core.authz import EXTERNAL_ROLES
 from data.module_catalog import (
     ACTION_LABELS, PORTAL_LABELS, detect_action, granular_portals, is_self_service, match_module, perm_key,
@@ -58,11 +58,12 @@ async def evaluate(method: str, path: str, payload: dict | None):
         return None
     # 1) Akses PORTAL (khusus aksi tulis/approve/export; baca lintas-portal tetap untuk layar pintasan):
     #    bila owner sudah mengatur daftar portal peran, modul di portal yang tidak dicentang ditolak.
-    configured = await _load_portals(role, payload.get("id")) if action != "view" else None
-    if configured:
-        from routes.shared import PORTAL_ACCESS
-        allowed = set(configured) | {p for p, roles in PORTAL_ACCESS.items() if role in roles}
-        allowed |= granular_portals(perms)
+    #    10 Nov 2026: portal dicentang = FINAL (bawaan kode tidak lagi ditambahkan) — routes.shared.effective_portals.
+    role_portals, extra_portals = (await _load_portal_config(role, payload.get("id"))
+                                   if action != "view" else ([], []))
+    if role_portals or extra_portals:
+        from routes.shared import effective_portals
+        allowed = set(effective_portals(role, role_portals, extra_portals)) | granular_portals(perms)
         if not ({mod["portal"], *mod["also_portals"]} & allowed):
             return mod, action, "portal"
     # 2) Izin granular per modul (aktif per portal setelah owner mencentang izin mod.*).

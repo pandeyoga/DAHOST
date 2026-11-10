@@ -167,11 +167,11 @@ def login(monkeypatch):
         return [], []
 
     async def portals(role, uid):
-        return []
+        return [], []
 
     monkeypatch.setattr(auth, "_load_live_user", live)
     monkeypatch.setattr(auth, "_load_rbac", rbac)
-    monkeypatch.setattr(auth, "_load_portals", portals)
+    monkeypatch.setattr(auth, "_load_portal_config", portals)
 
     def _req(role, body=None):
         state["role"] = role

@@ -150,8 +150,11 @@ async def require_auth(request: Request):
         user['_role_perms'] = role_perms
         user['_extra_permissions'] = extra_perms
         user['_permissions'] = sorted(set(role_perms) | set(extra_perms))
-        # Portal yang diatur owner (roles.portals + users.extra_portals) — dipakai check_portal_access.
-        user['_portals'] = await _load_portals(role, user.get('id'))
+        # Portal yang diatur owner (roles.portals = final; users.extra_portals = tambahan per orang) —
+        # dipakai check_portal_access (routes.shared.effective_portals).
+        role_portals, extra_portals = await _load_portal_config(role, user.get('id'))
+        user['_role_portals'], user['_extra_portals'] = role_portals, extra_portals
+        user['_portals'] = role_portals + [p for p in extra_portals if p not in role_portals]
     # Set user on request.state for routes that access it
     request.state.user = user
     return user
@@ -228,19 +231,24 @@ async def compute_permissions(role: str, user_id) -> list:
     return sorted(set(role_perms) | set(extra))
 
 
-async def _load_portals(role: str, user_id) -> list:
+async def _load_portal_config(role: str, user_id) -> tuple[list, list]:
+    """(portal yang dicentang di peran, portal tambahan per orang). Keduanya kosong = peran belum diatur.
+
+    Dipisah (10 Nov 2026) karena aturannya berbeda: centangan peran MENGGANTIKAN portal bawaan kode,
+    portal per orang DITAMBAHKAN di atasnya — lihat routes.shared.effective_portals.
+    """
     key = ('portals', str(role or '').lower(), str(user_id or ''))
     hit = _rbac_cache.get(key)
     nowts = datetime.now(timezone.utc).timestamp()
     if hit and hit[0] > nowts:
-        return list(hit[1])
+        return list(hit[1]), list(hit[2])
     db = get_db()
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'role_id': 1, 'extra_portals': 1}) if user_id else None
     role_doc = await resolve_role_doc(db, role, (u or {}).get('role_id'), {'_id': 0, 'portals': 1})
-    portals = list((role_doc or {}).get('portals') or [])
-    portals += [p for p in ((u or {}).get('extra_portals') or []) if p not in portals]
-    _rbac_cache[key] = (nowts + _RBAC_TTL_SECONDS, portals)
-    return list(portals)
+    role_portals = [str(p) for p in ((role_doc or {}).get('portals') or []) if p]
+    extra_portals = [str(p) for p in ((u or {}).get('extra_portals') or []) if p]
+    _rbac_cache[key] = (nowts + _RBAC_TTL_SECONDS, role_portals, extra_portals)
+    return list(role_portals), list(extra_portals)
 
 
 async def _load_rbac(role: str, user_id):
@@ -399,15 +407,16 @@ async def _seed_default_roles(db):
         {'name': 'owner', 'description': 'Owner/Pemilik'},
         {'name': 'supervisor', 'description': 'Supervisor (Legacy)'},
     ]
-    for role_data in DEFAULT_ROLES:
-        existing = await db.roles.find_one({'name': role_data['name']})
-        if not existing:
-            await db.roles.insert_one({
-                'id': str(uuid.uuid4()),
-                **role_data,
-                'active': True,
-                'created_at': datetime.now(timezone.utc),
-            })
+    # 10 Nov 2026 — peran bawaan HANYA diisi pada instalasi baru (koleksi `roles` masih kosong).
+    # Dulu setiap start mengisi ulang nama yang tidak ditemukan PERSIS, sehingga peran yang diganti nama
+    # atau dihapus owner di Manajemen Role muncul lagi sebagai peran kosong kembar (16 Okt: 6 peran).
+    if await db.roles.find_one({}, {'_id': 1}):
+        return 0
+    from core.reference_dedup import seed_once  # `_id` tetap per nama: dua proses start bersamaan tidak kembar
+    stamp = datetime.now(timezone.utc)
+    return await seed_once(db, 'roles', [
+        {'id': str(uuid.uuid4()), **r, 'active': True, 'created_at': stamp} for r in DEFAULT_ROLES
+    ], key='name')
 
 def serialize_doc(doc):
     """Recursively convert MongoDB documents to JSON-serializable format."""

@@ -136,11 +136,11 @@ def call(monkeypatch):
         return [], []
 
     async def portals(role, uid):
-        return list(ROLE_PORTALS.get(role, []))
+        return list(ROLE_PORTALS.get(role, [])), []
 
     monkeypatch.setattr(auth, "_load_live_user", live)
     monkeypatch.setattr(auth, "_load_rbac", rbac)
-    monkeypatch.setattr(auth, "_load_portals", portals)
+    monkeypatch.setattr(auth, "_load_portal_config", portals)
 
     def _call(role, path, method="GET"):
         """Status dari dependency router: 200 = lolos semua penjaga, selain itu kode HTTPException."""
