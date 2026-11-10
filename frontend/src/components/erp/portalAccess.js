@@ -51,11 +51,33 @@ export const PORTAL_ROLES = {
   self:           [],   // allRoles
 };
 
+/** Portal bawaan kode untuk sebuah kode peran (tanpa Portal Saya/Kolaborasi). Cermin backend `default_portals`. */
+export function portalBawaan(role) {
+  const r = String(role || '').toLowerCase();
+  return Object.keys(PORTAL_ROLES).filter((pid) => !ALL_ROLE_PORTALS.includes(pid) && PORTAL_ROLES[pid].includes(r));
+}
+
+/**
+ * Portal efektif — cermin backend `routes/shared.py::effective_portals` (10 Nov 2026, keputusan owner):
+ * portal yang dicentang di Manajemen Role = FINAL; bawaan `PORTAL_ROLES` hanya untuk peran yang belum
+ * dicentang sama sekali; portal per orang ditambahkan; Portal Saya & Kolaborasi untuk semua orang.
+ */
+export function effectivePortals(role, rolePortals = [], extraPortals = []) {
+  const r = String(role || '').toLowerCase();
+  if (SUPER_ROLES.includes(r)) return Object.keys(PORTAL_ROLES);
+  const base = (rolePortals || []).filter(Boolean);
+  const allowed = new Set([...(base.length ? base : portalBawaan(r)), ...(extraPortals || []).filter(Boolean),
+    ...ALL_ROLE_PORTALS]);
+  return [...Object.keys(PORTAL_ROLES).filter((pid) => allowed.has(pid)),
+    ...[...allowed].filter((pid) => !(pid in PORTAL_ROLES)).sort()];
+}
+
 // Can a given role open a given portal?
 // 2026-08-05 — daftar di atas kini BAWAAN. Bila owner sudah mengatur portal pada
 // role (Portal Administrasi Sistem → Manajemen Role), backend mengirim daftar
 // portal EFEKTIF saat login / `/auth/me` dan itulah yang dipakai. Disimpan di
 // localStorage `erp_access` supaya tidak perlu panggilan ekstra tiap render.
+// Tanpa daftar dari backend (sesi lama), dipakai `effectivePortals(role)` = bawaan peran.
 export function readEffectiveAccess() {
   try {
     return JSON.parse(localStorage.getItem('erp_access') || 'null') || null;
@@ -210,6 +232,6 @@ export function canAccessPortal(role, portalId) {
   const acc = readEffectiveAccess();
   const listed = (acc && Array.isArray(acc.portals) && acc.portals.length)
     ? acc.portals.includes(portalId)
-    : (PORTAL_ROLES[portalId] || []).includes(r);
+    : effectivePortals(r).includes(portalId);
   return listed && portalHasVisibleMenu(portalId, r);
 }

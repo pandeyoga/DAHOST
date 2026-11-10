@@ -56,14 +56,17 @@ def _db():
     return db
 
 
-# ═════════════════════════════ G1 — portal FE = bawaan ∪ konfigurasi ═════════════════════════════
-def test_g1_portals_union_default_and_configured():
+# ═════════════ G1 (direvisi 10 Nov 2026) — portal FE = portal BE; centangan owner = final ═════════════
+def test_g1_portals_fe_equals_be_and_ticks_are_final():
     from routes.shared import check_portal_access, get_user_portals
     u = {"role": "spv_packing", "_portals": ["production", "maklon"]}
     got = set(get_user_portals(u))
-    assert {"production", "maklon", "warehouse", "procurement", "self", "collaboration"} <= got
+    assert got == {"production", "maklon", "self", "collaboration"}   # bawaan Gudang/Pengadaan tidak ikut lagi
     assert all(check_portal_access(u, p) for p in got)          # FE tidak menampilkan yang ditolak BE
-    assert "warehouse" in get_user_portals({"role": "tim_packing", "_portals": ["production"]})
+    assert not check_portal_access(u, "warehouse")
+    assert "warehouse" not in get_user_portals({"role": "tim_packing", "_portals": ["production"]})
+    # peran belum diatur (portal kosong) → bawaan kode
+    assert "warehouse" in get_user_portals({"role": "tim_packing", "_portals": []})
     # peran kustom tanpa bawaan → hanya yang dicentang (+ portal semua orang)
     assert set(get_user_portals({"role": "tim return", "_portals": ["maklon"]})) == {"maklon", "self", "collaboration"}
     assert "warehouse" in get_user_portals({"role": "superadmin"})

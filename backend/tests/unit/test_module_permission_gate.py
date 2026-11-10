@@ -55,11 +55,11 @@ def as_role(monkeypatch):
         return list(state["perms"]), []
 
     async def portals(role, uid):
-        return list(ROLE_PORTALS.get(role, []))
+        return list(ROLE_PORTALS.get(role, [])), []
 
     monkeypatch.setattr(gate, "_load_live_user", live)
     monkeypatch.setattr(gate, "_load_rbac", rbac)
-    monkeypatch.setattr(gate, "_load_portals", portals)
+    monkeypatch.setattr(gate, "_load_portal_config", portals)
 
     def _login(role, perms=()):
         state.update(role=role, perms=perms)

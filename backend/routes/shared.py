@@ -150,43 +150,58 @@ PORTAL_ACCESS = {
     "collaboration":  [],   # all roles
     "self":           [],   # all roles
 }
-def check_portal_access(user, portal_id):
-    """Check if a user role has access to a given portal.
+def default_portals(role) -> list:
+    """Portal BAWAAN kode untuk sebuah kode peran (`PORTAL_ACCESS`), tanpa Portal Saya/Kolaborasi.
 
-    2026-08-05 — `PORTAL_ACCESS` di atas kini menjadi **bawaan**; bila owner sudah
-    mengatur daftar portal pada dokumen role (`roles.portals`) ATAU pada user
-    (`users.extra_portals`), konfigurasi itulah yang dipakai. Sinkron dengan
-    `frontend/src/components/erp/portalAccess.js` (satu-satunya cermin FE).
+    Hanya dipakai bila owner BELUM mencentang satu portal pun untuk peran itu (lihat
+    :func:`effective_portals`). Layar Manajemen Role menampilkannya supaya owner tahu portal mana
+    yang tidak lagi ikut terbuka begitu ia mengatur portalnya sendiri.
     """
-    role = (user.get("role", "") or "").lower()
-    if role in SUPER_ROLES:
-        return True
-    if portal_id in ALL_ROLE_PORTALS:
-        return True
+    r = str(role or "").lower()
+    return [pid for pid in PORTAL_ACCESS if pid not in ALL_ROLE_PORTALS and r in PORTAL_ACCESS[pid]]
+
+
+def effective_portals(role, role_portals=None, extra_portals=None) -> list:
+    """SATU aturan portal efektif (backend, gerbang modul, `/auth/me`; cermin FE `portalAccess.js`).
+
+    10 Nov 2026 (keputusan owner): portal yang DICENTANG owner di Manajemen Role = FINAL.
+      * peran super (superadmin/admin/owner) → semua portal;
+      * peran yang daftar portalnya sudah diisi → hanya portal itu;
+      * peran yang daftar portalnya masih kosong (belum pernah diatur) → bawaan `PORTAL_ACCESS`;
+      * lalu ditambah portal per orang (`users.extra_portals`) serta Portal Saya & Kolaborasi (semua orang).
+    Dulu (9 Nov, audit gudang G1) portal bawaan selalu DITAMBAHKAN ke centangan, sehingga portal bawaan
+    tidak pernah bisa dimatikan (mis. Supervisor Cutting tetap melihat Portal Produksi).
+    """
+    r = str(role or "").lower()
+    if r in SUPER_ROLES:
+        return list(PORTAL_ACCESS.keys())
+    base = {str(p) for p in (role_portals or []) if p} or set(default_portals(r))
+    allowed = base | {str(p) for p in (extra_portals or []) if p} | set(ALL_ROLE_PORTALS)
+    return [pid for pid in PORTAL_ACCESS if pid in allowed] + sorted(allowed - set(PORTAL_ACCESS))
+
+
+def _portal_config(user) -> tuple[list, list]:
+    """(portal peran, portal per orang) dari user yang sudah dimuat `require_auth`/`resolve_role_access`.
+
+    Pemanggil lama yang hanya mengisi `_portals` dianggap mengisi portal peran (centangan = final).
+    """
+    if "_role_portals" in user:
+        return list(user.get("_role_portals") or []), list(user.get("_extra_portals") or [])
     custom = user.get("_portals")
-    if isinstance(custom, list) and custom:
-        # Portal yang diatur owner DITAMBAHKAN ke bawaan (tidak mencabut akses lintas-portal lama
-        # yang dipakai layar pintasan, mis. Faktur Supplier di Portal Keuangan).
-        return portal_id in custom or role in PORTAL_ACCESS.get(portal_id, [])
-    return role in PORTAL_ACCESS.get(portal_id, [])
+    return (list(custom) if isinstance(custom, list) else []), []
+
+
+def check_portal_access(user, portal_id):
+    """Apakah user boleh membuka portal `portal_id`? Aturan: :func:`effective_portals`."""
+    role = (user.get("role", "") or "").lower()
+    if role in SUPER_ROLES or portal_id in ALL_ROLE_PORTALS:
+        return True
+    return portal_id in effective_portals(role, *_portal_config(user))
+
 
 def get_user_portals(user):
-    """Get list of portal IDs the user can access (bawaan ∪ konfigurasi owner).
-
-    2026-11-09 (audit gudang G1): aturannya SAMA dengan :func:`check_portal_access` dan gerbang modul
-    (`middleware/module_permission_gate`): portal yang dicentang owner DITAMBAHKAN ke bawaan peran,
-    bukan menggantikannya. Dulu daftar ini memakai konfigurasi saja, sehingga peran yang owner beri
-    portal lain (mis. spv_packing/tim_packing dicentang Produksi/Maklon) kehilangan Portal Gudang di
-    layar padahal backend tetap mengizinkan scan keluar & retur fisik.
-    """
-    role = (user.get("role", "") or "").lower()
-    if role in SUPER_ROLES:
-        return list(PORTAL_ACCESS.keys())
-    default = {pid for pid in PORTAL_ACCESS if pid in ALL_ROLE_PORTALS or role in PORTAL_ACCESS[pid]}
-    custom = user.get("_portals")
-    if isinstance(custom, list) and custom:
-        return sorted(set(custom) | set(ALL_ROLE_PORTALS) | default)
-    return [pid for pid in PORTAL_ACCESS if pid in default]
+    """Daftar portal yang boleh dibuka user. Aturan: :func:`effective_portals`."""
+    return effective_portals((user.get("role", "") or "").lower(), *_portal_config(user))
 
 
 async def resolve_role_access(db, user: dict) -> dict:
@@ -197,7 +212,7 @@ async def resolve_role_access(db, user: dict) -> dict:
          Portal Administrasi Sistem → Manajemen Role.
       2. dokumen `users` (`extra_portals`, `hidden_modules`, `extra_permissions`)
          — kekecualian per orang.
-      3. bila keduanya kosong → `PORTAL_ACCESS` bawaan di modul ini.
+      3. portal peran masih kosong → `PORTAL_ACCESS` bawaan di modul ini (:func:`effective_portals`).
     """
     role = (user.get("role") or "").lower()
     u = await db.users.find_one({"id": user.get("id")}, {"_id": 0, "extra_portals": 1,
@@ -208,11 +223,12 @@ async def resolve_role_access(db, user: dict) -> dict:
         role = str(u["role"]).lower()  # peran LIVE dari DB, bukan dari token
     from auth import resolve_role_doc
     role_doc = await resolve_role_doc(db, role, u.get("role_id"))
-    portals = list((role_doc or {}).get("portals") or [])
-    portals += [p for p in (u.get("extra_portals") or []) if p not in portals]
+    role_portals = [str(p) for p in ((role_doc or {}).get("portals") or []) if p]
+    extra_portals = [str(p) for p in (u.get("extra_portals") or []) if p]
     hidden = list((role_doc or {}).get("hidden_modules") or [])
     hidden += [m for m in (u.get("hidden_modules") or []) if m not in hidden]
-    user["_portals"] = portals
+    user["_role_portals"], user["_extra_portals"] = role_portals, extra_portals
+    user["_portals"] = role_portals + [p for p in extra_portals if p not in role_portals]
     # Izin granular per modul: menu tanpa izin `view` ikut disembunyikan + peta aksi per menu.
     from data.module_catalog import menu_access, view_portals
     role_keys = []
@@ -223,11 +239,14 @@ async def resolve_role_access(db, user: dict) -> dict:
     perm_hidden, module_access = menu_access(all_keys, is_super=role in SUPER_ROLES)
     hidden += [m for m in perm_hidden if m not in hidden]
     # Portal yang diberi izin Lihat per modul ikut terbuka walau belum dicentang di "Akses Portal".
-    eff_portals = sorted(set(get_user_portals(user)) | (set() if role in SUPER_ROLES else view_portals(all_keys)))
+    eff_portals = sorted(set(get_user_portals({**user, "role": role}))
+                         | (set() if role in SUPER_ROLES else view_portals(all_keys)))
     return {
         "role": role,
         "is_super": role in SUPER_ROLES,
         "portals": eff_portals,
+        # "peran" = portal dicentang owner (final); "bawaan" = peran belum diatur, memakai PORTAL_ACCESS.
+        "portal_source": "super" if role in SUPER_ROLES else ("peran" if role_portals else "bawaan"),
         "hidden_modules": [] if role in SUPER_ROLES else hidden,
         "module_access": module_access,
         "extra_permissions": list(u.get("extra_permissions") or []),

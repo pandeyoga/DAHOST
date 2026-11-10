@@ -591,10 +591,10 @@ def test_15_maklon_portal_may_write_cmt_billing(monkeypatch):
         return [], []
 
     async def portals(role, uid):
-        return ["maklon", "self", "collaboration"]
+        return ["maklon", "self", "collaboration"], []
     monkeypatch.setattr(gate, "_load_live_user", live)
     monkeypatch.setattr(gate, "_load_rbac", rbac)
-    monkeypatch.setattr(gate, "_load_portals", portals)
+    monkeypatch.setattr(gate, "_load_portal_config", portals)
     payload = {"id": "u-mk", "role": "admin_maklon"}
     for method, path in (("POST", "/api/production/cmt-billing/pay-1/post"),
                          ("POST", "/api/production/cmt-billing/pay-1/pay"), ("GET", "/api/production/cmt-billing")):

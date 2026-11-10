@@ -136,7 +136,7 @@ def env(monkeypatch):
         return [], []
 
     async def portals(role, uid):
-        return list(ROLE_PORTALS.get(role, []))
+        return list(ROLE_PORTALS.get(role, [])), []
 
     async def resolve(_db, user):
         return EMPLOYEES.get(user.get("id"))
@@ -146,7 +146,7 @@ def env(monkeypatch):
 
     monkeypatch.setattr(auth, "_load_live_user", live)
     monkeypatch.setattr(auth, "_load_rbac", rbac)
-    monkeypatch.setattr(auth, "_load_portals", portals)
+    monkeypatch.setattr(auth, "_load_portal_config", portals)
     monkeypatch.setattr(employee_identity, "resolve_my_employee", resolve)
     monkeypatch.setattr(payslips, "get_db", lambda: db)
     monkeypatch.setattr(portal_hr, "get_db", lambda: db)

@@ -286,15 +286,22 @@ async def list_users_for_assignment(request: Request):
         users = [u for u in users if await user_has_portal(db, u, portal_filter)]
     
     # Strip sensitive fields, attach portals
+    # 10 Nov 2026: portal = aturan yang sama dengan login (portal dicentang owner = final; bawaan hanya untuk
+    # peran yang belum diatur). Dulu daftar ini selalu memakai bawaan kode peran.
+    role_portals = {str(r.get('name') or '').lower(): r.get('portals') or []
+                    async for r in db.roles.find({}, {'_id': 0, 'name': 1, 'portals': 1})}
     result = []
     for u in users:
+        role = u.get('role', '') or ''
+        cfg = {'role': role, '_role_portals': role_portals.get(role.lower(), []),
+               '_extra_portals': u.get('extra_portals') or []}
         result.append({
             'id': u.get('id'),
             'name': u.get('name', u.get('email', '')),
             'email': u.get('email'),
             'role': u.get('role'),
             'status': u.get('status') or ('active' if u.get('active', True) else 'inactive'),
-            'portals': get_user_portals({"role": u.get('role', '')}),
+            'portals': get_user_portals(cfg),
         })
     
     return result

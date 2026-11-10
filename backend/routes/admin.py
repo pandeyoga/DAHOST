@@ -324,6 +324,7 @@ async def get_roles(request: Request):
     for p in perms_all:
         by_role.setdefault(p.get('role_id'), []).append(p)
     counts = await _role_user_counts(db, roles)
+    from routes.shared import SUPER_ROLES, default_portals
     result = []
     for r in roles:
         perms = by_role.get(r['id'], [])
@@ -334,8 +335,33 @@ async def get_roles(request: Request):
             'permissions': serialize_doc(perms),
             'permission_keys': sorted({p.get('permission_key') for p in perms if p.get('permission_key')}),
             'user_count': counts.get(r['id'], 0),
+            # Portal bawaan kode untuk peran ini — dipakai HANYA selama portalnya belum dicentang (10 Nov 2026).
+            # Layar Manajemen Role menyebut yang tidak dicentang supaya owner bisa mencentang bila masih perlu.
+            'portal_bawaan': [] if str(r.get('name') or '').lower() in SUPER_ROLES else default_portals(r.get('name')),
         })
     return result
+
+async def _peringatan_nama_mirip(db, name: str, body: dict, exclude_id: str | None = None):
+    """409 `PERAN_MIRIP` bila ejaan nama hampir sama dengan peran lain (mis. "operator cutting" vs
+    "Operator Cuting") dan pengguna belum menyatakan tetap lanjut (`izinkan_mirip`). None = boleh lanjut.
+
+    10 Nov 2026: `find_duplicate_ref` hanya mengabaikan huruf besar/spasi/garis bawah, jadi salah ketik
+    lolos dan menjadi peran kembar kosong. Ini peringatan, bukan larangan — nama yang memang berbeda tetap bisa dipakai.
+    """
+    if body.get('izinkan_mirip'):
+        return None
+    from core.reference_dedup import find_similar_refs
+    rows = await find_similar_refs(db, 'roles', name=name, exclude_id=exclude_id)
+    if not rows:
+        return None
+    nama = [r.get('name') for r in rows if r.get('name')]
+    daftar = ', '.join(f"'{n}'" for n in nama)
+    return JSONResponse({
+        'detail': f"Nama '{name}' mirip dengan peran yang sudah ada: {daftar}. "
+                  "Pakai peran yang sudah ada, atau lanjutkan bila memang peran yang berbeda.",
+        'code': 'PERAN_MIRIP', 'mirip': nama,
+    }, status_code=409)
+
 
 @router.post("/roles")
 async def create_role(request: Request):
@@ -355,6 +381,9 @@ async def create_role(request: Request):
     same = await find_duplicate_ref(db, 'roles', name=name)
     if same:
         raise HTTPException(400, f"Role '{same.get('name')}' sudah ada (nama setara dengan '{name}').")
+    mirip = await _peringatan_nama_mirip(db, name, body)
+    if mirip:
+        return mirip
     perms = validate_keys(body.get('permissions'))
     role = {'id': new_id(), 'name': name, 'description': body.get('description', ''),
             'portals': [str(p) for p in (body.get('portals') or [])],
@@ -398,6 +427,10 @@ async def update_role(role_id: str, request: Request):
             clash = await find_duplicate_ref(db, 'roles', name=nm, exclude_id=role_id)
         if clash:
             raise HTTPException(400, f"Role '{nm}' sudah ada.")
+        if nm != before_role.get('name'):
+            mirip = await _peringatan_nama_mirip(db, nm, body, exclude_id=role_id)
+            if mirip:
+                return mirip
         _set['name'] = nm
     if 'description' in body:
         _set['description'] = body.get('description', '')

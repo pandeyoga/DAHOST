@@ -312,16 +312,32 @@ export default function RoleManagementModule({ token, userRole }) {
   }));
 
   /* ── simpan / buat / hapus ───────────────────────────────────────────── */
+  // 10 Nov 2026: server menjawab 409 PERAN_MIRIP bila ejaan nama hampir sama dengan peran lain
+  // (mis. "operator cutting" vs "Operator Cuting"). Tanyakan dulu; kirim ulang dengan `izinkan_mirip` bila tetap lanjut.
+  const kirimPeran = async (url, method, payload) => {
+    let res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+    let body = await res.json().catch(() => ({}));
+    if (res.status === 409 && body.code === 'PERAN_MIRIP') {
+      const ok = await confirmDialog({
+        title: 'Nama peran mirip dengan yang sudah ada',
+        body: `${body.detail} Peran kembar membuat pengaturan akses terpecah dan mudah tertukar.`,
+        confirmLabel: 'Tetap pakai nama ini',
+      });
+      if (!ok) return null;
+      res = await fetch(url, { method, headers, body: JSON.stringify({ ...payload, izinkan_mirip: true }) });
+      body = await res.json().catch(() => ({}));
+    }
+    if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`);
+    return body;
+  };
+
   const save = async () => {
     if (!selected) return;
     if (!draft.name.trim()) { toast.error('Nama peran wajib diisi.'); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API}/api/roles/${selected.id}`, {
-        method: 'PUT', headers, body: JSON.stringify(draft),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`);
+      const body = await kirimPeran(`${API}/api/roles/${selected.id}`, 'PUT', draft);
+      if (!body) return;
       toast.success(`Peran "${draft.name}" tersimpan`, {
         description: `${draft.permissions.length} izin · ${draft.portals.length || 'bawaan'} portal · ${draft.hidden_modules.length} menu disembunyikan`,
       });
@@ -338,12 +354,9 @@ export default function RoleManagementModule({ token, userRole }) {
     if (!name) { toast.error('Nama peran wajib diisi.'); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API}/api/roles`, {
-        method: 'POST', headers,
-        body: JSON.stringify({ name, description: newRole.description, portals: [], hidden_modules: [], permissions: [] }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`);
+      const body = await kirimPeran(`${API}/api/roles`, 'POST',
+        { name, description: newRole.description, portals: [], hidden_modules: [], permissions: [] });
+      if (!body) return;
       toast.success(`Peran "${name}" dibuat`, { description: 'Sekarang atur portal & hak aksesnya di panel kanan.' });
       setShowCreate(false);
       setNewRole({ name: '', description: '' });
@@ -481,8 +494,8 @@ export default function RoleManagementModule({ token, userRole }) {
       )}
 
       <Notice tone="info" testId="role-access-notice">
-        Selama daftar izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur yang mati).
-        Begitu minimal satu izin dicentang, peran itu mengikuti daftar izinnya.
+        Selama daftar portal atau izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur
+        yang mati). Begitu minimal satu portal atau izin dicentang, peran itu hanya mengikuti yang dicentang.
         Peran yang belum diatur (tanpa portal dan izin) dan tidak dipakai siapa pun tidak ditawarkan saat menambah
         pengguna; peran itu muncul lagi begitu portal atau izinnya diisi.
       </Notice>
@@ -556,7 +569,7 @@ export default function RoleManagementModule({ token, userRole }) {
         <section className="space-y-3 border-t border-[var(--glass-border)] pt-4">
           <SectionTitle
             step="2" title="Portal yang boleh dibuka"
-            desc="Kosongkan semua bila ingin memakai aturan bawaan sistem untuk peran ini."
+            desc="Portal yang dicentang adalah daftar akhir: hanya portal itu yang terbuka (ditambah Portal Saya dan Kolaborasi). Kosongkan semua bila ingin memakai aturan bawaan sistem."
             right={canEdit && (
               <div className="flex gap-1.5">
                 <Button type="button" variant="outline" size="sm" data-testid="portal-select-all"
@@ -591,6 +604,8 @@ export default function RoleManagementModule({ token, userRole }) {
               );
             })}
           </div>
+          <PortalBawaanInfo bawaan={selected?.portal_bawaan || []} dicentang={draft.portals}
+            canEdit={canEdit} onCentang={togglePortal} />
         </section>
 
         {/* 3. Hak akses */}
@@ -901,6 +916,44 @@ const AKSI_IZIN = {
   approve: 'setujui', run: 'jalankan', export: 'unduh',
 };
 const namaPortalIzin = (list) => list.map((p) => PORTAL_LABEL?.[p] || p).join(', ');
+
+/**
+ * Portal bawaan sistem untuk kode peran ini (10 Nov 2026, keputusan owner: centangan = final).
+ * Selama belum ada yang dicentang, peran memakai portal bawaan. Begitu owner mencentang, portal bawaan yang
+ * TIDAK dicentang tidak terbuka lagi — disebut di sini supaya owner bisa mencentangnya bila masih dibutuhkan
+ * (mis. Gudang untuk tim packing yang scan keluar, Pengadaan untuk supervisor yang menyetujui permintaan pembelian).
+ */
+export function PortalBawaanInfo({ bawaan = [], dicentang = [], canEdit = false, onCentang }) {
+  if (!bawaan.length) return null;
+  if (!dicentang.length) {
+    return (
+      <Notice tone="info" testId="role-portal-bawaan-dipakai">
+        Belum ada portal yang dicentang, jadi peran ini memakai portal bawaan sistem: <b>{namaPortalIzin(bawaan)}</b>.
+      </Notice>
+    );
+  }
+  const lepas = bawaan.filter((p) => !dicentang.includes(p));
+  if (!lepas.length) return null;
+  return (
+    <Notice tone="warning" testId="role-portal-bawaan-lepas"
+      title={`Portal bawaan yang tidak ikut terbuka: ${namaPortalIzin(lepas)}`}>
+      <p>
+        Aturan bawaan sistem juga memberi peran ini portal di atas. Karena portal peran ini sudah dicentang,
+        hanya portal yang dicentang yang terbuka. Centang bila pengguna peran ini masih membutuhkannya.
+      </p>
+      {canEdit && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {lepas.map((p) => (
+            <Button key={p} type="button" size="sm" variant="outline" onClick={() => onCentang?.(p)}
+              data-testid={`role-portal-bawaan-centang-${p}`}>
+              <Plus />Centang {PORTAL_LABEL?.[p] || p}
+            </Button>
+          ))}
+        </div>
+      )}
+    </Notice>
+  );
+}
 
 function SectionTitle({ step, title, desc, right }) {
   return (

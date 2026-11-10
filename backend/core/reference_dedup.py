@@ -106,6 +106,35 @@ async def find_duplicate_ref(db, coll: str, *, name, name_field: str = "name",
     return None
 
 
+#: Ambang kemiripan ejaan (difflib) untuk peringatan "nama mirip" — "operator cuting" vs "operator cutting" = 0,97;
+#: "spv cuting" vs "spv gudang" = 0,70 (tidak diperingatkan).
+SIMILAR_CUTOFF = 0.85
+
+
+def similar_ref(a, b, cutoff: float = SIMILAR_CUTOFF) -> bool:
+    """Dua nama BEDA kunci tapi ejaannya hampir sama (salah ketik), mis. "Operator Cuting" ≈ "operator cutting".
+
+    Nama pendek (< 4 huruf) tidak dibandingkan supaya "HR" dan "HRD" tidak saling memperingatkan.
+    """
+    import difflib
+    ka, kb = ref_key(a), ref_key(b)
+    if not ka or not kb or ka == kb or min(len(ka), len(kb)) < 4:
+        return False
+    return difflib.SequenceMatcher(None, ka, kb).ratio() >= cutoff
+
+
+async def find_similar_refs(db, coll: str, *, name, name_field: str = "name",
+                            exclude_id: str | None = None, id_field: str = "id") -> list[dict]:
+    """Baris lain di `coll` yang namanya MIRIP (bukan sama persis menurut `ref_key`) — untuk peringatan, bukan tolak."""
+    out = []
+    async for d in db[coll].find({}, {"_id": 0}):
+        if exclude_id and d.get(id_field) == exclude_id:
+            continue
+        if similar_ref(name, d.get(name_field)):
+            out.append(d)
+    return out
+
+
 async def assert_unique_ref(db, coll: str, *, name, label: str, name_field: str = "name",
                             exclude_id: str | None = None, id_field: str = "id",
                             process_code: str | None = None, scope: dict | None = None,
