@@ -697,6 +697,23 @@ ROLE_LABELS_BY_EVENT[("po_denda", "credit_denda_cmt_maklon")] = (
 ROLE_LABELS_BY_EVENT[("po_denda", "credit_denda_cmt_internal")] = (
     "Pengurang biaya PO internal karena denda ke CMT (Cr) — lawan: hutang vendor CMT")
 
+# ── 2026-11-11 (permintaan owner): NOTA AKSESORIS ke vendor CMT (`core.nota_aksesoris_cmt`). Aksesoris yang
+# diserahkan saat Kirim ke CMT dibeli CMT; nota selalu terbit di buku CV Dewi Aditya, aksesoris tetap di HPP PO,
+# seluruh nilai nota = pendapatan lain-lain. Piutang = sub-ledger per vendor di bawah akun kontrol `debit_ar`.
+DEFAULT_PROFILES.append({
+    "event_type": "cmt_accessory_note",
+    "description": "Nota aksesoris ke vendor CMT → Dr piutang vendor CMT / Cr penjualan aksesoris ke CMT",
+    "mapping": {
+        "debit_ar": "1-1307",
+        "credit_other_income": "4-9400",
+    },
+})
+EVENT_LABELS["cmt_accessory_note"] = "Nota aksesoris ke vendor CMT (aksesoris dibeli CMT)"
+ROLE_LABELS_BY_EVENT[("cmt_accessory_note", "debit_ar")] = (
+    "Piutang vendor CMT (Dr) — akun induk; tiap vendor mendapat sub-akun sendiri")
+ROLE_LABELS_BY_EVENT[("cmt_accessory_note", "credit_other_income")] = (
+    "Penjualan aksesoris ke CMT — pendapatan lain-lain (Cr)")
+
 
 def event_label(event_type: str) -> str:
     return EVENT_LABELS.get(event_type) or (event_type or "").replace("_", " ")

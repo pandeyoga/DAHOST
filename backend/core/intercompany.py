@@ -49,8 +49,11 @@ KIND_ACCESSORY = "accessory"
 KIND_MARGIN = "accessory_margin"
 KIND_PAYMENT = "payment"
 KIND_TXN = "transaction"
+# 11 Nov 2026: nota aksesoris DA ke CMT memotong tagihan CMT di buku CV Sukma (`core.nota_aksesoris_cmt`)
+KIND_CMT_ACCESSORY_OFFSET = "cmt_accessory_offset"
 KIND_LABELS = {KIND_SEWING: "Tagihan jasa jahit", KIND_ACCESSORY: "Nota aksesoris", KIND_MARGIN: "Margin aksesoris",
-               KIND_PAYMENT: "Pembayaran antar CV", KIND_TXN: "Transaksi antar CV"}
+               KIND_PAYMENT: "Pembayaran antar CV", KIND_TXN: "Transaksi antar CV",
+               KIND_CMT_ACCESSORY_OFFSET: "Potong tagihan CMT dengan nota aksesoris"}
 
 SRC_SEWING_AR = "ic_sewing_ar"            # buku SMU: Dr 1-1305-DA / Cr 4-1500-DA
 SRC_ACCESSORY_AP = "ic_accessory_ap"      # buku SMU: Dr 5-4100 / Cr 2-1100-DA

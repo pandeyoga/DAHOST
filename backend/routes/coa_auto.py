@@ -66,6 +66,15 @@ DEFAULT_ENTITY_TYPES = {
         "target_field": "ap_account_code",
         "name_prefix": "Hutang CMT",
     },
+    # 2026-11-11 (owner): nota aksesoris ke CMT (`core.nota_aksesoris_cmt`) — piutang per vendor CMT.
+    "cmt_vendor_ar": {
+        "enabled": True,
+        "parent_code": "1-1307",          # Piutang Vendor CMT (dibuat otomatis saat nota pertama)
+        "label": "Vendor CMT — Piutang nota aksesoris (AR)",
+        "collection": "vendor_partners",
+        "target_field": "ar_account_code",
+        "name_prefix": "Piutang CMT",
+    },
     "supplier": {
         "enabled": True,
         "parent_code": "2-1100",          # Hutang Usaha (AP control)

@@ -213,10 +213,15 @@ export default function RahazaARInvoicesModule({ token }) {
                         <td className="whitespace-nowrap">
                           <div className="font-semibold text-foreground">{inv.invoice_number}</div>
                           {inv.intercompany && <StatusBadge status="antar-cv" label="Antar CV" tone="info" testId={`ar-ic-${inv.invoice_number}`} />}
+                          {/* 2026-11-11: nota aksesoris ke vendor CMT (Kirim ke CMT) — dipotong dari tagihan jahit atau dibayar langsung */}
+                          {inv.source_module === 'cmt_accessory' && <StatusBadge status="nota-aksesoris" label="Nota aksesoris CMT" tone="info" testId={`ar-nac-${inv.invoice_number}`} />}
                           <div className="text-xs text-muted-foreground">
                             {inv.schedule_mode === 'v2'
                               ? `PO ${inv.linked_maklon_po_number || '—'} · nilai PO ${fmt(inv.scheduled_total)} · tertagih ${fmt(inv.billed_total)}`
-                              : (inv.shipment_number || '—')}
+                              : inv.source_module === 'cmt_accessory'
+                                ? `Kiriman ${inv.shipment_number || '—'}${inv.po_number ? ` · PO ${inv.po_number}` : ''}`
+                                  + (Number(inv.jumlah_dipotong) > 0 ? ` · dipotong tagihan jahit ${fmt(inv.jumlah_dipotong)}` : '')
+                                : (inv.shipment_number || '—')}
                           </div>
                         </td>
                         <td className="hidden lg:table-cell"><ChannelBadge channel={inv.sales_channel} channels={channels} /></td>
@@ -243,7 +248,7 @@ export default function RahazaARInvoicesModule({ token }) {
                             )}
                             {/* Riwayat pembayaran (di bawah baris) & tandai jatuh tempo — di menu Lainnya (paling banyak 2 tombol terlihat) */}
                             {((Number(inv.paid_amount) > 0 || inv.status === 'paid' || inv.status === 'partial_paid')
-                              || (['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2')) && (
+                              || (['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2' && inv.source_module !== 'cmt_accessory')) && (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`ar-more-${inv.id}`}><MoreHorizontal className="w-4 h-4" /></Button>
@@ -255,7 +260,7 @@ export default function RahazaARInvoicesModule({ token }) {
                                     </DropdownMenuItem>
                                   )}
                                   {/* 2026-11-07: server menyimpan status terbit sebagai `issued` (H-01) */}
-                                  {['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2' && (
+                                  {['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2' && inv.source_module !== 'cmt_accessory' && (
                                     <DropdownMenuItem onClick={() => changeStatus(inv.id, 'overdue')}>Tandai lewat jatuh tempo</DropdownMenuItem>
                                   )}
                                 </DropdownMenuContent>

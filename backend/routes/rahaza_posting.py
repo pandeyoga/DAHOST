@@ -508,6 +508,12 @@ async def post_ar_invoice(db, invoice: dict, user: dict) -> dict:
     source_ref = f"ar:{inv_id}"
     if invoice.get("intercompany"):
         return _ic_doc_posting(invoice)   # Tahap 8 fase 2: dijurnal oleh core.intercompany
+    if invoice.get("source_module") == "cmt_accessory":
+        # 2026-11-11: nota aksesoris CMT dijurnal saat terbit (`core.nota_aksesoris_cmt`), bukan sebagai penjualan
+        if invoice.get("gl_je_id"):
+            return {"ok": True, "je_id": invoice["gl_je_id"], "je_number": invoice.get("gl_je_number"),
+                    "already_posted": True}
+        return {"ok": False, "error": "Nota aksesoris CMT dijurnal otomatis saat terbit dari Kirim ke CMT."}
     existing = await _find_existing_je(db, "ar_invoice", source_ref)
     if existing:
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}

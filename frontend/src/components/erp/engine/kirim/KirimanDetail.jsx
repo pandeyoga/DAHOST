@@ -2,6 +2,7 @@
  * Rincian satu kiriman ke CMT — DI HALAMAN (DetailPanel). Tahap 9, 7 Nov 2026.
  * Isi = dokumen pengeluaran kiriman itu (`GET /kirim-cmt/shipments/{id}`): angka yang SAMA dengan stok yang
  * berkurang dan surat jalan. "Posting ulang jurnal" pindah ke sini dari menu Pengeluaran Material (dinonaktifkan).
+ * 2026-11-11: bagian Nota aksesoris (`NotaAksesorisKiriman`) — lihat/cetak/potong/batal, atau buat nota kiriman lama.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, BookOpen, Download, Landmark, RefreshCw, Trash2 } from 'lucide-react';
@@ -14,6 +15,7 @@ import { DetailPanel } from '../../layout/PageLayout';
 import { Notice, StatusBadge } from '../../moduleAtoms';
 import FileAttachmentPanel from '../FileAttachmentPanel';
 import { AksesorisTable, PotonganTable, SectionLabel, ShipStatusBadge, ShipTypeBadge, fmtDate, fmtNum, fmtRp } from './kirimShared';
+import NotaAksesorisKiriman from './NotaAksesorisKiriman';
 
 export async function downloadPdf(type, id, filename, label) {
   try {
@@ -33,7 +35,7 @@ export async function downloadPdf(type, id, filename, label) {
   } catch (e) { toast.error(e.message || `Gagal mencetak ${label}`); }
 }
 
-export default function KirimanDetail({ id, canDelete, onClose, onOpen, onChanged, onNavigate }) {
+export default function KirimanDetail({ id, canDelete, canManage = false, onClose, onOpen, onChanged, onNavigate }) {
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
@@ -135,6 +137,9 @@ export default function KirimanDetail({ id, canDelete, onClose, onOpen, onChange
           </Button>
         )}
       </div>
+      {/* 2026-11-11 (owner): aksesoris yang diserahkan dibeli CMT → nota aksesoris kiriman ini */}
+      <NotaAksesorisKiriman shipmentId={s.id} vendorName={s.vendor_name} info={d.nota_aksesoris} canManage={canManage}
+        onChanged={load} />
       {(d.children || []).length > 0 && (
         <>
           <SectionLabel>Kiriman tambahan / pengganti</SectionLabel>

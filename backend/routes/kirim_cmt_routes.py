@@ -3,6 +3,11 @@
   POST /api/kirim-cmt/preview                         hitungan kiriman (pratinjau = yang disimpan = yang dicetak)
   GET  /api/kirim-cmt/shipments/{sid}                 isi kiriman: potongan, aksesoris (satuan serah), dokumen keluar
   POST /api/kirim-cmt/shipments/{sid}/repost-journal  posting ulang jurnal pengeluaran (pindahan dari Pengeluaran Material)
+  POST /api/kirim-cmt/shipments/{sid}/nota-aksesoris  buat nota aksesoris kiriman tersimpan (core.nota_aksesoris_cmt)
+  GET  /api/kirim-cmt/nota-aksesoris                  daftar nota aksesoris (vendor CMT: hanya miliknya)
+  GET  /api/kirim-cmt/nota-aksesoris/{nid}/pdf        cetak nota aksesoris
+  POST /api/kirim-cmt/nota-aksesoris/{nid}/potong     potong sisa nota dari tagihan jahit CMT yang terbuka
+  POST /api/kirim-cmt/nota-aksesoris/{nid}/batal      batalkan nota yang belum dibayar/dipotong (jurnal dibalik)
   GET  /api/kirim-cmt/requests                        tab "Permintaan tambahan" (vendor + staf), saring per portal
   GET  /api/kirim-cmt/requests/{src}/{rid}            rincian + pratinjau kiriman tambahan
   POST /api/kirim-cmt/requests                        input staf (dulu "Komponen Kurang")
@@ -63,7 +68,13 @@ async def kirim_preview(request: Request):
     lines = [{"po_item_id": i.get("po_item_id"), "qty": i.get("qty_sent", i.get("qty"))} for i in body.get("items") or []]
     calc = await kirim_cmt.compute(db, po_id=po_id, lines=lines, accessory_input=body.get("accessory_items"),
                                    materials=body.get("materials"), mode="normal" if stype == "NORMAL" else "tambahan")
-    return _clean(calc)
+    out = _clean(calc)
+    if body.get("vendor_id"):      # 2026-11-11: apakah aksesoris kiriman ini dibuatkan nota (CMT luar)?
+        from core import nota_aksesoris_cmt as nac
+        b = await nac.berlaku(db, vendor_id=body["vendor_id"])
+        out["nota_aksesoris"] = {"berlaku": b["berlaku"], "alasan": b["alasan"], "cara_bayar": nac.CARA_BAYAR,
+                                 "cara_bawaan": nac.CARA_BAWAAN}
+    return out
 
 
 # ── 2. Isi kiriman & posting ulang jurnal ───────────────────────────────────────────────────────────────────────
@@ -93,7 +104,120 @@ async def kirim_shipment_detail(sid: str, request: Request):
     po = await db.production_pos.find_one({"id": ship.get("po_id")}, {"_id": 0}) if ship.get("po_id") else None
     return serialize_doc({"shipment": ship, "items": items, "children": children, **lines,
                           "request": req, "sample_warning": await kirim_cmt.sample_warning(db, po),
-                          "allowed_next": ["Received"] if ship.get("status") == "Sent" else []})
+                          "allowed_next": ["Received"] if ship.get("status") == "Sent" else [],
+                          "nota_aksesoris": await _nota_kiriman_info(db, ship, lines)})
+
+
+# ── 2b. Nota aksesoris ke CMT (permintaan owner 10–11 Nov 2026, `core.nota_aksesoris_cmt`) ────────────────────────
+def _boleh_kelola_nota(user: dict) -> bool:
+    """Admin produksi/maklon (pemilik layar Kirim ke CMT) atau Keuangan (peran keuangan / izin finance.manage)."""
+    from core.roles import FINANCE_ROLES
+    return check_role(user, FIN_REPOST_ROLES + list(FINANCE_ROLES), perm_key="finance.manage")
+
+
+async def _nota_kiriman_info(db, ship: dict, lines: dict) -> dict:
+    """Nota kiriman ini (bila ada) + bisa/tidaknya dibuat dari rincian (kiriman lama, tambahan, atau terlewat)."""
+    from core import nota_aksesoris_cmt as nac
+    doc = await nac.nota_kiriman(db, ship["id"])
+    b = await nac.berlaku(db, vendor_id=ship.get("vendor_id"), shipment=ship)
+    baris = nac.baris_kiriman(lines.get("aksesoris") or [])
+    return {"nota": nac.ringkas(doc), "berlaku": b["berlaku"], "alasan": b["alasan"],
+            "status_kiriman": ship.get("nota_aksesoris_status") or "",
+            "bisa_dibuat": bool(b["berlaku"] and not doc and baris), "baris": baris,
+            "cara_bayar": nac.CARA_BAYAR, "cara_bawaan": nac.CARA_BAWAAN}
+
+
+async def _nota_or_404(db, nid: str, request: Request, user: dict) -> dict:
+    from core import nota_aksesoris_cmt as nac
+    doc = await db[nac.COLL].find_one({"id": nid, "source_module": nac.SOURCE}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Nota aksesoris tidak ditemukan.")
+    scope = await _scope(request, user, db)
+    if scope.get("vendor_id") and doc.get("vendor_id") != scope["vendor_id"]:
+        raise HTTPException(403, "Nota ini bukan milik vendor Anda.")
+    return doc
+
+
+@router.post("/kirim-cmt/shipments/{sid}/nota-aksesoris")
+async def kirim_nota_create(sid: str, request: Request):
+    """Buat nota untuk kiriman yang sudah tersimpan (kiriman sejak cutoff, kiriman tambahan/pengganti, terlewat)."""
+    from core import nota_aksesoris_cmt as nac
+    user = await require_auth(request)
+    deny_klien(user)
+    if is_vendor(user) or not check_role(user, PROD_ADMIN_ROLES):
+        raise HTTPException(403, "Hanya admin produksi/maklon yang boleh membuat nota aksesoris.")
+    db = get_db()
+    ship = await db.vendor_shipments.find_one({"id": sid}, {"_id": 0})
+    if not ship:
+        raise HTTPException(404, "Kiriman tidak ditemukan")
+    inp = nac.parse_input(await request.json()) or {"cara_bayar": nac.CARA_BAWAAN, "harga": {}}
+    aks = (await kirim_cmt.shipment_lines(db, ship)).get("aksesoris") or []
+    rows = nac.baris_kiriman(aks)
+    if not rows:
+        raise HTTPException(400, "Kiriman ini tidak menyerahkan aksesoris dari gudang — tidak ada yang dijual.")
+    kurang = nac.belum_berharga(rows, inp["harga"])
+    if kurang:
+        raise HTTPException(400, "Isi harga jual aksesoris (isi 0 bila gratis): " + ", ".join(kurang[:6]) + ".")
+    doc = await nac.buat(db, shipment=ship, lines=nac.baris_dari_kiriman(aks, inp["harga"]),
+                         cara_bayar=inp["cara_bayar"], user=user)
+    return serialize_doc({"nota": nac.ringkas(doc), "gratis": doc is None})
+
+
+@router.get("/kirim-cmt/nota-aksesoris")
+async def kirim_nota_list(request: Request, status: str = "", vendor_id: str = "", po_id: str = "", limit: int = 500):
+    """Daftar nota aksesoris. Vendor CMT (Portal Vendor) hanya melihat notanya sendiri."""
+    from core import nota_aksesoris_cmt as nac
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    scope = await _scope(request, user, db)
+    rows = await nac.daftar(db, vendor_id=scope.get("vendor_id") or vendor_id or None, status=status or None,
+                            po_id=po_id or None, limit=max(1, min(int(limit or 500), 1000)))
+    return serialize_doc([nac.ringkas(r) for r in rows])
+
+
+@router.get("/kirim-cmt/nota-aksesoris/{nid}/pdf")
+async def kirim_nota_pdf(nid: str, request: Request):
+    from fastapi.responses import Response
+
+    from core import nota_aksesoris_cmt as nac
+    from core import pdf_template
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    doc = await _nota_or_404(db, nid, request, user)
+    vendor = await nac.vendor_doc(db, doc.get("vendor_id")) or {"name": doc.get("vendor_name")}
+    profile = await pdf_template.company_profile(db, nac.ISSUER)
+    template = await pdf_template.resolve(db, "sales-note")
+    pdf = nac.build_pdf(doc, vendor=vendor, profile=profile, template=template, printed_by=user.get("name") or "")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="Nota-Aksesoris_{doc.get("invoice_number", nid)}.pdf"'})
+
+
+@router.post("/kirim-cmt/nota-aksesoris/{nid}/potong")
+async def kirim_nota_potong(nid: str, request: Request):
+    """Potong sisa nota dari tagihan jahit CMT yang terbuka sekarang (sisanya menunggu tagihan berikutnya)."""
+    from core import nota_aksesoris_cmt as nac
+    user = await require_auth(request)
+    deny_klien(user)
+    if is_vendor(user) or not _boleh_kelola_nota(user):
+        raise HTTPException(403, "Hanya admin produksi / keuangan yang boleh memotong tagihan CMT.")
+    db = get_db()
+    await _nota_or_404(db, nid, request, user)
+    return serialize_doc(nac.ringkas(await nac.potong_sekarang(db, nid, user)))
+
+
+@router.post("/kirim-cmt/nota-aksesoris/{nid}/batal")
+async def kirim_nota_batal(nid: str, request: Request):
+    from core import nota_aksesoris_cmt as nac
+    user = await require_auth(request)
+    deny_klien(user)
+    if is_vendor(user) or not _boleh_kelola_nota(user):
+        raise HTTPException(403, "Hanya admin produksi / keuangan yang boleh membatalkan nota aksesoris.")
+    db = get_db()
+    await _nota_or_404(db, nid, request, user)
+    body = await request.json()
+    return serialize_doc(nac.ringkas(await nac.batal(db, nid, user, body.get("alasan") or "")))
 
 
 @router.post("/kirim-cmt/shipments/{sid}/repost-journal")

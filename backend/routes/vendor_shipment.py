@@ -382,6 +382,19 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
     # ditolak dengan nama PO-nya dan layar Kirim Material menautkan ke form PO.
     if not opening and not is_vendor(user):
         await assert_rates_for_vendorless_pos(db, _po_ids_seen, items_data)
+    # 2026-11-11 (owner): aksesoris yang diserahkan DIBELI CMT → nota aksesoris (`core.nota_aksesoris_cmt`). Harga jual
+    # per satuan serah diketik di form (0 = gratis); diperiksa SEBELUM stok dipotong & nomor diterbitkan.
+    nota_in = None
+    if not opening and not is_vendor(user) and shipment_type == 'NORMAL':
+        from core import nota_aksesoris_cmt as nac
+        nota_in = nac.parse_input(body.get('nota_aksesoris'))
+        if nota_in is not None and not (await nac.berlaku(db, vendor_id=body.get('vendor_id')))['berlaku']:
+            nota_in = None                      # tim jahit CV sendiri: aksesoris tidak dijual
+        if nota_in is not None:
+            kurang = nac.belum_berharga(body.get('accessory_items') or [], nota_in['harga'])
+            if kurang:
+                raise HTTPException(400, 'Isi harga jual aksesoris (isi 0 bila gratis): ' + ', '.join(kurang[:6])
+                                    + (f' dan {len(kurang) - 6} lainnya' if len(kurang) > 6 else '') + '.')
     shipment_business_type = 'internal'
     if shipment_po_id:
         _po_bt = await db.production_pos.find_one({'id': shipment_po_id}, {'_id': 0, 'business_type': 1})
@@ -561,12 +574,31 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
             acc_recorded = await sa.record_for_shipment(db, shipment, acc_rows)
         except Exception:  # noqa: BLE001 — surat jalan garmen tetap sah; aksesoris dilaporkan
             logger.exception('aksesoris kiriman %s gagal dicatat', shipment.get('shipment_number'))
+    # 2026-11-11 (owner): nota aksesoris dari hitungan yang SAMA dengan stok yang berkurang. Gagal → kiriman tetap sah
+    # (stok sudah keluar), nota dibuat dari rincian kiriman.
+    nota_out, nota_err = None, ''
+    if nota_in is not None and isinstance(material_issue, dict) and not material_issue.get('already'):
+        from core import nota_aksesoris_cmt as nac
+        try:
+            nota_lines = nac.baris_dari_hitungan((material_issue.get('kirim') or {}).get('aksesoris') or [],
+                                                 nota_in['harga'])
+            nota_out = await nac.buat(db, shipment=shipment, lines=nota_lines, cara_bayar=nota_in['cara_bayar'],
+                                      user=user)
+        except HTTPException as e:
+            nota_err = str(e.detail)
+        except Exception:  # noqa: BLE001
+            logger.exception('nota aksesoris kiriman %s gagal', shipment.get('shipment_number'))
+            nota_err = 'Nota aksesoris gagal diterbitkan — buat dari rincian kiriman.'
     await log_activity(user['id'], user['name'], 'Create', 'Vendor Shipment', f"Created shipment {body.get('shipment_number')}")
     po_vendor_numbers = await after_po_vendor_assigned(db, po_vendor_assigned, shipment, user)
     result = serialize_doc(shipment)
     result['items'] = serialize_doc(inserted_items)
     result['accessory_lines'] = acc_recorded
     result['po_vendor_assigned'] = po_vendor_numbers
+    if nota_in is not None:
+        from core import nota_aksesoris_cmt as nac
+        result['nota_aksesoris'] = serialize_doc(nac.ringkas(nota_out)) if nota_out else None
+        result['nota_aksesoris_error'] = nota_err
     if material_issue:
         result['material_issue'] = {
             'mi_number': (material_issue.get('mi') or {}).get('mi_number')
