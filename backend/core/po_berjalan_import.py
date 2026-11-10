@@ -15,9 +15,14 @@ Satu baris berkas = satu SKU pada satu kiriman ke CMT. Baris dikelompokkan menja
      (`opening=True`: sudah diterima & diperiksa vendor, TANPA Material Issue — stok tidak dipotong
      lagi, tidak ada jurnal).
   3. menandai PO (`opening_import.key`) supaya impor ulang berkas yang sama DILEWATI (idempoten).
+  4. (11 Nov 2026, owner) langsung membuat Production Job dari surat jalan saldo awal lewat jalur resmi
+     `routes.production_execution.create_job_for_shipment_locked` (kunci + cek job ganda yang sama dengan
+     `POST /production-jobs`). PO internal mendapat Tujuan "Gudang FG Sendiri" (bawaan form PO internal);
+     kolom opsional "Tenggat produksi" / "Tenggat kirim" mengisi tenggat PO dan job.
 
-Langkah berikutnya memakai alur biasa: vendor/staf membuat Job dari surat jalan saldo awal, lapor
-progres, kirim ke DA, Terima FG dari CMT → QC → tagihan CMT matang (hutang) — tidak ada jalur kedua.
+Langkah berikutnya memakai alur biasa: staf/vendor tinggal lapor progres, kirim ke DA, Terima FG dari
+CMT → QC → tagihan CMT matang (hutang) — tidak ada jalur kedua. Bahan yang sudah di penjahit saat cutoff
+tidak dinilai (keputusan owner 11 Nov 2026, `core.fg_cost_layers`): barang dari PO ini dinilai upah jahit.
 
 SKU dipetakan lewat tabel padanan (format `padanan_impor_*.csv` skrip master: jenis,
 tertulis_di_excel, kode_erp) yang diunggah bersama berkas, ditambah padanan yang sudah tersimpan di
@@ -34,6 +39,9 @@ logger = logging.getLogger(__name__)
 
 KEY = "po_berjalan"
 JENIS = ("internal", "maklon")
+# Tujuan PO internal = bawaan form PO internal (`ProductionPOModule.openCreate`); kolom "Tujuan" daftar PO membacanya.
+TUJUAN_INTERNAL = "Gudang FG Sendiri"
+JOB_NOTE = "Job dari kiriman awal saldo cutoff (impor PO berjalan)"
 SHIPMENT_NUMBER_KEY = "vendor_shipments.shipment_number"
 PO_NUMBER_KEY = {"internal": "production_pos.po_number", "maklon": "production_pos.po_number_maklon"}
 
@@ -53,6 +61,8 @@ COLUMNS: tuple[tuple[str, str, bool, str], ...] = (
     ("harga_client", "Harga ke klien", False, ""),
     ("client", "Klien", False, ""),
     ("jenis", "Jenis", True, "internal"),
+    ("tenggat_produksi", "Tenggat produksi", False, "2026-11-30"),
+    ("tenggat_kirim", "Tenggat kirim", False, "2026-12-05"),
 )
 
 _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
@@ -73,6 +83,8 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
                      "harga dari client maklon", "harga klien"),
     "client": ("klien", "client", "client maklon", "klien maklon"),
     "jenis": ("jenis", "tipe", "jenis internal maklon", "business type"),
+    "tenggat_produksi": ("tenggat produksi", "tenggat", "deadline", "deadline produksi", "batas produksi"),
+    "tenggat_kirim": ("tenggat kirim", "deadline kirim", "batas kirim", "tenggat pengiriman"),
 }
 
 
@@ -370,6 +382,14 @@ async def _resolve_row(ctx: _Ctx, idx: int, r: dict, today: str) -> dict:
         tgl = today
         notes.append("tanggal kosong → tanggal hari ini")
     kode = str(r.get("kode_potongan") or "").strip()
+    tenggat, err = tanggal(r.get("tenggat_produksi"))
+    if err:
+        errors.append(f"Tenggat produksi: {err}")
+    tenggat_kirim, err = tanggal(r.get("tenggat_kirim"))
+    if err:
+        errors.append(f"Tenggat kirim: {err}")
+    if tenggat and tenggat_kirim and tenggat_kirim < tenggat:
+        errors.append(f"Tenggat kirim ({tenggat_kirim}) lebih awal dari tenggat produksi ({tenggat})")
 
     vendor = None
     if not str(r.get("cmt") or "").strip():
@@ -403,7 +423,7 @@ async def _resolve_row(ctx: _Ctx, idx: int, r: dict, today: str) -> dict:
         errors.append(f"Harga ke klien: {err}")
 
     out = {"row": idx, "errors": errors, "notes": notes, "jenis": jenis, "tanggal": tgl,
-           "kode": kode, "vendor": vendor, "qty_potong": potong, "qty_diterima": terima or 0,
+           "deadline": tenggat, "delivery_deadline": tenggat_kirim, "kode": kode, "vendor": vendor, "qty_potong": potong, "qty_diterima": terima or 0,
            "sisa": sisa, "upah": float(upah or 0), "harga": float(harga or 0), "client": None,
            "item": None, "label": "", "material_cost": 0.0}
     sku, model_t = str(r.get("sku") or "").strip(), str(r.get("model") or "").strip()
@@ -525,6 +545,12 @@ async def analyse(db, raw_rows: list, alias_rows: list | None = None) -> dict:
                     other["errors"].append(f"Satu kode potongan & CMT harus satu {label} (baris {first['row']})")
             if (other.get("client") or {}).get("id") != (first.get("client") or {}).get("id"):
                 other["errors"].append(f"Satu kode potongan & CMT harus satu klien (baris {first['row']})")
+        for f, label in (("deadline", "tenggat produksi"), ("delivery_deadline", "tenggat kirim")):
+            # tenggat boleh hanya ditulis di satu baris kelompok; dua nilai berbeda = satu PO dengan dua tenggat
+            filled = [gr for gr in grows if gr[f]]
+            for gr in filled[1:]:
+                if gr[f] != filled[0][f]:
+                    gr["errors"].append(f"Satu kode potongan & CMT harus satu {label} (baris {filled[0]['row']})")
         seen = {}
         for gr in grows:
             ik = (gr["item"].get("rahaza_variant_id") or gr["item"].get("catalog_item_id"),
@@ -611,11 +637,12 @@ async def analyse(db, raw_rows: list, alias_rows: list | None = None) -> dict:
 
 
 async def commit(db, analysis: dict, user: dict) -> dict:
-    """Buat PO + surat jalan saldo awal untuk setiap kelompok BARU hasil `analyse` (yang tanpa galat).
-    Kelompok yang gagal di tengah jalan dibatalkan lewat jalur hapus PO resmi; kelompok lain lanjut."""
+    """Buat PO + surat jalan saldo awal + Production Job untuk setiap kelompok BARU hasil `analyse` (yang tanpa
+    galat). Kelompok yang gagal di tengah jalan dibatalkan lewat jalur hapus PO resmi; kelompok lain lanjut."""
     from routes.production_pos import create_po_internal
     from routes.vendor_shipment import create_vendor_shipment_internal
     from routes.production_maklon_bridge import try_sync_maklon_finance
+    from routes.production_execution import create_job_for_shipment_locked
     from utils.waktu import now_wib
     created, failed = [], []
     batch = now_wib().strftime("%Y%m%d%H%M%S")
@@ -630,9 +657,13 @@ async def commit(db, analysis: dict, user: dict) -> dict:
             items.append({**r["item"], "qty": r["sisa"], "cmt_price_snapshot": r["upah"],
                           "selling_price_snapshot": r["harga"] if r["jenis"] == "maklon" else 0})
         body = {"business_type": first["jenis"], "vendor_id": vendor["id"], "po_date": first["tanggal"],
-                "status": "Confirmed", "notes": note, "items": items}
+                "status": "Confirmed", "notes": note, "items": items,
+                "deadline": next((r["deadline"] for r in rows if r.get("deadline")), None),
+                "delivery_deadline": next((r["delivery_deadline"] for r in rows if r.get("delivery_deadline")), None)}
         if first["jenis"] == "maklon":
             body.update({"buyer_id": client.get("id"), "customer_name": client.get("name", "")})
+        else:
+            body["customer_name"] = TUJUAN_INTERNAL
         from core.doc_number_policy import policy
         if (await policy(db, PO_NUMBER_KEY[first["jenis"]]))["mode"] == "manual":
             body["po_number"] = first["kode"]
@@ -666,9 +697,11 @@ async def commit(db, analysis: dict, user: dict) -> dict:
             if first["jenis"] == "maklon":
                 # jadwal hutang CMT disegarkan dari surat jalan saldo awal (jalur sinkron biasa)
                 await try_sync_maklon_finance(db, po_id, user)
+            # job lewat jalur resmi (kunci + cek job ganda) — staf tinggal lapor progres & pengiriman
+            job = await create_job_for_shipment_locked(db, ship["id"], vendor["id"], user, notes=JOB_NOTE)
             created.append({"key": g["key"], "po_id": po_id, "po_number": po["po_number"],
-                            "shipment_number": ship.get("shipment_number"), "baris": len(rows),
-                            "sisa": meta["qty_open"]})
+                            "shipment_number": ship.get("shipment_number"), "job_number": job.get("job_number"),
+                            "baris": len(rows), "sisa": meta["qty_open"]})
         except Exception as e:  # noqa: BLE001 — dilaporkan per kelompok; PO setengah jadi dibatalkan
             detail = getattr(e, "detail", None) or str(e)
             logger.exception("impor PO berjalan gagal (kelompok %s)", g["key"])

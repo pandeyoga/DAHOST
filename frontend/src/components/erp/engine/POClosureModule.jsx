@@ -15,6 +15,8 @@
  * PANDUAN_UI: PageLayout · rincian ukuran di bawah barisnya (RowDetail) · popup hanya formulir alasan.
  * 10 Nov 2026 (owner): popup tutup punya isian DENDA dua arah (`DendaTutupPO`): denda dari klien (PO maklon) dan
  *   denda ke CMT — qty × nominal per pcs masing-masing; rincian baris menampilkan nota dendanya.
+ * 11 Nov 2026 (owner): kolom "Kurang" hanya angka; kekurangan dijumlah PER UKURAN (`shortBySize`) di rincian
+ *   baris dan popup tutup; rincian baris menampilkan model/warna per baris PO.
  * Tahap 9 (7 Nov 2026): popup alasan memakai `FormDialog` (ui/dialog) — bukan lagi `engine/Modal` —
  * dan status PO tampil dengan label Indonesia (`lib/poStatus`). Daftar sudah disaring per portal.
  */
@@ -47,8 +49,20 @@ const REASON_LABELS = {
 };
 const TERMINAL = ['Completed', 'Closed', 'Closed Short'];
 const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
-const shortText = (lines) => (lines || []).filter((l) => l.short > 0)
-  .map((l) => `${l.size || l.sku || 'item'} kurang ${fmtNum(l.short)}`).join(', ');
+/** 11 Nov 2026 (owner): kekurangan DIJUMLAH per ukuran — satu PO bisa punya banyak baris (warna) ber-ukuran sama.
+ *  Sama dengan server `production_pos.short_by_size`. → [[ukuran, qty]] urut kemunculan pertama. */
+export const shortBySize = (lines) => {
+  const out = new Map();
+  (lines || []).forEach((l) => {
+    const n = Number(l.short || 0);
+    if (n > 0) {
+      const key = l.size || l.sku || 'item';
+      out.set(key, (out.get(key) || 0) + n);
+    }
+  });
+  return [...out.entries()];
+};
+export const shortText = (lines) => shortBySize(lines).map(([size, n]) => `${size} kurang ${fmtNum(n)}`).join(', ');
 
 export default function POClosureModule({ portalId }) {
   const businessType = portalBusinessType(portalId);
@@ -201,9 +215,10 @@ export default function POClosureModule({ portalId }) {
                           : fmtNum(0)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">{f ? fmtNum(f.total_received) : '—'}</TableCell>
-                      <TableCell className="text-right tabular-nums">
+                      {/* 11 Nov 2026 (owner): hanya angka — rincian per ukuran di baris rincian (dulu daftar per baris
+                          PO di sini membuat tabel sangat lebar sehingga Status & Aksi tergeser keluar layar). */}
+                      <TableCell className="text-right tabular-nums" data-testid={`po-closure-short-${po.id}`}>
                         {s > 0 ? <span className="text-[hsl(var(--warning-text))] font-medium">{fmtNum(s)}</span> : fmtNum(0)}
-                        {s > 0 && <div className="text-xs text-muted-foreground">{shortText(f.lines)}</div>}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={po.status} label={poStatusLabel(po.status)} tone={poStatusTone(po.status)} />
@@ -228,18 +243,27 @@ export default function POClosureModule({ portalId }) {
                     {open && (
                       <RowDetail colSpan={10} testId={`po-closure-lines-${po.id}`}>
                         <div className="space-y-3">
+                        {s > 0 && (
+                          <p className="text-sm" data-testid={`po-closure-short-size-${po.id}`}>
+                            <span className="text-muted-foreground">Kurang per ukuran: </span>{shortText(f.lines)}
+                          </p>
+                        )}
                         {(f?.lines || []).length === 0 ? (
                           <p className="text-sm text-muted-foreground">Rincian per ukuran tidak tersedia.</p>
                         ) : (
                           <Table>
                             <TableHeader><TableRow>
-                              <TableHead>Ukuran / barang</TableHead><TableHead className="text-right">Dipesan</TableHead>
+                              <TableHead>Model / warna</TableHead><TableHead>Ukuran</TableHead><TableHead className="text-right">Dipesan</TableHead>
                               <TableHead className="text-right">Lolos QC</TableHead><TableHead className="text-right">Terpenuhi</TableHead>
                               <TableHead className="text-right">Kurang</TableHead><TableHead className="text-right">Lebih</TableHead>
                             </TableRow></TableHeader>
                             <TableBody>{f.lines.map((ln) => (
                               <TableRow key={ln.po_item_id}>
-                                <TableCell>{ln.size || '—'} <span className="text-muted-foreground">{ln.sku}</span></TableCell>
+                                <TableCell>
+                                  {[ln.product_name, ln.color].filter(Boolean).join(' · ') || '—'}
+                                  {ln.sku && <span className="block text-xs text-muted-foreground">{ln.sku}</span>}
+                                </TableCell>
+                                <TableCell>{ln.size || '—'}</TableCell>
                                 <TableCell className="text-right tabular-nums">{fmtNum(ln.ordered)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{fmtNum(ln.accepted)}</TableCell>
                                 <TableCell className="text-right tabular-nums">{fmtNum(ln.fulfilled)}</TableCell>

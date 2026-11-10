@@ -73,10 +73,20 @@ async def _domain_map(db, payments: list) -> dict:
     return out
 
 
+def bill_entity(p: dict, domain: str) -> str:
+    """CV tagihan CMT (11 Nov 2026): field ``entity`` bila ada, selain itu PO maklon → CV Sukma, lainnya → DA.
+    Aturan yang sama dengan `dewi_maklon_finance.cmt_bill_entity` (jurnal & pembayarannya)."""
+    from core.entities import DA, SMU
+    if p.get('entity') in (DA, SMU):
+        return p['entity']
+    return SMU if domain == 'maklon' else DA
+
+
 def _enrich(p: dict, domain: str, entry: dict | None = None) -> dict:
     return {
         **serialize_doc(p),
         'business_type': domain,
+        'entity': bill_entity(p, domain),
         'amount': _amount(p),
         'penalty': float(p.get('total_penalty', 0) or 0),
         'gl_posted': bool(p.get('gl_je_id')),
@@ -213,6 +223,12 @@ async def _load(db, request: Request):
     rows = [_enrich(p, domains.get(p['id'], 'unknown'), entries.get(p['id'])) for p in payments]
     if scope != 'all':
         rows = [r for r in rows if r['business_type'] == scope]
+    # 11 Nov 2026: pilihan CV Portal Keuangan (header X-CV / ?entity=) — tagihan PO maklon = buku CV Sukma.
+    # Portal Produksi/Maklon tidak mengirim CV → tanpa saringan (perilaku lama).
+    from core.entities import ALL, entity_from_request
+    ent = entity_from_request(request, allow_all=True, default=None)
+    if ent and ent != ALL:
+        rows = [r for r in rows if r['entity'] == ent]
     return scope, rows
 
 
@@ -335,23 +351,51 @@ async def cmt_billing_vendors(request: Request):
 async def list_cmt_ap_schedules(request: Request):
     """2026-11-06 (Tahap 2): JADWAL hutang CMT per (PO maklon, vendor) — qty × upah CMT sejak PO
     dikonfirmasi, plus nilai lolos QC (matang), dibayar, tertahan (selisih), bisa dibayar.
-    WAJIB berada sebelum ``/{payment_id}``."""
+    WAJIB berada sebelum ``/{payment_id}``.
+
+    11 Nov 2026 (owner, "kenapa tidak ada hutang CMT" di Keuangan): Keuangan › Hutang Pemasok & CMT › "Hutang CMT
+    terjadwal" memakai endpoint ini dengan pilihan CV (header ``X-CV`` / ``?entity=``) dan ``perkiraan_internal=1``:
+      · CV Sukma        → jadwal PO maklon (tersimpan);
+      · CV Dewi Aditya  → PERKIRAAN hutang jahit PO DA — hitungan yang sama (`maklon_ledger.ap_schedule_rows`),
+                          TIDAK disimpan, tanpa jurnal; hutang nyata tetap lahir saat barang lolos QC;
+      · Gabungan        → keduanya.
+    Tanpa CV & tanpa ``perkiraan_internal`` (Portal Maklon) → perilaku lama: jadwal PO maklon saja.
+    Setiap baris membawa ``entity``, ``jenis`` (jadwal | perkiraan) dan ``remaining_amount`` (belum jatuh tempo =
+    jadwal − sudah lolos QC)."""
+    from core.entities import ALL, DA, SMU, entity_from_request
     user = await require_auth(request)
     deny_klien(user)
     db = get_db()
     sp = request.query_params
-    q: dict = {'status': {'$ne': 'cancelled'}}
-    if sp.get('po_id'):
-        q['po_id'] = sp['po_id']
-    if sp.get('partner_id'):
-        q['vendor_id'] = await cmt_vendor_master.canonical_id(db, sp['partner_id']) or sp['partner_id']
-    rows = await db.dewi_cmt_ap_schedules.find(q, {'_id': 0}).sort('updated_at', -1).to_list(2000)
+    ent = entity_from_request(request, allow_all=True, default=None)
+    show_maklon = ent in (None, ALL, SMU)
+    show_internal = (sp.get('perkiraan_internal') or '').lower() in ('1', 'true', 'ya') and ent in (None, ALL, DA)
+    vendor_id = (await cmt_vendor_master.canonical_id(db, sp['partner_id']) or sp['partner_id']) \
+        if sp.get('partner_id') else None
+    rows = []
+    if show_maklon:
+        q: dict = {'status': {'$ne': 'cancelled'}}
+        if sp.get('po_id'):
+            q['po_id'] = sp['po_id']
+        if vendor_id:
+            q['vendor_id'] = vendor_id
+        rows = await db.dewi_cmt_ap_schedules.find(q, {'_id': 0}).sort('updated_at', -1).to_list(2000)
+        for r in rows:
+            r.update({'entity': SMU, 'jenis': 'jadwal'})
+    if show_internal:
+        rows += await _internal_estimates(db, po_id=sp.get('po_id'), vendor_id=vendor_id)
+    for r in rows:
+        r['remaining_amount'] = round(max(0.0, float(r.get('scheduled_amount') or 0) - float(r.get('matured_amount') or 0)), 2)
+        r['remaining_qty'] = max(0, int(r.get('scheduled_qty') or 0) - int(r.get('matured_pcs') or 0))
     tot = {k: round(sum(float(r.get(k) or 0) for r in rows), 2)
-           for k in ('scheduled_amount', 'matured_amount', 'paid_amount', 'blocked_amount', 'payable_amount')}
+           for k in ('scheduled_amount', 'matured_amount', 'paid_amount', 'blocked_amount', 'payable_amount',
+                     'remaining_amount')}
+    tot['remaining_by_entity'] = {e: round(sum(r['remaining_amount'] for r in rows if r.get('entity') == e), 2)
+                                  for e in (DA, SMU)}
     # Tahap 8 fase 2: PO maklon yang dijahit tim CV Sukma sendiri — tidak punya jadwal hutang/tagihan CMT.
     from core import intercompany as ic
     own = []
-    team = await ic.own_team_vendor(db)
+    team = await ic.own_team_vendor(db) if show_maklon else None
     if team:
         pq = {'business_type': 'maklon', 'vendor_id': team['id'], 'status': {'$nin': ['Draft', 'Cancelled']}}
         if sp.get('po_id'):
@@ -359,7 +403,33 @@ async def list_cmt_ap_schedules(request: Request):
         async for po in db.production_pos.find(pq, {'_id': 0, 'id': 1, 'po_number': 1}).sort('created_at', -1).limit(200):
             own.append({'po_id': po['id'], 'po_number': po.get('po_number'), 'vendor_name': team.get('name'),
                         'message': ic.OWN_TEAM_MSG})
-    return {'items': serialize_doc(rows), 'total': len(rows), 'totals': tot, 'own_team_pos': own}
+    return {'items': serialize_doc(rows), 'total': len(rows), 'totals': tot, 'own_team_pos': own,
+            'entity': ent or ALL}
+
+
+# PO yang masih bisa menghasilkan hutang jahit (Draf belum dikonfirmasi; yang ditutup/selesai tidak lagi)
+_PERKIRAAN_SKIP_STATUS = ['Draft', 'Cancelled', 'Closed', 'Closed Short', 'Completed']
+
+
+async def _internal_estimates(db, *, po_id: str | None = None, vendor_id: str | None = None) -> list:
+    """PERKIRAAN hutang jahit PO DA (11 Nov 2026, owner): rumus jadwal hutang CMT yang sama dengan PO maklon
+    (`maklon_ledger.ap_schedule_rows`), dihitung saat dibaca — tidak disimpan, tanpa jurnal."""
+    from core import maklon_ledger
+    from core.entities import DA
+    q: dict = {'business_type': {'$ne': 'maklon'}, 'status': {'$nin': _PERKIRAAN_SKIP_STATUS}}
+    if po_id:
+        q['id'] = po_id
+    out = []
+    async for po in db.production_pos.find(q, {'_id': 0}).sort('created_at', -1).limit(500):
+        for row in await maklon_ledger.ap_schedule_rows(db, po):
+            doc = row['doc']
+            if vendor_id and doc.get('vendor_id') != vendor_id:
+                continue
+            if float(doc.get('scheduled_amount') or 0) <= 0 and not doc.get('bill_ids'):
+                continue          # tanpa upah & tanpa tagihan → tidak ada yang diperkirakan
+            out.append({**doc, 'id': f"perkiraan-{po['id']}-{doc.get('vendor_id') or 'tanpa-vendor'}",
+                        'entity': DA, 'jenis': 'perkiraan'})
+    return out
 
 
 @router.get("/{payment_id}")

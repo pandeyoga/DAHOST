@@ -83,6 +83,17 @@ def is_closed_status(status: str | None) -> bool:
     return str(status or '') in JOB_CLOSED_STATUSES
 
 
+def sewn_by_cmt(job: dict | None) -> bool:
+    """Job dijahit penjahit luar (CMT): lahir dari kiriman ke CMT, atau mewarisi vendor PO-nya.
+
+    11 Nov 2026 (keputusan owner): barang jadi job CMT masuk stok, jurnal WIP→Persediaan, dan tagihan CMT
+    HANYA lewat **Terima FG dari CMT → QC**. Progres job CMT hanya mencatat jumlah jadi (dasar tagihan), tanpa
+    "Penerimaan barang jadi" gudang dan tanpa jurnal saat job selesai — dulu keduanya juga terjadi sehingga
+    stok & persediaan tercatat dua kali. Job jahit sendiri (tanpa vendor) tidak berubah."""
+    j = job or {}
+    return bool(j.get('vendor_shipment_id') or j.get('vendor_id'))
+
+
 async def close_job(db, job_id: str, *, status: str = 'Completed',
                     when: datetime | None = None, extra: dict | None = None) -> datetime | None:
     """Tutup job dan **stempel waktunya ditulis SERVER**. Satu-satunya penulis ``closed_at``.

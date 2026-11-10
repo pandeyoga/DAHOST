@@ -658,13 +658,15 @@ def split_by_vendor(items: list, sent: list, header_vendor: str, po_closed: bool
     return out
 
 
-async def refresh_ap_schedules(db, po_id: str, user: dict | None = None) -> list:
-    """Jadwal hutang CMT per (PO maklon, vendor): qty × upah CMT, ditambah angka nyata tagihan
-    lolos QC (`dewi_cmt_payments`): matang / dibayar / tertahan / bisa dibayar."""
+async def ap_schedule_rows(db, po: dict) -> list:
+    """HITUNGAN jadwal hutang CMT per vendor untuk satu PO — TANPA menulis apa pun.
+
+    qty × upah CMT (qty terkirim milik vendor kiriman, sisa pesanan milik vendor PO) + angka nyata tagihan lolos QC
+    (`dewi_cmt_payments`): matang / dibayar / tertahan / bisa dibayar. Satu rumus untuk jadwal PO maklon
+    (`refresh_ap_schedules`, disimpan) dan PERKIRAAN hutang jahit PO DA di Keuangan (11 Nov 2026, owner; tidak
+    disimpan, tanpa jurnal). Tim jahit CV Sukma sendiri dilewati. → [{'vendor_id', 'doc', 'bills'}]"""
     from core import cmt_vendor_master
-    po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
-    if not po or po.get('business_type') != 'maklon' or (po.get('status') or 'Draft') == 'Draft':
-        return []
+    po_id = po['id']
     items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(None)
     by_item = {i['id']: i for i in items}
     vsi = await db.vendor_shipment_items.find({'po_item_id': {'$in': list(by_item)}}, {'_id': 0}).to_list(None) \
@@ -716,11 +718,10 @@ async def refresh_ap_schedules(db, po_id: str, user: dict | None = None) -> list
         blocked = _r2(sum(cmt_bill_blocked(b) for b in vb))
         payable = _r2(sum(cmt_bill_payable(b) for b in vb))
         sched = _r2(sum(x['amount'] for x in lines))
-        existing = await db.dewi_cmt_ap_schedules.find_one({'po_id': po_id, 'vendor_id': vid}, {'_id': 0, 'id': 1})
-        sid = (existing or {}).get('id') or _uid()
         status = ('lunas' if matured > 0 and paid >= max(matured, sched) - 0.01
                   else 'berjalan' if matured > 0 else 'terjadwal')
-        doc = {'po_id': po_id, 'po_number': po.get('po_number', ''), 'business_type': 'maklon',
+        doc = {'po_id': po_id, 'po_number': po.get('po_number', ''),
+               'business_type': 'maklon' if po.get('business_type') == 'maklon' else 'internal',
                'vendor_id': vid, 'vendor_name': vnames.get(vid) or (vb[0].get('cmt_name') if vb else '') or
                (po.get('vendor_name') if vid else 'Vendor belum ditentukan'),
                'lines': lines, 'scheduled_qty': sum(x['qty'] for x in lines), 'scheduled_amount': sched,
@@ -728,6 +729,21 @@ async def refresh_ap_schedules(db, po_id: str, user: dict | None = None) -> list
                'paid_amount': paid, 'blocked_amount': blocked, 'payable_amount': payable,
                'outstanding_amount': _r2(max(sched, matured) - paid),
                'bill_ids': [b['id'] for b in vb], 'status': status, 'updated_at': _now()}
+        out.append({'vendor_id': vid, 'doc': doc, 'bills': vb})
+    return out
+
+
+async def refresh_ap_schedules(db, po_id: str, user: dict | None = None) -> list:
+    """Jadwal hutang CMT per (PO maklon, vendor) — hitungan `ap_schedule_rows`, disimpan di
+    `dewi_cmt_ap_schedules` dan ditautkan ke tagihannya."""
+    po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
+    if not po or po.get('business_type') != 'maklon' or (po.get('status') or 'Draft') == 'Draft':
+        return []
+    out = []
+    for row in await ap_schedule_rows(db, po):
+        vid, doc, vb = row['vendor_id'], row['doc'], row['bills']
+        existing = await db.dewi_cmt_ap_schedules.find_one({'po_id': po_id, 'vendor_id': vid}, {'_id': 0, 'id': 1})
+        sid = (existing or {}).get('id') or _uid()
         if existing:
             await db.dewi_cmt_ap_schedules.update_one({'id': sid}, {'$set': doc})
         else:

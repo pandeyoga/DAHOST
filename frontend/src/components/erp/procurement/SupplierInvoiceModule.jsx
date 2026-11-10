@@ -527,7 +527,7 @@ const cmtPayable = (r) => Math.max(0, Number(r.payable_amount ?? r.balance ?? 0)
 const KIND_LABEL = { ap: 'Bahan & jasa', cmt: 'CMT' };
 
 // tagihan CMT (`/api/production/cmt-billing`) → bentuk baris yang sama dengan faktur pemasok
-const cmtToRow = (p) => ({
+export const cmtToRow = (p) => ({
   kind: 'cmt', id: p.id, invoice_number: p.payment_code, vendor_name: p.cmt_name || p.vendor_name,
   po_numbers: p.po_number ? [p.po_number] : [], issue_date: p.issue_date || p.period_end || p.created_at,
   total: p.amount, balance: p.outstanding_amount, paid_amount: p.paid_amount,
@@ -535,7 +535,8 @@ const cmtToRow = (p) => ({
   // tagihan CMT lahir 'draft' lalu langsung dijurnal; draft = jurnalnya gagal → hutang nyata yang belum dijurnal
   status: (p.status || '').toLowerCase() === 'draft' ? 'unposted' : (p.status || '').toLowerCase(), gl_posted: p.gl_posted,
   // Tahap 8 fase 2: tagihan tim jahit CV Sukma = hutang antar CV (bayar → penerimaan CV Sukma otomatis)
-  intercompany: !!p.intercompany, entity: 'DA',
+  // 11 Nov 2026: CV dari server (tagihan PO maklon = CV Sukma); dulu semua tagihan CMT dicap 'DA'.
+  intercompany: !!p.intercompany, entity: p.entity || (p.business_type === 'maklon' ? 'SMU' : 'DA'),
 });
 
 /**

@@ -6,7 +6,7 @@
  *
  * 2026-11-06 (Tahap 2, keputusan owner):
  *   • Hutang CMT TERJADWAL sejak PO maklon dikonfirmasi (qty × upah CMT per vendor) — tampilan
- *     "Jadwal hutang per PO".
+ *     "Jadwal hutang per PO" (tabel bersama `engine/JadwalHutangCmtTabel`, juga dipakai Keuangan sejak 11 Nov 2026).
  *   • Tagihan hanya bisa dibayar sampai nilai lolos QC − sudah dibayar: "bisa dibayar Rp X dari Rp Y".
  *   • Bagian selisih yang ditandai (lebih tagih) DITAHAN sampai Keuangan memutuskan: potong dari tagihan
  *     atau bayar penuh (`/resolve-variance`).
@@ -30,6 +30,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import { apiFetch, apiGet, apiPost } from '../../lib/api';
 import StaffEntryBadge from './engine/StaffEntryBadge';
+import JadwalHutangCmtTabel, { StatusPill, sisaJadwal } from './engine/JadwalHutangCmtTabel';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
@@ -43,16 +44,6 @@ import { checkPerm } from '@/lib/rbac';
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const fmtDate = (d) => (d ? formatDateID(d) : '—');
-const STATUS = {
-  draft: ['Draf', 'muted'], submitted: ['Diajukan', 'info'], approved: ['Disetujui', 'info'],
-  posted: ['Terjurnal', 'info'], partial_paid: ['Dibayar sebagian', 'warning'], paid: ['Lunas', 'success'],
-  cancelled: ['Dibatalkan', 'muted'], terjadwal: ['Terjadwal', 'info'], berjalan: ['Berjalan', 'warning'],
-  lunas: ['Lunas', 'success'],
-};
-const StatusPill = ({ status }) => {
-  const [label, tone] = STATUS[(status || '').toLowerCase()] || [status || 'Draf', 'default'];
-  return <StatusBadge status={label} tone={tone} />;
-};
 const FIN_ROLES = ['superadmin', 'admin', 'owner', 'accounting', 'staff_keuangan', 'manager_keuangan'];
 
 export default function ProductionCMTBillingModule({ portalId, userRole, user }) {
@@ -182,7 +173,8 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
           <TombolUnduh namaBerkas="jadwal-hutang-cmt" baris={schedules.items || []} testId="cmt-billing-unduh" kolom={[
             { label: 'PO', nilai: (s) => s.po_number || '' }, { label: 'Vendor CMT', nilai: (s) => s.vendor_name || '' },
             { label: 'Jadwal (Rp)', nilai: (s) => Number(s.scheduled_amount) || 0 }, { label: 'Jadwal (pcs)', nilai: (s) => Number(s.scheduled_qty) || 0 },
-            { label: 'Lolos QC (Rp)', nilai: (s) => Number(s.matured_amount) || 0 }, { label: 'Dibayar (Rp)', nilai: (s) => Number(s.paid_amount) || 0 },
+            { label: 'Lolos QC (Rp)', nilai: (s) => Number(s.matured_amount) || 0 }, { label: 'Belum jatuh tempo (Rp)', nilai: (s) => Number(sisaJadwal(s)) || 0 },
+            { label: 'Dibayar (Rp)', nilai: (s) => Number(s.paid_amount) || 0 },
             { label: 'Tertahan (Rp)', nilai: (s) => Number(s.blocked_amount) || 0 }, { label: 'Bisa dibayar (Rp)', nilai: (s) => Number(s.payable_amount) || 0 },
             { label: 'Status', nilai: (s) => s.status_label || s.status || '' },
           ]} />
@@ -230,7 +222,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
                 ))}
               </div>
             )}
-            <ScheduleTable items={schedules.items || []} loading={loading} />
+            <JadwalHutangCmtTabel items={schedules.items || []} loading={loading} />
           </>
         ) : loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat tagihan…</div>
@@ -308,45 +300,6 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
         )}
       </GlassCard>
     </PageLayoutSatuBaris>
-  );
-}
-
-function ScheduleTable({ items, loading }) {
-  if (loading && !items.length) return <div className="p-4 text-sm text-muted-foreground">Memuat jadwal…</div>;
-  return (
-    <Table data-testid="cmt-ap-schedules">
-      <TableHeader><TableRow>
-        <TableHead>PO</TableHead><TableHead>Vendor CMT</TableHead><TableHead className="text-right">Jadwal (qty × upah)</TableHead>
-        <TableHead className="text-right">Lolos QC</TableHead><TableHead className="text-right">Dibayar</TableHead>
-        <TableHead className="text-right">Tertahan</TableHead><TableHead>Bisa dibayar</TableHead><TableHead>Status</TableHead>
-      </TableRow></TableHeader>
-      <TableBody>
-        {items.length === 0 && (
-          <TableRow className="hover:bg-transparent">
-            <TableCell colSpan={8} className="p-0 [&>div]:py-8">
-              <EmptyState icon={Receipt} title="Belum ada jadwal hutang CMT"
-                description="Jadwal lahir saat PO maklon dikonfirmasi: qty × upah CMT per vendor." />
-            </TableCell>
-          </TableRow>
-        )}
-        {items.map((s) => (
-          <TableRow key={s.id}>
-            <TableCell className="font-medium whitespace-nowrap">{s.po_number}</TableCell>
-            <TableCell>{s.vendor_name || 'Vendor belum ditentukan'}</TableCell>
-            <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.scheduled_amount)} <span className="text-xs text-muted-foreground">· {fmtNum(s.scheduled_qty)} pcs</span></TableCell>
-            <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.matured_amount)}</TableCell>
-            <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.paid_amount)}</TableCell>
-            <TableCell className="text-right tabular-nums whitespace-nowrap">
-              {Number(s.blocked_amount || 0) > 0 ? <span className="text-[hsl(var(--danger-text))]">{fmtRp(s.blocked_amount)}</span> : fmtRp(0)}
-            </TableCell>
-            <TableCell className="whitespace-nowrap text-sm" data-testid={`cmt-ap-payable-${s.po_number}`}>
-              Bisa dibayar <b className="tabular-nums">{fmtRp(s.payable_amount)}</b> dari <span className="tabular-nums">{fmtRp(Math.max(Number(s.scheduled_amount || 0), Number(s.matured_amount || 0)))}</span>
-            </TableCell>
-            <TableCell><StatusPill status={s.status} /></TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
   );
 }
 

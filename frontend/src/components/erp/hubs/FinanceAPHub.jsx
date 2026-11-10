@@ -7,6 +7,9 @@ import HubTabs from './HubTabs';
 // Invoice Vendor CMT, Aging Hutang (+ tab ganda di Laporan Keuangan).
 const SupplierInvoiceModule = lazyRetry(() => import('../procurement/SupplierInvoiceModule'));
 const RahazaAPAgingModule   = lazyRetry(() => import('../RahazaAPAgingModule'));
+// 11 Nov 2026 (owner "kenapa tidak ada hutang CMT"): upah jahit barang yang masih di penjahit — belum jatuh tempo,
+// terpisah dari tagihan nyata. CV Sukma = jadwal PO maklon; CV Dewi Aditya = perkiraan PO DA.
+const HutangCmtTerjadwal    = lazyRetry(() => import('../finance/HutangCmtTerjadwal'));
 
 export default function FinanceAPHub(props) {
   return (
@@ -16,6 +19,7 @@ export default function FinanceAPHub(props) {
       compactHeaders
       tabs={[
         { key: 'bills', label: 'Tagihan', Component: SupplierInvoiceModule, props: { financeMode: true } },
+        { key: 'cmt-terjadwal', label: 'Hutang CMT terjadwal', Component: HutangCmtTerjadwal },
         { key: 'aging', label: 'Umur hutang', Component: RahazaAPAgingModule },
       ]}
       {...props}

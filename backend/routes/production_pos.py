@@ -616,9 +616,21 @@ CLOSE_SHORT_REASON_LABELS = {
 }
 
 
+def short_by_size(lines: list) -> list:
+    """Kekurangan dijumlah PER UKURAN (11 Nov 2026, owner): satu PO bisa punya banyak baris/warna untuk
+    ukuran yang sama — dulu tiap baris ditulis sendiri ("M kurang 2, M kurang 12, M kurang 19…").
+    Urutan = kemunculan pertama di PO. → [(ukuran, qty kurang)]"""
+    out: dict = {}
+    for ln in lines or []:
+        n = int(ln.get('short') or 0)
+        if n > 0:
+            key = ln.get('size') or ln.get('sku') or 'item'
+            out[key] = out.get(key, 0) + n
+    return list(out.items())
+
+
 def short_lines_text(lines: list) -> str:
-    return ', '.join(f"{(ln.get('size') or ln.get('sku') or 'item')} kurang {ln['short']}"
-                     for ln in lines if ln.get('short'))
+    return ', '.join(f"{size} kurang {n}" for size, n in short_by_size(lines))
 
 
 async def _denda_tutup(db, po: dict, masukan: dict, user: dict) -> list:
