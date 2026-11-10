@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from core.pantau_staf import meter
-from core.pantau_staf.katalog import ALUR_LABEL, ALUR_URUT, KATALOG, KATALOG_LIST
+from core.pantau_staf.katalog import ALUR_LABEL, ALUR_URUT, KATALOG_LIST
 from core.pantau_staf.pemindai import FINAL, KEJADIAN, TERBUKA, akun_internal
 from core.pantau_staf.waktu import Kalender, jam_wib, label_tenggat, muat_kalender, ts
 from utils.waktu import now_utc, to_wib

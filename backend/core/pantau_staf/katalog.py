@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Awaitable, Callable, Optional
 
-from core.pantau_staf.waktu import Kalender, tanggal_wib, ts
+from core.pantau_staf.waktu import Kalender, ts
 from utils.waktu import to_wib
 
 log = logging.getLogger(__name__)
