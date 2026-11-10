@@ -63,6 +63,36 @@ function CatatanHpp({ r }) {
   </>;
 }
 
+/**
+ * Pilihan produk di baris item nota (2026-11-10, owner: "pilihan produk terlalu kecil untuk dibaca").
+ * Daftar selalu bisa dicari (SKU atau nama) dan tiap opsi berbunyi "SKU · nama · stok N". Setelah dipilih, kotak
+ * menampilkan SKU di baris pertama dan nama lengkap di baris kedua (tidak dipotong); stok & HPP di bawahnya.
+ */
+export const labelProduk = (x) => `${x.sku} · ${x.name} · stok ${fmt(x.available_qty)}`;
+export function PilihProduk({ stock, value, onChange, testId }) {
+  const s = stock.find((x) => x.material_id === value);
+  return (
+    <div className="space-y-1">
+      <SmartNativeSelect className="h-auto min-h-9 w-full py-1.5" searchable value={value} onChange={(e) => onChange(e.target.value)}
+        searchPlaceholder="Cari SKU atau nama produk…" aria-label="Produk" data-testid={testId}
+        renderValue={(o) => (s ? (
+          <span className="block leading-snug">
+            <span className="block font-medium tabular-nums">{s.sku}</span>
+            <span className="block whitespace-normal break-words" data-testid={`${testId}-nama`}>{s.name}</span>
+          </span>
+        ) : o.label)}>
+        <option value="">— Pilih produk —</option>
+        {stock.map((x) => <option key={x.material_id} value={x.material_id}>{labelProduk(x)}</option>)}
+      </SmartNativeSelect>
+      {s && (
+        <p className="text-xs tabular-nums text-muted-foreground" data-testid={`${testId}-stok`}>
+          Stok {fmt(s.available_qty)}{s.hpp > 0 ? ` · HPP ${fmt(s.hpp)}` : ''}
+        </p>
+      )}
+    </div>
+  );
+}
+
 async function openPdf(id, number) {
   const r = await apiFetch(`/sales/direct-sales/${id}/pdf`);
   if (!r.ok) return toast.error('Gagal membuat PDF');
@@ -220,24 +250,25 @@ function CreateSaleModal({ onClose, onSaved }) {
           <p className="text-sm font-medium text-foreground">Item (stok barang jadi tersedia: {stock.length} SKU)</p>
           <Button type="button" size="sm" variant="outline" onClick={() => setItems((a) => [...a, { material_id: '', qty: 1, price: 0 }])} data-testid="sale-form-add-item"><Plus />Tambah baris</Button>
         </div>
-        {/* 2026-11-07: di HP baris item digulir menyamping (dulu kotak qty menciut & tombol hapus terpotong) */}
+        {/* 2026-11-07: di HP baris item digulir menyamping (dulu kotak qty menciut & tombol hapus terpotong).
+            2026-11-10: kolom Produk mengambil sisa lebar (± separuh baris); stok & HPP pindah ke bawah nama produk. */}
         <div className="overflow-x-auto">
-          <Table className="min-w-[640px]">
+          <Table className="min-w-[600px]" data-testid="sale-form-items">
             <TableHeader><TableRow>
-              <TableHead>SKU</TableHead><TableHead className="w-20 text-right">Stok</TableHead><TableHead className="w-24">Qty</TableHead>
-              <TableHead className="w-36">Harga</TableHead><TableHead className="w-32 text-right">Jumlah</TableHead><TableHead className="w-10" />
+              <TableHead>Produk</TableHead><TableHead className="w-20">Qty</TableHead>
+              <TableHead className="w-32">Harga</TableHead><TableHead className="w-28 text-right">Jumlah</TableHead><TableHead className="w-10" />
             </TableRow></TableHeader>
-            <TableBody>{items.map((it, i) => { const s = stock.find((x) => x.material_id === it.material_id); return (
+            <TableBody>{items.map((it, i) => (
               <TableRow key={i}>
-                <TableCell className="py-1.5"><SmartNativeSelect className="h-9 w-full" value={it.material_id} onChange={(e) => setItem(i, 'material_id', e.target.value)} searchPlaceholder="Cari SKU / nama…"
-                  aria-label="SKU" data-testid={`sale-item-${i}-sku`}><option value="">— Pilih SKU —</option>{stock.map((x) => <option key={x.material_id} value={x.material_id}>{`${x.sku} · ${x.name} (stok ${x.available_qty})`}</option>)}</SmartNativeSelect></TableCell>
-                <TableCell className="py-1.5 text-right tabular-nums">{s ? s.available_qty : '—'}{s?.hpp > 0 && <span className="block text-xs text-muted-foreground">HPP {fmt(s.hpp)}</span>}</TableCell>
-                <TableCell className="py-1.5"><Input type="number" min="1" step="1" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} className="h-9" aria-label="Qty" data-testid={`sale-item-${i}-qty`} /></TableCell>
-                <TableCell className="py-1.5"><MoneyInput value={it.price} onChange={(e) => setItem(i, 'price', e.target.value)} className="h-9" data-testid={`sale-item-${i}-price`} /></TableCell>
-                <TableCell className="py-1.5 text-right font-semibold tabular-nums">{fmt((Number(it.qty) || 0) * (Number(it.price) || 0))}</TableCell>
-                <TableCell className="py-1.5"><Button type="button" size="icon-sm" variant="ghost" onClick={() => setItems((a) => a.filter((_, idx) => idx !== i))}
+                <TableCell className="py-1.5 align-top">
+                  <PilihProduk stock={stock} value={it.material_id} onChange={(v) => setItem(i, 'material_id', v)} testId={`sale-item-${i}-sku`} />
+                </TableCell>
+                <TableCell className="py-1.5 align-top"><Input type="number" min="1" step="1" value={it.qty} onChange={(e) => setItem(i, 'qty', e.target.value)} className="h-9" aria-label="Qty" data-testid={`sale-item-${i}-qty`} /></TableCell>
+                <TableCell className="py-1.5 align-top"><MoneyInput value={it.price} onChange={(e) => setItem(i, 'price', e.target.value)} className="h-9" aria-label="Harga" data-testid={`sale-item-${i}-price`} /></TableCell>
+                <TableCell className="py-1.5 pt-3.5 align-top text-right font-semibold tabular-nums">{fmt((Number(it.qty) || 0) * (Number(it.price) || 0))}</TableCell>
+                <TableCell className="py-1.5 align-top"><Button type="button" size="icon-sm" variant="ghost" onClick={() => setItems((a) => a.filter((_, idx) => idx !== i))}
                   title="Hapus baris" aria-label="Hapus baris"><Trash2 /></Button></TableCell>
-              </TableRow>); })}</TableBody>
+              </TableRow>))}</TableBody>
           </Table>
         </div>
       </div>
