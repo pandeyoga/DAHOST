@@ -5,6 +5,8 @@
  *   1. POTONGAN — otomatis dari BOM, pcs per SKU, dikunci. Stok kurang / BOM warna belum ada → tidak bisa disimpan.
  *   2. AKSESORIS — perkiraan BOM tampil sebagai acuan; user mengisi jumlah FINAL dalam satuan serah.
  * Pratinjau = `POST /kirim-cmt/preview` — hitungan yang SAMA dengan yang dipakai saat menyimpan.
+ *   3. NOTA AKSESORIS (owner 10–11 Nov 2026) — aksesoris yang diserahkan DIBELI CMT luar: harga jual per satuan serah
+ *      diketik di sini (0 = gratis), cara bayar potong tagihan jahit / dibayar langsung (`NotaAksesorisIsian`).
  */
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, Truck } from 'lucide-react';
@@ -21,6 +23,7 @@ import { todayWIB } from '../../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../../docnum/DocNumberField';
 import { EmptyState, Notice } from '../../moduleAtoms';
 import { AksesorisTable, PotonganTable, SectionLabel, fmtNum, fmtRp } from './kirimShared';
+import NotaAksesorisIsian, { barisDariHitungan, notaGalat, notaPayload } from './NotaAksesorisIsian';
 
 const asList = (d) => (Array.isArray(d) ? d : (d?.items || []));
 
@@ -33,6 +36,8 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
   const [poItems, setPoItems] = useState([]);
   const [qty, setQty] = useState({});
   const [accVals, setAccVals] = useState({});
+  const [notaHarga, setNotaHarga] = useState({});
+  const [notaCara, setNotaCara] = useState('potong_tagihan');
   const [calc, setCalc] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -50,7 +55,7 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
 
   const choosePo = async (poId) => {
     setForm((f) => ({ ...f, po_id: poId }));
-    setCalc(null); setAccVals({});
+    setCalc(null); setAccVals({}); setNotaHarga({});
     if (!poId) { setPoItems([]); setQty({}); return; }
     try {
       const rows = asList(await apiGet(`/po-items?po_id=${poId}`))
@@ -72,7 +77,8 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        setCalc(await apiPost('/kirim-cmt/preview', { po_id: form.po_id, items: lines, accessory_items: accInput }));
+        setCalc(await apiPost('/kirim-cmt/preview', { po_id: form.po_id, vendor_id: form.vendor_id, items: lines,
+          accessory_items: accInput }));
       } catch (e) { setCalc({ blocking: true, blocking_reasons: [e.message || 'Pratinjau gagal'], potongan: [], aksesoris: [] }); }
       finally { setLoading(false); }
     }, 450);
@@ -82,8 +88,12 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
   const overRemaining = poItems.filter((i) => typeof i.remaining_qty_to_vendor === 'number' && Number(qty[i.id]) > i.remaining_qty_to_vendor);
   const noRate = po && !po.vendor_id ? lines.filter((l) => !(Number((poItems.find((i) => i.id === l.po_item_id) || {}).cmt_price_snapshot) > 0)) : [];
   const accRows = (calc?.aksesoris || []).filter((a) => a.qty_base > 0 || a.default_handover > 0 || a.estimate_base > 0 || accVals[a.key]);
+  // Nota aksesoris: hanya CMT luar (tim jahit CV sendiri tidak membeli aksesoris); harga wajib diketik (0 = gratis).
+  const notaInfo = calc?.nota_aksesoris || null;
+  const notaRows = notaInfo?.berlaku ? barisDariHitungan(calc?.aksesoris, accVals) : [];
+  const notaErr = notaRows.length ? notaGalat(notaRows, notaHarga) : '';
   const canSave = form.vendor_id && form.po_id && lines.length && calc && !calc.blocking && !loading && !saving
-    && !overRemaining.length && !noRate.length;
+    && !overRemaining.length && !noRate.length && !notaErr;
 
   const submit = async () => {
     if (!canSave) return;
@@ -91,14 +101,20 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
     try {
       const { shipment_number: typed, ...rest } = form;
       const accessory_items = (calc.aksesoris || []).map((a) => ({
-        key: a.key, material_id: a.material_id, qty_handover: Number(accVals[a.key]?.qty ?? a.qty_handover) || 0,
+        key: a.key, material_id: a.material_id, name: a.name, qty_handover: Number(accVals[a.key]?.qty ?? a.qty_handover) || 0,
         handover_uom: accVals[a.key]?.uom || a.handover_uom }));
       const data = await apiPost('/vendor-shipments', {
         ...rest, po_number: po?.po_number || '', shipment_type: 'NORMAL', items: lines, accessory_items,
+        ...(notaRows.length ? { nota_aksesoris: notaPayload(notaRows, notaHarga, notaCara) } : {}),
         ...docNumberPayload(numPolicy, 'shipment_number', typed) });
       const mi = data.material_issue;
       toast.success(`Kiriman ${data.shipment_number} dibuat${mi?.mi_number ? ` · stok berkurang (${mi.mi_number})` : ''}`
         + ((data.po_vendor_assigned || []).length ? ` · vendor PO diisi ${data.vendor_name || ''}` : ''));
+      if (data.nota_aksesoris?.invoice_number) {
+        toast.success(`Nota aksesoris ${data.nota_aksesoris.invoice_number} ${fmtRp(data.nota_aksesoris.total)} terbit · ${data.nota_aksesoris.cara_bayar_label}`);
+      } else if (data.nota_aksesoris_error) {
+        toast.warning(`Nota aksesoris belum terbit: ${data.nota_aksesoris_error} Buat dari rincian kiriman.`, { duration: 10000 });
+      }
       if ((mi?.negative_stock_lines || []).length) {
         toast.warning(`${mi.negative_stock_lines.length} aksesoris kini bersaldo minus — betulkan lewat stock opname.`, { duration: 8000 });
       }
@@ -229,6 +245,15 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
               </Notice>
             )}
           </div>
+          {notaRows.length > 0 && (
+            <NotaAksesorisIsian rows={notaRows} harga={notaHarga} caraBayar={notaCara} onCaraBayar={setNotaCara}
+              vendorName={(vendors.find((v) => v.id === form.vendor_id) || {}).garment_name}
+              onHarga={(key, v) => setNotaHarga((h) => ({ ...h, [key]: v }))} testId="kirim-nota" />
+          )}
+          {notaInfo && !notaInfo.berlaku && notaInfo.alasan && accRows.length > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="kirim-nota-tidak-berlaku">Tanpa nota aksesoris: {notaInfo.alasan}</p>
+          )}
+          {notaErr && <p className="text-xs text-[hsl(var(--warning-text))]" data-testid="kirim-nota-galat">{notaErr}</p>}
           {(calc?.warnings || []).length > 0 && (
             <Notice tone="info" icon={AlertTriangle} testId="kirim-warnings">
               <ul className="list-disc pl-4 text-xs space-y-0.5">{calc.warnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}</ul>

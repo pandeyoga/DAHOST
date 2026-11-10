@@ -268,6 +268,9 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
                     {Number(r.denda_dipotong || 0) > 0 && (
                       <span className="block text-xs text-muted-foreground" data-testid={`cmt-billing-denda-${r.payment_code}`}>setelah denda {fmtRp(r.denda_dipotong)}</span>
                     )}
+                    {Number(r.nota_aksesoris_dipotong || 0) > 0 && (
+                      <span className="block text-xs text-muted-foreground" data-testid={`cmt-billing-nac-${r.payment_code}`}>dipotong nota aksesoris {fmtRp(r.nota_aksesoris_dipotong)}</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.payable_amount)}</TableCell>
                   <TableCell className="text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
@@ -415,6 +418,16 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           <ul className="text-xs list-disc pl-4">
             {bill.potongan_denda.map((d, i) => (
               <li key={i}>{d.nomor} (PO {d.po_number || '—'}) {fmtRp(d.jumlah)} · {d.saat === 'tagihan_baru' ? 'sisa denda memotong tagihan ini' : 'saat PO ditutup'}</li>
+            ))}
+          </ul>
+        </Notice>
+      )}
+      {/* 2026-11-11 (owner): aksesoris yang dibeli CMT dibayar dengan memotong tagihan jahit (core.nota_aksesoris_cmt) */}
+      {(bill.potongan_nota_aksesoris || []).length > 0 && (
+        <Notice tone="info" icon={Receipt} testId="cmt-bill-nota-aksesoris" title={`Dipotong nota aksesoris ${fmtRp(bill.nota_aksesoris_dipotong)}`}>
+          <ul className="text-xs list-disc pl-4">
+            {bill.potongan_nota_aksesoris.map((d, i) => (
+              <li key={i}>{d.nomor}{d.po_number ? ` (PO ${d.po_number})` : ''} {fmtRp(d.jumlah)} · {d.saat === 'tagihan_baru' ? 'sisa nota memotong tagihan ini' : 'aksesoris dibeli CMT'}</li>
             ))}
           </ul>
         </Notice>

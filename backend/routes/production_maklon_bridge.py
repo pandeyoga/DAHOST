@@ -519,6 +519,12 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
         await denda_po.potong_tagihan_baru(db, doc['id'], user)
     except Exception:  # noqa: BLE001 — potongan denda tidak boleh menggagalkan pematangan tagihan
         logger.exception('[maklon-bridge] potong denda CMT ke tagihan %s gagal', payment_code)
+    # 2026-11-11 (owner): sisa nota aksesoris CMT ("potong tagihan jahit") memotong tagihan yang baru lahir.
+    try:
+        from core import nota_aksesoris_cmt
+        await nota_aksesoris_cmt.potong_tagihan_baru(db, doc['id'], user)
+    except Exception:  # noqa: BLE001 — potongan nota tidak boleh menggagalkan pematangan tagihan
+        logger.exception('[maklon-bridge] potong nota aksesoris CMT ke tagihan %s gagal', payment_code)
     # 2026-11-06 (Tahap 2): tagihan lolos QC ditempelkan ke JADWAL HUTANG CMT PO (maklon).
     try:
         from core.maklon_ledger import refresh_ap_schedules

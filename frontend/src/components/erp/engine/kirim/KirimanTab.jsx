@@ -131,7 +131,7 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
         <KirimanForm businessType={businessType} onNavigate={onNavigate} onClose={() => setCreating(false)}
           onSaved={(data) => { setCreating(false); setPage(1); load(); setOpen(data.id); }} />
       ) : open && (
-        <KirimanDetail id={open} canDelete={canDelete} onClose={() => setOpen(null)} onOpen={setOpen} onNavigate={onNavigate}
+        <KirimanDetail id={open} canDelete={canDelete} canManage={canCreate} onClose={() => setOpen(null)} onOpen={setOpen} onNavigate={onNavigate}
           onChanged={load} />
       )}
       footer={total > PER_PAGE && (

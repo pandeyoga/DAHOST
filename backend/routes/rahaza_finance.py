@@ -404,6 +404,15 @@ async def _reject_marketplace_ar(db, inv: dict):
 IC_DOC_MSG = ("Dokumen antar CV dibuat dan dijurnal otomatis dari tagihan CMT / nota aksesoris — statusnya "
               "tidak diubah di sini. Pembayarannya dicatat seperti biasa (pasangan di CV lain otomatis).")
 
+# 2026-11-11 (owner): nota aksesoris ke vendor CMT (`core.nota_aksesoris_cmt`) — terbit & dijurnal dari Kirim ke CMT.
+CMT_ACC_DOC_MSG = ("Nota aksesoris CMT terbit dan dijurnal otomatis dari Kirim ke CMT — statusnya tidak diubah di sini. "
+                   "Pembayaran langsung dicatat lewat Bayar; pembatalan dari rincian kiriman.")
+
+
+def _reject_cmt_accessory_doc(inv: dict) -> None:
+    if (inv or {}).get("source_module") == "cmt_accessory":
+        raise HTTPException(400, CMT_ACC_DOC_MSG)
+
 
 @router.post("/ar-invoices")
 async def create_ar(request: Request):
@@ -471,6 +480,7 @@ async def change_ar_status(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if _is_maklon_schedule(inv):
         raise HTTPException(400, MAKLON_SCHEDULE_MSG)
+    _reject_cmt_accessory_doc(inv)
     if inv.get("intercompany"):
         raise HTTPException(400, IC_DOC_MSG)   # Tahap 8 fase 2
     old_status = inv.get("status")
@@ -514,6 +524,7 @@ async def send_ar_invoice(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if _is_maklon_schedule(inv):
         raise HTTPException(400, MAKLON_SCHEDULE_MSG)
+    _reject_cmt_accessory_doc(inv)
     if inv.get("status") not in ("draft", "sent", "issued"):
         raise HTTPException(400, f"Hanya draft/issued yang bisa di-send. Status: {inv.get('status')}")
     if inv.get("status") == "draft":
@@ -545,6 +556,7 @@ async def retry_post_ar(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if _is_maklon_schedule(inv):
         raise HTTPException(400, MAKLON_SCHEDULE_MSG)
+    _reject_cmt_accessory_doc(inv)
     result = await post_ar_invoice(db, inv, user)
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     out["_posting_result"] = result

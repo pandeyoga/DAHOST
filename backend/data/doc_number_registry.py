@@ -209,6 +209,11 @@ DOC_NUMBER_REGISTRY = [
      "auto_only": True, "alasan_otomatis": 'Dibuat sistem saat PO ditutup dengan denda ke vendor CMT.',
      "collection": "dewi_po_denda", "field": "nomor",
      "default_format": "DND-CMT-{SEQ:5}", "tokens": []},
+    # 2026-11-11 (owner): nota aksesoris ke vendor CMT (`core.nota_aksesoris_cmt`) — piutang di rahaza_ar_invoices.
+    {"key": "rahaza_ar_invoices.nota_aksesoris_cmt", "label": "Nota Aksesoris ke CMT", "group": "Produksi",
+     "auto_only": True, "alasan_otomatis": 'Dibuat sistem saat aksesoris diserahkan ke vendor CMT (Kirim ke CMT).',
+     "collection": "rahaza_ar_invoices", "field": "invoice_number",
+     "default_format": "NAC-{SEQ:5}", "tokens": []},
     {"key": "dewi_cmt_payments.payment_code", "label": "Pembayaran CMT", "group": "Maklon",
      "auto_only": True, "alasan_otomatis": 'Dibuat sistem oleh jembatan produksi–maklon.',
      "default_format": "PAY-CMT-{SEQ:5}", "tokens": []},

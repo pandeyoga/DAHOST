@@ -286,14 +286,15 @@ async def _potong_piutang(db, doc: dict, p: dict, user: dict) -> dict:
     return {**doc, **upd}
 
 
-async def _tagihan_terbuka(db, vendor_id: str, entity: str, po_first: str | None = None) -> list:
-    """Tagihan CMT vendor ini di CV yang sama yang masih bisa dipotong: PO `po_first` dulu, lalu terlama."""
+async def _tagihan_terbuka(db, vendor_id: str, entity: str | None, po_first: str | None = None) -> list:
+    """Tagihan CMT vendor ini yang masih bisa dipotong: PO `po_first` dulu, lalu terlama. `entity` = hanya CV itu
+    (denda); None = kedua CV (nota aksesoris CMT, `core.nota_aksesoris_cmt`)."""
     from core.maklon_ledger import cmt_bill_payable
     from routes.dewi_maklon_finance import cmt_bill_entity
     rows = []
     async for b in db.dewi_cmt_payments.find({'vendor_id': vendor_id, 'status': {'$nin': list(BILL_CLOSED)}},
                                              {'_id': 0}).sort('created_at', 1).limit(500):
-        if await cmt_bill_entity(db, b) != entity:
+        if entity is not None and await cmt_bill_entity(db, b) != entity:
             continue
         bisa = cmt_bill_payable(b)
         if bisa > 0.004:
@@ -302,14 +303,25 @@ async def _tagihan_terbuka(db, vendor_id: str, entity: str, po_first: str | None
     return rows
 
 
-async def _kurangi_tagihan(db, bill: dict, x: float, doc: dict, saat: str, user: dict) -> None:
+# Jenis potongan pada tagihan CMT → (field total, field jejak). Denda (Tutup PO) dan nota aksesoris CMT
+# (`core.nota_aksesoris_cmt`, 11 Nov 2026) memakai SATU cara "potong bon" ini.
+JENIS_DENDA = 'denda'
+JENIS_NOTA_AKSESORIS = 'nota_aksesoris'
+_JEJAK = {JENIS_DENDA: ('denda_dipotong', 'potongan_denda'),
+          JENIS_NOTA_AKSESORIS: ('nota_aksesoris_dipotong', 'potongan_nota_aksesoris')}
+
+
+async def _kurangi_tagihan(db, bill: dict, x: float, doc: dict, saat: str, user: dict, *,
+                           jenis: str = JENIS_DENDA) -> None:
     from core.maklon_ledger import _bill_amount
+    f_total, f_jejak = _JEJAK[jenis]
     net = _r2(_bill_amount(bill) - x)
+    jejak = {'nomor': doc['nomor'], 'jumlah': x, 'saat': saat, 'po_number': doc.get('po_number', ''), 'at': _now()}
+    jejak['denda_id' if jenis == JENIS_DENDA else 'nota_id'] = doc['id']
     await db.dewi_cmt_payments.update_one({'id': bill['id']}, {
         '$set': {'net_amount': net, 'total_amount': net, 'outstanding_amount': _r2(net - _f(bill.get('paid_amount'))),
-                 'denda_dipotong': _r2(_f(bill.get('denda_dipotong')) + x), 'updated_at': _now()},
-        '$push': {'potongan_denda': {'denda_id': doc['id'], 'nomor': doc['nomor'], 'jumlah': x, 'saat': saat,
-                                     'po_number': doc.get('po_number', ''), 'at': _now()}}})
+                 f_total: _r2(_f(bill.get(f_total)) + x), 'updated_at': _now()},
+        '$push': {f_jejak: jejak}})
     try:
         from routes.dewi_maklon_finance import _refresh_ap_schedule_safe
         await _refresh_ap_schedule_safe(db, bill.get('po_id'), user)

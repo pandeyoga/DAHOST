@@ -11,11 +11,14 @@ TAMBAHAN yang mengurangi stok lewat hitungan yang SAMA dengan kiriman biasa (`co
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import HTTPException
 
 from core.helpers import new_id, now
+
+logger = logging.getLogger(__name__)
 
 SRC_VENDOR = "mr"        # material_requests
 SRC_STAF = "krg"         # dewi_cmt_component_requests
@@ -199,10 +202,14 @@ async def _child_number(db, parent: dict, stype: str) -> str:
 
 
 async def create_extra_shipment(db, *, payload: dict, stype: str, user: dict, notes: str = "",
-                                extra: Optional[dict] = None) -> dict:
-    """Surat jalan tambahan/pengganti + item + SATU MI lewat `core.kirim_cmt`. Gagal → tidak meninggalkan apa pun."""
+                                extra: Optional[dict] = None, nota: Optional[dict] = None) -> dict:
+    """Surat jalan tambahan/pengganti + item + SATU MI lewat `core.kirim_cmt`. Gagal → tidak meninggalkan apa pun.
+
+    `nota` (11 Nov 2026, owner: nota untuk SETIAP penyerahan) = isian `nota_aksesoris` layar Setujui & kirim: harga
+    jual aksesoris diperiksa SEBELUM apa pun ditulis, nota terbit sesudah stok keluar (`core.nota_aksesoris_cmt`)."""
     from core import kirim_cmt
     from core import material_issue_engine as mie
+    from core import nota_aksesoris_cmt as nac
     from core.po_lock import assert_pos_open
     po = await db.production_pos.find_one({"id": payload["po_id"]}, {"_id": 0}) if payload.get("po_id") else None
     if not po:
@@ -217,6 +224,15 @@ async def create_extra_shipment(db, *, payload: dict, stype: str, user: dict, no
     vname = (parent or {}).get("vendor_name") or vendor.get("name") or vendor.get("garment_name") or po.get("vendor_name") or ""
     if not payload["lines"] and not payload["materials"]:
         raise HTTPException(400, "Permintaan tidak berisi barang (pcs per SKU atau aksesoris) yang bisa dikirim.")
+    nota_in = nac.parse_input(nota)
+    if nota_in is not None and not (await nac.berlaku(db, vendor_id=vendor_id))["berlaku"]:
+        nota_in = None                          # tim jahit CV sendiri: aksesoris tidak dijual
+    if nota_in is not None:
+        pre = await kirim_cmt.compute(db, po_id=po["id"], lines=payload["lines"], materials=payload["materials"],
+                                      mode="tambahan", with_stock=False)
+        kurang = nac.belum_berharga(pre.get("aksesoris") or [], nota_in["harga"])
+        if kurang:
+            raise HTTPException(400, "Isi harga jual aksesoris (isi 0 bila gratis): " + ", ".join(kurang[:6]) + ".")
     number = None
     if parent:
         number = await _child_number(db, parent, stype)
@@ -278,9 +294,21 @@ async def create_extra_shipment(db, *, payload: dict, stype: str, user: dict, no
     if acc_sent:
         await db.vendor_shipments.update_one({"id": sid}, {"$set": {"accessory_count": len(acc_sent)}})
     ship = await db.vendor_shipments.find_one({"id": sid}, {"_id": 0})
+    nota_out, nota_err = None, ""
+    if nota_in is not None and not res.get("already"):
+        try:
+            nota_out = await nac.buat(db, shipment=ship, lines=nac.baris_dari_hitungan(calc.get("aksesoris") or [],
+                                                                                       nota_in["harga"]),
+                                      cara_bayar=nota_in["cara_bayar"], user=user)
+        except HTTPException as e:
+            nota_err = str(e.detail)
+        except Exception:  # noqa: BLE001 — kiriman tetap sah (stok sudah keluar); nota dibuat dari rincian kiriman
+            logger.exception("nota aksesoris kiriman tambahan %s gagal", number)
+            nota_err = "Nota aksesoris gagal diterbitkan — buat dari rincian kiriman."
+        ship = await db.vendor_shipments.find_one({"id": sid}, {"_id": 0})
     ship["accessory_items"] = acc_sent
     return {"shipment": ship, "items": items, "material_issue": res.get("mi"), "mi_number": res.get("mi_number"),
-            "accessory_items": acc_sent}
+            "accessory_items": acc_sent, "nota_aksesoris": nac.ringkas(nota_out), "nota_aksesoris_error": nota_err}
 
 
 async def approve_material_request(db, req: dict, body: dict, user: dict) -> dict:
@@ -291,7 +319,7 @@ async def approve_material_request(db, req: dict, body: dict, user: dict) -> dic
     payload = await request_payload(db, SRC_VENDOR, req, body.get("accessory_items"))
     admin_notes = body.get("admin_notes", "") or ""
     out = await create_extra_shipment(db, payload=payload, stype=req["request_type"], user=user, notes=admin_notes,
-                                      extra={"material_request_id": req["id"]})
+                                      extra={"material_request_id": req["id"]}, nota=body.get("nota_aksesoris"))
     ship = out["shipment"]
     if out["accessory_items"] and req.get("inspection_id"):
         await db.dewi_cmt_component_requests.update_many(
@@ -308,6 +336,8 @@ async def approve_material_request(db, req: dict, body: dict, user: dict) -> dic
     from auth import serialize_doc
     result = serialize_doc(await db.material_requests.find_one({"id": req["id"]}, {"_id": 0}))
     result["child_shipment"] = serialize_doc(ship)
+    result["nota_aksesoris"] = serialize_doc(out.get("nota_aksesoris"))
+    result["nota_aksesoris_error"] = out.get("nota_aksesoris_error") or ""
     return result
 
 
@@ -324,7 +354,7 @@ async def approve_component_request(db, doc: dict, user: dict, body: Optional[di
                                  "pilih barangnya dulu sebelum disetujui.")
     out = await create_extra_shipment(db, payload=payload, stype="ADDITIONAL", user=user,
                                       notes=body.get("notes") or doc.get("notes") or "",
-                                      extra={"component_request_id": doc["id"]})
+                                      extra={"component_request_id": doc["id"]}, nota=body.get("nota_aksesoris"))
     ship, mi = out["shipment"], out["material_issue"] or {}
     upd = {"status": "delivered", "delivered_by": user.get("name", ""), "delivered_at": now(),
            "fulfilled_shipment_id": ship["id"], "fulfilled_shipment_number": ship["shipment_number"],
@@ -335,7 +365,8 @@ async def approve_component_request(db, doc: dict, user: dict, body: Optional[di
         await db.rahaza_material_issues.update_one({"id": mi["id"]}, {"$set": {"component_request_id": doc["id"]}})
     return {"ok": True, "shipment_id": ship["id"], "shipment_number": ship["shipment_number"],
             "material_issue": {"material_issue_id": mi.get("id"), "material_issue_number": out["mi_number"],
-                               "gl_je_number": (mi.get("_posting_result") or {}).get("je_number")}}
+                               "gl_je_number": (mi.get("_posting_result") or {}).get("je_number")},
+            "nota_aksesoris": out.get("nota_aksesoris"), "nota_aksesoris_error": out.get("nota_aksesoris_error") or ""}
 
 
 async def reject(db, src: str, doc: dict, reason: str, user: dict) -> None:

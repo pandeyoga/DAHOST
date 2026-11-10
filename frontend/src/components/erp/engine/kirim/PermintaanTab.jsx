@@ -25,7 +25,8 @@ import { apiGet, apiPost } from '../../../../lib/api';
 import PageLayout, { DetailPanel } from '../../layout/PageLayout';
 import { PageLayoutSatuBaris } from '../DataTable';
 import { EmptyState, Notice, StatusBadge } from '../../moduleAtoms';
-import { AksesorisTable, PotonganTable, SectionLabel, fmtDate, fmtNum, handoverOptions } from './kirimShared';
+import { AksesorisTable, PotonganTable, SectionLabel, fmtDate, fmtNum, fmtRp, handoverOptions } from './kirimShared';
+import NotaAksesorisIsian, { barisDariHitungan, notaGalat, notaPayload } from './NotaAksesorisIsian';
 
 const PER_PAGE = 25;
 const STATUS_TONE = { menunggu: 'warning', dikirim: 'success', ditolak: 'danger' };
@@ -183,6 +184,8 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
   const [accVals, setAccVals] = useState({});
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [notaHarga, setNotaHarga] = useState({});
+  const [notaCara, setNotaCara] = useState('potong_tagihan');
   const load = useCallback(async () => {
     try { setD(await apiGet(`/kirim-cmt/requests/${src}/${id}`)); }
     catch (e) { toast.error(e.message || 'Rincian gagal dimuat'); onClose?.(); }
@@ -193,6 +196,9 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
   const pv = d.preview;
   const pending = r.status === 'menunggu';
   const editableAcc = src === 'mr' && pending;
+  // 11 Nov 2026 (owner): nota untuk SETIAP penyerahan — kiriman tambahan/pengganti ke CMT luar juga terbit nota
+  const notaRows = pending && pv && d.nota_aksesoris?.berlaku ? barisDariHitungan(pv.aksesoris, accVals) : [];
+  const notaErr = notaRows.length ? notaGalat(notaRows, notaHarga) : '';
 
   const approve = async () => {
     setBusy(true);
@@ -203,8 +209,14 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
           accessory_name: a.name, qty_sent: Number(accVals[a.key]?.qty ?? a.qty_handover) || 0,
           unit: accVals[a.key]?.uom || a.handover_uom }));
       }
+      if (notaRows.length) body.nota_aksesoris = notaPayload(notaRows, notaHarga, notaCara);
       const res = await apiPost(`/kirim-cmt/requests/${src}/${id}/approve`, body);
       toast.success(`Disetujui · kiriman tambahan ${res.shipment_number} dibuat dan stok berkurang`);
+      const nota = res.result?.nota_aksesoris;
+      if (nota?.invoice_number) toast.success(`Nota aksesoris ${nota.invoice_number} ${fmtRp(nota.total)} terbit · ${nota.cara_bayar_label}`);
+      else if (res.result?.nota_aksesoris_error) {
+        toast.warning(`Nota aksesoris belum terbit: ${res.result.nota_aksesoris_error} Buat dari rincian kiriman.`, { duration: 10000 });
+      }
       onChanged?.(); await load();
     } catch (e) { toast.error(e.message || 'Persetujuan gagal'); }
     finally { setBusy(false); }
@@ -226,7 +238,8 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
       description={`${r.kind_label} · ${r.source_label} · PO ${r.po_number || '—'}${r.shipment_number ? ` · dari ${r.shipment_number}` : ''} · ${fmtDate(r.created_at)}`}
       actions={pending && canDecide && <>
         <Button type="button" variant="destructive" onClick={reject} data-testid="permintaan-reject"><X className="w-4 h-4" />Tolak</Button>
-        <Button type="button" variant="success" onClick={approve} disabled={busy || !pv || pv.blocking} data-testid="permintaan-approve">
+        <Button type="button" variant="success" onClick={approve} disabled={busy || !pv || pv.blocking || !!notaErr}
+          title={notaErr || undefined} data-testid="permintaan-approve">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Setujui & kirim
         </Button>
       </>}>
@@ -269,6 +282,14 @@ function PermintaanDetail({ src, id, canDecide, onClose, onChanged }) {
             <AksesorisTable rows={pv.aksesoris} mode={editableAcc ? 'form' : 'detail'} values={accVals} testId="permintaan-aksesoris"
               onChange={editableAcc ? (key, v) => setAccVals((s) => ({ ...s, [key]: v })) : undefined} />
           ) : <p className="text-xs text-muted-foreground">Tidak ada aksesoris pada permintaan ini.</p>}
+          {notaRows.length > 0 && (
+            <NotaAksesorisIsian rows={notaRows} harga={notaHarga} caraBayar={notaCara} onCaraBayar={setNotaCara}
+              vendorName={r.vendor_name} onHarga={(key, v) => setNotaHarga((h) => ({ ...h, [key]: v }))} testId="permintaan-nota" />
+          )}
+          {d.nota_aksesoris && !d.nota_aksesoris.berlaku && (pv.aksesoris || []).length > 0 && (
+            <p className="text-xs text-muted-foreground" data-testid="permintaan-nota-tidak">Tanpa nota aksesoris: {d.nota_aksesoris.alasan}</p>
+          )}
+          {notaErr && <p className="text-xs text-[hsl(var(--warning-text))]" data-testid="permintaan-nota-galat">{notaErr}</p>}
           {canDecide && (
             <label className="block text-xs font-medium text-foreground/80 space-y-1">
               <span>Catatan untuk vendor (opsional)</span>

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Package, Truck, TrendingUp, Send, LogOut, X,
   Briefcase, AlertTriangle, BarChart2,
-  ClipboardCheck, AlertOctagon, Bell, Hash, ClipboardList, BookOpen
+  ClipboardCheck, AlertOctagon, Bell, Hash, ClipboardList, BookOpen, Receipt
 } from 'lucide-react';
 
 import VendorDashboard          from './VendorDashboard';
@@ -17,6 +17,7 @@ import VendorSerialTracking     from './VendorSerialTracking';
 import VendorVarianceReport     from './VendorVarianceReport';
 import VendorReminderInbox      from './VendorReminderInbox';
 import VendorProductionGuide    from './VendorProductionGuide';
+import VendorNotaAksesoris      from './VendorNotaAksesoris';
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function VendorPortalApp({ user, token, onLogout }) {
@@ -32,6 +33,7 @@ export default function VendorPortalApp({ user, token, onLogout }) {
     { id: 'production-guide',  label: 'Panduan Produksi',       icon: BookOpen },
     { id: 'progress',          label: 'Progress Produksi',      icon: TrendingUp },
     { id: 'buyer-shipments',   label: 'Pengiriman ke Buyer',    icon: Send },
+    { id: 'nota-aksesoris',    label: 'Nota Aksesoris',         icon: Receipt },
     { id: 'serial-tracking',   label: 'Serial Tracking',        icon: Hash },
     { id: 'variance-report',   label: 'Laporan Variance',       icon: AlertTriangle },
     { id: 'reminders',         label: 'Inbox Reminder',         icon: Bell },
@@ -48,6 +50,7 @@ export default function VendorPortalApp({ user, token, onLogout }) {
       case 'progress':           return <VendorProgress token={token} user={user} />;
       case 'defect-reports':     return <VendorDefectReports token={token} user={user} />;
       case 'buyer-shipments':    return <VendorBuyerShipments user={user} />;
+      case 'nota-aksesoris':     return <VendorNotaAksesoris />;
       case 'serial-tracking':    return <VendorSerialTracking token={token} user={user} />;
       case 'variance-report':    return <VendorVarianceReport token={token} user={user} />;
       case 'reminders':          return <VendorReminderInbox token={token} user={user} />;
