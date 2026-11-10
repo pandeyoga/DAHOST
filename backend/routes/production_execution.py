@@ -627,17 +627,42 @@ async def _create_job_locked(request: Request, db, body: dict, user: dict):
     if body.get('po_id') and not body.get('vendor_shipment_id'):
         from routes.production_internal_adapter import create_internal_job
         return await create_internal_job(db, body, user)
-    from core.cmt_override import effective_vendor_id, resolve_override, stamp as ov_stamp
+    from core.cmt_override import effective_vendor_id, resolve_override
     _ov = await resolve_override(request, user, db)
     vendor_id = await effective_vendor_id(request, user, db, body.get('vendor_id'))
     if not vendor_id: raise HTTPException(400, 'vendor_id diperlukan')
-    shipment = await db.vendor_shipments.find_one({'id': body.get('vendor_shipment_id')})
+    result = await create_job_from_shipment(db, body.get('vendor_shipment_id'), vendor_id, user,
+                                            po_id=body.get('po_id'), notes=body.get('notes', ''), override=_ov)
+    return JSONResponse(result, status_code=201)
+
+
+async def create_job_for_shipment_locked(db, shipment_id: str, vendor_id: str, user: dict, *, notes: str = '') -> dict:
+    """Buat job dari surat jalan kirim ke CMT DENGAN kunci yang sama seperti `POST /production-jobs`
+    (`vendor_shipments.job_lock`). Dipakai impor PO berjalan (11 Nov 2026, owner): kiriman awal langsung punya job
+    sehingga staf tinggal melapor progres dan pengiriman."""
+    from core import doc_lock
+    token = await doc_lock.claim(db, 'vendor_shipments', shipment_id, field='job_lock', actor=user,
+                                 not_found='Shipment tidak ditemukan',
+                                 busy='Production Job untuk dokumen ini sedang dibuat pengguna lain — muat ulang.')
+    try:
+        return await create_job_from_shipment(db, shipment_id, vendor_id, user, notes=notes)
+    finally:
+        await doc_lock.release(db, 'vendor_shipments', shipment_id, token, field='job_lock')
+
+
+async def create_job_from_shipment(db, shipment_id: str, vendor_id: str, user: dict, *,
+                                   po_id: str | None = None, notes: str = '', override: dict | None = None) -> dict:
+    """SATU jalur pembuatan Production Job dari surat jalan kirim ke CMT (validasi, cek job ganda, penomoran, baris
+    job). Pemanggil memegang kunci `vendor_shipments.job_lock` (endpoint `create_job` / `create_job_for_shipment_locked`)."""
+    from core.cmt_override import stamp as ov_stamp
+    _ov = override
+    shipment = await db.vendor_shipments.find_one({'id': shipment_id}) if shipment_id else None
     if not shipment: raise HTTPException(404, 'Shipment tidak ditemukan')
     if shipment.get('status') != 'Received': raise HTTPException(400, 'Shipment belum dikonfirmasi diterima.')
     if shipment.get('vendor_id') != vendor_id: raise HTTPException(403, 'Shipment ini bukan milik vendor Anda')
     if shipment.get('inspection_status') != 'Inspected':
         raise HTTPException(400, f"Inspeksi material belum selesai.")
-    existing = await db.production_jobs.find_one({'vendor_shipment_id': body['vendor_shipment_id']})
+    existing = await db.production_jobs.find_one({'vendor_shipment_id': shipment_id})
     if existing: raise HTTPException(400, f"Production Job sudah ada ({existing.get('job_number')})")
     parent_job_id = None
     parent_job_number = None
@@ -646,8 +671,8 @@ async def _create_job_locked(request: Request, db, body: dict, user: dict):
         if parent_job:
             parent_job_id = parent_job['id']
             parent_job_number = parent_job.get('job_number')
-    ship_items = await db.vendor_shipment_items.find({'shipment_id': body['vendor_shipment_id']}).to_list(None)
-    po_id = body.get('po_id') or (ship_items[0].get('po_id') if ship_items else None)
+    ship_items = await db.vendor_shipment_items.find({'shipment_id': shipment_id}).to_list(None)
+    po_id = po_id or (ship_items[0].get('po_id') if ship_items else None)
     po = await db.production_pos.find_one({'id': po_id}) if po_id else None
     job_id = new_id()
     if parent_job_number:
@@ -676,18 +701,18 @@ async def _create_job_locked(request: Request, db, body: dict, user: dict):
         'vendor_id': vendor_id, 'vendor_name': shipment.get('vendor_name', ''),
         'po_id': po_id, 'po_number': (po or {}).get('po_number', ''),
         'customer_name': (po or {}).get('customer_name', ''),
-        'vendor_shipment_id': body['vendor_shipment_id'],
+        'vendor_shipment_id': shipment_id,
         'shipment_number': shipment.get('shipment_number'),
         'shipment_type': shipment.get('shipment_type', 'NORMAL'),
         'business_type': (po or {}).get('business_type', shipment.get('business_type', 'internal')),
         'deadline': (po or {}).get('deadline'), 'delivery_deadline': (po or {}).get('delivery_deadline'),
-        'status': 'In Progress', 'notes': body.get('notes', ''),
+        'status': 'In Progress', 'notes': notes or '',
         'created_by': user['name'], 'created_at': now(), 'updated_at': now(),
         # keputusan 3a — jejak "diinput staf DA" (kosong bila bukan mode override)
         **ov_stamp(_ov),
     }
     await db.production_jobs.insert_one(job)
-    inspection = await db.vendor_material_inspections.find_one({'shipment_id': body['vendor_shipment_id']})
+    inspection = await db.vendor_material_inspections.find_one({'shipment_id': shipment_id})
     inserted_items = []
     for si in ship_items:
         po_item = await db.po_items.find_one({'id': si.get('po_item_id')}) if si.get('po_item_id') else None
@@ -730,7 +755,7 @@ async def _create_job_locked(request: Request, db, body: dict, user: dict):
     await log_activity(user['id'], user['name'], 'Create', 'Production Job', f"Created job {job_number}")
     result = serialize_doc(job)
     result['items'] = serialize_doc(inserted_items)
-    return JSONResponse(result, status_code=201)
+    return result
 
 @router.delete("/production-jobs/{jid}")
 async def delete_job(jid: str, request: Request):
@@ -1047,7 +1072,10 @@ async def create_progress(request: Request):
         # Resolve the canonical variant (color+size) from the job item and create a
         # WMS pending-inbound so warehouse scan-in adds physical FG stock keyed by
         # the canonical SKU (rahaza_materials.code == {MODEL}-{COLOR}-{SIZE}).
-        if job_doc.get('business_type') == 'internal' and qty_today > 0:
+        # 11 Nov 2026 (owner): HANYA job jahit sendiri. Job CMT → barang jadi masuk lewat Terima FG dari CMT → QC
+        # (dulu progres job CMT juga membuat penerimaan gudang → stok tercatat dua kali).
+        from core.production_job_lifecycle import sewn_by_cmt
+        if job_doc.get('business_type') == 'internal' and qty_today > 0 and not sewn_by_cmt(job_doc):
             try:
                 _variant = await resolve_variant(
                     db,

@@ -124,6 +124,11 @@ async def compute_batch_unit_cost(db, *, po_item: dict, qty: int, basis: str = "
         except Exception:  # noqa: BLE001 — jatuh ke BOM standar, tetapi terlihat di log
             logger.exception("bahan aktual gagal dihitung (po_item=%s)", (po_item or {}).get("id"))
             actual = None
+    # 11 Nov 2026 (keputusan owner): baris PO SALDO AWAL cutoff (impor PO berjalan) tanpa penyerahan bahan sesudah
+    # cutoff → bahan DIANGGAP 0. Bahan yang sudah di penjahit saat cutoff tidak ada di saldo awal WIP; dulu BOM standar
+    # dipakai sehingga jurnal WIP→Persediaan mengkredit WIP yang tidak pernah didebit (WIP minus). Barang dinilai upah
+    # jahit (+ permak). Bahan yang dikirim SESUDAH cutoff tetap terbaca sebagai bahan aktual di atas.
+    opening_zero = actual is None and basis == "auto" and bool((po_item or {}).get("opening_import"))
     if actual is not None:
         out["material_cost"] = _r(actual["material_value"] / qty)
         out["material_source"] = "aktual"
@@ -135,11 +140,16 @@ async def compute_batch_unit_cost(db, *, po_item: dict, qty: int, basis: str = "
         out["material_allocation"] = {k: actual[k] for k in ("cut_per_pcs", "accessory_per_pcs", "sent_item",
                                                              "sent_total", "sent_basis", "capped")}
         out["gaps"].extend(actual.get("gaps") or [])
+    elif opening_zero:
+        out["material_source"] = "saldo_awal_nol"
+        out["material_basis"] = "saldo_awal_nol"
+        out["material_note"] = ("PO saldo awal cutoff: bahan yang sudah di penjahit saat cutoff tidak dinilai "
+                                "(keputusan owner) — barang dinilai upah jahit.")
     elif model_id and size_id and basis == "auto" and (po_item or {}).get("po_id"):
         out["gaps"].append("Belum ada bahan yang tercatat diserahkan untuk PO ini — biaya bahan memakai BOM standar.")
 
     # ── bahan: BOM × harga master (SSOT core/product_costing) — standar / cadangan ─
-    if actual is not None:
+    if actual is not None or opening_zero:
         pass
     elif model_id and size_id:
         try:

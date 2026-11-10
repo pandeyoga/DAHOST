@@ -327,7 +327,8 @@ MAPPING = {
                        "debit_cmt_wip_internal": "1-1403"},
 }
 HEADER = ["Tanggal", "Kode potongan / No PO", "SKU", "Model", "Warna", "Ukuran", "CMT", "Qty potong",
-          "Qty sudah diterima", "Sisa di CMT", "Upah CMT", "Harga ke klien", "Klien", "Jenis"]
+          "Qty sudah diterima", "Sisa di CMT", "Upah CMT", "Harga ke klien", "Klien", "Jenis",
+          "Tenggat produksi", "Tenggat kirim"]
 
 
 def _csv(rows, header=HEADER) -> bytes:
@@ -451,7 +452,8 @@ def env(monkeypatch):
     monkeypatch.setattr(mie, "issue_for_vendor_shipment", mi)
     monkeypatch.setattr(mie, "issue_for_maklon_shipment", mi)
     monkeypatch.setattr(pc, "compute_material_cost", mcost)
-    for mod in (ppos, vs, bridge, dt, coa_auto, dmf):
+    import routes.production_execution as pe
+    for mod in (ppos, vs, bridge, dt, coa_auto, dmf, pe):
         monkeypatch.setattr(mod, "log_activity", noop)
     monkeypatch.setattr(auth, "log_activity", noop)
     monkeypatch.setattr(cascade_delete, "get_db", lambda: db)
@@ -557,7 +559,9 @@ def test_impor_po_berjalan_lewat_jalur_resmi_dan_idempoten(env):
         dtm.require_auth = dtm_require
     assert res["committed"] and res["inserted"] == 3 and res["failed"] == []
     pos = {p["opening_import"]["key"]: p for p in db.production_pos.docs}
-    assert len(pos) == 3 and all(p["status"] == "Confirmed" for p in pos.values())
+    # PO dibuat Dikonfirmasi; job otomatis (11 Nov 2026) lalu menaikkannya ke Produksi — sama dengan POST /production-jobs
+    assert len(pos) == 3 and all(p["status"] == "In Production" for p in pos.values())
+    assert all(h["status"] == "Confirmed" for p in pos.values() for h in (p.get("status_history") or [])[:1])
     a = pos["CUT-01|vp1"]
     items = [i for i in db.po_items.docs if i["po_id"] == a["id"]]
     assert sorted((i["sku"], i["qty"], i["cmt_price_snapshot"], i["opening_qty_cut"], i["opening_qty_received"])
@@ -584,6 +588,17 @@ def test_impor_po_berjalan_lewat_jalur_resmi_dan_idempoten(env):
     assert again["would_insert"] == 0 and again["would_skip"] == 5 and again["_groups"] == []
     assert run(pbi.commit(db, again, ADMIN))["created"] == []
     assert len(db.production_pos.docs) == 3
+    # 11 Nov 2026 (owner): PO internal ber-Tujuan bawaan form, setiap kiriman awal langsung punya job
+    assert sorted(p["customer_name"] for p in pos.values()) == ["Gudang FG Sendiri", "Gudang FG Sendiri", "PT Klien Satu"]
+    jobs = db.production_jobs.docs
+    assert len(jobs) == 3 and sorted(j["vendor_shipment_id"] for j in jobs) == sorted(s["id"] for s in ships)
+    assert {c["job_number"] for c in res["created"]} == {j["job_number"] for j in jobs}
+    ja = next(j for j in jobs if j["po_id"] == a["id"])
+    assert ja["business_type"] == "internal" and ja["customer_name"] == "Gudang FG Sendiri" and ja["vendor_id"] == "vp1"
+    assert sorted((i["sku"], i["shipment_qty"], i["available_qty"]) for i in db.production_job_items.docs
+                  if i["job_id"] == ja["id"]) == [("DA-9351-RDE-M", 30, 30), ("DA-9507-KTB-ALLSIZE", 40, 40)]
+    assert all(p["status"] == "In Production" for p in pos.values())          # sama dengan POST /production-jobs
+    assert all(not s.get("job_lock") for s in ships)                           # kunci dilepas
 
 
 def test_hutang_cmt_lahir_lewat_alur_biasa_hanya_untuk_sisa(env):
@@ -678,3 +693,56 @@ def test_angka_dan_tanggal():
     assert pbi.tanggal("2026-11-01 00:00:00") == ("2026-11-01", None)
     assert pbi.normalize_row({"Sisa Potongan (pcs)": 3, "Penjahit": "A", "Nama Produk": "X"}) == {
         "sisa_di_cmt": 3, "cmt": "A", "model": "X"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 11 Nov 2026 (owner) · impor PO berjalan lanjutan: tenggat, job otomatis, batal bila job gagal
+# ══════════════════════════════════════════════════════════════════════════════
+def test_tenggat_produksi_dan_kirim_masuk_po_dan_job(env):
+    db = env["db"]
+    rows = [GOOD[0] + ["2026-11-30", "2026-12-05"], GOOD[1] + ["", ""]]       # tenggat cukup di satu baris kelompok
+    a = run(pbi.analyse(db, _rows(_csv(rows))))
+    assert a["invalid"] == 0, a["preview_invalid"]
+    res = run(pbi.commit(db, a, ADMIN))
+    assert len(res["created"]) == 1 and res["created"][0]["job_number"]
+    po = db.production_pos.docs[0]
+    assert str(po["deadline"])[:10] == "2026-11-30" and str(po["delivery_deadline"])[:10] == "2026-12-05"
+    job = db.production_jobs.docs[0]
+    assert str(job["deadline"])[:10] == "2026-11-30" and str(job["delivery_deadline"])[:10] == "2026-12-05"
+
+
+def test_tenggat_bertentangan_atau_kirim_sebelum_produksi_ditolak(env):
+    db = env["db"]
+    rows = [GOOD[0] + ["2026-11-30", ""], GOOD[1] + ["2026-12-01", ""],          # satu PO, dua tenggat
+            ["2026-10-20", "CUT-09", "DA-9507-KTB-ALLSIZE", "", "", "", "CMT-A", "10", "0", "10", "1000", "", "",
+             "internal", "2026-12-10", "2026-12-01"]]                               # kirim sebelum produksi
+    a = run(pbi.analyse(db, _rows(_csv(rows))))
+    msgs = " ".join(" ".join(r["errors"]) for r in a["preview_invalid"])
+    assert "harus satu tenggat produksi" in msgs
+    assert "Tenggat kirim (2026-12-01) lebih awal dari tenggat produksi (2026-12-10)" in msgs
+    assert a["_groups"] == []
+
+
+def test_job_gagal_membatalkan_po_dan_kiriman(env, monkeypatch):
+    import routes.production_execution as pe
+    db = env["db"]
+
+    async def boom(*_a, **_k):
+        raise HTTPException(409, "job sedang dibuat pengguna lain")
+    monkeypatch.setattr(pe, "create_job_for_shipment_locked", boom)
+    a = run(pbi.analyse(db, _rows(_csv(GOOD[:1]))))
+    res = run(pbi.commit(db, a, ADMIN))
+    assert res["created"] == [] and "sedang dibuat" in res["failed"][0]["error"]
+    assert db.production_pos.docs == [] and db.vendor_shipments.docs == [] and db.production_jobs.docs == []
+
+
+def test_job_dari_kiriman_tidak_dibuat_dua_kali(env):
+    import routes.production_execution as pe
+    db = env["db"]
+    a = run(pbi.analyse(db, _rows(_csv(GOOD[:1]))))
+    run(pbi.commit(db, a, ADMIN))
+    ship = db.vendor_shipments.docs[0]
+    with pytest.raises(HTTPException) as e:                                       # jalur yang sama dengan POST /production-jobs
+        run(pe.create_job_for_shipment_locked(db, ship["id"], "vp1", ADMIN))
+    assert e.value.status_code == 400 and "sudah ada" in str(e.value.detail)
+    assert len(db.production_jobs.docs) == 1 and not db.vendor_shipments.docs[0].get("job_lock")

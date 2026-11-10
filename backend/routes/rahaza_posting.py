@@ -3167,7 +3167,18 @@ async def job_sewing_rate(db, job: dict) -> float:
 
 async def post_wip_to_fg_on_job_complete(db, job: dict, user: dict) -> dict:
     """AD-3: job internal Completed → Dr FG / Cr WIP.
-    Nilai = Σ MI issued (job_id) yang sudah diposting; fallback HPP snapshot job."""
+    Nilai = Σ MI issued (job_id) yang sudah diposting; fallback HPP snapshot job.
+
+    11 Nov 2026 (keputusan owner): job yang dijahit CMT DILEWATI — nilainya pindah WIP→FG saat Terima FG dari
+    CMT selesai QC (`post_wip_to_fg_on_cmt_receipt`). Dulu cadangan HPP snapshot (upah × qty jadi) tetap
+    membukukan jurnal di sini, lalu penerimaan membukukannya lagi: persediaan dua kali, WIP minus."""
+    from core.production_job_lifecycle import sewn_by_cmt
+    if sewn_by_cmt(job):
+        result = {"ok": True, "skipped": "job_cmt",
+                  "detail": "Job CMT: nilai WIP→FG dibukukan saat Terima FG dari CMT selesai QC, bukan saat job selesai."}
+        await db.production_jobs.update_one({"id": job["id"]}, {"$set": {
+            "wip_posted": False, "wip_skipped": "job_cmt", "wip_error": None}})
+        return result
     mapping = await get_mapping(db, "wip_to_fg_on_wo_complete")
     if not mapping:
         result = {"ok": False, "reason": "mapping_disabled"}
