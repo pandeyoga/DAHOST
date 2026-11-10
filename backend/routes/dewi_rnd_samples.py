@@ -64,7 +64,17 @@ async def list_sample_requests(
         q['status'] = status
 
     items = await db.dewi_rnd_sample_requests.find(q).sort('created_at', -1).limit(limit).to_list(length=limit)
-    return [serialize(it) for it in items]
+    return await _with_accessory_status(db, [serialize(it) for it in items])
+
+
+async def _with_accessory_status(db, rows: list) -> list:
+    """2026-11-10 (keputusan owner): status sample tidak berubah karena aksesoris; daftar sample
+    diberi `accessory_status` (menunggu / disiapkan / terkirim / ditolak) dari permintaan aksesorisnya."""
+    from routes.dewi_accessory_requests import accessory_status_by_sample
+    st = await accessory_status_by_sample(db, [r.get('id') for r in rows])
+    for r in rows:
+        r['accessory_status'] = st.get(r.get('id'))
+    return rows
 
 
 @router.post('/sample-requests')
@@ -113,7 +123,16 @@ async def get_sample_request(request_id: str, user: dict = Depends(require_auth)
     req = await db.dewi_rnd_sample_requests.find_one({'id': request_id})
     if not req:
         raise HTTPException(404, 'Sample request tidak ditemukan')
-    return serialize(req)
+    return (await _with_accessory_status(db, [serialize(req)]))[0]
+
+
+# 2026-11-10 (keputusan owner "tutup penuh"): status & data persetujuan hanya berubah lewat
+# /submit, /approve, /reject (gerbang izin `rnd.approve`). Dulu PUT menerima `status: approved`
+# dari siapa pun yang boleh mengubah data R&D — persetujuan bisa dilewati.
+SAMPLE_WORKFLOW_FIELDS = ('status', 'approval_status', 'approved_by', 'approved_by_name', 'approved_at',
+                          'approval_notes', 'created_by', 'created_by_name')
+# Sample yang sudah diputuskan tidak bisa diubah isinya lagi.
+SAMPLE_LOCKED_STATUSES = ('approved', 'rejected')
 
 
 @router.put('/sample-requests/{request_id}')
@@ -122,11 +141,18 @@ async def update_sample_request(request_id: str, body: dict, user: dict = Depend
     body.pop('_id', None)
     body.pop('id', None)
     body.pop('created_at', None)
+    before = await db.dewi_rnd_sample_requests.find_one({'id': request_id}, {'_id': 0})
+    if not before:
+        raise HTTPException(404, 'Sample request tidak ditemukan')
+    if before.get('status') in SAMPLE_LOCKED_STATUSES:
+        raise HTTPException(400, 'Sample yang sudah disetujui atau ditolak tidak bisa diubah lagi. '
+                                 'Buat request sample baru bila perlu perubahan.')
+    if 'status' in body and body.get('status') != before.get('status'):
+        raise HTTPException(400, 'Status sample hanya berubah lewat tombol Ajukan, Setujui, atau Tolak.')
+    for k in SAMPLE_WORKFLOW_FIELDS:
+        body.pop(k, None)
     # Tahap 6 (HR4): PIC sample hanya karyawan dari master atau penjahit luar bertanda
     if any(k in body for k in PIC_KEYS):
-        before = await db.dewi_rnd_sample_requests.find_one({'id': request_id}, {'_id': 0})
-        if not before:
-            raise HTTPException(404, 'Sample request tidak ditemukan')
         body.update(await resolve_sample_pic(db, body, before))
     body['updated_at'] = now_utc()
 

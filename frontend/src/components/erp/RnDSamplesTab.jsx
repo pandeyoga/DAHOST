@@ -6,6 +6,11 @@
  * request aksesoris), tolak & hapus lewat confirmDialog, tanggal lewat DatePicker, warna token.
  * Kotak "Setelah sample disetujui" (huruf kapital, selebar halaman) → menu "Langkah berikutnya".
  * Endpoint, isian, dan validasi tidak berubah.
+ *
+ * 2026-11-10 (keputusan owner): baris request aksesoris DIPILIH dari master aksesoris (satuan & stok gudang
+ * tampil); barang yang belum ada di master tetap bisa diketik lewat pilihan "Belum ada di master" dan ditandai
+ * "Belum tertaut". Status sample tidak berubah karena aksesoris — kolom status diberi keterangan
+ * "Aksesoris menunggu / disiapkan / terkirim / ditolak" (`accessory_status` dari server).
  */
 import { useState, useEffect, useMemo } from 'react';
 import {
@@ -57,7 +62,22 @@ const emptyForm = {
   style_id: '', quantity: 1, priority: 'normal', sample_pic: '', sample_pic_employee_id: '',
   sample_pic_external: false, due_date: '', notes: '',
 };
-const BARIS_AKS = () => ({ material_code: '', material_name: '', qty: 1, unit: 'pcs', notes: '' });
+const BARIS_AKS = () => ({ material_id: '', material_code: '', material_name: '', qty: 1, unit: 'pcs', notes: '', manual: false });
+// Pilihan cadangan: barang belum ada di master → diketik, ditautkan tim aksesoris saat diserahkan.
+const AKS_MANUAL = '__manual__';
+// Keterangan aksesoris di daftar sample (status sample sendiri tidak berubah).
+const AKS_STATE = {
+  submitted: 'menunggu',
+  allocated: 'disiapkan',
+  delivered: 'terkirim',
+  rejected: 'ditolak',
+};
+const aksesorisTeks = (a) => {
+  if (!a || !AKS_STATE[a.state]) return '';
+  const aktif = (a.total || 0) - (a.rejected || 0);
+  return `Aksesoris ${AKS_STATE[a.state]}${aktif > 1 && a.state !== 'delivered' ? ` · ${a.delivered || 0}/${aktif} terkirim` : ''}`;
+};
+const angka = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
 // 2026-11-07 (Tahap 6, HR4): PIC sample DIPILIH dari karyawan aktif — karyawan bagian sample (departemen /
 // jabatan / peran memuat "sample", "RnD", "riset") ditawarkan paling atas. Penjahit luar tetap bisa lewat
@@ -89,6 +109,9 @@ export default function RnDSamplesTab({ token, onNavigate }) {
                                           localStorage.getItem('erp_token'),
                                           { TIPE: 'REQ-AKS' });
   const [accReqCode, setAccReqCode] = useState('');
+  // Master aksesoris (kode, nama, satuan, stok gudang) — dimuat saat form request aksesoris dibuka.
+  const [accMasters, setAccMasters] = useState(null);
+  const masterById = useMemo(() => new Map((accMasters || []).map((m) => [m.id, m])), [accMasters]);
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -211,6 +234,11 @@ export default function RnDSamplesTab({ token, onNavigate }) {
       notes: '',
       submitting: false,
     });
+    if (accMasters === null) {
+      apiFetch('/acc/items')
+        .then((data) => setAccMasters(Array.isArray(data) ? data : []))
+        .catch(() => { setAccMasters([]); toast.error('Daftar master aksesoris gagal dimuat — barang bisa diketik manual.'); });
+    }
   };
 
   const updateAccReqItem = (idx, field, value) => {
@@ -218,6 +246,24 @@ export default function RnDSamplesTab({ token, onNavigate }) {
       if (!prev) return prev;
       const items = [...prev.items];
       items[idx] = { ...items[idx], [field]: value };
+      return { ...prev, items };
+    });
+  };
+
+  // Pilih master (kode, nama, satuan dari master) atau beralih ke ketik manual ("belum tertaut").
+  const pickAccMaster = (idx, value) => {
+    setAccReqModal(prev => {
+      if (!prev) return prev;
+      const items = [...prev.items];
+      const cur = items[idx];
+      if (value === AKS_MANUAL) {
+        items[idx] = { ...cur, manual: true, material_id: '', material_code: '', material_name: '' };
+      } else {
+        const m = masterById.get(value);
+        items[idx] = m
+          ? { ...cur, manual: false, material_id: m.id, material_code: m.code || '', material_name: m.name || '', unit: m.unit || 'pcs' }
+          : { ...cur, manual: false, material_id: '', material_code: '', material_name: '' };
+      }
       return { ...prev, items };
     });
   };
@@ -236,9 +282,21 @@ export default function RnDSamplesTab({ token, onNavigate }) {
 
   const handleSubmitAccReq = async () => {
     if (!accReqModal) return;
-    const validItems = accReqModal.items.filter(it => (it.material_name || it.material_code) && Number(it.qty) > 0);
+    const terisi = (it) => it.material_id || (it.manual && String(it.material_name || '').trim());
+    const validItems = accReqModal.items
+      .filter(it => terisi(it) && Number(it.qty) > 0)
+      .map(({ manual, ...it }) => ({
+        ...it, qty: Number(it.qty),
+        material_id: manual ? '' : it.material_id,
+        material_name: String(it.material_name || '').trim(),
+        material_code: String(it.material_code || '').trim(),
+      }));
+    if (accReqModal.items.some(it => it.manual && !String(it.material_name || '').trim() && Number(it.qty) > 0)) {
+      toast.error('Barang yang diketik manual wajib diberi nama.');
+      return;
+    }
     if (validItems.length === 0) {
-      toast.error('Minimal 1 item dengan nama/kode dan qty > 0');
+      toast.error('Pilih minimal 1 aksesoris dengan jumlah lebih dari 0.');
       return;
     }
     try {
@@ -256,8 +314,9 @@ export default function RnDSamplesTab({ token, onNavigate }) {
         ...docNumberPayload(accNumPolicy, 'request_code', accReqCode),
       };
       const res = await apiFetch('/dewi/accessory-requests', { method: 'POST', body: payload });
-      toast.success(`Request aksesoris ${res.request_code} terkirim`);
+      toast.success(`Request aksesoris ${res.request_code} terkirim ke tim aksesoris`);
       setAccReqModal(null);
+      fetchSamples();
     } catch (e) {
       if (e instanceof ApiError && !e.isUnauthorized) {
         toast.error(e?.body?.detail || 'Gagal membuat request aksesoris');
@@ -343,7 +402,15 @@ export default function RnDSamplesTab({ token, onNavigate }) {
       </span>) },
     { kunci: 'prio', label: 'Prioritas', isi: (s) => <StatusBadge status={`prio-${s.priority}`} tone={prioOf(s.priority).tone} label={prioOf(s.priority).label} /> },
     { kunci: 'due', label: 'Target selesai', isi: (s) => <span className="text-sm md:whitespace-nowrap">{tgl(s.due_date)}</span> },
-    { kunci: 'status', label: 'Status', isi: (s) => <StatusBadge status={s.status} tone={statusOf(s.status).tone} label={statusOf(s.status).label} /> },
+    { kunci: 'status', label: 'Status', isi: (s) => (
+      <div className="flex flex-col items-start gap-1">
+        <StatusBadge status={s.status} tone={statusOf(s.status).tone} label={statusOf(s.status).label} />
+        {aksesorisTeks(s.accessory_status) && (
+          <span className="text-xs text-muted-foreground" data-testid={`sample-acc-status-${s.id}`}>
+            {aksesorisTeks(s.accessory_status)}
+          </span>
+        )}
+      </div>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => <AksiBaris s={s} /> },
   ];
 
@@ -397,6 +464,7 @@ export default function RnDSamplesTab({ token, onNavigate }) {
             { label: 'Prioritas', nilai: (s) => prioOf(s.priority).label },
             { label: 'Target selesai', nilai: (s) => (s.due_date ? formatDateID(s.due_date) : '') },
             { label: 'Status', nilai: (s) => statusOf(s.status).label },
+            { label: 'Aksesoris', nilai: (s) => aksesorisTeks(s.accessory_status).replace(/^Aksesoris /, '') },
             { label: 'Catatan', nilai: (s) => s.notes || '' },
           ]} />
         <Button variant="outline" size="icon" onClick={fetchSamples} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
@@ -433,6 +501,15 @@ export default function RnDSamplesTab({ token, onNavigate }) {
               {detail.sample_pic || 'Belum ditentukan'}{detail.sample_pic && detail.sample_pic_external ? ' (penjahit luar)' : ''}
             </BarisDetail>
             <BarisDetail label="Target selesai">{tgl(detail.due_date)}</BarisDetail>
+            {detail.accessory_status && (
+              <BarisDetail label="Aksesoris">
+                {aksesorisTeks(detail.accessory_status).replace(/^Aksesoris /, '')}
+                {typeof onNavigate === 'function' && (
+                  <Button size="sm" variant="link" className="ml-2 px-0" onClick={() => onNavigate('rnd-accessory-requests')}
+                    data-testid="sample-detail-acc-link">Lihat permintaan</Button>
+                )}
+              </BarisDetail>
+            )}
             <BarisDetail label="Catatan">{detail.notes || '—'}</BarisDetail>
             {detail.approved_by_name && (
               <BarisDetail label="Diputuskan">{detail.approved_by_name}{detail.approved_at ? ` · ${formatDateTimeID(detail.approved_at)}` : ''}</BarisDetail>
@@ -514,28 +591,71 @@ export default function RnDSamplesTab({ token, onNavigate }) {
         testId="acc-req-form">
         {accReqModal && (
           <>
-            <Isian label="Daftar aksesoris" petunjuk="Isi nama atau kode, dan qty lebih dari 0.">
-              <div className="space-y-2">
-                {accReqModal.items.map((it, idx) => (
-                  <div key={idx} className="grid grid-cols-2 gap-2 sm:grid-cols-12 sm:items-start" data-testid={`acc-req-row-${idx}`}>
-                    <Input className="sm:col-span-3" placeholder="Kode (opsional)" aria-label="Kode aksesoris"
-                      value={it.material_code} onChange={e => updateAccReqItem(idx, 'material_code', e.target.value)} />
-                    <Input className="sm:col-span-4" placeholder="Nama aksesoris *" aria-label="Nama aksesoris"
-                      value={it.material_name} onChange={e => updateAccReqItem(idx, 'material_name', e.target.value)} />
-                    <Input className="sm:col-span-2" type="number" min="0" step="0.1" placeholder="Qty" aria-label="Qty"
-                      value={it.qty} onChange={e => updateAccReqItem(idx, 'qty', e.target.value)} />
-                    {/* 2026-11-07: satuan dari daftar satuan RnD yang sama dengan Costing/Tech Pack */}
-                    <div className="sm:col-span-2">
-                      <RnDUnitSelect value={it.unit} onChange={e => updateAccReqItem(idx, 'unit', e.target.value)}
-                        testId={`acc-req-unit-${idx}`} />
+            <Isian label="Daftar aksesoris"
+              petunjuk="Pilih dari master aksesoris. Bila barangnya belum ada di master, pilih 'Belum ada di master' lalu ketik namanya.">
+              <div className="space-y-3">
+                {accReqModal.items.map((it, idx) => {
+                  const m = it.material_id ? masterById.get(it.material_id) : null;
+                  const stok = m ? Number(m.stock_qty || 0) : null;
+                  const kurang = m && Number(it.qty) > stok;
+                  return (
+                    <div key={idx} className="space-y-1.5" data-testid={`acc-req-row-${idx}`}>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-12 sm:items-start">
+                        <div className="col-span-2 sm:col-span-6">
+                          <SmartNativeSelect value={it.manual ? AKS_MANUAL : it.material_id} searchable={true}
+                            onChange={e => pickAccMaster(idx, e.target.value)} aria-label="Aksesoris"
+                            data-testid={`acc-req-master-${idx}`}>
+                            <option value="">{accMasters === null ? 'Memuat master aksesoris…' : 'Pilih aksesoris'}</option>
+                            <option value={AKS_MANUAL}>Belum ada di master — ketik manual</option>
+                            {(accMasters || []).map((a) => (
+                              <option key={a.id} value={a.id}>{`${a.code} · ${a.name} (stok ${angka(a.stock_qty)} ${a.unit || 'pcs'})`}</option>
+                            ))}
+                          </SmartNativeSelect>
+                        </div>
+                        <Input className="sm:col-span-2" type="number" min="0" step="0.1" placeholder="Jumlah" aria-label="Jumlah"
+                          value={it.qty} onChange={e => updateAccReqItem(idx, 'qty', e.target.value)}
+                          data-testid={`acc-req-qty-${idx}`} />
+                        {/* Satuan: dari master bila tertaut (stok dipotong dalam satuan master); ketik manual memakai
+                            daftar satuan RnD yang sama dengan Costing/Tech Pack (2026-11-07). */}
+                        <div className="sm:col-span-3">
+                          {it.manual ? (
+                            <RnDUnitSelect value={it.unit} onChange={e => updateAccReqItem(idx, 'unit', e.target.value)}
+                              testId={`acc-req-unit-${idx}`} />
+                          ) : (
+                            <p className="flex h-9 items-center text-sm text-muted-foreground" data-testid={`acc-req-unit-${idx}`}>
+                              {m ? (m.unit || 'pcs') : 'Satuan dari master'}
+                            </p>
+                          )}
+                        </div>
+                        <Button type="button" variant="outline" size="icon" className="sm:col-span-1"
+                          onClick={() => removeAccReqItemRow(idx)} disabled={accReqModal.items.length <= 1}
+                          aria-label="Hapus baris" title="Hapus baris" data-testid={`acc-req-remove-row-${idx}`}>
+                          <Trash2 />
+                        </Button>
+                      </div>
+                      {it.manual && (
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-12 sm:items-center">
+                          <Input className="sm:col-span-3" placeholder="Kode (opsional)" aria-label="Kode aksesoris"
+                            value={it.material_code} onChange={e => updateAccReqItem(idx, 'material_code', e.target.value)} />
+                          <Input className="sm:col-span-6" placeholder="Nama aksesoris" aria-label="Nama aksesoris"
+                            value={it.material_name} onChange={e => updateAccReqItem(idx, 'material_name', e.target.value)}
+                            data-testid={`acc-req-name-${idx}`} />
+                          <div className="col-span-2 sm:col-span-3">
+                            <StatusBadge status="belum-tertaut" tone="warning" label="Belum tertaut"
+                              testId={`acc-req-unlinked-${idx}`} />
+                          </div>
+                        </div>
+                      )}
+                      {m && (
+                        <p className={`text-xs ${kurang ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}
+                          data-testid={`acc-req-stock-${idx}`}>
+                          Stok gudang {angka(stok)} {m.unit || 'pcs'}
+                          {kurang ? ' — kurang dari jumlah diminta; tim aksesoris akan menindaklanjuti (bisa lewat pembelian).' : '.'}
+                        </p>
+                      )}
                     </div>
-                    <Button type="button" variant="outline" size="icon" className="sm:col-span-1"
-                      onClick={() => removeAccReqItemRow(idx)} disabled={accReqModal.items.length <= 1}
-                      aria-label="Hapus baris" title="Hapus baris" data-testid={`acc-req-remove-row-${idx}`}>
-                      <Trash2 />
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
                 <Button type="button" variant="outline" size="sm" onClick={addAccReqItemRow} data-testid="acc-req-add-row">
                   <Plus />Tambah baris
                 </Button>

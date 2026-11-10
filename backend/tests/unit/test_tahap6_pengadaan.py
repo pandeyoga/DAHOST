@@ -370,6 +370,8 @@ def test_request_internal_simpan_pemohon_karyawan(monkeypatch):
     import routes.dewi_accessory_requests as dar
     import core.doc_number_policy as dnp
     db = _emp_db()
+    db.rahaza_materials.docs = [{"id": "ACC", "code": "ACC", "name": "Aksesoris", "type": "accessory",
+                                 "active": True, "unit": "pcs"}]   # 2026-11-10: baris wajib master aktif
     monkeypatch.setattr(dar, "get_db", lambda: db)
 
     async def num(*a, **k):

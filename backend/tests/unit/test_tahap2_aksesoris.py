@@ -746,6 +746,7 @@ def test_inbox_menampilkan_nama_vendor_dan_nomor_surat_jalan(req_db):
 
 # ═════════════════════════ 9. PUT mempertahankan tautan ═════════════════════════
 def test_ubah_permintaan_mempertahankan_material_id(req_db):
+    req_db.rahaza_materials.docs = [_mat("ACC9", "BRU")]   # 2026-11-10: tautan BARU wajib master aktif
     req_db.dewi_accessory_requests.docs = [{
         "id": "r1", "status": "submitted", "request_type": "internal_issuance",
         "items": [{"material_id": "ACC1", "material_code": "KCG", "material_name": "Kancing", "qty": 2,
@@ -767,6 +768,7 @@ def test_buat_permintaan_menolak_divisi_di_luar_daftar(req_db, monkeypatch):
     async def number(db_, key, *, ctx=None, requested=""):
         return "INT-REQ-1"
     monkeypatch.setattr(dnp, "issue_number", number)
+    req_db.rahaza_materials.docs = [_mat()]
     with pytest.raises(HTTPException) as e:
         run(req_mod.create_request({"request_type": "internal_issuance", "divisi": "Dapur",
                                     "items": [{"material_id": "ACC1", "qty": 1}]}, ADMIN_ACC))

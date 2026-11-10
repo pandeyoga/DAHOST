@@ -330,16 +330,64 @@ async def check_availability(db, items: list[dict]) -> list[dict]:
         needed[mat["id"]] = needed.get(mat["id"], 0) + qty
         resolved.append({"material": mat, "qty": qty,
                          "unit": it.get("unit") or mat.get("unit", "pcs")})
-    for mat_id, total in needed.items():
-        onhand = await _usable_qty(db, mat_id)
-        if onhand < total:
-            mat = next(r["material"] for r in resolved if r["material"]["id"] == mat_id)
-            problems.append(
-                f"{mat.get('code') or mat.get('name')}: stok tidak cukup "
-                f"(butuh {total:g}, bisa dipakai {onhand:g}; stok karantina tidak ikut)")
+    mats = {r["material"]["id"]: r["material"] for r in resolved}
+    short = await _short_rows(db, needed, mats)
+    for s in short:
+        problems.append(
+            f"{s['material_code'] or s['material_name']}: stok tidak cukup "
+            f"(butuh {s['needed']:g}, bisa dipakai {s['usable']:g}; stok karantina tidak ikut)")
     if problems:
-        raise IssueError("Tidak bisa mengeluarkan stok — " + "; ".join(problems))
+        # 2026-11-10: baris kurang stok ikut dikirim (`data.short_lines`) supaya layar serah bisa
+        # menawarkan draf pembelian untuk kekurangannya. Tanpa `code` → pemanggil lain tetap
+        # menampilkan pesan teks seperti dulu.
+        raise IssueError("Tidak bisa mengeluarkan stok — " + "; ".join(problems),
+                         data={"short_lines": short, "other_problems": len(problems) - len(short)})
     return resolved
+
+
+async def _short_rows(db, needed: dict, mats: dict) -> list[dict]:
+    """{material_id: qty dibutuhkan} → baris yang stoknya (tanpa karantina) tidak cukup."""
+    out = []
+    for mat_id, total in needed.items():
+        have = await _usable_qty(db, mat_id)
+        if have < total:
+            mat = mats.get(mat_id) or {}
+            usable = round(max(float(have or 0), 0.0), 4)
+            out.append({
+                "material_id": mat_id,
+                "material_code": mat.get("code") or "",
+                "material_name": mat.get("name") or "",
+                "unit": mat.get("unit") or "pcs",
+                "needed": round(total, 4),
+                "usable": usable,
+                "short": round(total - usable, 4),
+                "unit_cost": float(mat.get("unit_cost") or mat.get("hpp") or 0),
+            })
+    return out
+
+
+async def shortage_lines(db, items: list[dict]) -> dict:
+    """Kekurangan stok untuk baris permintaan yang SUDAH tertaut master (2026-11-10).
+
+    Dipakai tombol "Buat draf pembelian" di serah permintaan: hitungan sama dengan
+    `check_availability` (qty per material dijumlah, stok karantina tidak ikut).
+    Return {lines: [...], unlinked: jumlah baris tanpa master}."""
+    needed: dict[str, float] = {}
+    mats: dict[str, dict] = {}
+    unlinked = 0
+    for it in items or []:
+        mat = await resolve_material(
+            db, acc_id=str(it.get("material_id") or it.get("acc_id") or ""),
+            code=str(it.get("material_code") or it.get("acc_code") or ""))
+        if not mat:
+            unlinked += 1
+            continue
+        qty = float(it.get("qty") or it.get("qty_requested") or 0)
+        if qty <= 0:
+            continue
+        needed[mat["id"]] = needed.get(mat["id"], 0) + qty
+        mats[mat["id"]] = mat
+    return {"lines": await _short_rows(db, needed, mats), "unlinked": unlinked}
 
 
 async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
