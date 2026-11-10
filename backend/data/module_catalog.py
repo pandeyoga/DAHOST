@@ -84,6 +84,10 @@ MODULES: list[dict] = [
        ["asisten-ai", "ai-business-dashboard", "asisten-ai-tindakan", "asisten-ai-ingatan"],
        ["/api/asisten-ai", "/api/asisten-ai/tindakan", "/api/asisten-ai/ingatan", "/api/asisten-ai/proaktif"], _VE),
     # ── akhir Asisten AI (inti) ──
+    # Monitoring Staf ERP (10 Nov 2026): Monitoring Staf + Aturan Kewajiban. Route mengizinkan HANYA owner/admin/
+    # superadmin (keputusan K3); `/api/pantau-staf/saya` = swalayan Portal Saya (lihat SELF_SERVICE).
+    _m("management", "mgmt_pantau_staf", "Monitoring Staf & Aturan Kewajiban", ["pantau-staf", "aturan-kewajiban"],
+       ["/api/pantau-staf"], ("view", "edit", "export")),
 
     # ── PRODUKSI ────────────────────────────────────────────────────────────
     _m("production", "prod_master_product", "Master Produk (Model & Varian)", ["prod-master-product-hub"],
@@ -596,6 +600,8 @@ SELF_SERVICE = (
     ("POST", r"/api/rahaza/overtime"),
     ("GET", r"/api/rahaza/payslips/[^/]+/pdf"),
     ("POST", r"/api/dewi/kasbon/requests"),
+    # Monitoring Staf (10 Nov 2026): Portal Saya › Dashboard "Kewajiban saya" — milik sendiri (handler: user login).
+    ("GET", r"/api/pantau-staf/saya"),
 )
 _SELF_SERVICE_RX = [(m, re.compile(p + r"/?")) for m, p in SELF_SERVICE]
 

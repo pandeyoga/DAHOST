@@ -21,6 +21,14 @@ from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_env
 from core.enrichment import enrich_with_product_photos
 from utils.variant_ssot import build_variant_sku
 
+
+def riwayat_status(status: str, user: dict | None = None) -> dict:
+    """Satu baris `production_pos.status_history` (Monitoring Staf, 10 Nov 2026): status apa, kapan, oleh siapa.
+    Dulu hanya Konfirmasi & Tutup yang punya stempel sendiri; status lain hanya mengubah `updated_at` (tertimpa
+    perubahan apa pun) sehingga "PO ini menunggu ditutup sejak kapan" tidak bisa dihitung."""
+    u = user or {}
+    return {'status': status, 'at': now(), 'by_id': u.get('id') or None, 'by_name': u.get('name') or 'Sistem'}
+
 router = APIRouter(prefix="/api", tags=["production-pos"])
 
 # Valid PO statuses (staged lifecycle)
@@ -421,7 +429,8 @@ async def create_po_internal(db, body: dict, user: dict, *,
         'delivery_deadline': parse_date(body.get('delivery_deadline')),
         'status': initial_status, 'notes': body.get('notes', ''),
         'business_type': business_type,
-        'created_by': user['name'], 'created_at': now(), 'updated_at': now()
+        'created_by': user['name'], 'created_at': now(), 'updated_at': now(),
+        'status_history': [riwayat_status(initial_status, user)],
     }
     if initial_status == 'Confirmed':
         po.update({'confirmed_at': now(), 'confirmed_by': user.get('name', '')})
@@ -642,7 +651,7 @@ async def _close_po_checked(db, po: dict, body: dict, user: dict, *, short_endpo
             'status': 'Closed', 'close_reason': reason or 'full_fulfillment',
             'close_notes': notes, 'closed_by': user['name'],
             'closed_at': now(), 'updated_at': now()
-        }})
+        }, '$push': {'status_history': riwayat_status('Closed', user)}})
         if po.get('business_type') == 'maklon':
             from routes.production_maklon_bridge import try_sync_maklon_finance
             await try_sync_maklon_finance(db, po_id, user)
@@ -721,7 +730,7 @@ async def _apply_close_short(db, po: dict, f: dict, reason: str, notes: str, use
         'post_completion_adjustment': bool(post_completion),
         'status_before_close_short': po.get('status'),
         'updated_at': now(),
-    }})
+    }, '$push': {'status_history': riwayat_status('Closed Short', user)}})
     # Mirror finance dulu (status/qty), baru penyesuaian AR — supaya total_value mirror
     # tidak menimpa hasil penyesuaian close-short (audit M-03).
     if po.get('business_type') == 'maklon':
@@ -1359,7 +1368,8 @@ async def _quick_complete_po_locked(db, po_id: str, body: dict, user: dict):
                 'shipment_qty': si.get('qty_sent', 0), 'available_qty': available_qty,
                 'produced_qty': 0, 'created_at': now()
             })
-        await db.production_pos.update_one({'id': po_id}, {'$set': {'status': 'In Production', 'updated_at': now()}})
+        await db.production_pos.update_one({'id': po_id}, {'$set': {'status': 'In Production', 'updated_at': now()},
+                                                           '$push': {'status_history': riwayat_status('In Production', user)}})
         steps.append({'step': 4, 'name': 'Production Job', 'status': 'created',
                       'id': job_id, 'number': job_number})
 
@@ -1437,7 +1447,8 @@ async def _quick_complete_po_locked(db, po_id: str, body: dict, user: dict):
 
     # ── STEP 7: Mark PO → Completed ─────────────────────────────────────────
     await db.production_pos.update_one({'id': po_id},
-                                       {'$set': {'status': 'Completed', 'updated_at': now()}})
+                                       {'$set': {'status': 'Completed', 'updated_at': now()},
+                                        '$push': {'status_history': riwayat_status('Completed', user)}})
     steps.append({'step': 7, 'name': 'Status PO → Completed', 'status': 'done'})
 
     total_items = sum(int(i.get('qty', 0) or 0) for i in po_items)
@@ -1495,7 +1506,9 @@ async def transition_po_status(po_id: str, request: Request):
         return serialize_doc(await db.production_pos.find_one({'id': po_id}, {'_id': 0}))
     # 2026-11-06 (pola P9): status lama di filter — klik ganda Konfirmasi / dua transisi bersamaan tidak
     # lagi menjalankan sinkron piutang-hutang maklon dua kali atau saling menimpa status.
-    _res = await db.production_pos.update_one({'id': po_id, 'status': po.get('status')}, {'$set': update_data})
+    _res = await db.production_pos.update_one({'id': po_id, 'status': po.get('status')},
+                                              {'$set': update_data,
+                                               '$push': {'status_history': riwayat_status(new_status, user)}})
     if not _res.matched_count:
         raise HTTPException(409, f"PO {po.get('po_number') or ''} baru saja diubah pengguna lain — muat ulang.")
     # ── Fase 2 Maklon: resync mirror finance saat status PO maklon berubah ──

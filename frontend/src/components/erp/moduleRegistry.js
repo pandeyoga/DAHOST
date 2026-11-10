@@ -240,6 +240,9 @@ const AsistenAIModule            = lazyRetry(() => import('./asisten/AsistenAIMo
 const TindakanAIModule           = lazyRetry(() => import('./asisten/TindakanAIModule'));
 // Asisten AI (layar2) — Tahap D (8 Nov 2026): halaman "Ingatan AI" — ingatan milik sendiri (lihat/tambah/ubah/hapus).
 const IngatanAIModule            = lazyRetry(() => import('./asisten/IngatanAIModule'));
+// Monitoring Staf ERP (10 Nov 2026) — Portal Manajemen
+const MonitoringStafModule = lazyRetry(() => import('./pantau-staf/MonitoringStafModule'));
+const AturanKewajibanModule = lazyRetry(() => import('./pantau-staf/AturanKewajibanModule'));
 // ── akhir Asisten AI (layar) ──
 
 // Phase 21 — Decision Support & Quality Metrics
@@ -983,6 +986,8 @@ export const MODULE_REGISTRY = {
   'ai-business-dashboard': makeRedirect('asisten-ai'),  // DIPENSIUNKAN → Asisten AI (4 tab laporan beku jadi saran chat)
   'asisten-ai-tindakan':   TindakanAIModule,             // Tahap B
   'asisten-ai-ingatan':    IngatanAIModule,              // Asisten AI (layar2) — Tahap D
+  'pantau-staf':           MonitoringStafModule,         // Monitoring Staf ERP (10 Nov 2026)
+  'aturan-kewajiban':      AturanKewajibanModule,        // Monitoring Staf ERP (10 Nov 2026)
   // ── akhir Asisten AI (layar) ──
 
   // Phase 21 — Decision Support & Quality Metrics

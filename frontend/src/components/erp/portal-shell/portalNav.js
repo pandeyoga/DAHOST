@@ -79,7 +79,9 @@ import {
   // Employee Expense Management (EEM)
   CreditCard, Plane, Database,
   // Penomoran Dokumen & SKU
-  Hash, ListTree, ScrollText } from 'lucide-react';
+  Hash, ListTree, ScrollText,
+  // Monitoring Staf (10 Nov 2026)
+  UserCheck, ListChecks } from 'lucide-react';
 
 // Portal labels shown as badge next to brand (top-left). Click brand to go back to selector.
 export const PORTAL_LABEL = {
@@ -143,6 +145,15 @@ export const PORTAL_NAV = {
           // Asisten AI (layar2) — Tahap D, 8 Nov 2026: ingatan Asisten AI milik sendiri (lihat/ubah/hapus).
           // Tepat setelah Tindakan AI; bagian ini kini 8 menu (batas ≤ 8, NAV-MAX).
           { id: 'asisten-ai-ingatan',    label: 'Ingatan AI',      icon: Brain },
+        ],
+      },
+      {
+        // Monitoring Staf ERP (10 Nov 2026): bagian sendiri — dua bagian di atas sudah 8 menu (NAV-MAX).
+        // Keputusan owner K3: hanya owner & admin (cermin backend routes/pantau_staf.PERAN_PEMANTAU).
+        label: 'PEMANTAUAN STAF',
+        items: [
+          { id: 'pantau-staf',      label: 'Monitoring Staf',  icon: UserCheck, roles: ['owner', 'admin', 'superadmin'] },
+          { id: 'aturan-kewajiban', label: 'Aturan Kewajiban', icon: ListChecks, roles: ['owner', 'admin', 'superadmin'] },
         ],
       },
     ],

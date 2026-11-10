@@ -763,12 +763,13 @@ async def try_auto_close_po_on_full(db, po_id: str, user: dict) -> dict:
             return {'closed': False, 'fulfillment': f,
                     'reason': ('menunggu qty diterima buyer dicatat untuk '
                                f"{f.get('lines_unrecorded', 0)} baris") if f['is_full'] else 'belum penuh'}
+        from routes.production_pos import riwayat_status
         await db.production_pos.update_one({'id': po_id}, {'$set': {
             'status': 'Completed',
             'closed_reason': 'full_fulfillment',
             'closed_at': now(),
             'updated_at': now(),
-        }})
+        }, '$push': {'status_history': riwayat_status('Completed', None)}})
         if po.get('business_type') == 'maklon':
             await try_sync_maklon_finance(db, po_id, user)
         try:

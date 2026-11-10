@@ -606,8 +606,7 @@ async def job_marketing_alerts():
 async def job_auto_create_marketing_tasks():
     """
     Auto-generate actionable marketing tasks based on business events:
-    1. Missing sales data: For each active account, if yesterday's sales not yet entered,
-       create task type='data_entry' with related_entity='sales_data' and pre-filled account_id+date.
+    1. (DIHENTIKAN 10 Nov 2026, K9) data sales kemarin → kewajiban harian Monitoring Staf.
     2. Health drop alert: For each account with health_score < 60 (and no recent alert task),
        create task type='analysis' with related_entity='manual_check' to investigate.
     
@@ -618,9 +617,8 @@ async def job_auto_create_marketing_tasks():
     
     db = get_db()
     now = datetime.now(timezone.utc)
-    yesterday = (today_wib() - timedelta(days=1)).isoformat()   # kemarin menurut WIB (No.54a)
-    
-    created_sales_tasks = 0
+
+    created_sales_tasks = 0   # K9 (10 Nov 2026): selalu 0 — dipindah ke Monitoring Staf
     created_health_tasks = 0
     
     try:
@@ -629,113 +627,13 @@ async def job_auto_create_marketing_tasks():
             {"status": "active"}, {"_id": 0}
         ).to_list(500)
         
-        for acc in active_accounts:
-            account_id = acc.get("id")
-            account_name = acc.get("account_name") or acc.get("name", "")
-            if not account_id:
-                continue
-            
-            # Q-5 (keputusan owner 9 Nov 2026) — toko bermode "Impor pesanan" TIDAK mendapat
-            # tugas input manual (angkanya akan diganti turunan pesanan = kerja dobel); PIC
-            # cukup diingatkan bila pesanan kemarin belum diimpor.
-            from core import marketing_input_mode as _mode
-            if await _mode.mode_toko(db, acc) == _mode.IMPOR:
-                derived = await db.marketing_sales_data.find_one(
-                    {"account_id": account_id, "date": yesterday, "revenue_type": "total",
-                     "source": "orders_auto"}, {"_id": 0, "id": 1})
-                imported = await db.marketing_data_import_sessions.find_one(
-                    {"account_id": account_id, "status": "committed",
-                     "source_type": {"$in": list(_mode.IMPORT_TYPES)},
-                     "committed_at": {"$gte": now - timedelta(hours=36)}}, {"_id": 0, "id": 1})
-                pic_id = acc.get("pic_user_id")
-                if not derived and not imported and pic_id:
-                    try:
-                        from routes.rahaza_notifications import publish_notification
-                        await publish_notification(
-                            db, type_="marketing_import_reminder", severity="warning",
-                            title=f"Pesanan {account_name} {yesterday} belum diimpor",
-                            message=(f"Omzet {account_name} dihitung dari pesanan yang diimpor. "
-                                     f"Ekspor pesanan Seller Center tanggal {yesterday} lalu "
-                                     "impor di menu Impor Data."),
-                            link_module="marketing-import", target_user_ids=[pic_id],
-                            dedup_key=f"import_reminder_{account_id}_{yesterday}")
-                    except Exception as _ne:
-                        logger.warning(f"[scheduler] Gagal kirim pengingat impor: {_ne}")
-                continue
+        # 10 Nov 2026 (keputusan owner K9, Monitoring Staf): tugas "Input Sales Harian" dan pengingat impor
+        # pesanan TIDAK dibuat lagi di sini — 392 tugas otomatis tidak satu pun diselesaikan. Pemeriksaan yang sama
+        # (rekap/impor pesanan kemarin per toko aktif) kini kewajiban harian "Data penjualan toko kemarin"
+        # (`core/pantau_staf/katalog._e4_penjualan_toko`, pemegang = PIC toko) dengan pengingat harian ringkas dan
+        # tampil di Manajemen › Monitoring Staf. Tugas lama ditutup skrip
+        # `scripts/migrations/2026_11_10_tutup_tugas_input_sales.py`.
 
-            # Check if sales data already entered for yesterday
-            existing_sales = await db.marketing_sales_data.find_one({
-                "account_id": account_id,
-                "date": yesterday,
-            }, {"_id": 0})
-            if existing_sales:
-                continue
-            
-            # Check if task already created today for same purpose
-            existing_task = await db.marketing_tasks.find_one({
-                "account_id": account_id,
-                "related_entity": "sales_data",
-                "related_form_data.date": yesterday,
-                "status": {"$ne": "cancelled"},
-            }, {"_id": 0})
-            if existing_task:
-                continue
-            
-            # Create actionable task
-            task_doc = {
-                "id": str(_uuid.uuid4()),
-                "task_code": f"TSK-{fmt_wib('%Y%m%d', now)}-{_uuid.uuid4().hex[:6].upper()}",
-                "title": f"Input Sales Harian — {account_name} ({yesterday})",
-                "description": f"Sales data untuk {account_name} pada tanggal {yesterday} belum diinput. Mohon segera input revenue/orders/visitors.",
-                "task_type": "data_entry",
-                "recurrence": "one-time",
-                "recurrence_config": {},
-                "assigned_to": acc.get("pic_user_id"),  # PIC of this account, if set
-                "assigned_by": "system",
-                "account_id": account_id,
-                "priority": "high",
-                "due_date": None,
-                "status": "to_do",
-                "checklist": [],
-                "attachments": [],
-                "completion_notes": "",
-                "approval_status": None,
-                "approved_by": None,
-                "approved_at": None,
-                "related_entity": "sales_data",
-                "related_entity_id": None,
-                "related_form_data": {
-                    "account_id": account_id,
-                    "date": yesterday,
-                },
-                "action_type": "submit_form",
-                "action_executed_at": None,
-                "action_result": None,
-                "source": "auto_generated",
-                "created_at": now,
-                "updated_at": now,
-            }
-            await db.marketing_tasks.insert_one(task_doc)
-            created_sales_tasks += 1
-
-            # ── Kirim in-app notification ke PIC ──
-            pic_id = acc.get("pic_user_id")
-            if pic_id:
-                try:
-                    from routes.rahaza_notifications import publish_notification
-                    await publish_notification(
-                        db,
-                        type_="marketing_task_created",
-                        severity="info",
-                        title=f"Task Baru: Input Sales {account_name}",
-                        message=f"Sales data {account_name} untuk {yesterday} belum diinput. Silakan eksekusi dari Laporan Harian atau Kanban.",
-                        link_module="marketing-daily-report",
-                        target_user_ids=[pic_id],
-                        dedup_key=f"sales_task_notif_{account_id}_{yesterday}",
-                    )
-                except Exception as _ne:
-                    logger.warning(f"[scheduler] Gagal kirim notif sales task: {_ne}")
-        
         # ─── 2. HEALTH SCORE DROP TASKS ───
         critical_accounts = [
             a for a in active_accounts
@@ -1280,7 +1178,7 @@ JOB_REGISTRY = {
     },
     'auto_create_marketing_tasks': {
         'fn': job_auto_create_marketing_tasks,
-        'description': 'Auto-create actionable tasks untuk missing sales data harian + alert health score drop.',
+        'description': 'Tugas investigasi health score toko < 60. (Input sales harian → kewajiban Monitoring Staf, K9 10 Nov 2026.)',
         'cron': {'hour': 10, 'minute': 0},
         'cron_label': 'Setiap hari pukul 10:00',
     },
@@ -1341,6 +1239,34 @@ JOB_REGISTRY['asisten_ai_proaktif'] = {
     'cron_label': 'Tiap menit (jam briefing/peringatan/laporan dari pengaturan, WIB)',
 }
 # ── akhir Asisten AI (proaktif) ──
+
+
+# ── Monitoring Staf ERP (10 Nov 2026) ──
+async def job_pantau_staf_pindai():
+    from core.pantau_staf import pemindai
+    return await pemindai.job_pindai()
+
+
+async def job_pantau_staf_pengingat():
+    from core.pantau_staf import pengingat
+    return await pengingat.job_harian()
+
+
+JOB_REGISTRY['pantau_staf_pindai'] = {
+    'fn': job_pantau_staf_pindai,
+    'description': ('Monitoring Staf: baca data tiap langkah alur & kewajiban harian, tandai yang menunggu/terlambat/'
+                    'selesai per pemegang (aturan di Manajemen › Aturan Kewajiban). Idempoten.'),
+    'cron': {'minute': '*/15'},
+    'cron_label': 'Tiap 15 menit',
+}
+JOB_REGISTRY['pantau_staf_pengingat'] = {
+    'fn': job_pantau_staf_pengingat,
+    'description': ('Monitoring Staf: satu pesan ringkas per staf (kewajiban terlambat/jatuh tempo hari ini) + '
+                    'ringkasan owner/admin untuk yang terlambat > 1 hari kerja. Hari kerja saja; dedup per hari.'),
+    'cron': {'hour': 8, 'minute': 0},
+    'cron_label': 'Hari kerja 08:00 WIB',
+}
+# ── akhir Monitoring Staf ──
 
 
 # ══════════════════════════════════════════════════════════════════════════════

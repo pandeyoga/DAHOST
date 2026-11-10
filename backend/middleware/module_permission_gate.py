@@ -73,20 +73,52 @@ async def evaluate(method: str, path: str, payload: dict | None):
     return mod, action, "perm"
 
 
+def _catat_aktivitas(scope, payload: dict, status: int) -> None:
+    """Monitoring Staf (10 Nov 2026, Tahap 1): satu catatan aktivitas per permintaan yang lolos — di latar,
+    sesudah respons. Pemetaan modul+aksi SAMA dengan gerbang ini (satu katalog), aturan catat di `core.pantau_staf.meter`."""
+    try:
+        from core.pantau_staf import meter
+        method, path = scope.get("method", "GET"), scope.get("path", "")
+        mod = match_module(path)
+        action = detect_action(method, path, mod) if mod else None
+        meter.catat_latar(user_id=payload.get("id"), role=payload.get("role"), method=method, status=status,
+                          module=mod, action=action)
+    except Exception:  # noqa: BLE001 — pencatatan tidak boleh mengganggu permintaan
+        logger.debug("[module-gate] catat aktivitas gagal", exc_info=True)
+
+
 class ModulePermissionGateMiddleware:
     def __init__(self, app):
         self.app = app
 
+    async def _teruskan(self, scope, receive, send, payload):
+        if not payload or not payload.get("id"):
+            return await self.app(scope, receive, send)
+        status = {"v": None}
+
+        async def kirim(msg):
+            if msg.get("type") == "http.response.start":
+                status["v"] = msg.get("status")
+            await send(msg)
+
+        try:
+            await self.app(scope, receive, kirim)
+        finally:
+            if status["v"] is not None:
+                _catat_aktivitas(scope, payload, status["v"])
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not scope.get("path", "").startswith("/api/"):
             return await self.app(scope, receive, send)
+        payload = None
         try:
-            denied = await evaluate(scope.get("method", "GET"), scope["path"], _token_payload(scope))
+            payload = _token_payload(scope)
+            denied = await evaluate(scope.get("method", "GET"), scope["path"], payload)
         except Exception:  # noqa: BLE001 — gerbang tidak boleh menjatuhkan request
             logger.exception("[module-gate] evaluasi gagal untuk %s", scope.get("path"))
             denied = None
         if not denied:
-            return await self.app(scope, receive, send)
+            return await self._teruskan(scope, receive, send, payload)
         mod, action, reason = denied
         portal_label = PORTAL_LABELS.get(mod['portal'], mod['portal'])
         if reason == "portal":
