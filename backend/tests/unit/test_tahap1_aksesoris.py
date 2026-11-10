@@ -150,6 +150,9 @@ def test_buat_permintaan_tidak_bisa_langsung_lewat_tahap(req_db, status):
 
 @pytest.mark.parametrize("status,expected", [(None, "draft"), ("submitted", "submitted")])
 def test_buat_permintaan_draf_atau_diajukan_tetap_jalan(req_db, status, expected):
+    # 2026-11-10: baris ber-material_id wajib master aksesoris aktif
+    req_db.rahaza_materials.docs = [{"id": "m1", "code": "ACC-1", "name": "Kancing", "type": "accessory",
+                                     "active": True, "unit": "pcs"}]
     body = {"request_type": "internal_issuance", "items": [{"material_id": "m1", "qty": 1}]}
     if status:
         body["status"] = status

@@ -5,10 +5,15 @@
  * bisa diunduh · klik baris = rincian (popup) · Siapkan / Tandai kirim = form popup · Tolak = konfirmasi dengan
  * alasan (tombol merah) · Hapus = konfirmasi. Alur, isian, dan panggilan server tidak berubah.
  *
- * RC-IA T-2: RnD (rnd-accessory-requests) = PANTAU sampel (lihat saja); Gudang/Aksesoris = inbox penuh.
+ * RC-IA T-2: RnD (rnd-accessory-requests) = PANTAU sampel; Gudang/Aksesoris = inbox penuh.
+ *
+ * 2026-11-10 (keputusan owner): R&D bisa MEMBATALKAN permintaannya selama belum diserahkan (alasan wajib,
+ * tim aksesoris dikabari); kartu ringkasan R&D hanya menghitung sampel R&D; baris yang diketik manual
+ * ditandai "Belum tertaut"; stok kurang saat Tandai kirim → tawaran "Buat draf pembelian" berisi kekurangannya
+ * (draf Request Pembelian Aksesoris, tetap diajukan lewat menu Pembelian).
  */
 import { useState, useEffect, useMemo } from 'react';
-import { AlertTriangle, CheckCircle2, Inbox, Package, RefreshCw, Search, Trash2, Truck, XCircle } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Inbox, Package, RefreshCw, Search, ShoppingCart, Trash2, Truck, XCircle } from 'lucide-react';
 import { toast } from '../ui/sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +52,9 @@ const TYPE_CONF = {
 };
 const typeLabel = (t) => (TYPE_CONF[t] || TYPE_CONF.rnd_sample).label;
 const statusConf = (s) => STATUS_CONF[s] || STATUS_CONF.draft;
+// Belum diserahkan → peminta (R&D) masih bisa membatalkan.
+const BISA_BATAL = ['draft', 'submitted', 'allocated'];
+const angka = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
 const formatDate = (iso) => {
   if (!iso) return '—';
@@ -95,7 +103,9 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch(`${API}/api/dewi/accessory-requests/stats/summary`, { headers: h });
+      // R&D: ringkasan hanya sampel R&D (sama dengan daftarnya); inbox Portal Aksesoris: semua jenis.
+      const qs = isRndMonitor ? '?request_type=rnd_sample' : '';
+      const res = await fetch(`${API}/api/dewi/accessory-requests/stats/summary${qs}`, { headers: h });
       if (res.ok) setStats(await res.json());
     } catch { /* ringkasan opsional */ }
   };
@@ -123,7 +133,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
   const [accItems, setAccItems] = useState([]);
   const openDeliver = async (r) => {
     setActionModal({ id: r.id, code: r.request_code, type: 'deliver', notes: '', items: r.items || [], links: {}, reason: '',
-      overIssue: null, poNumber: r.po_number || '' });
+      overIssue: null, poNumber: r.po_number || '', shortage: null, draft: r.purchase_draft_number || '' });
     if ((r.items || []).some((it) => !it.material_id) && accItems.length === 0) {
       try {
         const res = await fetch(`${API}/api/acc/items`, { headers: h });
@@ -145,14 +155,16 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
     finally { setSaving(false); }
   };
 
+  const itemLinks = (m) => Object.entries(m?.links || {}).filter(([, v]) => v)
+    .map(([index, material_id]) => ({ index: Number(index), material_id }));
+
   const handleDeliver = async () => {
     if (!actionModal) return;
     setSaving(true);
     try {
       const res = await sendAction(`${actionModal.id}/deliver`, 'POST', {
         notes: actionModal.notes || '',
-        item_links: Object.entries(actionModal.links || {}).filter(([, v]) => v)
-          .map(([index, material_id]) => ({ index: Number(index), material_id })),
+        item_links: itemLinks(actionModal),
         over_issue_reason: (actionModal.reason || '').trim(),
       });
       const n = (res.issued_items || []).length;
@@ -165,8 +177,49 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
         toast.error('Melebihi kebutuhan PO — isi alasan kelebihan lalu tandai kirim lagi.');
         return;
       }
+      if (e.detail?.code === 'stock_short') {
+        // 2026-11-10 (keputusan owner): tampilkan kekurangannya + tawarkan draf pembelian
+        setActionModal((p) => ({ ...p, shortage: e.detail, draft: p.draft || e.detail.purchase_draft_number || '' }));
+        toast.error('Stok tidak cukup — lihat kekurangannya di form.');
+        return;
+      }
       toast.error(e.message || 'Gagal menyimpan status.');
     } finally { setSaving(false); }
+  };
+
+  // Stok kurang → SATU draf Request Pembelian Aksesoris berisi kekurangannya (tidak memotong stok).
+  const [drafting, setDrafting] = useState(false);
+  const handlePurchaseDraft = async () => {
+    if (!actionModal) return;
+    setDrafting(true);
+    try {
+      const res = await sendAction(`${actionModal.id}/purchase-draft`, 'POST', { item_links: itemLinks(actionModal) });
+      setActionModal((p) => ({ ...p, draft: res.pr_number || '' }));
+      toast.success(res.already
+        ? `Draf pembelian ${res.pr_number} sudah ada untuk permintaan ini.`
+        : `Draf pembelian ${res.pr_number} dibuat. Periksa harga lalu ajukan dari menu Pembelian aksesoris.`);
+      fetchRequests();
+    } catch (e) { toast.error(e.message || 'Gagal membuat draf pembelian.'); }
+    finally { setDrafting(false); }
+  };
+
+  // R&D menarik permintaan yang belum diserahkan (alasan wajib; tim aksesoris dikabari).
+  const handleCancel = async (r) => {
+    const reason = await confirmDialog({
+      title: `Batalkan permintaan ${r.request_code}?`,
+      body: r.status === 'allocated'
+        ? 'Tim aksesoris sudah menyiapkan barangnya dan akan dikabari. Permintaan yang dibatalkan tidak bisa diaktifkan lagi.'
+        : 'Tim aksesoris akan dikabari. Permintaan yang dibatalkan tidak bisa diaktifkan lagi.',
+      confirmLabel: 'Batalkan permintaan', danger: true,
+      input: { label: 'Alasan pembatalan', placeholder: 'Sample ditunda / desain diganti…', minLength: 1 },
+    });
+    if (!reason) return;
+    try {
+      await sendAction(`${r.id}/cancel`, 'POST', { reason });
+      toast.success('Permintaan dibatalkan.');
+      setDetail(null);
+      muatUlang();
+    } catch (e) { toast.error(e.message || 'Gagal membatalkan.'); }
   };
 
   // Tolak = konfirmasi bertombol merah yang meminta alasan (dulu popup biasa; alasan tetap wajib).
@@ -209,7 +262,13 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
 
   // Aksi baris (paling banyak 2 tampil); rincian = klik baris.
   const aksiBaris = (r) => {
-    if (isRndMonitor) return null;
+    if (isRndMonitor) {
+      return BISA_BATAL.includes(r.status) ? (
+        <Button size="sm" variant="outline" onClick={() => handleCancel(r)} data-testid={`acc-req-cancel-${r.id}`}>
+          <Ban />Batalkan
+        </Button>
+      ) : null;
+    }
     if (r.status === 'submitted') return (
       <div className="flex justify-end gap-1.5">
         <Button size="sm" variant="success" onClick={() => openAllocate(r)} data-testid={`acc-req-allocate-${r.id}`}>
@@ -240,7 +299,8 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
         <span className="font-medium tabular-nums text-foreground">{r.request_code}</span>
         {r.urgent && <StatusBadge status="mendesak" label="Mendesak" tone="danger" />}
       </span>) },
-    { kunci: 'jenis', label: 'Jenis', hp: 'keterangan', isi: (r) => <span data-testid={`acc-req-type-badge-${r.id}`}>{typeLabel(r.request_type)}</span> },
+    // R&D: daftar selalu sampel R&D — kolom jenis tidak perlu (memberi ruang untuk tombol Batalkan)
+    ...(isRndMonitor ? [] : [{ kunci: 'jenis', label: 'Jenis', hp: 'keterangan', isi: (r) => <span data-testid={`acc-req-type-badge-${r.id}`}>{typeLabel(r.request_type)}</span> }]),
     { kunci: 'konteks', label: 'Style / konteks', isi: (r) => {
       const k = konteks(r);
       return (
@@ -255,20 +315,21 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
     { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} label={statusConf(r.status).label} tone={statusConf(r.status).tone} /> },
     { kunci: 'peminta', label: 'Peminta', hp: false, isi: (r) => r.requester_name || '—' },
     { kunci: 'dibuat', label: 'Dibuat', hp: false, isi: (r) => <span className="whitespace-nowrap text-muted-foreground">{formatDate(r.created_at)}</span> },
-    ...(isRndMonitor ? [] : [{ kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiBaris }]),
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: aksiBaris },
   ];
 
   const opsiStatus = [
     { key: '', label: 'Semua' }, { key: 'submitted', label: 'Menunggu' }, { key: 'allocated', label: 'Disiapkan' },
-    { key: 'delivered', label: 'Terkirim' }, { key: 'rejected', label: 'Ditolak' },
+    { key: 'delivered', label: 'Terkirim' }, { key: 'rejected', label: 'Ditolak' }, { key: 'cancelled', label: 'Batal' },
   ];
+  const lingkup = isRndMonitor ? 'Sampel R&D' : 'Semua jenis permintaan';
   const jumlahJenis = (k) => (stats?.by_request_type ? ` (${stats.by_request_type[k] || 0})` : '');
 
   return (
     <PageLayout testId="accessory-request-inbox"
       title={isRndMonitor ? 'Request aksesoris' : 'Inbox persetujuan'}
       subtitle={isRndMonitor
-        ? 'Pantau status permintaan sampel R&D. Penyiapan dan pengiriman dilakukan Portal Aksesoris.'
+        ? 'Pantau permintaan aksesoris sampel R&D dan batalkan yang belum diserahkan. Penyiapan dan pengiriman oleh Portal Aksesoris.'
         : 'Semua permintaan aksesoris. Saat ditandai kirim, stok dipotong dan dijurnal.'}
       filters={<>
         <FilterChips options={opsiStatus} value={filterStatus} onChange={setFilterStatus} hideWhenEmpty={false}
@@ -313,14 +374,15 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
       summary={<>
         {isRndMonitor && (
           <Notice tone="info" testId="acc-req-rnd-monitor-banner">
-            Mode pantau: daftar disaring ke sampel R&D. Tombol siapkan, kirim, dan tolak hanya ada di Portal Aksesoris.
+            Permintaan baru dibuat dari Sample Request (tombol Aksesoris). Di sini R&D memantau dan bisa membatalkan
+            permintaan yang belum diserahkan; menyiapkan, mengirim, dan menolak dilakukan Portal Aksesoris.
           </Notice>
         )}
         {stats && (
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="acc-req-stats">
             <StatTile label="Menunggu persetujuan" value={stats.submitted ?? 0} testId="acc-req-stats-submitted"
-              sub="Semua jenis permintaan" />
-            <StatTile label="Disiapkan, belum dikirim" value={stats.allocated ?? 0} sub="Semua jenis permintaan" />
+              sub={lingkup} />
+            <StatTile label="Disiapkan, belum dikirim" value={stats.allocated ?? 0} sub={lingkup} />
             <StatTile label="Mendesak" value={stats.urgent_pending ?? 0} accent={stats.urgent_pending ? 'danger' : 'default'}
               testId="acc-req-stats-urgent" sub="Menunggu atau disiapkan" />
             <StatTile label="Terkirim" value={stats.delivered ?? 0} sub={`Dari ${stats.total ?? 0} permintaan tercatat`} />
@@ -342,7 +404,8 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
         <RincianPermintaan r={detail} onClose={() => setDetail(null)} isRndMonitor={isRndMonitor}
           onAllocate={() => { openAllocate(detail); setDetail(null); }}
           onDeliver={() => { openDeliver(detail); setDetail(null); }}
-          onReject={() => handleReject(detail)} onDelete={() => handleDelete(detail)} />
+          onReject={() => handleReject(detail)} onDelete={() => handleDelete(detail)}
+          onCancel={() => handleCancel(detail)} />
       )}
 
       {actionModal && (
@@ -371,6 +434,32 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                   )}
                 </div>
               ))}
+              {actionModal.shortage && (
+                <Notice tone="warning" icon={AlertTriangle} title="Stok tidak cukup — belum ada barang yang dikeluarkan"
+                  testId="acc-req-shortage"
+                  action={actionModal.draft ? null : (
+                    <Button size="sm" variant="outline" onClick={handlePurchaseDraft} disabled={drafting}
+                      data-testid="acc-req-purchase-draft">
+                      <ShoppingCart />{drafting ? 'Membuat…' : 'Buat draf pembelian'}
+                    </Button>
+                  )}>
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {(actionModal.shortage.lines || []).map((l) => (
+                      <li key={l.material_id}>
+                        {`${l.material_code || l.material_name}: butuh ${angka(l.needed)}, bisa dipakai ${angka(l.usable)} — kurang ${angka(l.short)} ${l.unit || ''}`}
+                      </li>
+                    ))}
+                  </ul>
+                  {actionModal.shortage.other_problems > 0 && (
+                    <p className="mt-1">Ada baris lain yang belum tertaut ke master — pilih masternya di atas.</p>
+                  )}
+                  <p className="mt-1" data-testid="acc-req-purchase-draft-info">
+                    {actionModal.draft
+                      ? `Draf pembelian ${actionModal.draft} sudah dibuat untuk kekurangan ini. Ajukan dari menu Pembelian aksesoris; serahkan setelah barang datang.`
+                      : 'Buat draf pembelian berisi kekurangannya (tidak memotong stok), atau serahkan setelah stok cukup.'}
+                  </p>
+                </Notice>
+              )}
               {actionModal.overIssue && (
                 <Isian label="Alasan kelebihan" wajib htmlFor="acc-req-over"
                   petunjuk={`Melebihi kebutuhan PO ${actionModal.overIssue.po_number || actionModal.poNumber}: ${(actionModal.overIssue.lines || [])
@@ -396,7 +485,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
   );
 }
 
-function RincianPermintaan({ r, onClose, isRndMonitor, onAllocate, onDeliver, onReject, onDelete }) {
+function RincianPermintaan({ r, onClose, isRndMonitor, onAllocate, onDeliver, onReject, onDelete, onCancel }) {
   const st = statusConf(r.status);
   const isVendor = r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement';
   const items = r.items || [];
@@ -407,7 +496,9 @@ function RincianPermintaan({ r, onClose, isRndMonitor, onAllocate, onDeliver, on
         <StatusBadge status={r.status} label={st.label} tone={st.tone} />
         {r.urgent && <StatusBadge status="mendesak" label="Mendesak" tone="danger" />}
       </>}
-      aksi={!isRndMonitor && <>
+      aksi={isRndMonitor ? (BISA_BATAL.includes(r.status) && (
+        <Button size="sm" variant="destructive" onClick={onCancel} data-testid="acc-req-detail-cancel"><Ban />Batalkan</Button>
+      )) : <>
         {r.status === 'submitted' && <>
           <Button size="sm" variant="success" onClick={onAllocate}><Package />Siapkan</Button>
           <Button size="sm" variant="destructive" onClick={onReject}><XCircle />Tolak</Button>
@@ -437,6 +528,13 @@ function RincianPermintaan({ r, onClose, isRndMonitor, onAllocate, onDeliver, on
         {r.allocated_by && <BarisDetail label="Disiapkan">{r.allocated_by} · {formatDate(r.allocated_at)}</BarisDetail>}
         {r.delivered_by && <BarisDetail label="Dikirim">{r.delivered_by} · {formatDate(r.delivered_at)}</BarisDetail>}
         {r.rejection_reason && <BarisDetail label="Alasan ditolak"><span className="text-[hsl(var(--danger-text))]">{r.rejection_reason}</span></BarisDetail>}
+        {r.status === 'cancelled' && <>
+          <BarisDetail label="Dibatalkan">{r.cancelled_by || '—'}{r.cancelled_at ? ` · ${formatDate(r.cancelled_at)}` : ''}</BarisDetail>
+          {r.cancel_reason && <BarisDetail label="Alasan dibatalkan">{r.cancel_reason}</BarisDetail>}
+        </>}
+        {r.purchase_draft_number && (
+          <BarisDetail label="Draf pembelian kekurangan"><span className="tabular-nums">{r.purchase_draft_number}</span></BarisDetail>
+        )}
       </dl>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
@@ -459,7 +557,14 @@ function RincianPermintaan({ r, onClose, isRndMonitor, onAllocate, onDeliver, on
                 {items.map((it, idx) => (
                   <TableRow key={idx}>
                     <TableCell className="tabular-nums">{it.material_code || '—'}</TableCell>
-                    <TableCell>{it.material_name}</TableCell>
+                    <TableCell>
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        {it.material_name}
+                        {!it.material_id && (
+                          <StatusBadge status="belum-tertaut" tone="warning" label="Belum tertaut" testId={`acc-req-item-unlinked-${idx}`} />
+                        )}
+                      </span>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{it.qty}</TableCell>
                     <TableCell>{it.unit}</TableCell>
                     <TableCell className="text-muted-foreground">{it.notes || '—'}</TableCell>

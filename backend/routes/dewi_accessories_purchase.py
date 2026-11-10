@@ -105,10 +105,24 @@ async def create_purchase_request(request: Request):
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
+    doc = await new_purchase_request(db, user, body)
+    return JSONResponse(serialize_doc(doc), status_code=201)
+
+
+# Asal draf yang dibuat sistem (bukan diketik di menu Pembelian Aksesoris).
+SOURCE_FIELDS = ("source_type", "source_id", "source_ref")
+
+
+async def new_purchase_request(db, user: dict, body: dict) -> dict:
+    """SATU jalur pembuatan Request Pembelian Aksesoris (status Draft).
+
+    Dipakai menu Pembelian Aksesoris dan (2026-11-10) tombol "Buat draf pembelian" saat stok
+    permintaan aksesoris kurang (`source_type='accessory_request'`). Draf tetap diajukan manual
+    lewat tombol Ajukan → diteruskan ke Permintaan Pengadaan (`core.accessory_procurement`)."""
     items = body.get("items") or []
     if not items:
         raise HTTPException(400, "items wajib diisi")
-    
+
     # Konversi kemasan → satuan dasar untuk setiap baris.
     # INV-UOM-1 & INV-UOM-2: qty dan harga yang DISIMPAN selalu dalam satuan dasar.
     # BUG-8 (2026-07-27): sebelumnya hanya qty yang dikonversi, sedangkan
@@ -181,9 +195,10 @@ async def create_purchase_request(request: Request):
         "created_by": user.get("name", ""),
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
+        **{k: str(body[k]) for k in SOURCE_FIELDS if body.get(k)},
     }
     await db.acc_purchase_requests.insert_one(doc)
-    return JSONResponse(serialize_doc(doc), status_code=201)
+    return doc
 
 
 @router.put("/purchase-requests/{pr_id}")

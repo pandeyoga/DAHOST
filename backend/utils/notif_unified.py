@@ -176,6 +176,10 @@ SOURCE_RULES = {
     # selesai begitu Keuangan memprosesnya (dibayar/dibatalkan).
     'cmt_variance':      {'collection': 'dewi_cmt_payments', 'field': 'status', 'open': ['draft', 'posted'],
                           'match': {'variance_flagged': True}},
+    # 2026-11-10 — permintaan aksesoris (sampel R&D, divisi, vendor) menunggu tim aksesoris: terbuka selama
+    # belum diserahkan (diajukan → disiapkan); tertutup saat diserahkan, ditolak, atau dibatalkan peminta.
+    'acc_request':       {'collection': 'dewi_accessory_requests', 'field': 'status',
+                          'open': ['submitted', 'allocated']},
     'low_stock':         {'collection': 'rahaza_materials', 'check': 'stock_low'},
     'negative_stock':    {'collection': 'rahaza_material_stock', 'check': 'stock_negative'},
     'contract_expiry':   {'collection': 'rahaza_employees', 'check': 'contract_expiring'},
@@ -192,6 +196,7 @@ ACTION_SUBTYPES = {
     'attendance_permit_request':   ('attendance_permit', 'Putuskan izin keluar'),
     'salary_raise_approval':       ('salary_manager', 'Putuskan kenaikan gaji'),
     'salary_raise_hr_approval':    ('salary_hr', 'Putuskan kenaikan gaji'),
+    'acc_request_submitted':       ('acc_request', 'Siapkan permintaan'),
     'low_stock':                   ('low_stock', 'Cek stok'),
     'negative_stock_daily':        ('negative_stock', 'Bereskan stok minus'),
     # Kontrak berakhir = ACTION untuk SDM: penerimanya hanya SDM/admin

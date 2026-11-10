@@ -25,7 +25,7 @@
       "modul": ["rnd-materials", "rnd-accessory-requests"],
       "langkah": [
         "Catat kandidat bahan beserta sumber dan harganya di 'Riset Material'.",
-        "Minta contoh aksesoris lewat 'Request Aksesoris' — stok gudang tetap terpotong.",
+        "Minta aksesoris sampel lewat tombol 'Aksesoris' di Sample Request (pilih dari master aksesoris), lalu pantau atau batalkan di 'Request Aksesoris' — stok gudang terpotong saat diserahkan.",
         "Hasil uji dipakai sebagai dasar pemilihan bahan di tech pack."
       ]
     }
@@ -34,7 +34,7 @@
     {"modul": "rnd-dashboard", "nama": "Dashboard RnD", "deskripsi": "Progres pengembangan produk berjalan."},
     {"modul": "rnd-design-hub", "nama": "Style & Desain", "deskripsi": "Spesifikasi lengkap produk."},
     {"modul": "rnd-samples", "nama": "Sample Request", "deskripsi": "Permintaan dan status pembuatan sampel."},
-    {"modul": "rnd-accessory-requests", "nama": "Request Aksesoris", "deskripsi": "Permintaan aksesoris untuk keperluan RnD."},
+    {"modul": "rnd-accessory-requests", "nama": "Request Aksesoris", "deskripsi": "Pantau permintaan aksesoris sampel dan batalkan yang belum diserahkan."},
     {"modul": "rnd-materials", "nama": "Riset Material", "deskripsi": "Kandidat bahan dan hasil ujinya."},
     {"modul": "rnd-costing-hub", "nama": "Costing & HPP", "deskripsi": "Perhitungan biaya produk baru."},
     {"modul": "rnd-analytics", "nama": "RnD Analytics", "deskripsi": "Kinerja pengembangan produk."},
