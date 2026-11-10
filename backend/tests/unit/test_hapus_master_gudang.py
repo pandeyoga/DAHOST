@@ -112,7 +112,6 @@ def test_bahan_belum_dipakai_dihapus_permanen(bahan):
     ("rahaza_purchase_orders", {"id": "po1", "items": [{"material_id": "m1"}]}, "PO pembelian"),
     ("warehouse_receiving", {"id": "gr1", "items": [{"material_id": "m1"}]}, "penerimaan barang"),
     ("rahaza_purchase_returns", {"id": "rt1", "lines": [{"material_id": "m1"}]}, "retur pembelian"),
-    ("rahaza_supplier_price_lists", {"id": "pl1", "material_id": "m1"}, "daftar harga pemasok"),
     ("rahaza_material_issues", {"id": "mi1", "items": [{"material_id": "m1"}]}, "pengeluaran material"),
     ("wh_opname3_sessions", {"id": "op1", "lines": [{"material_id": "m1", "bin_id": ""}]}, "opname stok"),
     ("wh_quarantine_items", {"id": "q1", "material_id": "m1"}, "karantina QC"),
@@ -406,7 +405,6 @@ def test_supplier_belum_dipakai_dihapus_beserta_harga_dan_akun(supplier):
     ("dewi_procurement_requests", {"id": "pr1", "items": [{"suggested_supplier_id": "s1"}]}, "permintaan pembelian"),
     ("acc_purchase_requests", {"id": "apr1", "supplier_id": "s1"}, "permintaan pembelian aksesoris"),
     ("rahaza_fixed_assets", {"id": "fa1", "supplier_id": "s1"}, "aset tetap"),
-    ("rahaza_materials", {"id": "m1", "supplier_id": "s1"}, "barang (pemasok utama)"),
     ("rahaza_journal_lines", {"id": "j1", "account_code": "2-1100-001"}, "baris jurnal"),
 ])
 def test_supplier_sudah_dipakai_ditolak_409(supplier, koleksi, doc, label):
@@ -581,3 +579,22 @@ def test_layar_master_punya_ubah_dan_hapus(rel, frags):
 def test_layar_aksesoris_tidak_lagi_berjanji_palsu():
     src = fe("components/erp/AccessoryModule.jsx")
     assert "akan ditolak sistem" not in src
+
+
+
+# ══ 10 Nov 2026 (keputusan owner): pemasok utama & daftar harga bukan "sudah dipakai" ══
+def test_bahan_dengan_daftar_harga_tetap_terhapus_beserta_hargannya(bahan):
+    mod, db = bahan
+    db.rahaza_supplier_price_lists.docs.append({"id": "plx", "material_id": "m1", "supplier_id": "s9"})
+    out = run(mod.deactivate_material("m1", REQ, hard=True))
+    assert out["deleted"] is True and not any(m["id"] == "m1" for m in db.rahaza_materials.docs)
+    assert not any(p.get("material_id") == "m1" for p in db.rahaza_supplier_price_lists.docs)
+
+
+def test_supplier_pemasok_utama_dilepas_saat_dihapus(supplier):
+    mod, db = supplier
+    db.rahaza_materials.docs.append({"id": "mx", "code": "KN-X", "supplier_id": "s1", "supplier_name": "PT Benang Jaya"})
+    out = run(mod.deactivate_supplier("s1", REQ, hard=True))
+    assert out["deleted"] is True and db.rahaza_suppliers.docs == []
+    mx = next(m for m in db.rahaza_materials.docs if m["id"] == "mx")
+    assert mx["supplier_id"] == "" and mx["supplier_name"] == ""

@@ -243,12 +243,17 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const labelPilihan = grupPilihan.flatMap((g) => g.item).filter((i) => pilihan.includes(i.id)).map((i) => i.label);
   const subType = cakupan === 'semua' ? '' : cakupan === 'zona' ? (zonaStok ? 'area' : 'zone') : cakupan === 'rak' ? 'rack' : 'bin';
   const hitungStok = cakupan === 'semua' || (cakupan === 'zona' && zonaStok);
-  const zonaIkut = areas.filter((a) => !a.quarantine).map((a) => a.name || a.code);
+  // 10 Nov 2026 (keputusan owner): area produksi (cutting/jahit/QC/packing) tidak ikut "Seluruh gudang" — server
+  // menyaringnya juga (core/opname_engine `_is_production_area`); pilih lewat "Zona tertentu" bila mau dihitung.
+  const areaProduksi = (a) => !!a.production;
+  const zonaIkut = areas.filter((a) => !a.quarantine && !areaProduksi(a)).map((a) => a.name || a.code);
   const zonaKarantina = areas.filter((a) => a.quarantine).map((a) => a.name || a.code);
+  const zonaProduksi = areas.filter((a) => !a.quarantine && areaProduksi(a)).map((a) => a.name || a.code);
   const efekCakupan = !loc ? 'Pilih gudang dulu.'
     : cakupan === 'semua'
       ? `Stok dan penempatan seluruh gudang dihitung ulang${zonaIkut.length ? `, termasuk zona ${zonaIkut.join(', ')}` : ''}.`
         + (zonaKarantina.length ? ` Zona karantina (${zonaKarantina.join(', ')}) tidak ikut.` : '')
+        + (zonaProduksi.length ? ` Area produksi (${zonaProduksi.join(', ')}) tidak ikut — pilih lewat Zona tertentu bila mau dihitung.` : '')
       : hitungStok ? 'Stok dan penempatan zona yang dicentang dihitung ulang.'
         : 'Penempatan bin saja — stok dan jurnal tidak berubah. Untuk memperbaiki stok, pilih seluruh gudang atau zona.';
 

@@ -311,7 +311,7 @@ async def pemakaian_karyawan(db, emp: dict) -> dict:
         ("karyawan bawahan", "rahaza_employees", {"manager_id": eid}),
         ("kepala unit organisasi", "dewi_org_units", {"head_employee_id": eid}),
         ("akun login tertaut", "users", akun),
-        ("dokumen karyawan", "attachments", {"entity_type": "employee", "entity_id": eid, "is_deleted": {"$ne": True}}),
+        # 10 Nov 2026 (keputusan owner): foto & dokumen karyawan bukan riwayat kerja — ikut terhapus (lihat hard delete).
     ])
 
 
@@ -1009,6 +1009,11 @@ async def deactivate_employee(eid: str, request: Request, hard: bool = False):
             "profil_gaji": (await db.rahaza_payroll_profiles.delete_many({"employee_id": eid})).deleted_count,
             "penugasan_shift": (await db.hr_shift_assignments.delete_many({"employee_id": eid})).deleted_count,
             "saldo_cuti": (await db.rahaza_leave_balances.delete_many({"employee_id": eid})).deleted_count,
+            # foto/dokumen karyawan ikut terhapus (keputusan owner 10 Nov 2026); lampiran ditandai terhapus (pola sama
+            # dengan hapus lampiran biasa), foto ikut dokumen karyawannya.
+            "dokumen": (await db.attachments.update_many(
+                {"entity_type": "employee", "entity_id": eid, "is_deleted": {"$ne": True}},
+                {"$set": {"is_deleted": True, "deleted_at": _now(), "deleted_reason": "karyawan dihapus"}})).modified_count,
         }
         await db.rahaza_employees.delete_one({"id": eid})
         await log_activity(user["id"], user.get("name", ""), "delete", "rahaza.employee",

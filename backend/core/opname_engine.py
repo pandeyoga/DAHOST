@@ -522,7 +522,7 @@ async def _members_scope(db, members: list, links: dict) -> dict:
     return scope_from(members, links, *(await _wh_index(db, zids)))
 
 
-async def location_scope(db, location_id: str, *, with_areas: bool = False) -> dict:
+async def location_scope(db, location_id: str, *, with_areas: bool = False, tanpa_produksi: bool = False) -> dict:
     """Lokasi + zona/rak/bin `wh_*` yang tertaut. Zona tertaut = peta migrasi
     (`wh_location_migration_map.rahaza_location_id`) atau field `location_id`/`rahaza_location_id`
     di zona. `location_ids` = id yang boleh dipakai baris stok lokasi ini (lokasi + zona tertaut).
@@ -537,14 +537,28 @@ async def location_scope(db, location_id: str, *, with_areas: bool = False) -> d
     if with_areas:
         locs = await db.rahaza_locations.find({"active": {"$ne": False}}, {"_id": 0}).to_list(5000)
         areas = descendants(locs, location_id)
-    members = [loc] + [a for a in areas if not _is_quarantine(a)]
+    # 10 Nov 2026 (keputusan owner): "Seluruh gudang" = area PENYIMPANAN saja — area produksi (cutting/jahit/QC/packing)
+    # tidak ikut, supaya barang setengah jadi yang tidak dihitung tidak ter-"anggap 0". Area produksi tetap bisa dipilih
+    # lewat "Zona tertentu" (`tanpa_produksi=False`).
+    produksi = [a for a in areas if tanpa_produksi and _is_production_area(a)]
+    members = [loc] + [a for a in areas if not _is_quarantine(a) and a not in produksi]
     return {"location": loc, "areas": areas, "members": members, "links": links, "locs": locs,
+            "excluded_production": produksi,
             **(await _members_scope(db, members, links))}
 
 
 def _is_quarantine(loc: dict) -> bool:
     from core.location_resolver import role_of_location
     return role_of_location(loc) == "karantina"
+
+
+PRODUCTION_AREA_ROLES = ("cutting", "sewing", "qc", "packing")
+
+
+def _is_production_area(loc: dict) -> bool:
+    """Area produksi (barang setengah jadi): jenis lokasi 'produksi' atau peran gudang cutting/jahit/QC/packing."""
+    from core.location_resolver import role_of_location
+    return str((loc or {}).get("type") or "").lower() == "produksi" or role_of_location(loc) in PRODUCTION_AREA_ROLES
 
 
 def _pos_label(p: dict) -> str:
@@ -614,7 +628,8 @@ async def list_locations(db) -> list:
             "storage_role": loc.get("storage_role") or "", "quarantine": _is_quarantine(loc),
             "parent_id": loc.get("parent_id") or "", "top_id": top_id, "top": top_id == loc["id"],
             "areas": [{"id": a["id"], "code": a.get("code"), "name": a.get("name"), "parent_id": a.get("parent_id"),
-                       "storage_role": a.get("storage_role") or "", "quarantine": _is_quarantine(a)} for a in areas],
+                       "type": a.get("type") or "", "storage_role": a.get("storage_role") or "",
+                       "quarantine": _is_quarantine(a), "production": _is_production_area(a)} for a in areas],
             "zones": [{"id": z["id"], "code": z.get("code"), "name": z.get("name"),
                        "area_id": sc["zone_home"].get(z["id"])} for z in sc["zones"]],
             "racks": [{"id": r["id"], "code": r.get("code"), "name": r.get("name"), "zone_id": r.get("zone_id")}
@@ -724,7 +739,8 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
     if opening and level == LEVEL_RAK:
         raise HTTPException(400, "Opname stok awal = hitung seluruh lokasi (tanpa sub-cakupan zona/rak/bin).")
     with_areas = bool(with_areas or sub_type == SUB_AREA)
-    sc = await location_scope(db, location_id, with_areas=with_areas)
+    sc = await location_scope(db, location_id, with_areas=with_areas,
+                              tanpa_produksi=bool(with_areas and not sub_type))
     loc = sc["location"]
     if _is_quarantine(loc):
         raise HTTPException(400, f"Lokasi {loc.get('code')} adalah lokasi KARANTINA — stoknya dikelola dokumen "
@@ -788,7 +804,9 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
                                          snapshot_qty=float(p.get("qty") or 0)))
     session_no = await gen_prefixed_number(db, SESS, "session_no", f"OPN-{fmt_wib('%Y%m', _now())}-", 4)
     scope_label = (("Stok awal · " if opening else "") + f"{loc.get('code')} — {loc.get('name')}"
-                   + (f" · {sub['label']}" if sub else (" · seluruh gudang" if with_areas else "")))
+                   + (f" · {sub['label']}" if sub else (" · seluruh gudang" if with_areas else ""))
+                   + (" (tanpa area produksi: " + ", ".join(a.get("code") or "" for a in sc.get("excluded_production") or [])
+                      + ")" if not sub and sc.get("excluded_production") else ""))
     if kinds:
         scope_label += " · " + ", ".join(KIND_LABELS[k] for k in kinds)
     if mids:

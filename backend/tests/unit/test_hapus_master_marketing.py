@@ -191,7 +191,6 @@ def test_kreator_belum_punya_riwayat_dihapus(kreator):
     ("marketing_creator_item_requests", {"id": "q1", "creator_id": "kr1"}, "permintaan produk"),
     ("dewi_kreator_requests", {"id": "dk1", "kreator_id": "kr1"}, "permintaan kreator"),
     ("marketing_content_calendar", {"id": "c1", "creator_id": "kr1"}, "jadwal konten"),
-    ("marketing_creator_targets", {"id": "t1", "creator_id": "kr1"}, "target bulanan"),
     ("marketing_creator_incentive_entries", {"id": "i1", "creator_id": "kr1"}, "catatan insentif"),
     ("marketing_creator_weekly_reports", {"id": "w1", "creator_id": "kr1"}, "rapor mingguan"),
 ])
@@ -444,3 +443,12 @@ def test_layar_master_potongan_punya_ubah_hapus():
     for frag in ("hapusMaster", "cutting-panel-row-edit-", "cutting-panel-row-delete-", "/cutting/panels/${m.id}",
                  "/rahaza/materials/${m.id}", "UbahPotonganForm", "FormPopup", "e.status = res.status", "label: 'Aksi'"):
         assert frag in src, frag
+
+
+
+# ══ 10 Nov 2026 (keputusan owner): target bulanan bukan riwayat — ikut terhapus bersama kreator ══
+def test_kreator_hanya_punya_target_tetap_terhapus(kreator):
+    mkc, db = kreator[0], kreator[1]
+    db.marketing_creator_targets.docs.append({"id": "t1", "creator_id": "kr1"})
+    out = run(mkc.deactivate_creator("kr1", fm.FakeRequest(), hard=True))
+    assert out["deleted"] is True and db.marketing_creator_targets.docs == []

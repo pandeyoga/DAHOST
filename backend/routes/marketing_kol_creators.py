@@ -178,7 +178,7 @@ def creator_usage_checks(creator_id: str) -> list:
         ('permintaan produk', 'marketing_creator_item_requests', q),
         ('permintaan kreator', 'dewi_kreator_requests', {'kreator_id': creator_id}),
         ('jadwal konten', 'marketing_content_calendar', q),
-        ('target bulanan', 'marketing_creator_targets', q),
+        # 10 Nov 2026 (keputusan owner): target bulanan bukan riwayat — ikut terhapus bersama kreator.
         ('catatan insentif', 'marketing_creator_incentive_entries', q),
         ('rapor mingguan', 'marketing_creator_weekly_reports', q),
     ]
@@ -198,9 +198,11 @@ async def deactivate_creator(creator_id: str, request: Request, hard: bool = Que
         from core.hapus_master import hitung_pemakaian, tolak_bila_dipakai
         pakai = await hitung_pemakaian(db, creator_usage_checks(creator_id))
         tolak_bila_dipakai('Kreator', creator.get('name') or '', pakai)
+        target = await db.marketing_creator_targets.delete_many({'creator_id': creator_id})
         await db.marketing_kol_creators.delete_one({'id': creator_id})
         await log_activity(user.get('id', 'system'), user.get('name') or user.get('email', 'system'),
-                           'delete', 'marketing_kol_creator', f"Deleted creator: {creator.get('name', '')}")
+                           'delete', 'marketing_kol_creator',
+                           f"Hapus kreator {creator.get('name', '')} (target bulanan {target.deleted_count})")
         return {'ok': True, 'deleted': True, 'message': 'Kreator dihapus'}
     await db.marketing_kol_creators.update_one({'id': creator_id}, {'$set': {'status': 'inactive', 'updated_at': _now()}})
     user = _get_user(request)

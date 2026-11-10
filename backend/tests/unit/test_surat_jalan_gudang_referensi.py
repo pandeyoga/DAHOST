@@ -132,7 +132,6 @@ def test_jenis_tak_dikenal_ditolak_tanpa_istilah_program(env):
 # ═════════════ 2 · Retur ke pemasok wajib Retur Pembelian yang sudah dikirim ═════════════
 @pytest.mark.parametrize("rid,pesan", [("", "wajib memilih dokumen Retur Pembelian"),
                                        ("TIDAK-ADA", "tidak ditemukan"),
-                                       ("R2", "belum dikirim"),
                                        ("R3", "dimusnahkan"),
                                        ("R4", "diterima dengan diskon"),
                                        ("R5", "dibatalkan")])
@@ -189,11 +188,13 @@ def test_supplier_retur_sedang_dikunci_pengguna_lain_409(env):
     assert db.wh_delivery_notes.docs == [] and nomor == [] and rtp["sj_lock"] == "token-orang-lain"
 
 
-def test_daftar_retur_untuk_form_hanya_yang_dikirim_dan_tandai_yang_sudah_ber_sj(env):
+def test_daftar_retur_untuk_form_termasuk_draf_dan_tandai_yang_sudah_ber_sj(env):
     dn, db, _ = env
     sj = run(dn.create_sj(_sup(dn), fm.FakeRequest()))["sj"]
     items = run(dn.list_supplier_returns(fm.FakeRequest()))["items"]
-    assert sorted(x["rtp_number"] for x in items) == ["RTP-1", "RTP-6"]
+    # 10 Nov 2026 (keputusan owner): retur DRAF (RTP-2) ikut — SJ boleh dibuat sebelum "Kirim";
+    # dimusnahkan / diterima diskon / batal tetap tidak.
+    assert sorted(x["rtp_number"] for x in items) == ["RTP-1", "RTP-2", "RTP-6"]
     by = {x["rtp_number"]: x for x in items}
     assert by["RTP-1"]["sj_number"] == sj["sj_number"] and by["RTP-6"]["sj_number"] == ""
     assert [ln["qty"] for ln in by["RTP-1"]["lines"]] == [4.0, 10.0]
@@ -288,3 +289,14 @@ def test_layar_form_hanya_dua_jenis_berreferensi():
     assert "n.status === 'draft' && drafSah(n)" in src and "viewDialog.status === 'draft' && drafSah(viewDialog)" in src
     for menu in ("Produksi › Kirim ke CMT", "Maklon/Produksi › Kirim hasil", "Gudang › Scan Keluar Penjualan"):
         assert menu in src
+
+
+
+def test_supplier_boleh_sebelum_retur_dikirim(env):
+    """10 Nov 2026 (keputusan owner): SJ retur ke pemasok boleh dibuat sebelum retur di-"Kirim"."""
+    dn, db, _ = env
+    sj = run(dn.create_sj(_sup(dn, "R2"), fm.FakeRequest()))["sj"]
+    assert sj["reference_id"] == "R2" and sj["sj_type"] == "SJ-SUPPLIER"
+    with pytest.raises(HTTPException) as e:                       # tetap satu retur satu SJ aktif
+        run(dn.create_sj(_sup(dn, "R2"), fm.FakeRequest()))
+    assert e.value.status_code == 409

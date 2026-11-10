@@ -541,7 +541,8 @@ async def supplier_usage(db, supplier_id: str) -> dict:
         ("permintaan pembelian", "dewi_procurement_requests", {"items.suggested_supplier_id": s}),
         ("permintaan pembelian aksesoris", ACC_PR_COLLECTION, {"supplier_id": s}),
         ("aset tetap", "rahaza_fixed_assets", {"supplier_id": s}),
-        ("barang (pemasok utama)", "rahaza_materials", {"supplier_id": s}),
+        # 10 Nov 2026 (keputusan owner): barang yang hanya mencatat supplier ini sebagai PEMASOK UTAMA bukan pemakaian —
+        # tautannya dilepas saat supplier dihapus (lihat `deactivate_supplier`).
     ]
     codes = [a.get("code") async for a in db.rahaza_coa_accounts.find(
         {"flags.subledger_entity_id": s}, {"_id": 0, "code": 1}) if a.get("code")]
@@ -565,12 +566,16 @@ async def deactivate_supplier(supplier_id: str, request: Request, hard: bool = Q
         from core.hapus_master import tolak_bila_dipakai
         tolak_bila_dipakai("Supplier", sup.get("name") or sup.get("code") or "", await supplier_usage(db, supplier_id))
         harga = await db.rahaza_supplier_price_lists.delete_many({"supplier_id": supplier_id})
+        # pemasok utama barang dilepas (keputusan owner 10 Nov 2026) — barangnya tetap, hanya tanpa pemasok utama
+        utama = await db.rahaza_materials.update_many({"supplier_id": supplier_id}, {"$set": {
+            "supplier_id": "", "supplier_name": "", "updated_at": _now()}})
         akun = await db.rahaza_coa_accounts.delete_many({"flags.subledger_entity_id": supplier_id,
                                                          "flags.subledger_entity_type": "supplier"})
         await db.rahaza_suppliers.delete_one({"id": supplier_id})
         await log_activity(user["id"], user.get("name", ""), "delete", "rahaza_suppliers",
                            f"Hapus permanen supplier {sup.get('code')} — {sup.get('name')} "
-                           f"(baris harga {harga.deleted_count}, akun hutang {akun.deleted_count})")
+                           f"(baris harga {harga.deleted_count}, akun hutang {akun.deleted_count}, "
+                           f"pemasok utama dilepas dari {utama.modified_count} barang)")
         return {"ok": True, "id": supplier_id, "deleted": True}
     open_po = await db.rahaza_purchase_orders.count_documents({
         "supplier_id": supplier_id,

@@ -17,7 +17,7 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Package, Plus, RefreshCw, Search, CheckCircle2, Loader2, MoreHorizontal, Printer, Truck, Brain, MapPin, FileSpreadsheet,
+  Package, Plus, RefreshCw, Search, CheckCircle2, Loader2, MoreHorizontal, Printer, Brain, MapPin, FileSpreadsheet,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -105,11 +105,7 @@ export default function WMSFabricRollsModule({ token }) {
   const [filters, setFilters] = useState({ qc_status: 'all', status: '' });
   const [sort, setSort] = useState({ key: 'qty_remaining', dir: 'asc' });
   const [viewDialog, setViewDialog] = useState(null); // {roll, movements}
-  const [issueDialog, setIssueDialog] = useState(null); // roll
-  const [issueForm, setIssueForm] = useState({ qty: '', reference_type: 'wo', reference_no: '', notes: '' });
   const [putawayDialog, setPutawayDialog] = useState(null); // roll → RollPutawayPopup (posisi dari master / scan)
-  const [formErr, setFormErr] = useState('');
-  const [saving, setSaving] = useState(false);
   const [aiAnalysisDialog, setAiAnalysisDialog] = useState(null); // AI insights
   const [aiLoading, setAiLoading] = useState(false);
   // ── FASE H-5 ───────────────────────────────────────────────────────────────
@@ -247,36 +243,6 @@ export default function WMSFabricRollsModule({ token }) {
   };
 
   const bukaPutaway = (roll) => setPutawayDialog(roll);
-  const bukaIssue = (roll) => { setFormErr(''); setIssueForm({ qty: '', reference_type: 'wo', reference_no: '', notes: '' }); setIssueDialog(roll); };
-
-  const handleIssue = async () => {
-    if (!(parseFloat(issueForm.qty) > 0)) { setFormErr('Qty wajib diisi.'); return; }
-    setSaving(true); setFormErr('');
-    try {
-      const r = await fetch(`${API}/api/wms/fabric-rolls/${issueDialog.id}/issue`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          qty: parseFloat(issueForm.qty),
-          unit: rollUom(issueDialog),
-          reference_type: issueForm.reference_type || 'wo',
-          reference_no: issueForm.reference_no || '',
-          notes: issueForm.notes || '',
-        }),
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.detail || d.error || `HTTP ${r.status}`);
-      }
-      toast.success('Roll berhasil dikeluarkan');
-      setIssueDialog(null);
-      load();
-    } catch (err) {
-      toast.error(`Gagal mengeluarkan roll: ${err.message || err}`);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const handleAIAnalysis = async () => {
     setAiLoading(true);
@@ -350,9 +316,6 @@ export default function WMSFabricRollsModule({ token }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem disabled={roll.status === 'fully_issued'} onSelect={() => bukaIssue(roll)} data-testid={`issue-btn-${roll.roll_no}`}>
-            <Truck className="mr-2 h-4 w-4" />Keluarkan roll
-          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => printRollLabel(roll)} data-testid={`label-btn-${roll.roll_no}`}>
             <Printer className="mr-2 h-4 w-4" />Cetak label barcode
           </DropdownMenuItem>
@@ -564,10 +527,6 @@ export default function WMSFabricRollsModule({ token }) {
               <Button size="sm" variant="outline" onClick={() => { const r = viewDialog.roll; setViewDialog(null); bukaPutaway(r); }}>
                 <MapPin />Simpan ke posisi
               </Button>
-              <Button size="sm" variant="outline" disabled={viewDialog.roll.status === 'fully_issued'}
-                onClick={() => { const r = viewDialog.roll; setViewDialog(null); bukaIssue(r); }}>
-                <Truck />Keluarkan
-              </Button>
               <Button size="sm" variant="outline" onClick={() => printRollLabel(viewDialog.roll)}>
                 <Printer />Cetak label
               </Button>
@@ -634,42 +593,6 @@ export default function WMSFabricRollsModule({ token }) {
 
       {/* ── Simpan roll ke posisi (put-away): posisi dari master struktur gudang atau scan barcode ── */}
       <RollPutawayPopup roll={putawayDialog} onClose={() => setPutawayDialog(null)} onDone={load} />
-
-      {/* ── Keluarkan roll (issue) ────────────────────────────────────────────── */}
-      {issueDialog && (
-        <FormPopup open onClose={() => setIssueDialog(null)} ukuran="pendek" testId="issue-dialog"
-          judul={`Keluarkan roll ${issueDialog.roll_no}`}
-          keterangan={`Sisa ${fmt(rollRemaining(issueDialog))} ${rollUom(issueDialog)}.`}
-          onSimpan={handleIssue} menyimpan={saving} galat={formErr} labelSimpan="Keluarkan">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Isian label="Qty" wajib htmlFor="iss-qty">
-              <Input id="iss-qty" type="number" step="0.01" value={issueForm.qty}
-                onChange={(e) => setIssueForm((f) => ({ ...f, qty: e.target.value }))} data-testid="input-issue-qty" />
-            </Isian>
-            {/* Gulungan hanya bisa dikeluarkan dalam satuannya sendiri — dulu pilihan meter/kg di sini
-                membuat gulungan yard terkurangi dengan label yang salah. */}
-            <Isian label="Satuan gulungan" htmlFor="iss-satuan">
-              <Input id="iss-satuan" value={rollUom(issueDialog)} readOnly className="tabular-nums" data-testid="input-issue-unit" />
-            </Isian>
-          </div>
-          <Isian label="Jenis referensi" htmlFor="iss-jenis">
-            <SmartNativeSelect id="iss-jenis" value={issueForm.reference_type}
-              onChange={(e) => setIssueForm((f) => ({ ...f, reference_type: e.target.value }))} data-testid="input-ref-type">
-              <option value="wo">Perintah kerja (WO)</option>
-              <option value="cmt">CMT</option>
-              <option value="manual">Manual</option>
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="No. referensi" htmlFor="iss-ref">
-            <Input id="iss-ref" value={issueForm.reference_no}
-              onChange={(e) => setIssueForm((f) => ({ ...f, reference_no: e.target.value }))} data-testid="input-ref-no" />
-          </Isian>
-          <Isian label="Catatan" htmlFor="iss-catatan">
-            <Input id="iss-catatan" value={issueForm.notes}
-              onChange={(e) => setIssueForm((f) => ({ ...f, notes: e.target.value }))} data-testid="input-issue-notes" />
-          </Isian>
-        </FormPopup>
-      )}
 
       {/* ── Hasil analisis AI ─────────────────────────────────────────────────── */}
       {aiAnalysisDialog && (

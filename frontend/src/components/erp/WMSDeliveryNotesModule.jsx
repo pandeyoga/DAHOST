@@ -551,7 +551,7 @@ function TabSJGudang({ token, onNavigate, onBuat, buatTerbuka, setBuatTerbuka })
 // 10 Nov 2026 (owner): "surat jalan tidak bisa asal input, harus ada referensinya, jangan sampai double".
 // Hanya dua jenis, keduanya tanpa isian bebas untuk penerima dan barang:
 //   · Pindah antar lokasi — lokasi asal/tujuan + barang dari master; server menolak qty di atas stok asal.
-//   · Retur ke pemasok — pilih Retur Pembelian yang sudah dikirim; pemasok & barang diambil dari dokumen itu.
+//   · Retur ke pemasok — pilih Retur Pembelian (draf atau sudah dikirim); pemasok & barang diambil dari dokumen itu.
 //     Retur yang sudah punya surat jalan tidak ditawarkan lagi (server menolak 409 bila ganda).
 // Dilepas: isian nama/alamat/telepon penerima, uraian barang ketikan, dan "Isi dari BOM (job internal)" — bahan ke
 // produksi keluar lewat Pengeluaran Material, bukan surat jalan gudang.
@@ -574,7 +574,7 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
   const [toLoc, setToLoc] = useState('');
   const [storageLocs, setStorageLocs] = useState([]);
   const [materials, setMaterials] = useState([]);
-  // 10 Nov 2026: retur ke pemasok = pilih dokumen Retur Pembelian yang sudah dikirim.
+  // 10 Nov 2026: retur ke pemasok = pilih dokumen Retur Pembelian (keputusan owner: boleh sebelum "Kirim").
   const [returs, setReturs] = useState([]);
   const [returMuat, setReturMuat] = useState(false);
   const [returId, setReturId] = useState('');
@@ -761,16 +761,16 @@ function FormBuatSJ({ token, open, onClose, onTersimpan }) {
             <SmartNativeSelect value={returId} onChange={(e) => setReturId(e.target.value)} className="w-full"
               aria-label="Retur Pembelian" disabled={returMuat} data-testid="input-sj-retur">
               <option value="">{returMuat ? 'Memuat daftar retur…'
-                : (returBisa.length ? 'Pilih retur yang sudah dikirim' : 'Belum ada retur yang bisa dipilih')}</option>
+                : (returBisa.length ? 'Pilih retur pembelian' : 'Belum ada retur yang bisa dipilih')}</option>
               {returBisa.map((x) => (
-                <option key={x.id} value={x.id}>{x.rtp_number} · {x.supplier_name}{x.settlement_label ? ` · ${x.settlement_label}` : ''}</option>
+                <option key={x.id} value={x.id}>{x.rtp_number} · {x.supplier_name}{x.settlement_label ? ` · ${x.settlement_label}` : ''}{x.status_label ? ` · ${x.status_label}` : ''}</option>
               ))}
             </SmartNativeSelect>
           </Isian>
           <p className="text-xs text-muted-foreground" data-testid="sj-retur-keterangan">
-            Hanya retur yang sudah dikirim di menu Pengadaan › Retur Pembelian dan belum punya surat jalan. Pemasok dan
-            barang diambil dari dokumen returnya; stok sudah dikeluarkan oleh Retur Pembelian, surat jalan ini hanya
-            pengantar barang.{returSudah > 0 ? ` ${returSudah} retur lain sudah punya surat jalan.` : ''}
+            Retur dari menu Pengadaan › Retur Pembelian (draf atau sudah dikirim) yang belum punya surat jalan. Pemasok dan
+            barang diambil dari dokumen returnya; stok keluar saat retur di-"Kirim" di Retur Pembelian — surat jalan ini
+            hanya pengantar barang.{returSudah > 0 ? ` ${returSudah} retur lain sudah punya surat jalan.` : ''}
           </p>
           {retur && (
             <>

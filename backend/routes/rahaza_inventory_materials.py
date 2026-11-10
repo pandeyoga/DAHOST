@@ -327,7 +327,7 @@ async def material_usage(db, material_id: str) -> dict:
         ("PO pembelian", "rahaza_purchase_orders", {"items.material_id": m}),
         ("penerimaan barang", "warehouse_receiving", {"items.material_id": m}),
         ("retur pembelian", "rahaza_purchase_returns", {"lines.material_id": m}),
-        ("daftar harga pemasok", "rahaza_supplier_price_lists", {"material_id": m}),
+        # 10 Nov 2026 (keputusan owner): baris DAFTAR HARGA pemasok bukan pemakaian — ikut terhapus bersama barang.
         ("pengeluaran material", "rahaza_material_issues", {"items.material_id": m}),
         ("opname stok", "wh_opname3_sessions", {"lines.material_id": m}),
         ("karantina QC", "wh_quarantine_items", {"material_id": m}),
@@ -356,9 +356,11 @@ async def hapus_material_permanen(db, mat: dict, user: dict, jenis: str = "Baran
     mid = mat["id"]
     tolak_bila_dipakai(jenis, mat.get("name") or mat.get("code") or "", await material_usage(db, mid))
     stok0 = await db.rahaza_material_stock.delete_many({"material_id": mid})
+    harga = await db.rahaza_supplier_price_lists.delete_many({"material_id": mid})
     await db.rahaza_materials.delete_one({"id": mid})
     await log_activity(user.get("id") or "", user.get("name") or "", "delete", "rahaza.material",
-                       f"id={mid} kode={mat.get('code')} jenis={mat.get('type')} baris_stok_0={stok0.deleted_count}")
+                       f"id={mid} kode={mat.get('code')} jenis={mat.get('type')} baris_stok_0={stok0.deleted_count} "
+                       f"baris_harga={harga.deleted_count}")
     return {"status": "deleted", "deleted": True, "message": f"{jenis} {mat.get('code') or ''} dihapus".replace("  ", " ")}
 
 

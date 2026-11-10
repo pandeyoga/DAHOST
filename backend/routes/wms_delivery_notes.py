@@ -312,11 +312,10 @@ def _rtp_blocker(rtp: dict) -> str:
         return f"Retur {no} sudah dibatalkan."
     if settle == "destroy":
         return f"Retur {no} dimusnahkan — barangnya tidak dikirim ke pemasok, jadi tidak perlu surat jalan."
-    if settle not in RTP_SJ_SETTLEMENTS:
+    if settle and settle not in RTP_SJ_SETTLEMENTS:
         return f"Retur {no} diterima dengan diskon — barangnya tidak dikirim ke pemasok, jadi tidak perlu surat jalan."
-    if st not in RTP_SENT_STATUSES or not rtp.get("sent_at"):
-        return (f"Retur {no} belum dikirim. Klik \"Kirim\" di {RTP_MENU} dulu (stok keluar di sana), "
-                "lalu buat surat jalannya di sini.")
+    # 10 Nov 2026 (keputusan owner): SJ boleh dibuat SEBELUM retur di-"Kirim" (dibawa saat barang keluar). SJ hanya
+    # dokumen pengantar — stok & jurnal tetap keluar lewat tombol "Kirim" di Retur Pembelian.
     return ""
 
 
@@ -339,8 +338,8 @@ async def _supplier_payload(db, rid: str) -> dict:
     from core import purchase_returns as pr
     rid = (rid or "").strip()
     if not rid:
-        raise HTTPException(400, f"Surat jalan retur ke pemasok wajib memilih dokumen Retur Pembelian. Buat dan "
-                                 f"kirim returnya dulu di {RTP_MENU}.")
+        raise HTTPException(400, f"Surat jalan retur ke pemasok wajib memilih dokumen Retur Pembelian. Buat "
+                                 f"returnya dulu di {RTP_MENU}.")
     rtp = await db[pr.RTP_COLL].find_one({"id": rid}, {"_id": 0})
     if not rtp:
         raise HTTPException(400, f"Dokumen Retur Pembelian tidak ditemukan. Pilih ulang dari daftar di {RTP_MENU}.")
@@ -663,8 +662,9 @@ async def list_sj_all_sources(
 
 @router.get("/supplier-returns")
 async def list_supplier_returns(request: Request):
-    """Pilihan form "Retur ke pemasok" (10 Nov 2026): Retur Pembelian yang barangnya sudah dikirim ke
-    pemasok, beserta nomor SJ aktifnya bila sudah ada (yang sudah ber-SJ tidak bisa dipilih lagi).
+    """Pilihan form "Retur ke pemasok" (10 Nov 2026): Retur Pembelian yang barangnya dikirim ke pemasok — draf
+    maupun yang sudah di-"Kirim" (keputusan owner: SJ boleh dibuat sebelum Kirim) — beserta nomor SJ aktifnya bila
+    sudah ada (yang sudah ber-SJ tidak bisa dipilih lagi).
     Hanya baca — dokumen & aturannya tetap milik `routes.rahaza_purchase_returns`."""
     await require_auth(request)
     db = get_db()
@@ -675,7 +675,7 @@ async def list_supplier_returns(request: Request):
             {"_id": 0, "reference_id": 1, "sj_number": 1}):
         active.setdefault(sj.get("reference_id"), sj.get("sj_number") or "")
     rows = await db[pr.RTP_COLL].find(
-        {"status": {"$in": list(RTP_SENT_STATUSES)}, "settlement": {"$in": list(RTP_SJ_SETTLEMENTS)}},
+        {"status": {"$in": ["draft", *RTP_SENT_STATUSES]}},
         {"_id": 0, "journals": 0, "history": 0}).sort("created_at", -1).to_list(500)
     items = []
     for r in rows:

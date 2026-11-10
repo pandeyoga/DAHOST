@@ -502,49 +502,17 @@ async def putaway_roll(roll_id: str, data: PutAwayIn, request: Request):
     return {"ok": True, "position_id": pos["id"], "position_barcode": barcode}
 
 
+# 10 Nov 2026 (keputusan owner): "Keluarkan roll" DIHAPUS — hanya mengurangi sisa gulungan tanpa memotong stok bahan
+# dan tanpa jurnal (celah yang sama dengan roll manual). Kain keluar HANYA lewat Order Cutting (stok, gulungan, HPP,
+# jurnal ikut); selisih fisik lewat opname. Endpoint dibiarkan ada supaya pemanggil lama mendapat kalimat yang jelas.
+ISSUE_GONE_MSG = ("Keluarkan roll langsung sudah tidak dipakai. Kain keluar lewat Portal Cutting › Order Cutting "
+                  "(stok bahan, sisa gulungan, HPP, dan jurnal ikut tercatat); selisih fisik dibetulkan lewat opname.")
+
+
 @router.post("/{roll_id}/issue")
 async def issue_roll(roll_id: str, data: IssueIn, request: Request):
-    user = await require_auth(request)
-    db = get_db()
-    roll = await db.wh_fabric_rolls.find_one({"id": roll_id})
-    if not roll:
-        raise HTTPException(404, "Roll tidak ditemukan")
-    _assert_usable(roll)
-    if roll.get("status") in ("rejected", "fully_issued"):
-        raise HTTPException(400, f"Roll berstatus '{roll['status']}' tidak dapat di-issue")
-    # Satuan pengeluaran WAJIB satuan gulungan itu sendiri (2026-08-21).
-    # Dulu embernya dipilih dari `data.unit`: gulungan YARD yang dikeluarkan
-    # sebagai "meter" tetap mengurangi angka yard (label bohong), dan bila
-    # pemakai memilih "kg" sistem menjawab "sisa 0" padahal gulungannya penuh.
-    field = fabric_roll_engine.remaining_field(roll)
-    r_uom = str(roll.get("uom") or "").strip().lower()
-    d_uom = str(data.unit or "").strip().lower()
-    if d_uom and r_uom and d_uom != r_uom:
-        raise HTTPException(400, (
-            f"Gulungan {roll.get('roll_no')} bersatuan {r_uom} — keluarkan dalam {r_uom}, "
-            f"bukan {d_uom}."))
-    remaining = roll.get(field, 0)
-    if data.qty > remaining:
-        raise HTTPException(400, f"Sisa hanya {remaining:.2f} {r_uom}. Issue {data.qty:.2f} melebihi sisa")
-    new_remaining = remaining - data.qty
-    new_status = _recalc_status({**roll, field: new_remaining})
-    # 2026-11-06 (pola P9): sisa lama di filter — dua pengeluaran bersamaan dulu sama-sama lolos cek sisa
-    # dan yang terakhir menimpa (sisa gulungan lebih besar dari kenyataan).
-    res = await db.wh_fabric_rolls.update_one({"id": roll_id, field: roll.get(field), "status": roll.get("status")},
-                                              {"$set": {
-        field: new_remaining,
-        "status": new_status,
-        "updated_at": _now(),
-        "updated_by": user.get("name", user["id"]),
-    }})
-    if not res.matched_count:
-        raise HTTPException(409, "Sisa gulungan ini baru saja berubah (dikeluarkan/dikembalikan pengguna lain) — "
-                                 "muat ulang lalu ulangi.")
-    await _log_movement(db, roll, "issue", data.qty, r_uom or d_uom,
-                        data.reference_type, data.reference_id, data.reference_no,
-                        roll.get("position_barcode", ""), data.reference_no,
-                        data.notes, user.get("name", ""))
-    return {"ok": True, "issued_qty": data.qty, "remaining": new_remaining, "status": new_status}
+    await require_auth(request)
+    raise HTTPException(410, ISSUE_GONE_MSG)
 
 
 @router.post("/{roll_id}/return")

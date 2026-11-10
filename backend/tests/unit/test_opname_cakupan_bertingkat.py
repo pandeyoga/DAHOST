@@ -325,3 +325,26 @@ def test_layar_mengikuti_tingkatan_dan_centang_banyak():
     # masukan baru ke mesin; pilihan "Level" satu zona/rak/bin yang lama sudah tidak ada
     assert "sub_scope_ids" in s and "with_areas: true" in s
     assert "opname-sub-type" not in s and "Per rak (penempatan saja)" not in s and "sub_scope_id:" not in s
+
+
+# ══ 10 Nov 2026 (keputusan owner): "Seluruh gudang" tanpa area produksi ══
+def test_area_produksi_dikenali():
+    from core import opname_engine as oe
+    assert oe._is_production_area({"type": "produksi", "code": "GD-L2-CUT"})
+    assert oe._is_production_area({"type": "gudang", "storage_role": "cutting"})
+    assert not oe._is_production_area({"type": "gudang", "storage_role": "bahan"})
+    src = (pathlib.Path(__file__).resolve().parents[3] / "frontend" / "src" / "components" / "erp"
+           / "WMSOpnameScanModule.jsx").read_text(encoding="utf-8")
+    assert "Area produksi (" in src and "a.production" in src
+
+
+def test_seluruh_gudang_tanpa_area_produksi_tetapi_bisa_dipilih_zona(env):
+    db = env.db
+    seed(db)
+    db.rahaza_locations.docs.append({"id": "CUT", "code": "GD-L1-CUT", "name": "Area Cutting", "type": "produksi",
+                                     "parent_id": "G1", "storage_role": "cutting", "active": True})
+    s = run(eng.create_session(db, USER, location_id="G1", with_areas=True))
+    assert "CUT" not in s["location_ids"]
+    assert s["scope_label"] == "GD-L1 — Gudang Lantai 1 · seluruh gudang (tanpa area produksi: GD-L1-CUT)"
+    s2 = run(eng.create_session(db, USER, location_id="G1", sub_type="area", sub_ids=["CUT"]))
+    assert "CUT" in s2["location_ids"]

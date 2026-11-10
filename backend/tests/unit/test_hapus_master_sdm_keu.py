@@ -307,7 +307,6 @@ def test_karyawan_tanpa_riwayat_dihapus_beserta_konfigurasinya(master):
     ("rahaza_schedules", {"id": "j1", "shifts": [{"employee_id": "e1", "shift_id": "S1"}]}, "jadwal shift"),
     ("rahaza_wip_events", {"id": "w1", "operator_id": "e1"}, "catatan produksi"),
     ("users", {"id": "u9", "employee_id": "e1"}, "akun login tertaut"),
-    ("attachments", {"id": "f1", "entity_type": "employee", "entity_id": "e1"}, "dokumen karyawan"),
     ("rahaza_employees", {"id": "e2", "name": "Cici", "manager_id": "e1"}, "karyawan bawahan"),
 ])
 def test_karyawan_punya_riwayat_ditolak_409(master, koleksi, doc, label):
@@ -661,3 +660,14 @@ def test_layar_lokasi_gudang_tanpa_kantor():
     assert "saringBaris={bukanKantor}" in src and "r.type !== 'kantor'" in src
     assert "SDM › Lokasi kerja" in src
     assert "{ value: 'gedung', label: 'Gedung' }, { value: 'zona', label: 'Zona' }" in src   # pilihan jenis tetap
+
+
+
+# ══ 10 Nov 2026 (keputusan owner): foto & dokumen karyawan bukan riwayat — ikut terhapus ══
+def test_karyawan_hanya_punya_dokumen_tetap_terhapus(master):
+    mod, db = master[0], master[1]
+    _karyawan(db)
+    db.attachments.docs.append({"id": "f1", "entity_type": "employee", "entity_id": "e1"})
+    out = run(mod.deactivate_employee("e1", fm.FakeRequest(), hard=True))
+    assert out["deleted"] is True and not any(e["id"] == "e1" for e in db.rahaza_employees.docs)
+    assert db.attachments.docs[0]["is_deleted"] is True
