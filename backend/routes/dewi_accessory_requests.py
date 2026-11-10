@@ -644,6 +644,7 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
     over_lines: list = []
     reason = (body.get('over_issue_reason') or '').strip()
     target: dict = {}
+    nota_in = None          # isian nota aksesoris (permintaan vendor ke CMT luar)
     if not doc.get('stock_issued'):
         try:
             rows = await accessory_issue.check_availability(db, items)
@@ -654,6 +655,7 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
                 # tambahan/pengganti vendor: alasan permintaannya sendiri = alasan kelebihan
                 reason = (doc.get('notes') or '').strip()
             over_lines = await accessory_issue.guard_po_over_issue(db, target, rows, reason)
+            nota_in = await _nota_masukan(db, doc, rows, body)
         except accessory_issue.IssueError as e:
             short = (e.data or {}).get('short_lines') if not getattr(e, 'code', '') else None
             if short:
@@ -730,6 +732,7 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
     await db.dewi_accessory_requests.update_one({'id': request_id}, {'$set': update})
     await _close_team_action(db, request_id)
     await _notify_requester(db, {**doc, 'items': items}, user, event='delivered')
+    nota = await _terbitkan_nota(db, doc, issue_results, nota_in, user) if nota_in is not None and issue_results else {}
     return {
         'ok': True,
         'stock_issued': bool(issue_results),
@@ -737,7 +740,41 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
         'cost_target': target.get('cost_target', ''),
         'over_issue_lines': over_lines,
         'total_value': round(sum(x['value'] for x in issue_results), 2),
+        **nota,
     }
+
+
+# ─── NOTA AKSESORIS KE CMT (owner 11 Nov 2026: nota untuk SETIAP penyerahan) ───────────────────────────
+async def _nota_masukan(db, doc: dict, rows: list, body: dict):
+    """Permintaan tambahan/pengganti vendor (CMT luar) yang diserahkan = aksesoris DIBELI CMT. Harga jual per satuan
+    diperiksa SEBELUM stok dipotong (`core.nota_aksesoris_cmt`). None = tanpa nota (jenis lain / tim sendiri / tanpa isian)."""
+    from core import accessory_issue
+    from core import nota_aksesoris_cmt as nac
+    if doc.get('request_type') not in accessory_issue.VENDOR_REQUEST_TYPES:
+        return None
+    nota_in = nac.parse_input(body.get('nota_aksesoris'))
+    if nota_in is None or not (await nac.berlaku(db, vendor_id=doc.get('vendor_id')))['berlaku']:
+        return None
+    kurang = nac.belum_berharga([{'material_id': r['material']['id'], 'qty_handover': r['qty'],
+                                  'name': r['material'].get('name') or r['material'].get('code')} for r in rows],
+                                nota_in['harga'])
+    if kurang:
+        raise HTTPException(400, 'Isi harga jual aksesoris (isi 0 bila gratis): ' + ', '.join(kurang[:6]) + '.')
+    return nota_in
+
+
+async def _terbitkan_nota(db, doc: dict, issue_results: list, nota_in: dict, user: dict) -> dict:
+    """Stok sudah keluar → nota terbit. Gagal tidak membatalkan serah (dilaporkan ke layar)."""
+    from core import nota_aksesoris_cmt as nac
+    try:
+        n = await nac.buat(db, permintaan=doc, lines=nac.baris_dari_serah(issue_results, nota_in['harga']),
+                           cara_bayar=nota_in['cara_bayar'], user=user)
+        return {'nota_aksesoris': nac.ringkas(n), 'nota_aksesoris_error': ''}
+    except HTTPException as e:
+        return {'nota_aksesoris': None, 'nota_aksesoris_error': str(e.detail)}
+    except Exception:  # noqa: BLE001
+        logger.exception('nota aksesoris permintaan %s gagal', doc.get('request_code'))
+        return {'nota_aksesoris': None, 'nota_aksesoris_error': 'Nota aksesoris gagal diterbitkan.'}
 
 
 # ─── REJECT ──────────────────────────────────────────────────────────────────

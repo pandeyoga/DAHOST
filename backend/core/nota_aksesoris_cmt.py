@@ -272,14 +272,49 @@ async def _accounts(db, vendor: dict, user: dict) -> tuple:
     return await piutang_account(db, vendor, m['debit_ar'], user), m['credit_other_income']
 
 
+# ══════════════════════════════ sumber nota ══════════════════════════════
+# Setiap PENYERAHAN aksesoris ke CMT = satu nota (owner 11 Nov: "invoice juga bisa diterbitkan untuk setiap
+# transaksi"). Dua jenis penyerahan: kiriman ke CMT (normal/tambahan/pengganti, `vendor_shipments`) dan serah
+# permintaan tambahan/pengganti vendor di Portal Aksesoris (`dewi_accessory_requests`, tanpa surat jalan).
+SUMBER_KIRIMAN = 'kiriman'
+SUMBER_PERMINTAAN = 'permintaan_aksesoris'
+_SUMBER = {SUMBER_KIRIMAN: ('vendor_shipments', 'shipment_id', 'shipment_number', 'Kiriman'),
+           SUMBER_PERMINTAAN: ('dewi_accessory_requests', 'permintaan_id', 'permintaan_nomor', 'Permintaan aksesoris')}
+
+
+def sumber_dari(*, shipment: Optional[dict] = None, permintaan: Optional[dict] = None) -> dict:
+    """Bentuk seragam sumber nota (murni)."""
+    if (shipment is None) == (permintaan is None):
+        raise ValueError('nota butuh tepat satu sumber: kiriman atau permintaan aksesoris')
+    if shipment is not None:
+        s = shipment
+        return {'jenis': SUMBER_KIRIMAN, 'id': s['id'], 'nomor': s.get('shipment_number') or '',
+                'vendor_id': s.get('vendor_id') or '', 'vendor_name': s.get('vendor_name') or '',
+                'po_id': s.get('po_id') or '', 'po_number': s.get('po_number') or '',
+                'business_type': s.get('business_type') or '', 'opening': bool(s.get('opening'))}
+    r = permintaan
+    return {'jenis': SUMBER_PERMINTAAN, 'id': r['id'], 'nomor': r.get('request_code') or '',
+            'vendor_id': r.get('vendor_id') or '', 'vendor_name': r.get('vendor_name') or '',
+            'po_id': r.get('po_id') or '', 'po_number': r.get('po_number') or '', 'business_type': '', 'opening': False}
+
+
+def label_sumber(doc: dict) -> str:
+    if doc.get('permintaan_id'):
+        return f"Permintaan aksesoris {doc.get('permintaan_nomor') or ''}".strip()
+    return f"Kiriman {doc.get('shipment_number') or ''}".strip()
+
+
 # ══════════════════════════════ baca ══════════════════════════════
+async def nota_sumber(db, jenis: str, sid: str) -> Optional[dict]:
+    field = _SUMBER[jenis][1]
+    return await db[COLL].find_one({'source_module': SOURCE, field: sid, 'status': {'$ne': 'cancelled'}}, {'_id': 0})
+
+
 async def nota_kiriman(db, shipment_id: str) -> Optional[dict]:
-    return await db[COLL].find_one({'source_module': SOURCE, 'shipment_id': shipment_id,
-                                    'status': {'$ne': 'cancelled'}}, {'_id': 0})
+    return await nota_sumber(db, SUMBER_KIRIMAN, shipment_id)
 
 
-async def daftar(db, *, vendor_id: Optional[str] = None, status: Optional[str] = None, po_id: Optional[str] = None,
-                 shipment_id: Optional[str] = None, limit: int = 500) -> list:
+def _q_daftar(*, vendor_id=None, status=None, po_id=None, shipment_id=None, dari=None, sampai=None) -> dict:
     q: dict = {'source_module': SOURCE}
     if vendor_id:
         q['vendor_id'] = vendor_id
@@ -289,58 +324,72 @@ async def daftar(db, *, vendor_id: Optional[str] = None, status: Optional[str] =
         q['shipment_id'] = shipment_id
     if status == 'terbuka':
         q['status'] = {'$in': list(OPEN)}
+    elif status == 'aktif':
+        q['status'] = {'$ne': 'cancelled'}
     elif status:
         q['status'] = status
+    if dari or sampai:
+        q['issue_date'] = {**({'$gte': str(dari)[:10]} if dari else {}), **({'$lte': str(sampai)[:10]} if sampai else {})}
+    return q
+
+
+async def daftar(db, *, vendor_id: Optional[str] = None, status: Optional[str] = None, po_id: Optional[str] = None,
+                 shipment_id: Optional[str] = None, dari: Optional[str] = None, sampai: Optional[str] = None,
+                 limit: int = 500) -> list:
+    q = _q_daftar(vendor_id=vendor_id, status=status, po_id=po_id, shipment_id=shipment_id, dari=dari, sampai=sampai)
     return await db[COLL].find(q, {'_id': 0}).sort('created_at', -1).limit(limit).to_list(limit)
 
 
 def ringkas(doc: Optional[dict]) -> Optional[dict]:
-    """Bentuk ringkas untuk rincian kiriman & portal vendor."""
+    """Bentuk ringkas untuk rincian kiriman, daftar nota & portal vendor."""
     if not doc:
         return None
     return {k: doc.get(k) for k in (
         'id', 'invoice_number', 'issue_date', 'vendor_id', 'vendor_name', 'po_id', 'po_number', 'shipment_id',
-        'shipment_number', 'items', 'total', 'paid_amount', 'balance', 'jumlah_dipotong', 'potongan', 'status',
-        'cara_bayar', 'gl_je_number', 'potong_error', 'cancel_reason', 'created_by_name')} | {
+        'shipment_number', 'permintaan_id', 'permintaan_nomor', 'items', 'total', 'paid_amount', 'balance',
+        'jumlah_dipotong', 'potongan', 'status', 'cara_bayar', 'gl_je_number', 'potong_error', 'cancel_reason',
+        'created_by_name')} | {
         'status_label': STATUS_LABEL.get(doc.get('status'), doc.get('status') or ''),
-        'cara_bayar_label': CARA_BAYAR.get(doc.get('cara_bayar'), ''),
+        'cara_bayar_label': CARA_BAYAR.get(doc.get('cara_bayar'), ''), 'sumber_label': label_sumber(doc),
         'dibayar_langsung': _rp0(_f(doc.get('paid_amount')) - _f(doc.get('jumlah_dipotong')))}
 
 
 # ══════════════════════════════ terbitkan ══════════════════════════════
-async def buat(db, *, shipment: dict, lines: list, cara_bayar: str, user: dict,
-               tanggal: Optional[date] = None) -> Optional[dict]:
-    """Terbitkan nota untuk satu kiriman (satu nota aktif per kiriman). Total 0 (semua gratis) → None.
+async def buat(db, *, lines: list, cara_bayar: str, user: dict, shipment: Optional[dict] = None,
+               permintaan: Optional[dict] = None, tanggal: Optional[date] = None) -> Optional[dict]:
+    """Terbitkan nota untuk SATU penyerahan — kiriman ke CMT (`shipment`) atau serah permintaan aksesoris vendor
+    (`permintaan`); satu nota aktif per penyerahan. Total 0 (semua gratis) → None.
     Jurnal: Dr Piutang Vendor CMT / Cr Penjualan Aksesoris ke CMT (buku DA). Cara potong → langsung memotong
     tagihan CMT yang terbuka; sisanya menunggu tagihan berikutnya."""
     from routes.rahaza_posting import _create_posted_je
     from utils.counters import gen_prefixed_number
     from utils.waktu import today_wib
+    src = sumber_dari(shipment=shipment, permintaan=permintaan)
+    coll, f_id, f_no, label = _SUMBER[src['jenis']]
     if cara_bayar not in CARA_BAYAR:
         raise HTTPException(400, 'Cara bayar nota aksesoris tidak dikenal.')
-    ok = await berlaku(db, vendor_id=shipment.get('vendor_id'), shipment=shipment)
+    ok = await berlaku(db, vendor_id=src['vendor_id'], shipment={'opening': src['opening']})
     if not ok['berlaku']:
         raise HTTPException(400, ok['alasan'])
-    if await nota_kiriman(db, shipment['id']):
-        raise HTTPException(400, f"Kiriman {shipment.get('shipment_number', '')} sudah punya nota aksesoris.")
+    if await nota_sumber(db, src['jenis'], src['id']):
+        raise HTTPException(400, f"{label} {src['nomor']} sudah punya nota aksesoris.")
     lines = [ln for ln in lines or [] if _f(ln.get('qty')) > 0]
     if not lines:
-        return None                                     # kiriman tanpa aksesoris dari gudang
+        return None                                     # penyerahan tanpa aksesoris dari gudang
     total = _rp0(sum(_f(ln.get('jumlah')) for ln in lines))
     if total <= 0:
-        await db.vendor_shipments.update_one({'id': shipment['id']}, {'$set': {
-            'nota_aksesoris_status': 'gratis', 'updated_at': _now()}})
+        await db[coll].update_one({'id': src['id']}, {'$set': {'nota_aksesoris_status': 'gratis', 'updated_at': _now()}})
         return None
     vendor = ok['vendor']
     ar_code, rev_code = await _accounts(db, vendor, user)
-    po = await db.production_pos.find_one({'id': shipment.get('po_id')}, {'_id': 0, 'po_number': 1, 'business_type': 1}) \
-        if shipment.get('po_id') else None
+    po = await db.production_pos.find_one({'id': src['po_id']}, {'_id': 0, 'po_number': 1, 'business_type': 1}) \
+        if src['po_id'] else None
     d = tanggal or today_wib()
     nid = _uid()
     nomor = await gen_prefixed_number(db, COLL, 'invoice_number', PREFIX, 5, config_key=NUMBER_KEY)
-    po_number = shipment.get('po_number') or (po or {}).get('po_number') or ''
-    memo = (f"Nota aksesoris {nomor} · {vendor.get('name', '')} · kiriman {shipment.get('shipment_number', '')}"
-            f"{' · PO ' + po_number if po_number else ''}")
+    po_number = src['po_number'] or (po or {}).get('po_number') or ''
+    ref_txt = f"{label.lower()} {src['nomor']}{' · PO ' + po_number if po_number else ''}"
+    memo = f"Nota aksesoris {nomor} · {vendor.get('name', '')} · {ref_txt}"
     je = await _create_posted_je(
         db, je_date=d, memo=memo, source_module=JE_MODULE, source_ref=f'nac:{nid}', user=user, entity=ISSUER,
         lines_raw=[{'account_code': ar_code, 'debit': total, 'credit': 0, 'description': memo},
@@ -348,12 +397,12 @@ async def buat(db, *, shipment: dict, lines: list, cara_bayar: str, user: dict,
     if not je.get('ok'):
         raise HTTPException(400, f"Nota aksesoris tidak dibuat — jurnal gagal: {je.get('error')}")
     doc = {
-        'id': nid, 'invoice_number': nomor, 'entity': ISSUER, 'source_module': SOURCE,
-        'vendor_id': vendor['id'], 'vendor_name': vendor.get('name') or shipment.get('vendor_name') or '',
-        'customer_id': None, 'customer_name': vendor.get('name') or shipment.get('vendor_name') or '',
-        'shipment_id': shipment['id'], 'shipment_number': shipment.get('shipment_number') or '',
-        'po_id': shipment.get('po_id') or '', 'po_number': po_number,
-        'po_business_type': (po or {}).get('business_type') or shipment.get('business_type') or 'internal',
+        'id': nid, 'invoice_number': nomor, 'entity': ISSUER, 'source_module': SOURCE, 'sumber': src['jenis'],
+        'vendor_id': vendor['id'], 'vendor_name': vendor.get('name') or src['vendor_name'] or '',
+        'customer_id': None, 'customer_name': vendor.get('name') or src['vendor_name'] or '',
+        f_id: src['id'], f_no: src['nomor'],
+        'po_id': src['po_id'], 'po_number': po_number,
+        'po_business_type': (po or {}).get('business_type') or src['business_type'] or 'internal',
         # jatuh tempo 30 hari (sama dengan nota aksesoris antar CV): potong tagihan menunggu tagihan jahit lahir
         'issue_date': d.isoformat(), 'invoice_date': d.isoformat(), 'due_date': (d + timedelta(days=30)).isoformat(),
         'items': lines, 'subtotal': total, 'tax_pct': 0, 'tax_amount': 0, 'discount_amount': 0,
@@ -362,27 +411,41 @@ async def buat(db, *, shipment: dict, lines: list, cara_bayar: str, user: dict,
         'status': 'issued', 'cara_bayar': cara_bayar, 'potongan': [], 'jumlah_dipotong': 0.0,
         'gl_je_id': je.get('je_id'), 'gl_je_number': je.get('je_number'), 'gl_posted_at': _now(),
         'gl_ar_account_code': ar_code, 'revenue_account_code': rev_code,
-        'notes': f"Nota aksesoris untuk kiriman {shipment.get('shipment_number', '')}"
-                 f"{' · PO ' + po_number if po_number else ''} — {CARA_BAYAR[cara_bayar].lower()}.",
+        'notes': f"Nota aksesoris untuk {ref_txt} — {CARA_BAYAR[cara_bayar].lower()}.",
         'created_at': _now(), 'updated_at': _now(),
         'created_by': user.get('id', ''), 'created_by_name': user.get('name', ''),
     }
     await db[COLL].insert_one(dict(doc))
-    await db.vendor_shipments.update_one({'id': shipment['id']}, {'$set': {
+    await db[coll].update_one({'id': src['id']}, {'$set': {
         'nota_aksesoris_id': nid, 'nota_aksesoris_number': nomor, 'nota_aksesoris_status': 'terbit',
         'updated_at': _now()}})
     if cara_bayar == 'potong_tagihan':
         try:
-            doc = await potong(db, doc, user, po_first=shipment.get('po_id'), saat='terbit')
+            doc = await potong(db, doc, user, po_first=src['po_id'] or None, saat='terbit')
         except Exception:  # noqa: BLE001 — nota tetap sah; potongan dicoba lagi saat tagihan berikutnya lahir
             logger.exception('potong tagihan nota %s gagal', nomor)
     try:
         from auth import log_activity
-        await log_activity(user.get('id', ''), user.get('name', ''), 'nota_aksesoris_cmt.create', 'Vendor Shipment',
-                           f"{nomor} {vendor.get('name', '')} {fmt_rp(total)} ({CARA_BAYAR[cara_bayar]})")
+        await log_activity(user.get('id', ''), user.get('name', ''), 'nota_aksesoris_cmt.create',
+                           'Vendor Shipment' if src['jenis'] == SUMBER_KIRIMAN else 'Accessory Request',
+                           f"{nomor} {vendor.get('name', '')} {fmt_rp(total)} ({CARA_BAYAR[cara_bayar]}) · {ref_txt}")
     except Exception:  # noqa: BLE001 — jejak aktivitas tidak boleh menggagalkan nota yang sudah dijurnal
         logger.exception('jejak aktivitas nota %s gagal', nomor)
     return doc
+
+
+def baris_dari_serah(issued: list, harga: dict) -> list:
+    """Baris nota dari hasil serah Portal Aksesoris (`issued_items`: qty & harga pokok per satuan material). Murni."""
+    out = []
+    for r in issued or []:
+        q = _f(r.get('qty'))
+        if q <= 0:
+            continue
+        row = {'key': r.get('material_id'), 'material_id': r.get('material_id')}
+        out.append(_baris(material_id=r.get('material_id'), code=r.get('material_code'), name=r.get('material_name'),
+                          qty=q, satuan=r.get('unit') or '', harga=harga_baris(row, harga) or 0,
+                          hpp_satuan=r.get('unit_cost'), qty_base=q, usage_unit=r.get('unit') or ''))
+    return out
 
 
 # ══════════════════════════════ potong tagihan jahit ══════════════════════════════
@@ -547,7 +610,8 @@ async def batal(db, nid: str, user: dict, alasan: str = '') -> dict:
     upd = {'status': 'cancelled', 'balance': 0.0, 'amount_due': 0.0, 'cancel_reason': alasan, 'cancelled_at': _now(),
            'cancelled_by': user.get('name', ''), 'updated_at': _now()}
     await db[COLL].update_one({'id': nid}, {'$set': upd})
-    await db.vendor_shipments.update_one({'id': doc.get('shipment_id')}, {
+    coll, f_id = ('dewi_accessory_requests', 'permintaan_id') if doc.get('permintaan_id') else ('vendor_shipments', 'shipment_id')
+    await db[coll].update_one({'id': doc.get(f_id)}, {
         '$set': {'nota_aksesoris_status': 'batal', 'updated_at': _now()},
         '$unset': {'nota_aksesoris_id': '', 'nota_aksesoris_number': ''}})
     try:
@@ -580,7 +644,7 @@ def build_pdf(doc: dict, *, vendor: dict, profile: dict, template: dict, printed
     avail = CONTENT_W_PORTRAIT
     elems = header_flowables(template.get('header'), profile, 'NOTA AKSESORIS', avail=avail, info_pairs=[
         ('No. Nota', doc.get('invoice_number')), ('Tanggal', _fmt_d(doc.get('issue_date'))),
-        ('Kiriman', doc.get('shipment_number') or '-'), ('PO', doc.get('po_number') or '-'),
+        ('Sumber', label_sumber(doc)), ('PO', doc.get('po_number') or '-'),
         ('Pembayaran', f"{CARA_BAYAR.get(doc.get('cara_bayar'), '')} · {STATUS_LABEL.get(doc.get('status'), '')}")])
     addr = ' · '.join(x for x in (vendor.get('address'), vendor.get('phone')) if x)
     elems += [Paragraph(f"<b>Kepada:</b><br/>{vendor.get('name') or doc.get('vendor_name') or '-'}"
@@ -612,5 +676,80 @@ def build_pdf(doc: dict, *, vendor: dict, profile: dict, template: dict, printed
         'customer_name': vendor.get('name') or doc.get('vendor_name') or '', 'invoice_number': doc.get('invoice_number') or '',
         'note_number': doc.get('invoice_number') or '', 'printed_by': printed_by,
         'confirmed_by': doc.get('created_by_name') or ''}, avail=avail))
+    elems.extend(footer_flowables(template.get('footer'), profile))
+    return _build_pdf(io.BytesIO(), elems, page=template.get('page')).getvalue()
+
+
+# ══════════════════════════════ rekap per CMT per periode ══════════════════════════════
+# Owner 11 Nov: selain nota per penyerahan, ada satu lembar REKAP gabungan per CMT per periode (daftar nota,
+# yang sudah dipotong dari tagihan jahit / dibayar langsung, dan sisanya). Hanya membaca — tidak menulis apa pun.
+def jumlah_rekap(rows: list) -> dict:
+    """Total kolom rekap (murni). `rows` = bentuk `ringkas`."""
+    t = {'total': 0.0, 'dipotong': 0.0, 'dibayar_langsung': 0.0, 'sisa': 0.0}
+    for r in rows or []:
+        t['total'] += _f(r.get('total'))
+        t['dipotong'] += _f(r.get('jumlah_dipotong'))
+        t['dibayar_langsung'] += _f(r.get('dibayar_langsung'))
+        t['sisa'] += _f(r.get('balance'))
+    return {k: _rp0(v) for k, v in t.items()}
+
+
+async def rekap(db, *, vendor_id: str, dari: Optional[str] = None, sampai: Optional[str] = None) -> dict:
+    v = await vendor_doc(db, vendor_id)
+    if not v:
+        raise HTTPException(404, 'Vendor CMT tidak ditemukan.')
+    rows = await daftar(db, vendor_id=v['id'], status='aktif', dari=dari, sampai=sampai, limit=2000)
+    rows.sort(key=lambda r: (r.get('issue_date') or '', r.get('invoice_number') or ''))
+    out = [ringkas(r) for r in rows]
+    terbuka = await daftar(db, vendor_id=v['id'], status='terbuka', limit=2000)
+    return {'vendor': {k: v.get(k) for k in ('id', 'code', 'name', 'address', 'phone')},
+            'dari': str(dari or '')[:10], 'sampai': str(sampai or '')[:10], 'rows': out, 'jumlah': jumlah_rekap(out),
+            'count': len(out), 'sisa_semua': _rp0(sum(_f(r.get('balance')) for r in terbuka))}
+
+
+def build_rekap_pdf(data: dict, *, profile: dict, template: dict, printed_by: str = '') -> bytes:
+    import io
+
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    from core.pdf_template import footer_flowables, header_flowables, signature_flowables
+    from routes.operations_pdf_helpers import CONTENT_W_PORTRAIT, _build_pdf
+    from routes.sales_direct import _fmt_d
+
+    styles = getSampleStyleSheet()
+    body = ParagraphStyle('body', parent=styles['Normal'], fontSize=8.5, leading=11, textColor=colors.HexColor('#1f2937'))
+    avail = CONTENT_W_PORTRAIT
+    v = data.get('vendor') or {}
+    periode = (f"{_fmt_d(data['dari']) if data.get('dari') else 'awal'} – {_fmt_d(data['sampai']) if data.get('sampai') else 'sekarang'}")
+    elems = header_flowables(template.get('header'), profile, 'REKAP NOTA AKSESORIS', avail=avail, info_pairs=[
+        ('Periode', periode), ('Jumlah nota', str(data.get('count') or 0))])
+    addr = ' · '.join(x for x in (v.get('address'), v.get('phone')) if x)
+    elems += [Paragraph(f"<b>Kepada:</b><br/>{v.get('name') or '-'}"
+                        f"{'<br/><font size=8 color=#64748b>' + addr + '</font>' if addr else ''}", body), Spacer(1, 3 * mm)]
+    rows = [['No', 'No. nota', 'Tanggal', 'Sumber / PO', 'Total', 'Dipotong', 'Dibayar', 'Sisa']]
+    for i, r in enumerate(data.get('rows') or [], start=1):
+        rows.append([str(i), r.get('invoice_number') or '', _fmt_d(r.get('issue_date')),
+                     Paragraph(f"{r.get('sumber_label') or ''}<br/><font size=7 color=#64748b>"
+                               f"{'PO ' + r['po_number'] if r.get('po_number') else ''}</font>", body),
+                     fmt_rp(r.get('total')), fmt_rp(r.get('jumlah_dipotong')), fmt_rp(r.get('dibayar_langsung')),
+                     fmt_rp(r.get('balance'))])
+    j = data.get('jumlah') or {}
+    rows.append(['', Paragraph('<b>Jumlah</b>', body), '', '', fmt_rp(j.get('total')), fmt_rp(j.get('dipotong')),
+                 fmt_rp(j.get('dibayar_langsung')), fmt_rp(j.get('sisa'))])
+    t = Table(rows, colWidths=[avail * w for w in (0.05, 0.13, 0.12, 0.22, 0.12, 0.12, 0.12, 0.12)], repeatRows=1)
+    t.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')), ('FONTSIZE', (0, 0), (-1, -1), 8),
+                           ('ALIGN', (4, 0), (-1, -1), 'RIGHT'), ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                           ('LINEBELOW', (0, 0), (-1, -1), 0.3, colors.HexColor('#e2e8f0')),
+                           ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f8fafc'))]))
+    elems += [t, Spacer(1, 3 * mm),
+              Paragraph(f"Sisa seluruh nota yang belum lunas (semua periode): <b>{fmt_rp(data.get('sisa_semua'))}</b>.", body),
+              Paragraph('Sisa nota "potong tagihan jahit" otomatis memotong tagihan jahit berikutnya.', body),
+              Spacer(1, 4 * mm)]
+    elems.extend(signature_flowables(template.get('signatures'), {
+        'customer_name': v.get('name') or '', 'invoice_number': '', 'note_number': '', 'printed_by': printed_by,
+        'confirmed_by': printed_by}, avail=avail))
     elems.extend(footer_flowables(template.get('footer'), profile))
     return _build_pdf(io.BytesIO(), elems, page=template.get('page')).getvalue()

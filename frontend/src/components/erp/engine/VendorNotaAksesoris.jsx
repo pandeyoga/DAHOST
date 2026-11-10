@@ -2,18 +2,21 @@
  * Portal Vendor CMT › Nota Aksesoris — nota aksesoris yang dibeli CMT ini (permintaan owner 10–11 Nov 2026).
  * Hanya nota milik vendor yang masuk (server menyaring per vendor). Dibaca saja: nomor, kiriman/PO, total,
  * yang sudah dipotong dari tagihan jahit / dibayar langsung, sisa, dan PDF. Server: core/nota_aksesoris_cmt.py.
+ * 11 Nov 2026: periode + "Cetak rekap" (rekap gabungan nota vendor ini untuk periode terpilih).
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Download, Receipt, RefreshCw } from 'lucide-react';
+import { Download, FileText, Receipt, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDateID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS } from '../finance/PeriodPicker';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import { apiGet } from '../../../lib/api';
 import { fmtRp } from './kirim/kirimShared';
 import { ringkasBayar, unduhNotaPdf } from './kirim/NotaAksesorisKiriman';
+import { unduhRekapPdf } from './kirim/NotaTab';
 
 const NADA = { issued: 'warning', overdue: 'warning', partial_paid: 'warning', paid: 'success', cancelled: 'muted' };
 const TERBUKA = ['issued', 'overdue', 'partial_paid'];
@@ -22,11 +25,15 @@ export default function VendorNotaAksesoris() {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [period, setPeriod] = useState({ preset: 'all', from: '', to: '' });
   const load = useCallback(async () => {
     setError('');
-    try { const d = await apiGet('/kirim-cmt/nota-aksesoris'); setRows(Array.isArray(d) ? d : []); }
+    const qs = new URLSearchParams();
+    if (period.from) qs.set('dari', period.from);
+    if (period.to) qs.set('sampai', period.to);
+    try { const d = await apiGet(`/kirim-cmt/nota-aksesoris?${qs}`); setRows(Array.isArray(d) ? d : []); }
     catch (e) { setError(e.message || 'Nota gagal dimuat'); setRows([]); }
-  }, []);
+  }, [period]);
   useEffect(() => { load(); }, [load]);
 
   const all = (rows || []).filter((r) => r.status !== 'cancelled');
@@ -37,18 +44,25 @@ export default function VendorNotaAksesoris() {
   return (
     <PageLayout testId="vendor-nota-aksesoris" title="Nota aksesoris"
       subtitle="Aksesoris yang Anda beli saat menerima kiriman — dipotong dari tagihan jahit atau dibayar langsung."
-      filters={<FilterChips value={status} onChange={setStatus} ariaLabel="Status nota" testId="vendor-nota-status"
-        options={[{ key: '', label: 'Semua', count: all.length },
-          { key: 'terbuka', label: 'Belum lunas', count: all.filter((r) => TERBUKA.includes(r.status)).length },
-          { key: 'lunas', label: 'Lunas', count: all.filter((r) => r.status === 'paid').length }]} hideWhenEmpty={false} />}
-      tools={<Button type="button" variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" onClick={load}>
-        <RefreshCw className="w-4 h-4" /></Button>}
+      filters={<>
+        <PeriodPicker value={period} onChange={setPeriod} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="vendor-nota-periode" />
+        <FilterChips value={status} onChange={setStatus} ariaLabel="Status nota" testId="vendor-nota-status"
+          options={[{ key: '', label: 'Semua', count: all.length },
+            { key: 'terbuka', label: 'Belum lunas', count: all.filter((r) => TERBUKA.includes(r.status)).length },
+            { key: 'lunas', label: 'Lunas', count: all.filter((r) => r.status === 'paid').length }]} hideWhenEmpty={false} />
+      </>}
+      tools={<>
+        <Button type="button" variant="outline" size="icon" title="Muat ulang" aria-label="Muat ulang" onClick={load}>
+          <RefreshCw className="w-4 h-4" /></Button>
+        <Button type="button" variant="outline" onClick={() => unduhRekapPdf({ from: period.from, to: period.to })}
+          title="Rekap gabungan nota untuk periode ini" data-testid="vendor-nota-rekap"><FileText className="w-4 h-4" />Cetak rekap</Button>
+      </>}
       summary={rows && <p className="text-sm" data-testid="vendor-nota-sisa">Sisa yang belum dibayar/dipotong: <b className="tabular-nums">{fmtRp(sisa)}</b></p>}>
       {error && <Notice tone="danger" icon={Receipt}>{error}</Notice>}
       <div className="overflow-x-auto">
         <Table data-testid="vendor-nota-tabel">
           <TableHeader><TableRow>
-            <TableHead>No. nota</TableHead><TableHead>Tanggal</TableHead><TableHead>Kiriman / PO</TableHead>
+            <TableHead>No. nota</TableHead><TableHead>Tanggal</TableHead><TableHead>Sumber / PO</TableHead>
             <TableHead className="text-right">Total</TableHead><TableHead>Pembayaran</TableHead><TableHead>Status</TableHead>
             <TableHead className="text-right">Cetak</TableHead>
           </TableRow></TableHeader>
@@ -68,7 +82,7 @@ export default function VendorNotaAksesoris() {
               <TableRow key={r.id} data-testid={`vendor-nota-row-${r.invoice_number}`}>
                 <TableCell className="font-medium whitespace-nowrap">{r.invoice_number}</TableCell>
                 <TableCell className="text-sm whitespace-nowrap">{formatDateID(r.issue_date)}</TableCell>
-                <TableCell className="text-sm">{r.shipment_number || '—'}
+                <TableCell className="text-sm">{r.sumber_label || r.shipment_number || '—'}
                   <span className="block text-xs text-muted-foreground">{r.po_number ? `PO ${r.po_number}` : ''}</span></TableCell>
                 <TableCell className="text-right tabular-nums">{fmtRp(r.total)}</TableCell>
                 <TableCell className="text-sm">{r.cara_bayar_label}

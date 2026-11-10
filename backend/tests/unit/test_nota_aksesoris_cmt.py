@@ -427,3 +427,134 @@ def test_layar_satu_form_produksi_maklon_portal_vendor_dan_keuangan():
     assert "cmt_accessory" in ar
     bill = (erp / "ProductionCMTBillingModule.jsx").read_text(encoding="utf-8")
     assert "potongan_nota_aksesoris" in bill
+
+
+# ══════════════════════════════ 11 Nov: nota untuk SETIAP penyerahan + rekap ══════════════════════════════
+# Owner: "tambahan untu invoice juga bisa diterbitkan untuk setiap transaksi" → dijawab "per penyerahan + rekap".
+def _extra_env(monkeypatch, db):
+    import core.doc_number_policy as dnp
+    import core.kirim_cmt as kc
+    import core.material_issue_engine as mie
+    calls = {"issued": 0}
+
+    async def compute(_db, **_k):
+        return {"aksesoris": CALC_AKS, "potongan": [], "blocking": False}
+
+    async def issue(_db, ship, items, user, **_k):
+        calls["issued"] += 1
+        return {"ok": True, "mi": {"id": "mi-x", "mi_number": "MI-X"}, "mi_number": "MI-X", "kirim": {"aksesoris": CALC_AKS}}
+
+    async def number(*_a, **_k):
+        return "SHP-TMB-1"
+    monkeypatch.setattr(kc, "compute", compute)
+    monkeypatch.setattr(mie, "issue_for_vendor_shipment", issue)
+    monkeypatch.setattr(dnp, "issue_number", number)
+    db.production_pos.docs[0]["status"] = "Confirmed"
+    return calls
+
+
+def test_kiriman_tambahan_terbit_nota_dan_harga_kosong_ditolak_sebelum_ditulis(env, monkeypatch):
+    from core import kirim_permintaan as kp
+    db = env["db"]
+    calls = _extra_env(monkeypatch, db)
+    payload = {"po_id": "PO1", "vendor_id": "v1", "parent_id": "", "lines": [],
+               "materials": [{"material_id": "KCG", "qty": 432, "uom": "pcs"}]}
+    with pytest.raises(HTTPException) as e:
+        run(kp.create_extra_shipment(db, payload=payload, stype="ADDITIONAL", user=USER,
+                                     nota={"cara_bayar": "langsung", "harga": [{"key": "KCG", "harga": 8000}]}))
+    assert "Renda" in e.value.detail and calls["issued"] == 0 and db.vendor_shipments.docs == []
+    out = run(kp.create_extra_shipment(db, payload=payload, stype="ADDITIONAL", user=USER, nota={
+        "cara_bayar": "langsung", "harga": [{"material_id": "KCG", "harga": 8000}, {"material_id": "REN", "harga": 0}]}))
+    assert out["nota_aksesoris"]["invoice_number"] == "NAC-00001" and out["nota_aksesoris"]["total"] == 24000.0
+    assert out["nota_aksesoris"]["sumber_label"] == "Kiriman SHP-TMB-1" and out["nota_aksesoris_error"] == ""
+    assert db.vendor_shipments.docs[0]["nota_aksesoris_number"] == "NAC-00001"
+    # tanpa isian nota (jalur lama) kiriman tetap jalan, nota bisa dibuat dari rincian kiriman
+    out2 = run(kp.create_extra_shipment(db, payload=payload, stype="ADDITIONAL", user=USER))
+    assert out2["nota_aksesoris"] is None and len(db.rahaza_ar_invoices.docs) == 1
+
+
+def test_serah_permintaan_vendor_portal_aksesoris_terbit_nota(env):
+    import routes.dewi_accessory_requests as rq
+    db = env["db"]
+    doc = {"id": "rq1", "request_code": "REQ-VA-0001", "request_type": "vendor_additional", "vendor_id": "v1",
+           "po_id": "PO1", "po_number": "PO-UJI-1", "status": "allocated"}
+    db.dewi_accessory_requests.docs = [dict(doc)]
+    rows = [{"material": {"id": "KCG", "code": "A-KCG", "name": "Kancing"}, "qty": 144},
+            {"material": {"id": "REN", "code": "A-REN", "name": "Renda"}, "qty": 50}]
+    assert run(rq._nota_masukan(db, {**doc, "request_type": "internal_issuance"}, rows, {"nota_aksesoris": {}})) is None
+    assert run(rq._nota_masukan(db, {**doc, "vendor_id": "vsgo"}, rows, {"nota_aksesoris": {}})) is None   # tim sendiri
+    assert run(rq._nota_masukan(db, doc, rows, {})) is None                                             # tanpa isian
+    with pytest.raises(HTTPException) as e:
+        run(rq._nota_masukan(db, doc, rows, {"nota_aksesoris": {"harga": [{"material_id": "KCG", "harga": 60}]}}))
+    assert "Renda" in e.value.detail
+    nota_in = run(rq._nota_masukan(db, doc, rows, {"nota_aksesoris": {
+        "cara_bayar": "langsung", "harga": [{"material_id": "KCG", "harga": 60}, {"material_id": "REN", "harga": 1200}]}}))
+    issued = [{"material_id": "KCG", "material_code": "A-KCG", "material_name": "Kancing", "qty": 144, "unit": "pcs",
+               "unit_cost": 50.0}, {"material_id": "REN", "material_code": "A-REN", "material_name": "Renda", "qty": 50,
+                                   "unit": "m", "unit_cost": 1000.0}]
+    out = run(rq._terbitkan_nota(db, doc, issued, nota_in, USER))
+    n = out["nota_aksesoris"]
+    assert n["total"] == 144 * 60 + 50 * 1200 and n["sumber_label"] == "Permintaan aksesoris REQ-VA-0001"
+    assert n["permintaan_id"] == "rq1" and n["shipment_id"] is None and out["nota_aksesoris_error"] == ""
+    assert db.dewi_accessory_requests.docs[0]["nota_aksesoris_number"] == n["invoice_number"]
+    assert run(rq._terbitkan_nota(db, doc, issued, nota_in, USER))["nota_aksesoris_error"]   # satu nota per penyerahan
+    run(nac.batal(db, n["id"], USER, "harga salah"))                         # batal membuka lagi permintaannya
+    assert db.dewi_accessory_requests.docs[0]["nota_aksesoris_status"] == "batal"
+    # urutan di deliver_request: harga diperiksa SEBELUM stok dipotong, nota terbit sesudahnya
+    src = (REPO / "backend" / "routes" / "dewi_accessory_requests.py").read_text(encoding="utf-8")
+    i = src.index("async def deliver_request")
+    body = src[i:src.index("# ─── REJECT", i)]
+    assert body.index("_nota_masukan(") < body.index("issue_accessory(") < body.index("_terbitkan_nota(")
+
+
+def test_rekap_per_cmt_per_periode(env):
+    from datetime import date
+    db = env["db"]
+    s1, s2, s3 = _ship(db, "SJ1"), _ship(db, "SJ2"), _ship(db, "SJ3")
+    n1 = run(nac.buat(db, shipment=s1, lines=nac.baris_dari_hitungan(CALC_AKS, _harga()["harga"]), cara_bayar="langsung",
+                      user=USER, tanggal=date(2026, 11, 3)))
+    run(nac.buat(db, shipment=s2, lines=nac.baris_dari_hitungan(CALC_AKS, {"KCG": 1000, "REN": 0}),
+                 cara_bayar="langsung", user=USER, tanggal=date(2026, 11, 20)))
+    n3 = run(nac.buat(db, shipment=s3, lines=nac.baris_dari_hitungan(CALC_AKS, {"KCG": 2000, "REN": 0}),
+                      cara_bayar="langsung", user=USER, tanggal=date(2026, 10, 30)))
+    run(nac.batal(db, n3["id"], USER, "salah ketik"))                       # batal tidak masuk rekap
+    db.dewi_cmt_payments.docs = [_bill("b", "PO1", 30000)]
+    run(nac.potong_sekarang(db, n1["id"], USER))
+    r = run(nac.rekap(db, vendor_id="v1", dari="2026-11-01", sampai="2026-11-30"))
+    assert [x["invoice_number"] for x in r["rows"]] == ["NAC-00001", "NAC-00002"] and r["count"] == 2
+    assert r["jumlah"] == {"total": 137000.0, "dipotong": 30000.0, "dibayar_langsung": 0.0, "sisa": 107000.0}
+    assert r["vendor"]["name"] == "CMT Sejahtera" and r["sisa_semua"] == 107000.0
+    assert run(nac.rekap(db, vendor_id="v1", dari="2026-11-10", sampai=""))["count"] == 1
+    with pytest.raises(HTTPException):
+        run(nac.rekap(db, vendor_id="tidak-ada"))
+    assert nac.jumlah_rekap([]) == {"total": 0.0, "dipotong": 0.0, "dibayar_langsung": 0.0, "sisa": 0.0}
+
+
+def test_cetak_nota_dan_rekap_menghasilkan_pdf(env):
+    from core import pdf_template
+    db = env["db"]
+    doc = run(nac.buat(db, permintaan={"id": "rq9", "request_code": "REQ-9", "vendor_id": "v1", "po_id": "PO1"},
+                       lines=nac.baris_dari_serah([{"material_id": "KCG", "material_code": "A-KCG", "material_name": "Kancing",
+                                                     "qty": 10, "unit": "pcs", "unit_cost": 50}], {"KCG": 75}),
+                       cara_bayar="langsung", user=USER))
+    tpl = {**pdf_template.defaults_for("sales-note"), "page": "portrait"}
+    prof = {"name": "CV Uji", "address": "Jl. Uji"}
+    assert nac.build_pdf(doc, vendor={"name": "CMT Sejahtera"}, profile=prof, template=tpl)[:4] == b"%PDF"
+    data = run(nac.rekap(db, vendor_id="v1"))
+    assert data["rows"][0]["sumber_label"] == "Permintaan aksesoris REQ-9"
+    assert nac.build_rekap_pdf(data, profile=prof, template=tpl)[:4] == b"%PDF"
+
+
+def test_layar_nota_setiap_penyerahan_dan_rekap():
+    erp = REPO / "frontend" / "src" / "components" / "erp"
+    hub = (erp / "engine" / "VendorShipmentModule.jsx").read_text(encoding="utf-8")
+    assert "NotaTab" in hub and "Nota aksesoris" in hub
+    tab = (erp / "engine" / "kirim" / "NotaTab.jsx").read_text(encoding="utf-8")
+    for frag in ("Cetak rekap", "nota-aksesoris-rekap/pdf", "PeriodPicker", "PageLayout", "TombolUnduh"):
+        assert frag in tab, frag
+    perm = (erp / "engine" / "kirim" / "PermintaanTab.jsx").read_text(encoding="utf-8")
+    assert "NotaAksesorisIsian" in perm and "nota_aksesoris" in perm
+    inbox = (erp / "AccessoryRequestInbox.jsx").read_text(encoding="utf-8")
+    assert "NotaAksesorisIsian" in inbox and "nota-aksesoris-berlaku" in inbox and "nota_aksesoris" in inbox
+    vend = (erp / "engine" / "VendorNotaAksesoris.jsx").read_text(encoding="utf-8")
+    assert "unduhRekapPdf" in vend and "PeriodPicker" in vend

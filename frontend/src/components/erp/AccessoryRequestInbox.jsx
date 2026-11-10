@@ -31,6 +31,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import NotaAksesorisIsian, { notaGalat, notaPayload } from './engine/kirim/NotaAksesorisIsian';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -133,8 +134,21 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
   const [accItems, setAccItems] = useState([]);
   const openDeliver = async (r) => {
     setActionModal({ id: r.id, code: r.request_code, type: 'deliver', notes: '', items: r.items || [], links: {}, reason: '',
-      overIssue: null, poNumber: r.po_number || '', shortage: null, draft: r.purchase_draft_number || '' });
-    if ((r.items || []).some((it) => !it.material_id) && accItems.length === 0) {
+      overIssue: null, poNumber: r.po_number || '', shortage: null, draft: r.purchase_draft_number || '',
+      nota: null, harga: {}, cara: 'potong_tagihan', vendorName: r.vendor_name || '' });
+    // 11 Nov 2026 (owner): aksesoris tambahan/pengganti yang diserahkan ke CMT luar DIBELI CMT → nota per penyerahan
+    const vendorReq = r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement';
+    if (vendorReq && r.vendor_id) {
+      try {
+        const res = await fetch(`${API}/api/kirim-cmt/nota-aksesoris-berlaku?vendor_id=${encodeURIComponent(r.vendor_id)}`, { headers: h });
+        if (res.ok) {
+          const nota = await res.json();
+          setActionModal((p) => (p && p.id === r.id ? { ...p, nota, cara: nota.cara_bawaan || p.cara,
+            vendorName: p.vendorName || nota.vendor_name } : p));
+        }
+      } catch { /* tanpa info nota: serah tetap jalan, nota dibuat dari layar lain */ }
+    }
+    if (((r.items || []).some((it) => !it.material_id) || vendorReq) && accItems.length === 0) {
       try {
         const res = await fetch(`${API}/api/acc/items`, { headers: h });
         if (res.ok) setAccItems(await res.json());
@@ -157,18 +171,32 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
 
   const itemLinks = (m) => Object.entries(m?.links || {}).filter(([, v]) => v)
     .map(([index, material_id]) => ({ index: Number(index), material_id }));
+  // Baris nota (satuan material, HPP master sebagai acuan) — hanya bila penyerahan ini ke CMT luar
+  const notaRows = (m) => (m?.nota?.berlaku ? (m.items || []).map((it, idx) => {
+    const mid = it.material_id || m.links?.[idx] || '';
+    const mat = accItems.find((a) => a.id === mid) || {};
+    return { key: mid, material_id: mid, name: it.material_name || mat.name || it.material_code || '', code: it.material_code || mat.code || '',
+      qty_handover: Number(it.qty) || 0, handover_label: it.unit || mat.unit || '', hpp_satuan: Number(mat.unit_cost) || 0 };
+  }).filter((r) => r.key && r.qty_handover > 0) : []);
 
   const handleDeliver = async () => {
     if (!actionModal) return;
     setSaving(true);
     try {
+      const rows = notaRows(actionModal);
       const res = await sendAction(`${actionModal.id}/deliver`, 'POST', {
         notes: actionModal.notes || '',
         item_links: itemLinks(actionModal),
         over_issue_reason: (actionModal.reason || '').trim(),
+        ...(rows.length ? { nota_aksesoris: notaPayload(rows, actionModal.harga || {}, actionModal.cara) } : {}),
       });
       const n = (res.issued_items || []).length;
       toast.success(n ? `Diserahkan · ${n} aksesoris keluar dari stok dan dijurnal.` : 'Permintaan ditandai sudah diterima.');
+      if (res.nota_aksesoris?.invoice_number) {
+        toast.success(`Nota aksesoris ${res.nota_aksesoris.invoice_number} terbit · ${res.nota_aksesoris.cara_bayar_label}`);
+      } else if (res.nota_aksesoris_error) {
+        toast.warning(`Nota aksesoris belum terbit: ${res.nota_aksesoris_error}`, { duration: 10000 });
+      }
       setActionModal(null);
       muatUlang();
     } catch (e) {
@@ -410,11 +438,12 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
 
       {actionModal && (
         <FormPopup open onClose={() => setActionModal(null)} menyimpan={saving}
-          ukuran={actionModal.type === 'deliver' && (actionModal.items || []).length > 4 ? 'panjang' : 'pendek'}
+          ukuran={actionModal.type === 'deliver' && ((actionModal.items || []).length > 4 || actionModal.nota?.berlaku) ? 'panjang' : 'pendek'}
           judul={actionModal.type === 'allocate' ? `Siapkan aksesoris · ${actionModal.code || ''}` : `Tandai sudah diterima · ${actionModal.code || ''}`}
           keterangan={actionModal.type === 'deliver' ? 'Stok aksesoris berikut dipotong dan dijurnal saat ditandai kirim.' : 'Barang disiapkan untuk diserahkan ke peminta.'}
           labelSimpan={actionModal.type === 'allocate' ? 'Siapkan' : 'Tandai kirim'}
           onSimpan={actionModal.type === 'allocate' ? handleAllocate : handleDeliver}
+          bisaSimpan={actionModal.type !== 'deliver' || !notaGalat(notaRows(actionModal), actionModal.harga || {})}
           testId="acc-req-action-form">
           {actionModal.type === 'deliver' && (
             <div className="space-y-3" data-testid="acc-req-deliver-lines">
@@ -434,6 +463,15 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                   )}
                 </div>
               ))}
+              {notaRows(actionModal).length > 0 && (
+                <NotaAksesorisIsian rows={notaRows(actionModal)} harga={actionModal.harga || {}} caraBayar={actionModal.cara}
+                  vendorName={actionModal.vendorName} testId="acc-req-nota"
+                  onCaraBayar={(v) => setActionModal((p) => ({ ...p, cara: v }))}
+                  onHarga={(key, v) => setActionModal((p) => ({ ...p, harga: { ...(p.harga || {}), [key]: v } }))} />
+              )}
+              {actionModal.nota && !actionModal.nota.berlaku && (
+                <p className="text-xs text-muted-foreground" data-testid="acc-req-nota-tidak">Tanpa nota aksesoris: {actionModal.nota.alasan}</p>
+              )}
               {actionModal.shortage && (
                 <Notice tone="warning" icon={AlertTriangle} title="Stok tidak cukup — belum ada barang yang dikeluarkan"
                   testId="acc-req-shortage"

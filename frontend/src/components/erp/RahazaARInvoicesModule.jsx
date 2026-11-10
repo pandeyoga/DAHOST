@@ -219,7 +219,7 @@ export default function RahazaARInvoicesModule({ token }) {
                             {inv.schedule_mode === 'v2'
                               ? `PO ${inv.linked_maklon_po_number || '—'} · nilai PO ${fmt(inv.scheduled_total)} · tertagih ${fmt(inv.billed_total)}`
                               : inv.source_module === 'cmt_accessory'
-                                ? `Kiriman ${inv.shipment_number || '—'}${inv.po_number ? ` · PO ${inv.po_number}` : ''}`
+                                ? `${inv.permintaan_nomor ? `Permintaan aksesoris ${inv.permintaan_nomor}` : `Kiriman ${inv.shipment_number || '—'}`}${inv.po_number ? ` · PO ${inv.po_number}` : ''}`
                                   + (Number(inv.jumlah_dipotong) > 0 ? ` · dipotong tagihan jahit ${fmt(inv.jumlah_dipotong)}` : '')
                                 : (inv.shipment_number || '—')}
                           </div>
