@@ -25,8 +25,10 @@ import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 // Asisten AI (layar2) — Tahap D: bagian "Asisten AI proaktif" (ingatan, briefing, peringatan, laporan mingguan).
 import PengaturanProaktif from './asisten/PengaturanProaktif';
 import { bacaPengaturanProaktif, susunPengaturanProaktif } from './asisten/adapterTahapCD';
+// Asisten AI per pengguna (10 Nov 2026): tabel saklar + batas per akun di tab Pengaturan.
+import AsistenPerPengguna from './asisten/AsistenPerPengguna';
 import {
-  AlertTriangle, RefreshCw, Loader2, Power, Settings, Sparkles, ClipboardCheck,
+  AlertTriangle, RefreshCw, Loader2, Power, Settings, Sparkles, ClipboardCheck, Users,
 } from 'lucide-react';
 
 // Status kesehatan AI → label + nada StatusBadge (dulu kotak berwarna mentah).
@@ -98,6 +100,7 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [versiSetelan, setVersiSetelan] = useState(0); // naik tiap simpan → daftar Asisten AI per pengguna dimuat ulang
   const [galatProaktif, setGalatProaktif] = useState({}); // Asisten AI (layar2): {kunci jam: kalimat}
   const [period, setPeriod] = useState(7);
   const [loading, setLoading] = useState(false);
@@ -156,6 +159,9 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
           disabled_features: Array.isArray(d.disabled_features) ? [...d.disabled_features] : [],
           asisten_tindakan_aktif: d.asisten_tindakan_aktif !== false,
           asisten_batas_tindakan_harian: d.asisten_batas_tindakan_harian ?? BATAS_TINDAKAN_BAWAAN,
+          // Asisten AI per pengguna (10 Nov 2026): bawaan akun yang belum diatur + batas pertanyaan bawaan (0 = tanpa batas)
+          asisten_pengguna_bawaan_aktif: d.asisten_pengguna_bawaan_aktif === true,
+          asisten_batas_pertanyaan_harian: d.asisten_batas_pertanyaan_harian ?? 0,
           // Asisten AI (layar2) — Tahap D: 8 kunci asisten_* (server lama → bawaan, lihat adapterTahapCD A6)
           ...bacaPengaturanProaktif(d),
         });
@@ -179,6 +185,11 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
       toast.error(`Batas tindakan per hari harus angka bulat 0–${BATAS_TINDAKAN_MAKS}.`);
       return false;
     }
+    const batasPertanyaan = bacaBatasTindakan(form.asisten_batas_pertanyaan_harian);
+    if (batasPertanyaan === null) {
+      toast.error(`Batas pertanyaan per hari harus angka bulat 0–${BATAS_TINDAKAN_MAKS} (0 = tanpa batas).`);
+      return false;
+    }
     // Asisten AI (layar2) — Tahap D: jam JJ:MM wajib sah sebelum PUT
     const proaktif = susunPengaturanProaktif(form);
     setGalatProaktif(proaktif.galat);
@@ -200,12 +211,15 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
           disabled_features: form.disabled_features,
           asisten_tindakan_aktif: !!form.asisten_tindakan_aktif,
           asisten_batas_tindakan_harian: batasTindakan,
+          asisten_pengguna_bawaan_aktif: !!form.asisten_pengguna_bawaan_aktif,
+          asisten_batas_pertanyaan_harian: batasPertanyaan,
           ...proaktif.nilai, // Asisten AI (layar2) — Tahap D
         }),
       });
       const data = await r.json();
       if (r.ok && data?.success) {
         toast.success('Pengaturan AI disimpan.');
+        setVersiSetelan((v) => v + 1);
         await Promise.all([fetchSettings(), fetchToday()]);
         return true;
       } else {
@@ -242,6 +256,7 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
     return cocok?.label || feature || '—';
   }, [settings, grupFitur]);
 
+  const bolehAturPengguna = ['owner', 'superadmin'].includes(String(user?.role || '').toLowerCase());
   const [bukaSetelan, setBukaSetelan] = useState(false);
   const simpanSetelan = async () => { if (await saveSettings()) setBukaSetelan(false); };
   const batalSetelan = () => { setBukaSetelan(false); fetchSettings(); };
@@ -574,6 +589,11 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                 <BarisDetail label="Tindakan Asisten AI">
                   {settings?.asisten_tindakan_aktif !== false ? 'Aktif' : 'Dimatikan'} · paling banyak {fmtNum(settings?.asisten_batas_tindakan_harian ?? BATAS_TINDAKAN_BAWAAN)} per pengguna per hari
                 </BarisDetail>
+                <BarisDetail label="Asisten AI untuk akun yang belum diatur">
+                  {settings?.asisten_pengguna_bawaan_aktif === true ? 'Aktif' : 'Mati'}
+                  {' · '}pertanyaan {Number(settings?.asisten_batas_pertanyaan_harian) > 0 ? `paling banyak ${fmtNum(settings.asisten_batas_pertanyaan_harian)} per pengguna per hari` : 'tanpa batas'}
+                  {' · '}owner dan superadmin selalu aktif
+                </BarisDetail>
                 <BarisDetail label="Anggaran">
                   Harian {fmtUSD(settings?.daily_budget_usd)} · bulanan {fmtUSD(settings?.monthly_budget_usd)} · per fitur per hari {fmtUSD(settings?.per_feature_daily_usd)}
                 </BarisDetail>
@@ -588,6 +608,8 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
               </dl>
             </GlassCard>
           )}
+          {/* Asisten AI per pengguna (10 Nov 2026): dimuat ulang setelah pengaturan bawaan disimpan */}
+          <AsistenPerPengguna key={versiSetelan} token={token} />
         </TabsContent>
       </Tabs>
 
@@ -620,6 +642,30 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
               petunjuk={`Perubahan yang dijalankan Asisten AI untuk satu pengguna dalam sehari. Bawaan ${BATAS_TINDAKAN_BAWAAN}.`}>
               <MoneyInput id="ai-set-batas-tindakan" decimals={0} value={form.asisten_batas_tindakan_harian}
                 onChange={(e) => setField('asisten_batas_tindakan_harian', e.target.value)} data-testid="ai-set-batas-tindakan" />
+            </Isian>
+          </div>
+
+          {/* Asisten AI per pengguna (10 Nov 2026): bawaan akun yang belum diatur — hanya owner/superadmin yang mengubah */}
+          <div className="space-y-3 border-t border-[var(--glass-border)] pt-4" data-testid="ai-set-per-pengguna">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2">
+                <Users className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Asisten AI aktif untuk akun yang belum diatur</p>
+                  <p className="text-xs text-muted-foreground">
+                    Berlaku untuk akun yang tidak diatur sendiri di daftar Asisten AI per pengguna. Owner dan superadmin selalu aktif.
+                    {!bolehAturPengguna && ' Hanya owner atau superadmin yang bisa mengubah bagian ini.'}
+                  </p>
+                </div>
+              </div>
+              <Switch checked={!!form.asisten_pengguna_bawaan_aktif} disabled={!bolehAturPengguna}
+                onCheckedChange={(v) => setField('asisten_pengguna_bawaan_aktif', v)}
+                aria-label="Asisten AI aktif untuk akun yang belum diatur" data-testid="ai-set-bawaan-pengguna" />
+            </div>
+            <Isian label="Batas pertanyaan per pengguna per hari" htmlFor="ai-set-batas-pertanyaan" className="max-w-xs"
+              petunjuk="Pertanyaan yang boleh dikirim satu akun dalam sehari. 0 = tanpa batas.">
+              <MoneyInput id="ai-set-batas-pertanyaan" decimals={0} value={form.asisten_batas_pertanyaan_harian} disabled={!bolehAturPengguna}
+                onChange={(e) => setField('asisten_batas_pertanyaan_harian', e.target.value)} data-testid="ai-set-batas-pertanyaan" />
             </Isian>
           </div>
 

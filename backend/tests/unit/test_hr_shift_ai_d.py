@@ -137,6 +137,11 @@ class TestRuang:
             return dict(state["u"])
         monkeypatch.setattr(r, "require_auth", auth)
         monkeypatch.setattr(r, "get_db", lambda: db)
+
+        # Asisten AI per pengguna (10 Nov 2026): uji ini soal RUANG per peran, jadi bawaan akun dinyalakan.
+        async def _setelan(*_a, **_k):
+            return {**r.akp.tracker._default_ai_settings(), "asisten_pengguna_bawaan_aktif": True}
+        monkeypatch.setattr(r.akp.tracker, "get_ai_settings", _setelan)
         assert r.ruang_diizinkan(OWNER) == ["umum", "sdm", "saya"]
         assert r.ruang_diizinkan(HR) == ["sdm", "saya"]
         assert r.ruang_diizinkan(STAF) == ["saya"]

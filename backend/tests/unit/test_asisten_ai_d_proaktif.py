@@ -750,7 +750,9 @@ def test_pengaturan_proaktif_bawaan_dan_validasi(env, monkeypatch):
         return {"id": "u-x", "role": req.role, "email": "x@contoh.test"}
     monkeypatch.setattr(mon, "require_auth", _auth)
     bawaan = t._default_ai_settings()
-    assert {k: bawaan[k] for k in bawaan if k.startswith("asisten_") and "tindakan" not in k} == {
+    # Kunci tindakan (Tahap B) dan per pengguna (10 Nov 2026) diuji di berkasnya sendiri.
+    assert {k: bawaan[k] for k in bawaan if k.startswith("asisten_") and "tindakan" not in k
+            and k not in ("asisten_pengguna_bawaan_aktif", "asisten_batas_pertanyaan_harian")} == {
         "asisten_ingatan_aktif": True, "asisten_briefing_aktif": True, "asisten_briefing_jam": "07:00",
         "asisten_briefing_penerima": [], "asisten_peringatan_aktif": True, "asisten_peringatan_jam": "07:00",
         "asisten_laporan_mingguan_aktif": True, "asisten_laporan_mingguan_jam": "07:30"}

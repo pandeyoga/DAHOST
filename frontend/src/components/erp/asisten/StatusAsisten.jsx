@@ -3,7 +3,7 @@
  * AI dimatikan, anggaran habis, server tidak menjawab). "Tindakan AI" (Tahap B) dan "Ingatan AI" (Tahap D) kini halaman
  * sendiri (`asisten-ai-tindakan`, `asisten-ai-ingatan`), jadi tempat "tahap berikutnya" sudah dihapus.
  */
-import { CloudOff, KeyRound, Power, Wallet } from 'lucide-react';
+import { CloudOff, Hourglass, KeyRound, Power, UserX, Wallet } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '../moduleAtoms';
 import { canAccessPortal } from '../portalAccess';
@@ -36,6 +36,20 @@ export function StatusBelumSiap({ status, peran, onNavigate, onCobaLagi }) {
         action={admin && onNavigate ? { label: 'Buka API Keys', variant: 'outline', onClick: () => onNavigate('mgmt-system-hub', { tab: 'api' }), testId: 'asisten-buka-api-keys' } : undefined} />
     );
   }
+  // Asisten AI per pengguna (10 Nov 2026): akun ini dimatikan owner / batas pertanyaan hari ini tercapai.
+  if (alasan === 'pengguna_nonaktif') {
+    return (
+      <EmptyState icon={UserX} title="Asisten AI belum aktif untuk akun Anda" testId="asisten-status-pengguna-nonaktif"
+        description="Owner mengatur siapa yang boleh memakai Asisten AI. Minta owner menyalakannya untuk akun Anda di Monitor AI › Pengaturan › Asisten AI per pengguna. Riwayat percakapan Anda tetap bisa dibuka."
+        action={keMonitor} />
+    );
+  }
+  if (alasan === 'batas_pertanyaan') {
+    return (
+      <EmptyState icon={Hourglass} title="Batas pertanyaan hari ini sudah tercapai" testId="asisten-status-batas-pertanyaan"
+        description={`${status.data?.pesan || 'Batas pertanyaan Asisten AI untuk akun Anda hari ini sudah tercapai.'} Riwayat percakapan tetap bisa dibuka.`} />
+    );
+  }
   if (alasan === 'anggaran_habis') {
     return (
       <EmptyState icon={Wallet} title="Anggaran AI sudah habis" testId="asisten-status-anggaran-habis"
@@ -54,4 +68,9 @@ export const PLACEHOLDER_BELUM_SIAP = {
   kunci_kosong: 'Asisten AI belum siap: kunci API belum diisi',
   ai_nonaktif: 'Asisten AI sedang dimatikan admin',
   anggaran_habis: 'Anggaran AI sudah habis',
+  pengguna_nonaktif: 'Asisten AI belum aktif untuk akun Anda',
+  batas_pertanyaan: 'Batas pertanyaan hari ini sudah tercapai',
 };
+
+/** Galat jawaban yang berarti status AKUN berubah (Asisten AI per pengguna) → layar memuat ulang status. */
+export const KODE_GALAT_AKUN = ['pengguna_nonaktif', 'batas_pertanyaan'];

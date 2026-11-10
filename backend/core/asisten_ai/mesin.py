@@ -1350,11 +1350,14 @@ async def siapkan_jalan(*, db, user: dict, sesi: dict, teks: str, cv: str, perio
                         token: Optional[str] = None, app=None, klien=None, klien_api=None,
                         maks_putaran: int = MAKS_PUTARAN_ALAT,
                         batas_detik: float = BATAS_DETIK, lampiran: Optional[list] = None,
-                        maks_putaran_kode: int = MAKS_PUTARAN_KODE) -> tuple[Optional[Jalan], Optional[dict]]:
+                        maks_putaran_kode: int = MAKS_PUTARAN_KODE,
+                        batas_tindakan: Optional[int] = None) -> tuple[Optional[Jalan], Optional[dict]]:
     """Gerbang sebelum jawaban dimulai. Return (Jalan, None) atau (None, galat {kode, pesan}).
 
     Bila gerbang menolak (kunci kosong, AI dimatikan, anggaran habis) tidak ada pesan yang disimpan.
     `lampiran` (Tahap E) = id lampiran yang SUDAH diperiksa rute (`lampiran.periksa_untuk_pesan`).
+    `batas_tindakan` (10 Nov 2026) = batas tindakan per hari akun ini (`akses_pengguna`); None = batas bawaan.
+    Saklar Asisten AI per akun + batas pertanyaan diperiksa rute (`akses_pengguna.periksa`) sebelum fungsi ini.
     """
     if sedang_berjalan(sesi["id"]):
         return None, {"kode": "sedang_berjalan", "pesan": PESAN_GALAT["sedang_berjalan"]}
@@ -1365,8 +1368,8 @@ async def siapkan_jalan(*, db, user: dict, sesi: dict, teks: str, cv: str, perio
     j = Jalan(db=db, user=user, sesi=sesi, teks=teks, cv=cv, periode=periode, today=today, token=token, app=app,
               klien=klien, klien_api=klien_api, api_key=g.api_key, peringatan=g.warning,
               maks_putaran=maks_putaran, batas_detik=batas_detik, tindakan_aktif=aturan["aktif"],
-              batas_tindakan=aturan["batas"], ingatan_aktif=await ing.aktif(), lampiran=lampiran,
-              maks_putaran_kode=maks_putaran_kode)
+              batas_tindakan=aturan["batas"] if batas_tindakan is None else batas_tindakan,
+              ingatan_aktif=await ing.aktif(), lampiran=lampiran, maks_putaran_kode=maks_putaran_kode)
     return j, None
 
 
@@ -1381,11 +1384,13 @@ class _Reservasi:
 
 async def siapkan_putusan(*, db, user: dict, tindakan_id: str, keputusan: str, ubahan=None, alasan: str = "",
                           cv: Optional[str] = None, today, token: Optional[str] = None, app=None, klien=None,
-                          klien_api=None, batas_detik: float = BATAS_DETIK) -> Jalan:
+                          klien_api=None, batas_detik: float = BATAS_DETIK,
+                          batas_tindakan: Optional[int] = None) -> Jalan:
     """Pemeriksaan + klaim keputusan kartu SEBELUM aliran dimulai. Galat → `tdk.GalatTindakan` (HTTP 4xx).
 
     Hanya pemilik sesi yang boleh memutuskan (orang lain, superadmin pun, mendapat 404). Return `Jalan` mode
-    putusan yang tinggal di-`mulai()`: event `tindakan_status`, lalu jawaban lanjutan bila giliran lengkap."""
+    putusan yang tinggal di-`mulai()`: event `tindakan_status`, lalu jawaban lanjutan bila giliran lengkap.
+    `batas_tindakan` (10 Nov 2026) = batas tindakan per hari akun ini; None = batas bawaan."""
     doc = await tdk.ambil(db, tindakan_id)
     if not doc or doc.get("user_id") != user.get("id"):
         raise tdk.GalatTindakan(404, tdk.LAYAR_TIDAK_ADA)
@@ -1402,17 +1407,18 @@ async def siapkan_putusan(*, db, user: dict, tindakan_id: str, keputusan: str, u
         if keputusan == "setujui" and not g.ok:
             raise tdk.GalatTindakan(409, galat_dari_gerbang(g)["pesan"])
         aturan = await tdk.pengaturan()
+        batas = aturan["batas"] if batas_tindakan is None else batas_tindakan
 
         def _ctx_baca(d):
             return tdk.buat_ctx(user=user, doc=d, token=token, app=app, klien_api=klien_api, tulis=False,
                                 today=today)
         p = await tdk.periksa_dan_kunci(db, user, doc, keputusan=keputusan, ubahan=ubahan, alasan=alasan,
-                                        buat_ctx_baca=_ctx_baca)
+                                        buat_ctx_baca=_ctx_baca, batas=batas)
         j = Jalan(db=db, user=user, sesi=sesi, teks="", cv=cv or doc.get("cv") or "DA",
                   periode=doc.get("periode") or today.strftime("%Y-%m"), today=today, token=token, app=app,
                   klien=klien, klien_api=klien_api, api_key=g.api_key if g.ok else "",
                   peringatan=g.warning if g.ok else None, batas_detik=batas_detik,
-                  tindakan_aktif=aturan["aktif"], batas_tindakan=aturan["batas"], putusan=p, boleh_lanjut=g.ok,
+                  tindakan_aktif=aturan["aktif"], batas_tindakan=batas, putusan=p, boleh_lanjut=g.ok,
                   ingatan_aktif=await ing.aktif())
     except BaseException:
         if p is not None:
