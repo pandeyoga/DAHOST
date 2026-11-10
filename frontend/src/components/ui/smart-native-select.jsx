@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils"
  *     x-panel      → panel
  *     x-list       → daftar opsi (role=listbox)
  *     x-option-<v> → tiap opsi (role=option, aria-selected, data-value)
+ *     x-value      → isi tombol dari `renderValue` (hanya bila prop itu dipakai dan ada pilihan)
  *
  * 2026-11-07 — BUG BESAR "pilihan tidak bisa diklik / tidak bisa dicari" (keluhan owner: supplier di form PO,
  * model & warna di Order Cutting, dan banyak form lain). Panel dulu dirender lewat createPortal ke <body>.
@@ -49,6 +50,10 @@ import { cn } from "@/lib/utils"
  * kini SELEBAR ISINYA (minimal selebar tombol, maksimal ±40 rem / lebar layar), nama panjang tidak dipotong lagi
  * (dibungkus ke baris berikut, judul lengkap di `title`), daftar lebih tinggi, dan pencarian per KATA dalam urutan
  * bebas ("opp plastik 25" menemukan "Plastik OPP 25 x 35") — dulu satu potongan teks utuh harus persis berurutan.
+ *
+ * 2026-11-10 (owner, Nota penjualan baru: "pilihan produk terlalu kecil untuk dibaca") — prop opsional
+ * `renderValue(opsi)`: isi tombol untuk pilihan yang SUDAH dipilih (mis. SKU di baris 1, nama lengkap di baris 2).
+ * Tanpa prop ini tampilan tombol sama seperti sebelumnya (satu baris, dipotong "…").
  */
 const MAX_RENDER = 300
 function nodeText(node) {
@@ -86,6 +91,7 @@ export default function SmartNativeSelect({
   searchThreshold = 8,
   searchPlaceholder = "Cari...",
   placeholder,
+  renderValue,
   id,
   name,
   "data-testid": dataTestId,
@@ -168,10 +174,16 @@ export default function SmartNativeSelect({
             {/* 2026-11-04 (galeri Keuangan): pilihan bernilai kosong yang BERARTI ("Semua toko", "Semua status") tampil
                 seperti pilihan biasa — dulu abu seperti placeholder, sehingga dua pilihan bersebelahan terlihat beda.
                 Abu hanya untuk placeholder sungguhan (prop `placeholder`, atau label "— …" / "Pilih …"). */}
-            <span className={cn("truncate", (!selected || (selected.value === "" && (placeholder || /^\s*([—–-]|pilih\b)/i.test(selected.label))))
-              ? "text-muted-foreground" : "text-foreground")}>
-              {selected ? selected.label : ph}
-            </span>
+            {renderValue && selected && selected.value !== "" ? (
+              <span className="min-w-0 flex-1 text-foreground" data-testid={dataTestId ? `${dataTestId}-value` : undefined}>
+                {renderValue(selected)}
+              </span>
+            ) : (
+              <span className={cn("truncate", (!selected || (selected.value === "" && (placeholder || /^\s*([—–-]|pilih\b)/i.test(selected.label))))
+                ? "text-muted-foreground" : "text-foreground")}>
+                {selected ? selected.label : ph}
+              </span>
+            )}
             <ChevronDown className={cn("h-4 w-4 flex-shrink-0 opacity-50 transition-transform", open && "rotate-180")} />
           </button>
         </PopoverPrimitive.Trigger>
