@@ -1411,6 +1411,13 @@ app.include_router(asisten_ai_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 _muat_alat_asisten_ai()
 # ── akhir Asisten AI (inti) ──────────────────────────────────────────────────────────────
 
+# ── Monitoring Staf ERP (Portal Manajemen, 10 Nov 2026) ─────────────────────────────────
+# Layar Monitoring/Aturan: owner/admin/superadmin (dicek di route). `/saya` swalayan untuk semua staf internal
+# (termasuk PIC toko), jadi router ini TIDAK memakai _DENY_MKT.
+from routes.pantau_staf import router as pantau_staf_router
+app.include_router(pantau_staf_router, dependencies=_DENY_EXTERNAL)
+# ── akhir Monitoring Staf ──
+
 # New Portals — Communication Hub + Asset Management + Procurement + Workspace + LMS Student
 from routes.dewi_communication import router as comm_router
 from routes.dewi_asset_management import router as asset_router

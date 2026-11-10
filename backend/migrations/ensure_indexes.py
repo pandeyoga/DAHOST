@@ -972,6 +972,14 @@ async def create_fase4_indexes(db):
         ("rahaza_boms", "active"), ("rahaza_employees", "active"),
         ("rahaza_locations", "active"), ("rahaza_leave_types", "active"),
         ("production_jobs", "status"), ("production_jobs", "po_id"),
+        # Monitoring Staf (10 Nov 2026): meter aktivitas di-upsert per permintaan (kunci `id`) + bacaan layar
+        ("pantau_aktivitas_harian", "id"), ("pantau_aktivitas_harian", [("user_id", 1), ("tanggal", -1)]),
+        ("pantau_aktivitas_harian", "tanggal"),
+        ("kewajiban_aturan", "id"),
+        ("kewajiban_kejadian", "id"), ("kewajiban_kejadian", [("aturan_id", 1), ("status", 1)]),
+        ("kewajiban_kejadian", [("aturan_id", 1), ("objek_id", 1)]),
+        ("kewajiban_kejadian", [("pemegang_ids", 1), ("status", 1)]),
+        ("kewajiban_kejadian", "po_id"), ("kewajiban_kejadian", "tenggat"), ("kewajiban_kejadian", "status"),
     ]
     for coll, keys in specs:
         try:

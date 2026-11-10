@@ -736,6 +736,17 @@ _TRANSAKSI += " marketing_impor_paket "
 _KONFIGURASI += " marketing_impor_pemetaan_toko "
 _LOG += " ai_fakta_laporan_marketing "
 # ── akhir MKT-AI ──
+# 2026-11-10 — Monitoring Staf ERP (Portal Manajemen): aturan kewajiban = konfigurasi owner (bertahan saat cutoff);
+# kejadian kewajiban = turunan dari dokumen transaksi (ikut dikosongkan bersama transaksi); meter aktivitas harian = log.
+REGISTRY.update({
+    "kewajiban_aturan": "lain",
+    "kewajiban_kejadian": "lain",
+    "pantau_aktivitas_harian": "lain",
+})
+_KONFIGURASI += " kewajiban_aturan "
+_TRANSAKSI += " kewajiban_kejadian "
+_LOG += " pantau_aktivitas_harian "
+# ── akhir Monitoring Staf ──
 
 
 def _kind_table() -> dict[str, str]:

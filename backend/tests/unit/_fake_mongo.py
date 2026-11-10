@@ -3,7 +3,7 @@
 Mendukung operasi yang dipakai route payroll/kasbon/dinas/klaim: find/find_one/count_documents/
 insert_one/insert_many/update_one/delete_one/delete_many + kursor sort/skip/limit/to_list/async-for.
 Operator kueri: kesetaraan (termasuk elemen array), $in $nin $ne $lt $lte $gt $gte $exists $regex
-$or $and $not $elemMatch. Operator update: $set $unset $push $inc $addToSet.
+$or $and $not $elemMatch. Operator update: $set $unset $push $inc $addToSet $max $min, upsert + $setOnInsert.
 """
 from __future__ import annotations
 
@@ -181,25 +181,43 @@ class FakeCollection:
             self.docs.append(copy.deepcopy(d))
         return _Result()
 
+    @staticmethod
+    def _apply(d, upd, *, inserted=False):
+        if inserted:
+            for k, v in (upd.get("$setOnInsert") or {}).items():
+                _set_path(d, k, copy.deepcopy(v))
+        for k, v in (upd.get("$set") or {}).items():
+            _set_path(d, k, copy.deepcopy(v))
+        for k in (upd.get("$unset") or {}):
+            _unset_path(d, k)
+        for k, v in (upd.get("$inc") or {}).items():
+            _set_path(d, k, (_get(d, k) if _get(d, k) is not _MISSING else 0) + v)
+        for op, better in (("$max", lambda cur, v: v > cur), ("$min", lambda cur, v: v < cur)):
+            for k, v in (upd.get(op) or {}).items():
+                cur = _get(d, k)
+                if cur is _MISSING or cur is None or better(cur, v):
+                    _set_path(d, k, copy.deepcopy(v))
+        for k, v in (upd.get("$push") or {}).items():
+            cur = _get(d, k)
+            _set_path(d, k, (cur if isinstance(cur, list) else []) + [copy.deepcopy(v)])
+        for k, v in (upd.get("$addToSet") or {}).items():
+            cur = _get(d, k)
+            cur = cur if isinstance(cur, list) else []
+            if v not in cur:
+                cur = cur + [v]
+            _set_path(d, k, cur)
+
     async def update_one(self, q, upd, upsert=False):
         for d in self.docs:
             if match(d, q):
-                for k, v in (upd.get("$set") or {}).items():
-                    _set_path(d, k, copy.deepcopy(v))
-                for k in (upd.get("$unset") or {}):
-                    _unset_path(d, k)
-                for k, v in (upd.get("$inc") or {}).items():
-                    _set_path(d, k, (_get(d, k) if _get(d, k) is not _MISSING else 0) + v)
-                for k, v in (upd.get("$push") or {}).items():
-                    cur = _get(d, k)
-                    _set_path(d, k, (cur if isinstance(cur, list) else []) + [copy.deepcopy(v)])
-                for k, v in (upd.get("$addToSet") or {}).items():
-                    cur = _get(d, k)
-                    cur = cur if isinstance(cur, list) else []
-                    if v not in cur:
-                        cur = cur + [v]
-                    _set_path(d, k, cur)
+                self._apply(d, upd)
                 return _Result(matched=1, modified=1)
+        if upsert:   # 2026-11-10 (Monitoring Staf): upsert + $setOnInsert/$max/$min
+            d = {k: copy.deepcopy(v) for k, v in (q or {}).items()
+                 if not str(k).startswith("$") and not (isinstance(v, dict) and any(str(x).startswith("$") for x in v))}
+            self._apply(d, upd, inserted=True)
+            self.docs.append(d)
+            return _Result(matched=0, modified=0, inserted_id=d.get("id"))
         return _Result()
 
     async def update_many(self, q, upd):
