@@ -4,6 +4,8 @@ Gudang men-scan setiap pcs barang jadi yang keluar untuk pembeli marketplace. Sc
 ditautkan ke nomor pesanan. Modul ini tipis: semua mesin yang dipakai SUDAH ADA.
 
   * kode → master FG       : `core.scan_resolver.resolve(expect=("fg",))` (barcode = SKU, QR label FG)
+  * tanpa scan (10 Nov)    : `pick()` — barang dipilih dari daftar cari (`core.fg_pick.search`), tiap
+                             barang lewat `scan(material_id=…)`; baris bertanda `tanpa_scan` (bukan merah)
   * stok keluar/kembali    : `core.stock_service.issue/add` (atomik, ledger `ref.type=mp_scan_out*`)
   * nilai keluar           : `core.fg_cost_layers.issue_wac` (qty × WAC saat scan, komponen dibekukan)
   * nilai kembali (batal)  : `core.fg_cost_layers.push_layer` / `reverse_receipt` (rumus WAC yang sama)
@@ -71,6 +73,10 @@ KIND_SCAN = "scan"
 KIND_CANCEL = "batal_kirim"
 KINDS = (KIND_SCAN, KIND_CANCEL)
 KIND_LABELS = {KIND_SCAN: "Keluar", KIND_CANCEL: "Batal kirim"}
+
+# 2026-11-10 (owner) — barang DIPILIH dari daftar cari, bukan di-scan (`scan(material_id=…)`, `pick`).
+VIA_PICK = "tanpa_scan"
+MAX_PICK_ITEMS = 100                # produk per sekali simpan "Pilih tanpa scan"
 
 # ── posting ─────────────────────────────────────────────────────────────────
 POSTING_EVENT = "cogs_marketplace_scan"
@@ -346,13 +352,17 @@ def line_sign(line: dict) -> int:
 def sum_lines(lines: list) -> dict:
     """Total neto baris AKTIF (scan − batal kirim) per komponen; Σ komponen = nilai."""
     out = {"pcs_out": 0, "pcs_cancel": 0, "pcs": 0, "lines": 0, "material": 0.0, "labor": 0.0,
-           "overhead": 0.0, "value": 0.0, "uncosted_qty": 0, "negative_lines": 0, "skus": 0}
+           "overhead": 0.0, "value": 0.0, "uncosted_qty": 0, "negative_lines": 0, "skus": 0,
+           "tanpa_scan_lines": 0, "tanpa_scan_pcs": 0}
     skus = set()
     for ln in lines or []:
         if ln.get("status") != "active":
             continue
         s, q = line_sign(ln), int(_f(ln.get("qty")))
         out["lines"] += 1
+        if ln.get("tanpa_scan"):          # 2026-11-10: dipilih dari daftar cari (pcs neto, tanda audit)
+            out["tanpa_scan_lines"] += 1
+            out["tanpa_scan_pcs"] += s * q
         if s > 0:
             out["pcs_out"] += q
         else:
@@ -476,12 +486,13 @@ def public_line(ln: Optional[dict]) -> Optional[dict]:
 
 
 async def _reject(db, *, csid: str, day: str, location: dict, raw: str, code: str, reason_code: str,
-                  reason: str, actor: dict, multiplier: int, kind: str, store: Optional[dict]) -> dict:
+                  reason: str, actor: dict, multiplier: int, kind: str, store: Optional[dict],
+                  tanpa_scan: bool = False) -> dict:
     doc = {"id": _uid(), "client_scan_id": csid, "date": day, "location_id": location["id"],
            "location_code": location.get("code"), "raw_code": str(raw or "")[:200], "code": code,
            "reason_code": reason_code, "reason": reason, "multiplier": multiplier, "kind": kind,
            "store": store, "operator_id": actor.get("id"), "operator_name": actor.get("name"),
-           "at": _now()}
+           "at": _now(), "tanpa_scan": bool(tanpa_scan)}
     try:
         await db[REJECTS].insert_one(doc)
         doc.pop("_id", None)
@@ -491,12 +502,28 @@ async def _reject(db, *, csid: str, day: str, location: dict, raw: str, code: st
     return {"result": "rejected", "duplicate": False, "reject": doc}
 
 
+async def _resolve_picked(db, material_id: str) -> Optional[dict]:
+    """Barang jadi yang DIPILIH dari daftar cari (tanpa scan) → bentuk hasil resolver yang sama.
+    Hanya master barang jadi; master lain/tak dikenal = None (ditolak seperti kode tak dikenal)."""
+    mat = await db.rahaza_materials.find_one({"id": material_id, "type": "fg"}, {"_id": 0})
+    if not mat:
+        return None
+    code = mat.get("code") or mat.get("sku") or ""
+    return {"tipe": "fg", "id": mat["id"], "kode": code, "sku": code, "via": VIA_PICK, "_doc": mat}
+
+
 async def scan(db, *, location_id: str, raw_code: str, client_scan_id: str, multiplier=1,
-               kind: str = KIND_SCAN, account_id: str = "", user: Optional[dict] = None) -> dict:
+               kind: str = KIND_SCAN, account_id: str = "", user: Optional[dict] = None,
+               material_id: str = "") -> dict:
     """Satu scan: resolve kode → potong stok (atau kembalikan, untuk batal kirim) → nilai WAC.
 
     Idempoten per `client_scan_id`: scan yang sama dikirim ulang mengembalikan baris yang sama
-    (`duplicate=True`) tanpa efek stok kedua."""
+    (`duplicate=True`) tanpa efek stok kedua.
+
+    2026-11-10 (owner, "tanpa scan bisa dicari dan pilih banyak"): `material_id` diisi = barang
+    DIPILIH dari daftar cari, bukan di-scan. Sesudah resolusi, jalurnya IDENTIK dengan scan (aturan
+    tolak, lembar, stok, WAC, batal baris, Tutup Hari); barisnya hanya diberi tanda `tanpa_scan`
+    (bukan `flags` — tidak masuk daftar merah, keputusan owner)."""
     await ensure_indexes(db)
     actor = _actor(user)
     csid = str(client_scan_id or "").strip()
@@ -518,13 +545,20 @@ async def scan(db, *, location_id: str, raw_code: str, client_scan_id: str, mult
     location = await location_info(db, location_id, blocked=blocked)
     store = await store_info(db, account_id)
     day = today_str()
-    code = normalize_code(raw_code)
+    picked_id = str(material_id or "").strip()
     rej = None
-    res = await resolve(db, raw_code, expect=("fg",)) if code else None
+    if picked_id:
+        res = await _resolve_picked(db, picked_id)
+        code = (res or {}).get("kode") or picked_id[:60]
+        raw_code = raw_code or code
+    else:
+        code = normalize_code(raw_code)
+        res = await resolve(db, raw_code, expect=("fg",)) if code else None
     if not code:
         rej = ("empty", "Kode kosong.")
     elif not res:
-        rej = ("unknown_code", f"Kode '{code[:60]}' tidak dikenal sebagai SKU barang jadi.")
+        rej = ("unknown_code", "Barang yang dipilih tidak ditemukan di master barang jadi." if picked_id
+               else f"Kode '{code[:60]}' tidak dikenal sebagai SKU barang jadi.")
     else:
         mat = res["_doc"]
         if await client_owner_of_material(db, mat["id"]):
@@ -538,7 +572,7 @@ async def scan(db, *, location_id: str, raw_code: str, client_scan_id: str, mult
     if rej:
         return await _reject(db, csid=csid, day=day, location=location, raw=raw_code, code=code,
                              reason_code=rej[0], reason=rej[1], actor=actor, multiplier=qty,
-                             kind=kind, store=store)
+                             kind=kind, store=store, tanpa_scan=bool(picked_id))
 
     mat = res["_doc"]
     sheet = await open_sheet(db, day=day, location=location, actor=actor)
@@ -549,7 +583,7 @@ async def scan(db, *, location_id: str, raw_code: str, client_scan_id: str, mult
             "sku": mat.get("code") or mat.get("sku") or code, "name": mat.get("name") or "",
             "store": store, "operator_id": actor.get("id"), "operator_name": actor.get("name"),
             "scanned_at": _now(), "status": "pending", "claim_at": _now(), "flags": [],
-            "negative_stock": False, "locked": False}
+            "negative_stock": False, "locked": False, "tanpa_scan": bool(picked_id)}
     try:
         await db[LINES].insert_one(line)
         line.pop("_id", None)
@@ -559,6 +593,77 @@ async def scan(db, *, location_id: str, raw_code: str, client_scan_id: str, mult
     line = await _process(db, line, actor)
     line = await _rehome_if_closed(db, line, location, actor)
     return {"result": "accepted", "duplicate": False, "line": public_line(line)}
+
+
+def parse_pick_items(items) -> list:
+    """Isi "Pilih tanpa scan" → [{material_id, qty, client_scan_id}] (fungsi murni, semua galat sekaligus).
+
+    Setiap produk membawa `client_scan_id` sendiri (dibuat layar saat produk dicentang) sehingga
+    Simpan yang terkirim dua kali tidak memotong stok dua kali — aturan idempoten scan yang sama."""
+    if not isinstance(items, list) or not items:
+        raise ScanOutError(400, "Pilih minimal satu barang.")
+    if len(items) > MAX_PICK_ITEMS:
+        raise ScanOutError(400, f"Paling banyak {MAX_PICK_ITEMS} barang per sekali simpan — simpan bertahap.")
+    out, errs, seen_csid, seen_mat = [], [], set(), set()
+    for i, it in enumerate(items, start=1):
+        it = it if isinstance(it, dict) else {}
+        mid = str(it.get("material_id") or "").strip()
+        csid = str(it.get("client_scan_id") or "").strip()
+        label = str(it.get("code") or f"Barang ke-{i}")[:60]     # id mentah tidak pernah tampil ke staf
+        if not mid:
+            errs.append(f"Baris {i}: barang belum dipilih.")
+            continue
+        if mid in seen_mat:
+            errs.append(f"{label}: dipilih dua kali — gabungkan jumlahnya di satu baris.")
+            continue
+        if not csid or len(csid) > 80:
+            errs.append(f"{label}: id pilihan wajib (maks. 80 karakter) — muat ulang layar lalu pilih lagi.")
+            continue
+        if csid in seen_csid:
+            errs.append(f"{label}: id pilihan kembar — muat ulang layar lalu pilih lagi.")
+            continue
+        try:
+            qty = parse_multiplier(it.get("qty"))
+        except ScanOutError:
+            errs.append(f"{label}: jumlah harus angka bulat 1–{MAX_MULTIPLIER} pcs.")
+            continue
+        seen_mat.add(mid)
+        seen_csid.add(csid)
+        out.append({"material_id": mid, "qty": qty, "client_scan_id": csid})
+    if errs:
+        raise ScanOutError(400, " ".join(errs))
+    return out
+
+
+async def pick(db, *, location_id: str, items, kind: str = KIND_SCAN, account_id: str = "",
+               user: Optional[dict] = None) -> dict:
+    """"Pilih tanpa scan": banyak barang jadi sekaligus, SETIAP barang lewat :func:`scan` (jalur stok,
+    nilai, dan lembar yang sama dengan scan). Lokasi/toko/jenis diperiksa sekali di depan; hasil per
+    barang dikembalikan apa adanya (diterima / ditolak / gagal diproses → antrean kirim ulang server)."""
+    await ensure_indexes(db)
+    if kind not in KINDS:
+        raise ScanOutError(400, f"Jenis scan harus salah satu: {', '.join(KINDS)}.")
+    rows = parse_pick_items(items)
+    await location_info(db, location_id)
+    await store_info(db, account_id)
+    results, accepted, rejected, failed = [], 0, 0, 0
+    for it in rows:
+        try:
+            out = await scan(db, location_id=location_id, raw_code="", client_scan_id=it["client_scan_id"],
+                             multiplier=it["qty"], kind=kind, account_id=account_id, user=user,
+                             material_id=it["material_id"])
+        except ScanOutError as e:
+            failed += 1
+            results.append({"result": "failed", "material_id": it["material_id"], "qty": it["qty"],
+                            "client_scan_id": it["client_scan_id"], "error": e.message})
+            continue
+        if out.get("result") == "rejected":
+            rejected += 1
+        elif out.get("result") == "accepted":
+            accepted += 1
+        results.append({**out, "material_id": it["material_id"], "client_scan_id": it["client_scan_id"]})
+    pcs = sum(int(_f((r.get("line") or {}).get("qty"))) for r in results if r.get("result") == "accepted")
+    return {"accepted": accepted, "rejected": rejected, "failed": failed, "pcs": pcs, "results": results}
 
 
 async def _claim(db, line: dict, from_status: str, to_status: str) -> bool:
@@ -1257,9 +1362,13 @@ async def daily_report(db, *, day: Optional[str] = None, location_id: Optional[s
         r2["net"] += s * qty
         r2["value"] = round(r2["value"] + s * val, 2)
         ok = ln.get("operator_id") or ln.get("operator_name") or ""
-        r3 = per_op.setdefault(ok, {"operator": ln.get("operator_name") or "-", "scans": 0, "net": 0})
+        r3 = per_op.setdefault(ok, {"operator": ln.get("operator_name") or "-", "scans": 0, "net": 0,
+                                    "tanpa_scan": 0, "net_tanpa_scan": 0})
         r3["scans"] += 1
         r3["net"] += s * qty
+        if ln.get("tanpa_scan"):
+            r3["tanpa_scan"] += 1
+            r3["net_tanpa_scan"] += s * qty
     rejects = await db[REJECTS].find(q, {"_id": 0}).sort("at", 1).to_list(5000)
     nota = await _direct_sales_out(db, day)
     scanned = {r["material_id"] for r in per_sku.values() if r["out"] > 0}
@@ -1276,6 +1385,7 @@ async def daily_report(db, *, day: Optional[str] = None, location_id: Optional[s
             "voided": [public_line(ln) for ln in lines if ln.get("status") in ("voided", "voiding")],
             "negative": [public_line(ln) for ln in active if ln.get("negative_stock")],
             "flagged": [public_line(ln) for ln in active if ln.get("flags")],
+            "tanpa_scan": [public_line(ln) for ln in active if ln.get("tanpa_scan")],
             "rejects": rejects,
             "direct_sales": {**nota, "overlap_with_scan": overlap,
                              "note": "Nota Portal Penjualan sudah memotong stok & menjurnal HPP sendiri — "

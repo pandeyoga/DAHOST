@@ -12,9 +12,15 @@
  *  • Masuk/keluar hari ini = dari 100 pergerakan terakhir /api/rahaza/fg-movements (sumber sama dengan tab Riwayat)
  *    — keterangannya kini menyebut batas itu; dulu "+0"/"−0" tanpa keterangan.
  *  • Hitungan di label tab Pengeluaran/Riwayat dihapus: itu panjang halaman API (maks 50/100), bukan total.
+ *
+ * 2026-11-10 (owner: "barang keluar tanpa scan bisa dicari dan bisa pilih multiple"): "Keluarkan stok" kini BANYAK
+ * produk sekaligus. Produk dicari & dicentang lewat PilihProdukJadi (stok per lokasi dari server), tiap produk memilih
+ * lokasi asal & jumlahnya. Satu formulir = SATU nomor pengeluaran; server memproses tiap baris lewat jalur yang sama
+ * dengan pengeluaran satu produk (POST /api/rahaza/fg-issue/batch — potong stok, riwayat, jurnal HPP WAC). Semua
+ * baris diperiksa dulu: satu saja stoknya kurang ⇒ tidak ada yang dikeluarkan (aturan lama "stok harus cukup" tetap).
  */
-import { useState, useEffect, useCallback } from 'react';
-import { MinusCircle, RefreshCw, Search } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { MinusCircle, RefreshCw, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import FilterChips from '@/components/ui/filter-chips';
@@ -29,6 +35,8 @@ import FGStockMatrixView from './FGStockMatrixView';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
+import PilihProdukJadi, { kolomBarang } from './warehouse/PilihProdukJadi';
+import { apiFetch } from '@/lib/api';
 
 const REASON_OPTIONS = [
   { value: 'surat_jalan_internal', label: 'Surat jalan internal', tone: 'info' },
@@ -48,14 +56,28 @@ const SOURCE_LABEL = {
 };
 const sumberDari = (v) => SOURCE_LABEL[v] || { label: v ? 'Lainnya' : '—', tone: 'muted' };
 
-const EMPTY_FORM = { material_id: '', location_id: '', qty: '', reason: 'surat_jalan_internal', customer_id: undefined, reference_number: '', notes: '' };
+const EMPTY_FORM = { reason: 'surat_jalan_internal', customer_id: undefined, reference_number: '', notes: '' };
+const idBaru = () => {
+  try { if (window.crypto?.randomUUID) return window.crypto.randomUUID(); } catch (_) { /* noop */ }
+  return `fgi-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+// Satu baris formulir: { item (dari /fg-pick), location_id, qty }. Lokasi bawaan = lokasi dengan stok terbanyak.
+const barisBaru = (item) => ({ item, location_id: item.lokasi?.[0]?.location_id || '', qty: '' });
+const stokDi = (b) => Number((b.item.lokasi || []).find((l) => l.location_id === b.location_id)?.qty || 0);
+const galatBaris = (b) => {
+  if (!b.location_id) return 'Pilih lokasi asal';
+  if (b.qty === '' || b.qty === null || b.qty === undefined) return 'Isi jumlah';
+  const n = Number(b.qty);
+  if (!Number.isInteger(n) || n <= 0) return 'Jumlah harus angka bulat lebih dari 0';
+  if (n > stokDi(b)) return `Melebihi stok tersedia (${stokDi(b)} pcs)`;
+  return null;
+};
 const pcs = (n) => Number(n || 0).toLocaleString('id-ID');
 
 export default function RahazaFGInventoryModule({ token }) {
   const { toast } = useToast();
   const [items,     setItems]     = useState([]);
   const [stocks,    setStocks]    = useState({});
-  const [stockRows, setStockRows] = useState([]);
   const [movements, setMovements] = useState([]);
   const [issues,    setIssues]    = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -102,7 +124,6 @@ export default function RahazaFGInventoryModule({ token }) {
           map[s.material_id] = (map[s.material_id] || 0) + (s.qty || 0);
         });
         setStocks(map);
-        setStockRows(rows);
       }
     } finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,44 +137,74 @@ export default function RahazaFGInventoryModule({ token }) {
   const inToday  = movements.filter(m => m.direction === 'in'  && new Date(m.timestamp).toDateString() === today).reduce((a,m)=>a+m.qty,0);
   const outToday = movements.filter(m => m.direction === 'out' && new Date(m.timestamp).toDateString() === today).reduce((a,m)=>a+m.qty,0);
 
-  // Get current stock for selected FG in form
-  const selectedMat   = items.find(m => m.id === form.material_id);
-  // 2026-11-02 — No.18(a): lokasi asal WAJIB dipilih (dulu backend diam-diam membaca
-  // "lokasi aktif pertama" → stok 36 pcs di rak terbaca 0). Pilihan = lokasi yang
-  // benar-benar memegang stok FG ini; tidak ada pilihan bawaan.
-  const locOptions = selectedMat
-    ? stockRows.filter(r => r.material_id === selectedMat.id && Number(r.qty || 0) > 0)
-    : [];
-  const selectedLoc = locOptions.find(r => r.location_id === form.location_id);
-  const availableStock = selectedLoc ? Number(selectedLoc.qty || 0) : 0;
+  // ── Formulir "Keluarkan stok" banyak produk (10 Nov 2026) ─────────────────
+  // 2026-11-02 — No.18(a) tetap: lokasi asal WAJIB per produk, pilihannya hanya lokasi yang memegang stok produk
+  // itu (data `lokasi` dari server, /fg-pick). Bawaan = lokasi dengan stok terbanyak, bisa diganti.
+  const [baris, setBaris] = useState([]);
+  const [galatSimpan, setGalatSimpan] = useState('');
+  // Id kiriman dibuat saat formulir dibuka: Simpan yang terkirim dua kali tidak mengeluarkan stok dua kali.
+  const batchId = useRef('');
+  const terpilihMap = useMemo(() => Object.fromEntries(baris.map((b) => [b.item.id, true])), [baris]);
+  const ubahPilihan = (item, centang) => setBaris((bs) => (centang
+    ? (bs.some((b) => b.item.id === item.id) ? bs : [...bs, barisBaru(item)])
+    : bs.filter((b) => b.item.id !== item.id)));
+  const ubahBaris = (id, patch) => setBaris((bs) => bs.map((b) => (b.item.id === id ? { ...b, ...patch } : b)));
+  const totalPcs = baris.reduce((a, b) => a + (galatBaris(b) ? 0 : Number(b.qty)), 0);
+  const barisSalah = baris.find((b) => galatBaris(b));
+
+  const tutupForm = () => { setShowIssueForm(false); setForm(EMPTY_FORM); setBaris([]); setGalatSimpan(''); };
 
   const handleSubmitIssue = async () => {
-    if (!form.material_id)  return toast({ title: 'Pilih produk jadi terlebih dahulu', variant: 'destructive' });
-    if (!form.location_id)  return toast({ title: 'Pilih lokasi asal barang terlebih dahulu', variant: 'destructive' });
-    if (!form.qty || parseFloat(form.qty) <= 0) return toast({ title: 'Qty harus lebih dari 0', variant: 'destructive' });
-    if (parseFloat(form.qty) > availableStock)  return toast({ title: `Stok tidak cukup. Tersedia: ${availableStock} pcs`, variant: 'destructive' });
+    if (!baris.length) return toast({ title: 'Pilih produk jadi terlebih dahulu', variant: 'destructive' });
+    if (barisSalah) return toast({ title: `${barisSalah.item.code}: ${galatBaris(barisSalah)}`, variant: 'destructive' });
     setSubmitting(true);
+    setGalatSimpan('');
     try {
-      const res = await fetch('/api/rahaza/fg-issue', {
+      const res = await apiFetch('/api/rahaza/fg-issue/batch', {
         method: 'POST',
-        headers: h,
-        body: JSON.stringify({ ...form, qty: parseInt(form.qty),
-                               ...docNumberPayload(numPolicy, 'issue_number', issueNo) }),
+        body: JSON.stringify({
+          ...form, client_batch_id: batchId.current,
+          items: baris.map((b) => ({ material_id: b.item.id, location_id: b.location_id, qty: Number(b.qty), code: b.item.code })),
+          ...docNumberPayload(numPolicy, 'issue_number', issueNo),
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Gagal membuat pengeluaran');
-      toast({ title: `Pengeluaran ${data.issue_number} tercatat — ${form.qty} pcs dikurangi dari stok` });
-      setForm(EMPTY_FORM);
-      setShowIssueForm(false);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setGalatSimpan(data.detail || 'Gagal membuat pengeluaran'); return; }
+      const lines = data.lines || [];
+      const pcsKeluar = lines.reduce((a, l) => a + Number(l.qty || 0), 0);
+      toast({ title: `Pengeluaran ${data.issue_number} tercatat — ${lines.length} produk, ${pcs(pcsKeluar)} pcs dikurangi dari stok` });
+      if ((data.failed || []).length) {
+        toast({ variant: 'destructive', title: `${data.failed.length} produk tidak dikeluarkan`,
+          description: data.failed.map((f) => `${f.code}: ${f.error}`).join(' · ') });
+      }
+      const jurnalGagal = lines.filter((l) => l.gl_post_error);
+      if (jurnalGagal.length) {
+        toast({ variant: 'destructive', title: 'Stok sudah keluar, tetapi jurnal HPP belum tercatat',
+          description: jurnalGagal.map((l) => `${l.fg_code}: ${l.gl_post_error}`).join(' · ') });
+      }
+      tutupForm();
       fetchData();
     } catch (e) {
-      toast({ title: e.message, variant: 'destructive' });
+      setGalatSimpan('Jaringan putus — belum pasti tercatat. Tekan simpan lagi tanpa mengubah isian: pengeluaran yang sudah tercatat tidak dibuat dua kali.');
     } finally { setSubmitting(false); }
   };
 
-  const bukaForm = (materialId) => {
-    if (materialId) setForm(f => ({ ...f, material_id: materialId, location_id: '', qty: '' }));
+  // Tombol "Keluarkan" di baris tabel / matriks: produk itu langsung masuk daftar (data lokasi dari server).
+  const bukaForm = async (materialId, kodeCadangan) => {
+    setForm(EMPTY_FORM);
+    setBaris([]);
+    setGalatSimpan('');
+    setIssueNo('');
+    batchId.current = idBaru();
     setShowIssueForm(true);
+    const kode = items.find((m) => m.id === materialId)?.code || kodeCadangan;
+    if (!materialId || !kode) return;
+    try {
+      const r = await apiFetch(`/api/rahaza/fg-pick?ada_stok=true&q=${encodeURIComponent(kode)}`);
+      const d = r.ok ? await r.json() : {};
+      const it = (d.items || []).find((x) => x.id === materialId);
+      if (it) setBaris((bs) => (bs.some((b) => b.item.id === it.id) ? bs : [...bs, barisBaru(it)]));
+    } catch (_) { /* produk tetap bisa dicari manual di formulir */ }
   };
 
   // RC-UI-03: client-side pagination (25/halaman) untuk 3 tabel (hook di tingkat atas)
@@ -290,10 +341,7 @@ export default function RahazaFGInventoryModule({ token }) {
           <FGStockMatrixView
             token={token}
             onCellAction={(action, cell) => {
-              if (action === 'issue') {
-                setForm(f => ({ ...f, material_id: cell.material_id, location_id: '', qty: '' }));
-                setShowIssueForm(true);
-              }
+              if (action === 'issue') bukaForm(cell.material_id, cell.code);
             }}
           />
         </>)}
@@ -314,45 +362,59 @@ export default function RahazaFGInventoryModule({ token }) {
         </div>)}
 
         {/* ── FORM KELUARKAN STOK (popup) ── */}
-        <FormPopup open={showIssueForm} onClose={() => { setShowIssueForm(false); setForm(EMPTY_FORM); }} ukuran="panjang"
+        <FormPopup open={showIssueForm} onClose={tutupForm} ukuran="panjang"
           judul="Keluarkan stok produk jadi" testId="fg-issue-form"
-          keterangan="Produksi internal: WO selesai menambah stok, pengeluaran dicatat manual di sini. Customer PO: stok berkurang otomatis saat surat jalan dikirim."
-          onSimpan={handleSubmitIssue} menyimpan={submitting} labelSimpan="Keluarkan stok"
-          bisaSimpan={!!form.material_id && !!form.qty && parseFloat(form.qty) <= availableStock}>
-          <Isian label="Produk jadi" wajib>
-            <SmartNativeSelect value={form.material_id} className="w-full" data-testid="fg-issue-material"
-              onChange={e => setForm(f => ({ ...f, material_id: e.target.value, location_id: '', qty: '' }))}>
-              <option value="">Pilih produk jadi</option>
-              {items.map(m => (
-                <option key={m.id} value={m.id} disabled={(stocks[m.id] || 0) <= 0}>
-                  {`${m.code} — ${m.name} (${stocks[m.id] || 0} pcs tersedia)`}
-                </option>
-              ))}
-            </SmartNativeSelect>
+          keterangan="Cari dan centang produk (boleh banyak), lalu pilih lokasi asal dan jumlahnya. Semua produk memakai satu nomor pengeluaran. Customer PO: stok berkurang otomatis saat surat jalan dikirim, bukan di sini."
+          onSimpan={handleSubmitIssue} menyimpan={submitting}
+          labelSimpan={baris.length ? `Keluarkan ${baris.length} produk · ${pcs(totalPcs)} pcs` : 'Keluarkan stok'}
+          galat={galatSimpan /* galat per baris tampil di barisnya sendiri; kaki popup hanya galat server */}
+          bisaSimpan={baris.length > 0 && !barisSalah}>
+          <Isian label="Cari produk jadi" wajib>
+            {showIssueForm && (
+              <PilihProdukJadi adaStok terpilih={terpilihMap} onUbah={ubahPilihan} testId="fg-issue-cari" />
+            )}
           </Isian>
 
-          {/* Lokasi asal — wajib dipilih (No.18a) */}
-          <Isian label="Lokasi asal" wajib
-            galat={form.material_id && locOptions.length === 0 ? 'Produk ini tidak punya stok di lokasi mana pun.' : undefined}
-            petunjuk={form.location_id ? `Stok di lokasi ini: ${availableStock} pcs` : undefined}>
-            <SmartNativeSelect value={form.location_id} className="w-full" disabled={!form.material_id} required
-              onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))} data-testid="fg-issue-location">
-              <option value="">{form.material_id ? 'Pilih lokasi' : 'Pilih produk jadi dulu'}</option>
-              {locOptions.map(r => (
-                <option key={r.location_id} value={r.location_id}>
-                  {`${(r.location_code ? `${r.location_code} · ` : '') + (r.location_name || r.location_id)} — ${r.qty} pcs`}
-                </option>
-              ))}
-            </SmartNativeSelect>
-          </Isian>
+          {/* Produk terpilih — lokasi asal wajib per produk (No.18a), jumlah ≤ stok lokasi itu */}
+          <div className="space-y-2">
+            <div className="text-sm font-medium">Dipilih ({baris.length} produk · {pcs(totalPcs)} pcs)</div>
+            <TabelData baris={baris} kunci={(b) => b.item.id} testId="fg-issue-dipilih"
+              kosong={<EmptyState title="Belum ada produk dipilih" description="Centang produk dari hasil cari di atas." />}
+              kolom={[
+                ...kolomBarang((b) => b.item),
+                { kunci: 'lokasi', label: 'Lokasi asal', isi: (b) => (
+                  <SmartNativeSelect value={b.location_id} className="w-full" wrapperClassName="w-full sm:w-52"
+                    aria-label={`Lokasi asal ${b.item.code}`} data-testid={`fg-issue-location-${b.item.code}`}
+                    onChange={(e) => ubahBaris(b.item.id, { location_id: e.target.value })}>
+                    <option value="">Pilih lokasi</option>
+                    {(b.item.lokasi || []).map((l) => (
+                      <option key={l.location_id} value={l.location_id}>
+                        {`${l.code ? `${l.code} · ` : ''}${l.name || ''} — ${pcs(l.qty)} pcs${l.jual ? '' : ' (bukan stok jual)'}`}
+                      </option>
+                    ))}
+                  </SmartNativeSelect>
+                ) },
+                { kunci: 'qty', label: 'Jumlah (pcs)', rata: 'kanan', isi: (b) => {
+                  const g = b.qty !== '' ? galatBaris(b) : null;
+                  return (
+                    <div className="flex flex-col items-end gap-0.5">
+                      <Input type="number" min="1" max={stokDi(b)} value={b.qty} placeholder={`maks ${stokDi(b)}`}
+                        aria-label={`Jumlah ${b.item.code}`} className="h-8 w-24 text-right text-sm"
+                        onChange={(e) => ubahBaris(b.item.id, { qty: e.target.value })} data-testid={`fg-issue-qty-${b.item.code}`} />
+                      {g && <span className="block max-w-[9rem] whitespace-normal text-right text-xs text-[hsl(var(--danger-text))]">{g}</span>}
+                    </div>
+                  );
+                } },
+                { kunci: 'hapus', label: '', hp: 'aksi', lebar: 'w-10', isi: (b) => (
+                  <Button type="button" size="icon-sm" variant="ghost" onClick={() => ubahPilihan(b.item, false)}
+                    aria-label={`Hapus ${b.item.code} dari pilihan`} title="Hapus dari pilihan">
+                    <X />
+                  </Button>
+                ) },
+              ]} />
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <Isian label="Qty dikeluarkan (pcs)" wajib htmlFor="fg-issue-qty-in"
-              galat={form.qty && parseFloat(form.qty) > availableStock ? 'Melebihi stok tersedia' : undefined}>
-              <Input id="fg-issue-qty-in" type="number" min="1" max={availableStock} value={form.qty}
-                onChange={e => setForm(f => ({ ...f, qty: e.target.value }))}
-                placeholder={`maks ${availableStock}`} data-testid="fg-issue-qty" />
-            </Isian>
             <Isian label="Alasan pengeluaran" wajib>
               <SmartNativeSelect value={form.reason} searchable={false} className="w-full" data-testid="fg-issue-reason"
                 onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}>
@@ -376,7 +438,7 @@ export default function RahazaFGInventoryModule({ token }) {
             <Input id="fg-issue-notes-in" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
               placeholder="Catatan tambahan" data-testid="fg-issue-notes" />
           </Isian>
-          {/* SESI #27 — nomor dokumen (otomatis/manual sesuai setelan owner) */}
+          {/* SESI #27 — nomor dokumen (otomatis/manual sesuai setelan owner); SATU nomor untuk semua produk */}
           <DocNumberField policy={numPolicy} value={issueNo} onChange={setIssueNo}
             testId="fg-issue-docnum" label="Nomor pengeluaran barang jadi" />
         </FormPopup>
