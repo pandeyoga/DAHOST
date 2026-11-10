@@ -197,6 +197,11 @@ def _default_ai_settings() -> dict:
         # Asisten AI (inti) — Tahap B: saklar "Tindakan AI aktif" + batas tindakan per pengguna per hari.
         "asisten_tindakan_aktif": True,
         "asisten_batas_tindakan_harian": 30,
+        # Asisten AI per pengguna (keputusan owner 10 Nov 2026, core/asisten_ai/akses_pengguna.py): akun yang belum
+        # diatur MATI (owner/superadmin selalu aktif) + batas pertanyaan per pengguna per hari (0 = tanpa batas).
+        # Pengaturan per akun di `users.asisten_ai`.
+        "asisten_pengguna_bawaan_aktif": False,
+        "asisten_batas_pertanyaan_harian": 0,
         # ── akhir Asisten AI (inti) ──
         # Asisten AI (proaktif) — Tahap D (keputusan owner no. 12–13): ingatan AI + briefing pagi 07:00,
         # peringatan harian, laporan mingguan Senin. Penerima kosong = semua owner aktif. Jam = WIB "HH:MM".

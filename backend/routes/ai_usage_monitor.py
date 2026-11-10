@@ -280,6 +280,8 @@ async def update_settings(request: Request, payload: dict = Body(...)):
         "per_feature_daily_usd", "default_tier", "disabled_features",
         # Asisten AI (inti) — Tahap B: saklar tindakan + batas harian per pengguna.
         "asisten_tindakan_aktif", "asisten_batas_tindakan_harian",
+        # Asisten AI per pengguna (10 Nov 2026): bawaan akun yang belum diatur + batas pertanyaan bawaan.
+        "asisten_pengguna_bawaan_aktif", "asisten_batas_pertanyaan_harian",
         # Asisten AI (proaktif) — Tahap D: ingatan + briefing/peringatan/laporan mingguan.
         *_PROAKTIF_BOOL, *_PROAKTIF_JAM, "asisten_briefing_penerima",
     }
@@ -295,15 +297,16 @@ async def update_settings(request: Request, payload: dict = Body(...)):
         # ── akhir Asisten AI (proaktif) ──
         if k == "ai_enabled":
             update[k] = bool(v)
-        elif k == "asisten_tindakan_aktif":
+        elif k in ("asisten_tindakan_aktif", "asisten_pengguna_bawaan_aktif"):
             update[k] = (v.strip().lower() in ("1", "true", "ya", "on")) if isinstance(v, str) else bool(v)
-        elif k == "asisten_batas_tindakan_harian":
+        elif k in ("asisten_batas_tindakan_harian", "asisten_batas_pertanyaan_harian"):
+            label = "Batas tindakan" if k == "asisten_batas_tindakan_harian" else "Batas pertanyaan"
             try:
                 iv = int(v)
             except (TypeError, ValueError):
-                raise HTTPException(400, "Batas tindakan per pengguna per hari harus bilangan bulat")
+                raise HTTPException(400, f"{label} per pengguna per hari harus bilangan bulat")
             if isinstance(v, bool) or iv < 0 or iv > 1000 or (isinstance(v, float) and not v.is_integer()):
-                raise HTTPException(400, "Batas tindakan per pengguna per hari harus 0–1000")
+                raise HTTPException(400, f"{label} per pengguna per hari harus 0–1000")
             update[k] = iv
         elif k in ("daily_budget_usd", "monthly_budget_usd", "per_feature_daily_usd"):
             try:
@@ -325,6 +328,14 @@ async def update_settings(request: Request, payload: dict = Body(...)):
     if not update:
         raise HTTPException(400, "Tidak ada field valid untuk diupdate")
 
+    # Asisten AI per pengguna (10 Nov 2026): bawaan akun & batas pertanyaan bawaan HANYA diubah owner/superadmin.
+    # Admin tetap bisa menyimpan formulir yang sama selama nilainya tidak berubah.
+    if user.get("role") not in ("superadmin", "owner"):
+        lama = await get_ai_settings(db, force=True)
+        for k in ("asisten_pengguna_bawaan_aktif", "asisten_batas_pertanyaan_harian"):
+            if k in update and update[k] != lama.get(k):
+                raise HTTPException(403, "Hanya owner atau superadmin yang boleh mengubah bawaan Asisten AI per pengguna.")
+
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
     update["updated_by"] = user.get("email") or user.get("id")
     await db.ai_config.update_one({"id": "global"}, {"$set": update, "$setOnInsert": {"id": "global"}}, upsert=True)
@@ -332,3 +343,108 @@ async def update_settings(request: Request, payload: dict = Body(...)):
 
     settings = await get_ai_settings(db, force=True)
     return {"success": True, "data": settings, "message": "Setting AI berhasil disimpan"}
+
+
+# ── Asisten AI per pengguna (10 Nov 2026, keputusan owner) ───────────────────
+# Saklar aktif/mati + batas pertanyaan & tindakan per akun (`users.asisten_ai`, aturan di
+# core/asisten_ai/akses_pengguna.py). Daftar: superadmin/admin/owner (sama dengan pengubah setting AI);
+# mengubah: HANYA owner/superadmin. Owner & superadmin selalu aktif (tidak bisa dimatikan).
+PERAN_LIHAT_PENGGUNA_AI = ("superadmin", "admin", "owner")
+PERAN_UBAH_PENGGUNA_AI = ("superadmin", "owner")
+_PROYEKSI_PENGGUNA_AI = {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1, "status": 1, "active": 1,
+                         "is_active": 1, "asisten_ai": 1}
+
+
+def _peran_tanpa_asisten() -> set:
+    """Peran yang ditolak router Asisten AI (eksternal + portal marketing) — tidak ditampilkan di daftar."""
+    from core.authz import EXTERNAL_ROLES, MARKETING_PORTAL_ROLES
+    return {*EXTERNAL_ROLES, *MARKETING_PORTAL_ROLES}
+
+
+async def _pemakaian_asisten_hari_ini(db) -> tuple[dict, dict, dict]:
+    """({uid: pertanyaan}, {uid: tindakan}, {uid: biaya USD}) hari ini (WIB)."""
+    from core.asisten_ai import akses_pengguna as akp
+    from core.asisten_ai.tindakan import KEADAAN_TERHITUNG
+    from utils.waktu import wib_date_str
+    pertanyaan = await akp.pertanyaan_per_pengguna(db)
+    tindakan: dict = {}
+    async for r in db.ai_actions.find({"tanggal_jalan": wib_date_str(), "keadaan": {"$in": list(KEADAAN_TERHITUNG)}},
+                                      {"_id": 0, "user_id": 1}):
+        if r.get("user_id"):
+            tindakan[r["user_id"]] = tindakan.get(r["user_id"], 0) + 1
+    biaya: dict = {}
+    async for r in db[USAGE_LOGS].find({"date": today_wib().isoformat(), "feature_group": "asisten-ai"},
+                                       {"_id": 0, "user_id": 1, "cost_usd": 1}):
+        if r.get("user_id"):
+            biaya[r["user_id"]] = biaya.get(r["user_id"], 0.0) + float(r.get("cost_usd") or 0)
+    return pertanyaan, tindakan, biaya
+
+
+def _baris_pengguna_ai(u: dict, settings: dict, pemakaian: tuple) -> dict:
+    from core.asisten_ai import akses_pengguna as akp
+    aturan = akp.aturan_dari(u, u.get("role"), settings)
+    cfg = u.get("asisten_ai") if isinstance(u.get("asisten_ai"), dict) else {}
+    pertanyaan, tindakan, biaya = pemakaian
+    uid = u.get("id")
+    return {
+        "id": uid, "name": u.get("name") or u.get("email") or "", "email": u.get("email") or "",
+        "role": u.get("role") or "", **aturan,
+        "atur": {"aktif": cfg.get("aktif") if isinstance(cfg.get("aktif"), bool) else None,
+                 "batas_pertanyaan_harian": akp.bilangan_batas(cfg.get("batas_pertanyaan_harian")),
+                 "batas_tindakan_harian": akp.bilangan_batas(cfg.get("batas_tindakan_harian"))},
+        "diubah_oleh": cfg.get("diubah_oleh"), "diubah_at": cfg.get("diubah_at"),
+        "pertanyaan_hari_ini": int(pertanyaan.get(uid, 0)), "tindakan_hari_ini": int(tindakan.get(uid, 0)),
+        "biaya_hari_ini_usd": round(float(biaya.get(uid, 0.0)), 4),
+    }
+
+
+@router.get("/asisten-pengguna")
+async def daftar_asisten_pengguna(request: Request):
+    """Akun internal aktif + status Asisten AI efektif, batas, dan pemakaian hari ini."""
+    from core.asisten_ai import akses_pengguna as akp
+    from core.asisten_ai import proaktif as _pro
+    user = await require_auth(request)
+    if user.get("role") not in PERAN_LIHAT_PENGGUNA_AI:
+        raise HTTPException(403, "Hanya owner, superadmin, atau admin yang bisa melihat Asisten AI per pengguna.")
+    db = get_db()
+    settings = await get_ai_settings(db, force=True)
+    tolak = _peran_tanpa_asisten()
+    rows = await db.users.find({}, dict(_PROYEKSI_PENGGUNA_AI)).to_list(2000)
+    rows = [u for u in rows if u.get("id") and str(u.get("role") or "").lower() not in tolak
+            and _pro.pengguna_aktif(u)]
+    pemakaian = await _pemakaian_asisten_hari_ini(db)
+    items = sorted((_baris_pengguna_ai(u, settings, pemakaian) for u in rows),
+                   key=lambda r: (not r["aktif"], str(r["name"]).lower()))
+    return {"success": True, "data": {
+        "bawaan": akp.bawaan_dari(settings), "boleh_ubah": user.get("role") in PERAN_UBAH_PENGGUNA_AI,
+        "items": items, "tanggal": today_wib().isoformat()}}
+
+
+@router.put("/asisten-pengguna/{uid}")
+async def ubah_asisten_pengguna(uid: str, request: Request, payload: dict = Body(...)):
+    """{aktif: true|false|null, batas_pertanyaan_harian: n|null, batas_tindakan_harian: n|null} — null = ikut bawaan."""
+    from core.asisten_ai import akses_pengguna as akp
+    from routes.rahaza_audit import log_audit
+    user = await require_auth(request)
+    if user.get("role") not in PERAN_UBAH_PENGGUNA_AI:
+        raise HTTPException(403, "Hanya owner atau superadmin yang boleh mengubah Asisten AI per pengguna.")
+    db = get_db()
+    target = await db.users.find_one({"id": uid}, dict(_PROYEKSI_PENGGUNA_AI))
+    if not target:
+        raise HTTPException(404, "Pengguna tidak ditemukan.")
+    if str(target.get("role") or "").lower() in _peran_tanpa_asisten():
+        raise HTTPException(400, "Akun ini (vendor, buyer, atau portal marketing) tidak bisa memakai Asisten AI.")
+    try:
+        isian = akp.rapikan_masukan(payload if isinstance(payload, dict) else {}, peran_target=target.get("role"))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    sebelum = target.get("asisten_ai") if isinstance(target.get("asisten_ai"), dict) else {}
+    sesudah = await akp.simpan(db, uid, isian, oleh=user.get("email") or user.get("id") or "")
+    await log_audit(db, entity_type="user", entity_id=uid, action="asisten_ai_pengguna",
+                    before={k: sebelum.get(k) for k in isian}, after={k: sesudah.get(k) for k in isian},
+                    user=user, request=request)
+    target["asisten_ai"] = sesudah
+    settings = await get_ai_settings(db, force=True)
+    return {"success": True, "data": _baris_pengguna_ai(target, settings, await _pemakaian_asisten_hari_ini(db)),
+            "message": "Asisten AI untuk pengguna ini disimpan."}
+# ── akhir Asisten AI per pengguna ──

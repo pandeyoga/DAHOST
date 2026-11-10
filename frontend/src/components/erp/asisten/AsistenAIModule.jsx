@@ -35,7 +35,7 @@ import { monthOptions } from '../finance/PeriodPicker';
 import { KUNCI_SESI_AKTIF, asistenApi } from './asistenApi';
 import { JENIS_ISI as KONTEN, dariRiwayat, judulDariTeks, pesanAsistenBaru, terapkanPeristiwa } from './peristiwaSse';
 import KomposerAsisten from './KomposerAsisten';
-import { PLACEHOLDER_BELUM_SIAP, StatusBelumSiap } from './StatusAsisten';
+import { KODE_GALAT_AKUN, PLACEHOLDER_BELUM_SIAP, StatusBelumSiap } from './StatusAsisten';
 import RiwayatPercakapan from './RiwayatPercakapan';
 import {
   kartuMenunggu, kedaluwarsakanMenunggu, terapkanStatusTindakan, terapkanUbahanKeRencana, ubahKartu,
@@ -304,6 +304,9 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
     const ubah = (fn) => setPesan((prev) => prev.map((p) => (p.kunci === kA ? fn(p) : p)));
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // Asisten AI per pengguna (10 Nov 2026): akun dimatikan / batas pertanyaan tercapai → muat ulang status supaya
+    // kotak tanya ikut terkunci dengan penjelasannya.
+    let segarkanStatus = false;
     try {
       let sid = aktifRef.current;
       if (!sid) {
@@ -321,6 +324,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
       const hasil = await asistenApi.kirimPesan(sid, { teks, cv, periode, lampiran: lamp.map((l) => l.id) }, {
         signal: ctrl.signal,
         onEvent: ({ event, data }) => {
+          if (event === 'galat' && KODE_GALAT_AKUN.includes(data?.kode)) segarkanStatus = true;
           if (aktifRef.current !== sid) return;
           // keadaan kartu bisa berubah untuk kartu di jawaban sebelumnya → seluruh utas
           if (event === 'tindakan_status') setPesan((prev) => terapkanStatusTindakan(prev, data));
@@ -329,14 +333,16 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
       });
       ubah((p) => akhiriJawaban(p, hasil.aborted));
     } catch (e) {
+      if (e?.status === 403) segarkanStatus = true;
       ubah((p) => ({ ...p, keadaan: 'galat', statusTeks: '', galat: { kode: e?.status || 'galat', pesan: e?.message || 'Asisten AI gagal menjawab.' } }));
     } finally {
       if (abortRef.current === ctrl) abortRef.current = null;
       mengalirRef.current = false;
       setMengalir(false);
       muatDaftar(true);
+      if (segarkanStatus) muatStatus();
     }
-  }, [siap, cv, periode, muatDaftar, KUNCI_SESI, ruang]);
+  }, [siap, cv, periode, muatDaftar, muatStatus, KUNCI_SESI, ruang]);
 
   /**
    * Muat ulang isi percakapan tanpa kerangka memuat (keadaan & rencana kartu dari server = sumber kebenaran).

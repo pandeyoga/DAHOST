@@ -43,6 +43,14 @@ Tahap E (9 Nov 2026, Kontrak K2) — lampiran berkas:
   `GET /sessions/{id}`: pesan pengguna membawa `lampiran: [{id, nama, jenis, ukuran_kb}]`.
   DELETE /sessions/{id} juga menghapus berkas Anthropic milik percakapan itu (upaya terbaik).
 Berkas keluaran kode (K3) diunduh lewat `GET /api/asisten-ai/berkas/{id}` (routes/asisten_ai_berkas_routes.py).
+
+Asisten AI per pengguna (10 Nov 2026, keputusan owner — core/asisten_ai/akses_pengguna.py): saklar per akun
+(`users.asisten_ai.aktif`, bawaan MATI untuk staf; owner/superadmin selalu aktif) menutup KETIGA ruang. Akun yang
+dimatikan masih bisa membaca riwayat & ingatannya sendiri dan membatalkan kartu, tetapi TIDAK bisa membuat percakapan,
+mengirim pesan, melampirkan berkas, atau menyetujui kartu (403 / galat SSE `pengguna_nonaktif`). Batas pertanyaan per
+hari → galat SSE `batas_pertanyaan`; batas tindakan per hari akun ini dipakai mesin & persetujuan kartu.
+`GET /status` membawa `pengguna` = {aktif, sumber, batas_pertanyaan, batas_tindakan, pertanyaan_hari_ini} dan
+`siap: false` + `alasan` pengguna_nonaktif | batas_pertanyaan bila akun ini tertahan.
 """
 from __future__ import annotations
 
@@ -55,6 +63,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from auth import require_auth
+from core.asisten_ai import akses_pengguna as akp
 from core.asisten_ai import ingatan as ing
 from core.asisten_ai import lampiran as lmp
 from core.asisten_ai import mesin, proaktif, saran, simpan
@@ -130,15 +139,35 @@ def _galat_http(e: "tdk.GalatTindakan") -> HTTPException:
     return HTTPException(e.status, e.pesan)
 
 
+async def _wajib_aktif(user: dict, pesan: str = akp.PESAN_NONAKTIF) -> dict:
+    """Saklar Asisten AI per akun (10 Nov 2026). 403 bila akun ini dimatikan; return aturan efektif."""
+    aturan, galat = await akp.periksa(get_db(), user)
+    if galat:
+        raise HTTPException(403, pesan)
+    return aturan
+
+
 @router.get("/status")
 async def status(request: Request):
     user = await require_auth(request)
+    db = get_db()
     out = await mesin.status_siap()
     out["ruang"] = ruang_diizinkan(user)
     try:
-        out["tindakan_hari_ini"] = await tdk.jumlah_hari_ini(get_db(), user["id"])
+        out["tindakan_hari_ini"] = await tdk.jumlah_hari_ini(db, user["id"])
     except Exception:  # noqa: BLE001 — status tetap tampil walau hitungan gagal
         out["tindakan_hari_ini"] = None
+    # Asisten AI per pengguna (10 Nov 2026): saklar + batas akun ini. Akun tertahan → siap: false + alasan sendiri.
+    aturan = await akp.aturan(db, user)
+    pertanyaan = await akp.jumlah_pertanyaan_hari_ini(db, user["id"])
+    out["pengguna"] = {**aturan, "pertanyaan_hari_ini": pertanyaan}
+    out["batas_tindakan_harian"] = aturan["batas_tindakan"]
+    # Akun dimatikan selalu menang (apa pun keadaan AI); batas pertanyaan hanya bila AI-nya sendiri siap.
+    if not aturan["aktif"]:
+        out.update({"siap": False, "alasan": akp.KODE_NONAKTIF, "pesan": akp.PESAN_NONAKTIF})
+    elif out.get("siap") and aturan["batas_pertanyaan"] > 0 and pertanyaan >= aturan["batas_pertanyaan"]:
+        out.update({"siap": False, "alasan": akp.KODE_BATAS_PERTANYAAN,
+                    "pesan": akp.PESAN_BATAS_PERTANYAAN.format(batas=aturan["batas_pertanyaan"])})
     return out
 
 
@@ -166,7 +195,9 @@ async def daftar_sesi(request: Request, ruang: Optional[str] = None):
 async def buat_sesi(request: Request):
     user = await require_auth(request)
     body = await _body(request)
-    return await simpan.buat_sesi(get_db(), user["id"], body.get("judul"), ruang=_ruang_dari(user, body.get("ruang")))
+    ruang = _ruang_dari(user, body.get("ruang"))
+    await _wajib_aktif(user)
+    return await simpan.buat_sesi(get_db(), user["id"], body.get("judul"), ruang=ruang)
 
 
 @router.get("/sessions/{sesi_id}")
@@ -237,6 +268,12 @@ async def kirim_pesan(sesi_id: str, request: Request):
     if not sesi:
         raise HTTPException(404, "Percakapan tidak ditemukan.")
     _ruang_dari(user, sesi.get("ruang") or "umum")   # akses portal dicabut sesudah percakapan dibuat → 403
+    # Asisten AI per pengguna (10 Nov 2026): akun dimatikan / batas pertanyaan hari ini → galat lewat aliran yang
+    # sama dengan gerbang AI (tidak ada pesan yang disimpan).
+    aturan, galat = await akp.periksa(db, user, kirim=True)
+    if galat:
+        return StreamingResponse(mesin.aliran_galat(galat["kode"], galat["pesan"]),
+                                 media_type="text/event-stream", headers=_SSE_HEADERS)
     try:
         lampiran = await lmp.periksa_untuk_pesan(db, user["id"], body.get("lampiran"))
     except lmp.GalatLampiran as e:
@@ -244,7 +281,7 @@ async def kirim_pesan(sesi_id: str, request: Request):
 
     jalan, galat = await mesin.siapkan_jalan(db=db, user=user, sesi=sesi, teks=teks, cv=cv, periode=periode,
                                              today=today, token=_token(request), app=request.app,
-                                             lampiran=lampiran)
+                                             lampiran=lampiran, batas_tindakan=aturan["batas_tindakan"])
     if galat:
         return StreamingResponse(mesin.aliran_galat(galat["kode"], galat["pesan"]),
                                  media_type="text/event-stream", headers=_SSE_HEADERS)
@@ -259,6 +296,7 @@ async def unggah_lampiran(request: Request, berkas: UploadFile = File(...)):
     """Unggah SATU berkas untuk dilampirkan di pesan berikutnya (belum dikirim ke AI sampai pesannya dikirim)."""
     user = await require_auth(request)
     try:
+        await _wajib_aktif(user)
         data = await berkas.read(lmp.MAKS_UKURAN + 1)
     finally:
         await berkas.close()
@@ -299,10 +337,15 @@ async def putuskan_tindakan(tindakan_id: str, request: Request):
     alasan = body.get("alasan")
     if alasan is not None and not isinstance(alasan, str):
         raise HTTPException(400, "Alasan harus berupa teks.")
+    # Asisten AI per pengguna (10 Nov 2026): akun dimatikan tidak bisa MENYETUJUI kartu; membatalkan tetap boleh.
+    aturan = await akp.aturan(get_db(), user)
+    if keputusan == "setujui" and not aturan["aktif"]:
+        raise HTTPException(403, akp.PESAN_SETUJUI_NONAKTIF)
     try:
         jalan = await mesin.siapkan_putusan(db=get_db(), user=user, tindakan_id=tindakan_id, keputusan=keputusan,
                                             ubahan=ubahan, alasan=alasan or "", cv=cv, today=today_wib(),
-                                            token=_token(request), app=request.app)
+                                            token=_token(request), app=request.app,
+                                            batas_tindakan=aturan["batas_tindakan"])
     except tdk.GalatTindakan as e:
         raise _galat_http(e) from None
     mesin.mulai(jalan)

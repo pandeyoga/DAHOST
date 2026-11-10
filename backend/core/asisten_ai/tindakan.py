@@ -572,11 +572,12 @@ def _galat_keadaan(doc: dict) -> GalatTindakan:
 
 
 async def periksa_dan_kunci(db, user: dict, doc: dict, *, keputusan: str, ubahan: Any, alasan: str,
-                            buat_ctx_baca: Callable[[dict], ab.AlatContext]) -> Putusan:
+                            buat_ctx_baca: Callable[[dict], ab.AlatContext], batas: Optional[int] = None) -> Putusan:
     """Semua pemeriksaan SEBELUM aliran dimulai (galat → HTTP 4xx), lalu klaim atomik kartu.
 
     Setujui: saklar menyala, alat masih ada, alasan (risiko menengah), batas harian, ubahan sah → `siapkan`
-    dijalankan ULANG dengan isian baru (validasi penuh lagi). Batal: selalu boleh selama masih menunggu."""
+    dijalankan ULANG dengan isian baru (validasi penuh lagi). Batal: selalu boleh selama masih menunggu.
+    `batas` (10 Nov 2026) = batas tindakan per hari akun ini (`akses_pengguna`); None = batas bawaan."""
     if keputusan not in ("setujui", "batal"):
         raise GalatTindakan(400, "Keputusan harus setujui atau batal.")
     if doc.get("keadaan") != "menunggu":
@@ -594,8 +595,9 @@ async def periksa_dan_kunci(db, user: dict, doc: dict, *, keputusan: str, ubahan
                                      "Kartu masih bisa dibatalkan.")
         if (doc.get("risiko") or alat.risiko) == "menengah" and len(alasan) < MIN_ALASAN_MENENGAH:
             raise GalatTindakan(400, LAYAR_ALASAN)
-        if await jumlah_hari_ini(db, doc["user_id"]) >= aturan["batas"]:
-            raise GalatTindakan(409, LAYAR_BATAS.format(batas=aturan["batas"]))
+        batas = aturan["batas"] if batas is None else batas
+        if await jumlah_hari_ini(db, doc["user_id"]) >= batas:
+            raise GalatTindakan(409, LAYAR_BATAS.format(batas=batas))
         args, ubahan_bersih = terapkan_ubahan(args, doc.get("rencana") or {}, ubahan)
         if ubahan_bersih:
             errs = ab.periksa_skema(alat.input_schema, args)
