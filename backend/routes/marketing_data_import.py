@@ -1627,14 +1627,31 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
             # diterima lalu DITIMPA diam-diam oleh sinkron shift/kreator.
             return None, ["Baris jenis 'live' tidak diterima: omzet live dihitung dari "
                           "pesanan berkanal LIVE (impor pesanan), bukan diketik di rekap. "
-                          "Isi angka live di kolom kanal 'Live' pada baris jenis 'total'."]
+                          "Isi angka live di kolom \"Kanal Live (Rp)\" pada baris jenis 'total'."]
+        # 11 Nov 2026 — kolom "Kanal … (Rp)" = rincian omzet total per kanal (bagian dari
+        # Revenue, sisanya "Lainnya"). Disimpan sebagai `traffic_manual`, tidak sebagai
+        # field akar, lalu digabung lewat `core.marketing_sales_shape.merge_traffic`.
+        from core.marketing_import_schema import SALES_KANAL_PREFIX
+        kanal_raw = {k[len(SALES_KANAL_PREFIX):]: d.pop(k) for k in list(d)
+                     if k.startswith(SALES_KANAL_PREFIX)}
+        try:
+            manual = _shape.clean_manual_traffic(kanal_raw)
+            _shape.assert_manual_fits(manual, d.get("revenue") or 0, _shape.DASAR_OMZET)
+        except _shape.KanalTidakSah as e:
+            return None, [str(e)]
+        flat = {k: v for k, v in d.items() if k not in ("account_id", "date", "revenue_type")}
+        extra = None
+        if manual:
+            traffic, status = _shape.merge_traffic(None, manual, d.get("revenue") or 0)
+            flat["traffic"] = traffic
+            extra = {"traffic_manual": manual, "traffic_manual_status": status}
         doc = _shape.build_daily_doc(
             account=acc,
             date=d.get("date"),
             revenue_type=rtype,
-            flat={k: v for k, v in d.items()
-                  if k not in ("account_id", "date", "revenue_type")},
+            flat=flat,
             source=_shape.SOURCE_IMPORT,
+            extra=extra,
         )
         return doc, warn
 
@@ -2168,6 +2185,16 @@ def _update_payload(st: SourceType, doc: dict, existing: dict) -> dict:
     jenis konten dengan nilai turunan berkas akan MENGHAPUS rencana konten yang
     ditulis staf — kerusakan senyap yang baru terasa saat rapat mingguan.
     """
+    if st.key == "sales_daily" and "traffic_manual" not in doc and existing.get("traffic_manual"):
+        # 11 Nov 2026 — berkas tanpa kolom kanal tidak menghapus rincian kanal yang sudah
+        # diisi; rincian lama dihitung ulang terhadap omzet baru dari berkas.
+        try:
+            manual = _shape.clean_manual_traffic(existing.get("traffic_manual"))
+        except _shape.KanalTidakSah:
+            manual = {}
+        traffic, status = _shape.merge_traffic(None, manual,
+                                               _shape.read_metrics(doc).get("revenue"))
+        return {**doc, "traffic": traffic, "traffic_manual_status": status}
     if st.key != "content_performance":
         return doc
     out = {k: doc[k] for k in _CONTENT_KPI_PATCH if k in doc}
@@ -3142,6 +3169,8 @@ _DIFF_HIDE = {
     "status_history", "_import_session_id", "_import_source_type",
     "reserved_rows", "reserved_qty", "stock_reserved",
     "fulfillment_import_at", "fulfillment_import_session_id",
+    # 11 Nov 2026 — hasil gabung kanal & jejaknya; yang ditampilkan "Rincian kanal"
+    "traffic", "traffic_manual_status", "traffic_manual_by", "traffic_manual_at",
 }
 _DIFF_MAX = 14        # cukup untuk dibaca; sisanya diringkas "+N field lain"
 
@@ -3198,7 +3227,43 @@ def _same(a: Any, b: Any) -> bool:
 
 def _label_of(st: SourceType, name: str) -> str:
     f = st.field(name)
+    if f is None and name == "traffic_manual":
+        return "Rincian kanal"
     return f.label if f else name
+
+
+def _disp_kanal(v: Any) -> str:
+    """11 Nov 2026 — rincian kanal untuk kolom "lama → baru": "Live Rp3.000.000, Video …"."""
+    if not isinstance(v, dict) or not v:
+        return "—"
+    return ", ".join(f"{_shape.TRAFFIC_LABELS.get(k, k)} {_shape.rp_teks(x)}"
+                     for k, x in v.items() if x)
+
+
+def _derived_daily_safe(doc: dict, existing: dict, actor: str) -> tuple:
+    """Pagar F2 + rincian kanal (11 Nov 2026) untuk baris Sales Harian yang tanggalnya
+    TURUNAN pesanan → ``($set aman, [label dilindungi], [catatan kanal])``.
+
+    Omzet & jumlah pesanan tetap milik rollup. Kolom "Kanal … (Rp)" BOLEH dipakai: ia
+    hanya membagi bagian "Lainnya" dari pesanan hari itu (keputusan owner), dan bila
+    lebih besar dari bagian itu, rinciannya tidak dipakai dengan alasan yang terbaca.
+    """
+    base = {k: v for k, v in doc.items()
+            if k not in ("traffic", "traffic_manual", "traffic_manual_status")}
+    safe, protected = _shape.derived_safe_update(base)
+    notes: List[str] = []
+    manual = doc.get("traffic_manual") or {}
+    if manual:
+        cap, dasar = _shape.manual_traffic_cap(existing)
+        try:
+            _shape.assert_manual_fits(manual, cap, dasar)
+        except _shape.KanalTidakSah as e:
+            notes.append(f"Rincian kanal tidak dipakai: {e}")
+        else:
+            safe.update(_shape.manual_traffic_update(existing, manual, actor=actor))
+            notes.append("Rincian kanal dipakai untuk membagi bagian \"Lainnya\" (pesanan "
+                         "tanpa kanal) hari itu; kanal dari pesanan tetap.")
+    return safe, protected, notes
 
 
 def _diff_changes(st: SourceType, payload: dict, existing: dict) -> tuple:
@@ -3214,8 +3279,9 @@ def _diff_changes(st: SourceType, payload: dict, existing: dict) -> tuple:
         if len(changes) >= _DIFF_MAX:
             hidden += 1
             continue
+        disp = _disp_kanal if k == "traffic_manual" else _disp
         changes.append({"field": k, "label": _label_of(st, k),
-                        "before": _disp(old_v), "after": _disp(new_v)})
+                        "before": disp(old_v), "after": disp(new_v)})
     return changes, hidden
 
 
@@ -3228,8 +3294,12 @@ def _new_row_changes(st: SourceType, doc: dict) -> tuple:
     """
     changes: List[dict] = []
     hidden = 0
+    from core.marketing_import_schema import SALES_KANAL_PREFIX
     for f in st.input_fields:
         v = doc.get(f.name)
+        if v is None and f.name.startswith(SALES_KANAL_PREFIX):
+            # kolom kanal disimpan di `traffic_manual`, bukan field akar
+            v = (doc.get("traffic_manual") or {}).get(f.name[len(SALES_KANAL_PREFIX):])
         if v in (None, "", 0, 0.0, []):
             continue
         if len(changes) >= _DIFF_MAX:
@@ -3424,16 +3494,16 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
                     target_id=existing.get("id", ""), status_now=status_now)
                 continue
             if st.key == "sales_daily" and _shape.is_derived(existing):
-                safe, protected = _shape.derived_safe_update(doc)
+                safe, protected, kanal_notes = _derived_daily_safe(doc, existing, "pratinjau")
                 msg = _shape.derived_lock_message(
                     existing.get("date") or doc.get("date"), protected,
                     kept=len(safe))
                 if safe:
                     changes, hidden = _diff_changes(st, safe, existing)
-                    add(row_no, ref, "sebagian", [msg], changes, hidden,
+                    add(row_no, ref, "sebagian", [msg, *kanal_notes], changes, hidden,
                         target_id=existing.get("id", ""), status_now=status_now)
                 else:
-                    add(row_no, ref, "dilewati", [msg],
+                    add(row_no, ref, "dilewati", [msg, *kanal_notes],
                         target_id=existing.get("id", ""), status_now=status_now)
                 continue
             if on_duplicate == "update":
@@ -3804,7 +3874,8 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
                             continue
                         # ── PAGAR F2: omzet turunan tidak boleh ditimpa berkas ──
                         if st.key == "sales_daily" and _shape.is_derived(existing):
-                            safe, protected = _shape.derived_safe_update(doc)
+                            safe, protected, kanal_notes = _derived_daily_safe(
+                                doc, existing, user.get("email", "system"))
                             msg = _shape.derived_lock_message(
                                 existing.get("date") or doc.get("date"),
                                 protected, kept=len(safe))
@@ -3818,12 +3889,14 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
                                 updated += 1
                                 row_notes.append({"row": r["row_id"] + 2,
                                                   "action": "sebagian disimpan",
-                                                  "why": [msg], "id": existing["id"]})
+                                                  "why": [msg, *kanal_notes],
+                                                  "id": existing["id"]})
                             else:
                                 skipped += 1
                                 row_notes.append({"row": r["row_id"] + 2,
                                                   "action": "dilewati",
-                                                  "why": [msg], "id": existing["id"]})
+                                                  "why": [msg, *kanal_notes],
+                                                  "id": existing["id"]})
                             continue
                         if opt.on_duplicate == "update":
                             payload = _update_payload(st, doc, existing)

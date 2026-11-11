@@ -91,7 +91,7 @@ def _order_env(db, monkeypatch, user=SA):
 def test_q4_pesanan_manual_toko_marketplace_wajib_nomor_dan_tanggal(db, monkeypatch):
     mo = _order_env(db, monkeypatch)
     base = dict(platform="tiktok", account_id="TTK-01", customer_name="Uji", catalog_item_id="c1",
-                quantity=1, price_final=100_000)
+                quantity=1, price_final=100_000, order_channel="live")
     with pytest.raises(HTTPException) as e:
         run(mo.create_order(mo.OrderCreateBody(**base), Req()))
     assert e.value.status_code == 400 and "No. Pesanan" in e.value.detail
@@ -110,7 +110,8 @@ def test_q4_toko_non_marketplace_tetap_boleh_tanpa_nomor(db, monkeypatch):
     mo = _order_env(db, monkeypatch)
     out = run(mo.create_order(mo.OrderCreateBody(platform="whatsapp", account_id="WA-01",
                                                  customer_name="Uji", catalog_item_id="c1",
-                                                 quantity=1, price_final=100_000), Req()))
+                                                 quantity=1, price_final=100_000,
+                                                 order_channel="Lainnya"), Req()))
     assert out["order_id"].startswith("MAN-")
 
 

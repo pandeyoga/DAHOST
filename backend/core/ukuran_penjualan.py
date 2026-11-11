@@ -581,13 +581,37 @@ async def rincian_item(db, orders: Sequence[dict], cara: str) -> List[dict]:
     return out
 
 
-def rincian_kanal(orders: Sequence[dict]) -> List[dict]:
+def rincian_kanal(orders: Sequence[dict], rows: Optional[Sequence[dict]] = None) -> List[dict]:
+    """Omzet, pesanan, unit, dan pembeli per kanal.
+
+    11 Nov 2026 (rincian kanal manual) — bila ``rows`` (baris :func:`baca_rekap`) diberikan,
+    OMZET per kanal dibaca dari pecahan kanal rekap harian (``kanal`` = kanal pesanan +
+    rincian yang diketik staf, lihat ``core.marketing_sales_shape.merge_traffic``) untuk
+    setiap (toko, tanggal) yang punya pecahan; tanggal tanpa pecahan memakai pesanannya.
+    Tanpa ini, omzet yang diinput manual per kanal tidak pernah muncul di laporan.
+    Jumlah pesanan/unit/pembeli selalu dari pesanan (rekap tidak menyimpannya per kanal).
+    """
     acc: Dict[str, dict] = {}
+
+    def bucket(k: str) -> dict:
+        return acc.setdefault(k, {"kunci": k, "label": TRAFFIC_LABEL[k], "omzet": 0.0,
+                                  "pesanan": 0, "unit": 0, "_pembeli": set()})
+
+    hari_berkanal = set()
+    for r in rows or ():
+        kanal = {k: _num(v) for k, v in (r.get("kanal") or {}).items() if k in TRAFFIC_LABEL}
+        if not any(kanal.values()):
+            continue
+        hari_berkanal.add((r.get("account_id"), r.get("date")))
+        for k, v in kanal.items():
+            if v:
+                bucket(k)["omzet"] += v
     for o in orders:
         k = kanal_pesanan(o)
-        b = acc.setdefault(k, {"kunci": k, "label": TRAFFIC_LABEL[k], "omzet": 0.0,
-                               "pesanan": 0, "unit": 0, "_pembeli": set()})
-        b["omzet"] += _rollup.order_revenue_product(o)
+        b = bucket(k)
+        hari = (o.get("account_id"), o.get("_tanggal") or kunci_tanggal(o.get("order_date")))
+        if hari not in hari_berkanal:
+            b["omzet"] += _rollup.order_revenue_product(o)
         b["pesanan"] += 1
         b["unit"] += sum(ln["unit"] for ln in baris_item(o))
         pk = kunci_pembeli(o)
@@ -597,6 +621,40 @@ def rincian_kanal(orders: Sequence[dict]) -> List[dict]:
             "pesanan": b["pesanan"], "unit": b["unit"], "pembeli": len(b["_pembeli"])}
            for b in acc.values()]
     out.sort(key=lambda r: -r["omzet"])
+    return out
+
+
+KANAL_UTAMA = ("live", "video", "product_card", "affiliate")
+
+
+def kanal_per_toko(rows: Sequence[dict], orders: Sequence[dict],
+                   toko: Dict[str, dict]) -> List[dict]:
+    """11 Nov 2026 — pecahan omzet per kanal untuk SETIAP toko dalam periode.
+
+    → ``[{account_id, account_name, platform, omzet, kanal{kode: omzet}, belum_dirinci}]``.
+    ``belum_dirinci`` = omzet rekap yang tidak punya pecahan kanal (hari tanpa pesanan
+    berkanal dan tanpa rincian ketikan) — ditampilkan apa adanya, tidak ditebak.
+    """
+    per_rows: Dict[str, List[dict]] = {}
+    for r in rows:
+        per_rows.setdefault(r.get("account_id"), []).append(r)
+    per_orders: Dict[str, List[dict]] = {}
+    for o in orders:
+        per_orders.setdefault(o.get("account_id"), []).append(o)
+    out: List[dict] = []
+    for aid in sorted(set(per_rows) | set(per_orders), key=lambda a: str(a)):
+        rs = per_rows.get(aid, [])
+        omzet = jumlahkan(rs)["omzet"]
+        kanal = {k: 0.0 for k in TRAFFIC_LABEL}
+        for c in rincian_kanal(per_orders.get(aid, []), rs):
+            kanal[c["kunci"]] = c["omzet"]
+        terinci = sum(kanal.values())
+        a = toko.get(aid) or {}
+        out.append({"account_id": aid, "account_name": a.get("account_name") or aid,
+                    "platform": _platform(a.get("platform")), "omzet": _rp(omzet),
+                    "kanal": {k: _rp(v) for k, v in kanal.items()},
+                    "belum_dirinci": _rp(max(0.0, omzet - terinci))})
+    out.sort(key=lambda r: (-r["omzet"], r["account_name"]))
     return out
 
 
@@ -671,7 +729,7 @@ def _grup_rekap(rows: Sequence[dict], orders: Sequence[dict], toko: Dict[str, di
 async def _grup(db, rows, orders, toko, kelompok) -> List[dict]:
     if kelompok in KELOMPOK_PESANAN:
         if kelompok == "kanal":
-            return rincian_kanal(orders)
+            return rincian_kanal(orders, rows)
         rinci = await rincian_item(db, orders, kelompok)
         return [{"kunci": r["kunci"], "label": r["label"], "sku": r["sku"], "omzet": r["omzet"],
                  "pesanan": r["pesanan"], "unit": r["unit"],
@@ -746,8 +804,12 @@ async def analitik_penjualan(db, accounts: Sequence[dict], dari: str, sampai: st
         cakupan = {"omzet_rincian": _rp(rinci_omzet),
                    "persen_dari_total": _pct(rinci_omzet, total["omzet"]),
                    "pesanan_terbaca": len(orders),
-                   "catatan": ("Rincian dibaca dari pesanan impor/manual (omzet produk per baris SKU). "
-                               "Toko yang hanya mengisi rekap harian tanpa pesanan tidak punya rincian.")}
+                   "catatan": (("Omzet per kanal dibaca dari pecahan kanal rekap harian (kanal pesanan "
+                                "ditambah rincian kanal yang diisi staf); hari tanpa pecahan memakai "
+                                "pesanannya. Jumlah pesanan per kanal hanya dari pesanan.")
+                               if kelompok == "kanal" else
+                               ("Rincian dibaca dari pesanan impor/manual (omzet produk per baris SKU). "
+                                "Toko yang hanya mengisi rekap harian tanpa pesanan tidak punya rincian."))}
         if total["omzet"] and abs(rinci_omzet - total["omzet"]) > max(1000.0, total["omzet"] * 0.01):
             catatan.append("Jumlah rincian tidak sama dengan total omzet: sebagian omzet berasal dari "
                            "rekap harian tanpa pesanan, atau toko memakai basis nilai pesanan.")

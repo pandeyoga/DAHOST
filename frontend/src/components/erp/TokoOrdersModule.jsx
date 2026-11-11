@@ -13,6 +13,8 @@ import { toast } from 'sonner';
 import { PageHeader } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import { CatalogItemPickerDialog } from './CatalogItemPickerDialog';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { KANAL_PESANAN, labelKanal } from '@/lib/kanalPenjualan';
 
 const fmtIDR = formatRupiah;
 const fmtDate = (d) => (d ? new Date(d).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-');
@@ -74,6 +76,9 @@ const emptyOrder = {
   shipping_cost: 0,
   courier: '',
   note: '',
+  // 11 Nov 2026 (keputusan owner) — kanal penjualan WAJIB dipilih; akun kreator opsional (afiliasi)
+  order_channel: '',
+  creator_handle: '',
 };
 
 export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
@@ -191,9 +196,10 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
 
   const orderBlocked = useMemo(
     () => !orderForm.customer_name.trim()
+      || !orderForm.order_channel
       || (orderForm.items || []).length === 0
       || Object.keys(orderLineIssues).length > 0,
-    [orderForm.customer_name, orderForm.items, orderLineIssues],
+    [orderForm.customer_name, orderForm.order_channel, orderForm.items, orderLineIssues],
   );
 
   const applyLine = (idx, patch) => setOrderForm((f) => {
@@ -225,6 +231,10 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
   const saveOrder = async () => {
     if (!orderForm.customer_name.trim()) {
       toast.error('Nama customer wajib diisi');
+      return;
+    }
+    if (!orderForm.order_channel) {
+      toast.error('Pilih kanal penjualan (pilih Lainnya bila tidak tahu)');
       return;
     }
     const lines = orderForm.items || [];
@@ -263,6 +273,8 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
         shipping_cost: Number(orderForm.shipping_cost),
         courier: orderForm.courier,
         note: orderForm.note,
+        order_channel: orderForm.order_channel,
+        creator_handle: orderForm.creator_handle.trim(),
       };
       const r = await fetch('/api/marketing/orders', {
         method: 'POST',
@@ -519,6 +531,7 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
                         <span className="font-semibold text-foreground/70">{fmtIDR(o.total_payment)}</span>
                         {o.tracking_number && <span className="font-mono text-primary">{o.tracking_number}</span>}
                         {o.courier && <span>{o.courier}</span>}
+                        {o.order_channel && <span data-testid={`order-channel-${o.id}`}>Kanal {labelKanal(o.order_channel)}</span>}
                         <span>{fmtDate(o.order_date || o.created_at)}</span>
                       </div>
                     </div>
@@ -758,6 +771,32 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
                 data-testid="input-order-date"
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs" htmlFor="input-order-channel">Kanal penjualan *</Label>
+                <SmartNativeSelect id="input-order-channel" className="mt-1 w-full" value={orderForm.order_channel}
+                  searchable={false} data-testid="input-order-channel"
+                  onChange={(e) => setOrderForm((f) => ({ ...f, order_channel: e.target.value }))}>
+                  <option value="">Pilih kanal…</option>
+                  {KANAL_PESANAN.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </SmartNativeSelect>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Dari mana pembeli datang. Pilih Lainnya bila tidak tahu.
+                </p>
+              </div>
+              <div>
+                <Label className="text-xs" htmlFor="input-creator-handle">Akun kreator</Label>
+                <Input
+                  id="input-creator-handle"
+                  className="mt-1"
+                  placeholder={orderForm.order_channel === 'affiliate' ? 'Mis. @namakreator' : 'Opsional'}
+                  value={orderForm.creator_handle}
+                  onChange={(e) => setOrderForm((f) => ({ ...f, creator_handle: e.target.value }))}
+                  data-testid="input-creator-handle"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">Untuk penjualan afiliasi.</p>
+              </div>
+            </div>
             <div>
               <Label className="text-xs">Nama Customer *</Label>
               <Input
@@ -987,6 +1026,8 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
                 <span>
                   {!orderForm.customer_name.trim()
                     ? 'Nama customer wajib diisi.'
+                    : !orderForm.order_channel
+                    ? 'Pilih kanal penjualan (Lainnya bila tidak tahu).'
                     : 'Perbaiki produk yang ditandai dulu — order tidak disimpan agar stok tidak terjual dua kali.'}
                 </span>
               </div>

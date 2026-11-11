@@ -113,8 +113,11 @@ async def performance_overview(
         b["orders"] += r["pesanan"]
 
     orders = await _ukuran.baca_pesanan(db, list(by_acc), d0, d1)
-    by_channel = {c["kunci"]: {"revenue": c["omzet"], "orders": c["pesanan"]}
-                  for c in _ukuran.rincian_kanal(orders)}
+    # 11 Nov 2026 — omzet per kanal dari pecahan kanal rekap harian (kanal pesanan +
+    # rincian yang diisi staf di Input Sales/impor Sales Harian), per periode & per toko.
+    by_channel = {c["kunci"]: {"revenue": c["omzet"], "orders": c["pesanan"], "label": c["label"]}
+                  for c in _ukuran.rincian_kanal(orders, oms["baris"])}
+    by_store_channel = _ukuran.kanal_per_toko(oms["baris"], orders, by_acc)
 
     return success_response(data={
         "total_revenue": tot["omzet"],
@@ -128,6 +131,10 @@ async def performance_overview(
         "definition": _ukuran.DEFINISI_OMZET,
         "by_platform": by_platform,
         "by_channel": by_channel,
+        "by_store_channel": by_store_channel,
+        "channel_note": ("Kanal dari pesanan impor (TikTok: Live/Video/Kartu produk) ditambah "
+                         "rincian kanal yang diisi staf. Ekspor Shopee tidak membawa kanal, jadi "
+                         "pesanan Shopee masuk Lainnya kecuali dirinci di Input Sales."),
         "daily_trend": [daily[k] for k in sorted(daily)],
     }, metadata={
         "start_date": d0,

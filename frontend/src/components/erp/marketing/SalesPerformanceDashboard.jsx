@@ -16,13 +16,14 @@ import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import PageLayout from '../layout/PageLayout';
 import PeriodPicker, { PERIOD_PRESETS } from '../finance/PeriodPicker';
 import { EmptyState, StatTile } from '../moduleAtoms';
+import { KANAL_PESANAN, KANAL_UTAMA, kanalUtama, labelKanal } from '@/lib/kanalPenjualan';
 import axios from 'axios';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 function fmt(n) { return new Intl.NumberFormat('id-ID').format(n || 0); }
 function fmtRp(n) { return `Rp ${fmt(n)}`; }
-const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada', whatsapp: 'WhatsApp', website: 'Website', lainnya: 'Lainnya' };
 const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
 // Tanpa tanggal, server memakai 30 hari terakhir — pilihan bawaan diberi nama itu (bukan "semua waktu").
 const BAWAAN_30 = { key: 'all', label: '30 hari terakhir' };
@@ -111,6 +112,18 @@ export default function SalesPerformanceDashboard({ token }) {
   const rentang = meta?.start_date ? `${formatTanggalID(meta.start_date)} – ${formatTanggalID(meta.end_date)}` : '';
   const nilai = (v) => (overviewLoading && !overview ? '…' : v);
   const perPlatform = Object.entries(overview?.by_platform || {}).map(([platform, d]) => ({ platform, ...d }));
+  // 11 Nov 2026 — pecahan omzet per kanal (kanal pesanan + rincian yang diisi staf di Input Sales)
+  const totalKanal = Object.values(overview?.by_channel || {}).reduce((s, d) => s + Number(d.revenue || 0), 0);
+  const perKanal = Object.entries(overview?.by_channel || {})
+    .map(([k, d]) => ({ k, label: d.label || labelKanal(k), revenue: Number(d.revenue || 0), orders: Number(d.orders || 0) }))
+    .filter((r) => r.revenue > 0 || r.orders > 0)
+    .sort((a, b) => b.revenue - a.revenue);
+  const perTokoKanal = (overview?.by_store_channel || []).map((r) => ({ ...r, utama: kanalUtama(r.kanal) }));
+  const persen = (v, t) => (t > 0 ? `${Math.round((v / t) * 1000) / 10}%`.replace('.', ',') : '—');
+  const kolomRp = (k, label) => ({
+    kunci: k, label, rata: 'kanan',
+    isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{r.utama[k] ? fmtRp(r.utama[k]) : '—'}</span>,
+  });
 
   return (
     <PageLayout testId="sales-dashboard" title="Performa penjualan"
@@ -147,6 +160,56 @@ export default function SalesPerformanceDashboard({ token }) {
           <StatTile label="Barang terjual" value={nilai(fmt(overview?.total_items))} sub="Jumlah pcs di periode terpilih" />
         </div>
       )}>
+      <section className="space-y-2" data-testid="sales-per-kanal">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-base font-semibold">Omzet per kanal</p>
+            {overview?.channel_note && <p className="text-xs text-muted-foreground">{overview.channel_note}</p>}
+          </div>
+          <TombolUnduh namaBerkas="omzet-per-kanal" namaLembar="Per kanal" baris={perKanal} testId="sales-kanal-unduh"
+            kolom={[
+              { label: 'Kanal', nilai: (r) => r.label }, { label: 'Omzet', nilai: (r) => r.revenue },
+              { label: 'Bagian (%)', nilai: (r) => (totalKanal ? Math.round((r.revenue / totalKanal) * 1000) / 10 : 0) },
+              { label: 'Pesanan tercatat', nilai: (r) => r.orders },
+            ]} />
+        </div>
+        <TabelData baris={perKanal} kunci={(r) => r.k} testId="sales-kanal-table"
+          kosong={<EmptyState title="Belum ada pecahan kanal" description="Isi rincian per kanal di Input Sales, atau impor pesanan TikTok yang membawa kanal." />}
+          kolom={[
+            { kunci: 'kanal', label: 'Kanal', hp: 'judul', isi: (r) => <span className="font-medium">{r.label}</span> },
+            { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.revenue)}</span> },
+            { kunci: 'bagian', label: 'Bagian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{persen(r.revenue, totalKanal)}</span> },
+            { kunci: 'pesanan', label: 'Pesanan tercatat', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.orders ? fmt(r.orders) : '—'}</span> },
+          ]} />
+      </section>
+
+      <section className="space-y-2" data-testid="sales-kanal-per-toko">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-base font-semibold">Kanal per toko</p>
+          <TombolUnduh namaBerkas="kanal-per-toko" namaLembar="Kanal per toko" baris={perTokoKanal} testId="sales-kanal-toko-unduh"
+            kolom={[
+              { label: 'Toko', nilai: (r) => r.account_name }, { label: 'Platform', nilai: (r) => labelPlatform(r.platform) },
+              { label: 'Omzet', nilai: (r) => Number(r.omzet || 0) },
+              ...[...KANAL_PESANAN, ['organic', 'Organik']].map(([k, label]) => ({ label, nilai: (r) => Number(r.kanal?.[k] || 0) })),
+              { label: 'Belum dirinci', nilai: (r) => Number(r.belum_dirinci || 0) },
+            ]} />
+        </div>
+        <TabelData baris={perTokoKanal} kunci={(r) => r.account_id} testId="sales-kanal-toko-table"
+          kosong={<EmptyState title="Belum ada omzet di periode ini" description="Ubah periode atau toko." />}
+          kolom={[
+            { kunci: 'toko', label: 'Toko', hp: 'judul', isi: (r) => (
+              <div><p className="font-medium">{r.account_name}</p><p className="text-xs text-muted-foreground">{labelPlatform(r.platform)}</p></div>) },
+            ...KANAL_UTAMA.map((k) => kolomRp(k, labelKanal(k))),
+            kolomRp('other', 'Lainnya'),
+            { kunci: 'belum', label: 'Belum dirinci', rata: 'kanan', isi: (r) => (
+              <span className="tabular-nums text-muted-foreground md:whitespace-nowrap">{r.belum_dirinci ? fmtRp(r.belum_dirinci) : '—'}</span>) },
+            { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (r) => <span className="tabular-nums font-semibold md:whitespace-nowrap">{fmtRp(r.omzet)}</span> },
+          ]} />
+        <p className="text-xs text-muted-foreground">
+          Lainnya = iklan, kampanye, pencarian, dan pesanan tanpa kanal. Belum dirinci = omzet hari yang belum punya pecahan kanal.
+        </p>
+      </section>
+
       <section className="space-y-2" data-testid="sales-top-products">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-base font-semibold">10 produk terlaris</p>

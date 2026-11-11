@@ -425,8 +425,19 @@ async def recompute_daily(db, account_id: str, date: str, *,
     }
     # traffic & sebagian fulfillment: per-field, supaya angka dari sumber lain
     # (KPI mingguan F8, entri manual) tidak ikut terhapus.
-    for k, v in traffic.items():
+    # 11 Nov 2026 (keputusan owner "Isi bagian Lainnya") — kanal dari PESANAN disimpan
+    # terpisah (`traffic_orders`); rincian yang DIKETIK staf (`traffic_manual`, tidak
+    # pernah ditimpa di sini) hanya membagi bagian "Lainnya" pesanan (mis. Shopee tanpa
+    # kolom kanal). `traffic` = hasil gabung yang dibaca layar. Lihat
+    # `core.marketing_sales_shape.merge_traffic`.
+    manual_traffic = (existing or {}).get("traffic_manual") or {}
+    merged_traffic, manual_status = _shape.merge_traffic(
+        traffic, manual_traffic, metrics.get("revenue"))
+    for k, v in merged_traffic.items():
         set_fields[f"traffic.{k}"] = v
+    set_fields["traffic_orders"] = {k: round(_num(traffic.get(k)), 2) for k in TRAFFIC_KEYS}
+    if manual_status:
+        set_fields["traffic_manual_status"] = manual_status
     for k in DERIVED_FULFILLMENT_KEYS:
         if k in fulfillment:
             set_fields[f"fulfillment.{k}"] = fulfillment[k]
