@@ -192,6 +192,27 @@ def label_aksi(metode: str, jalur: str, jenis: str) -> str:
     return f"{kata} {benda}".strip()
 
 
+def pilih_menu(menu: list, label: str, jalur: str) -> list:
+    """Urutkan menu pemakai: yang labelnya paling mirip label aksi / kata di alamat lebih dulu (mis. aksi pemasok →
+    menu "Pemasok", bukan menu lain yang kebetulan memakai komponen yang sama)."""
+    kata = set(re.findall(r"[a-z0-9]+", label.lower()))
+    for x in _segs(jalur):
+        if not x.startswith("{"):
+            kata |= set(re.findall(r"[a-z0-9]+", _humanis(x).lower())) | set(re.findall(r"[a-z0-9]+", x.lower()))
+    kata -= {"api", "buat", "ubah", "hapus", "rahaza", "dewi", "id"}
+
+    def skor(m):
+        lab = set(re.findall(r"[a-z0-9]+", (m[1] or "").lower())) | set(re.findall(r"[a-z0-9]+", m[0].lower()))
+        return (-len(kata & lab), not m[1], m[0])
+    urut = sorted(menu, key=skor)
+    if urut and not urut[0][1]:
+        sama = [m for m in urut if m[1] and skor(m)[0] == skor(urut[0])[0]]
+        if sama:
+            urut.remove(sama[0])
+            urut.insert(0, sama[0])
+    return urut
+
+
 def id_aksi(metode: str, jalur: str) -> str:
     bag = [("id" if x.startswith("{") else re.sub(r"[^a-z0-9]+", "_", x.lower()).strip("_"))
            for x in _segs(jalur) if x != "api"]
@@ -381,10 +402,11 @@ def susun() -> dict:
                     balik = {"jenis": "hapus_buatan", "jalur": anak[0][1]}
             elif jenis == "ubah" and baca and isian.get("bentuk") in ("bertipe", "bebas"):
                 balik = {"jenis": "kembalikan"}
-        menu = pakai["menu"]
-        portal = pakai["portal"]
-        layar = next((lab for _m, lab in menu if lab), "")
         label = label_aksi(metode, jalur, jenis)
+        menu = pilih_menu(pakai["menu"], label, jalur)
+        portal = pakai["portal"]
+        # menu & nama layar dari menu terbaik yang berlabel (bila menu terbaik tidak berlabel: tanpa nama layar)
+        layar = menu[0][1] if menu else ""
         aksi.append({
             "id": id_aksi(metode, jalur), **dasar, "label": label, "keterangan": paragraf[:300],
             "jenis": jenis, "golongan": gol, "tingkat": aturan.tingkat_untuk(gol, jenis),

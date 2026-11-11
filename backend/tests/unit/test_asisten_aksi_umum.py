@@ -359,7 +359,7 @@ def test_put_mengirim_isian_lengkap_dan_bisa_dibalikkan(env):
     lama = {"id": "x1", "status": "aktif", k1: "lama-1", k2: "lama-2"}
     args = {"aksi": a["id"], "jalur": {p: "x1" for p in a["parameter_jalur"]}, "isian": {k1: "baru-1"}}
     r = tdk.rapikan_rencana(run(K().siapkan(Ctx(lama=lama), args)), args, K())
-    assert [x["label"] for x in r["perubahan"]] == [k1.replace("_", " ")]
+    assert [x["label"] for x in r["perubahan"]] == [au.label_isian(k1)]
     assert r["perubahan"][0]["sebelum"] == "lama-1" and r["perubahan"][0]["sesudah"] == "baru-1"
     ctx = Ctx(lama=lama)
     out = run(K().jalankan(ctx, args, r))
@@ -449,6 +449,12 @@ def test_alasan_kartu_diteruskan_ke_kolom_alasan(env):
 
 
 # ═══ Mesin kartu: risiko tinggi & persetujuan kedua ══════════════════════════
+def test_label_isian_bahasa_indonesia():
+    assert [au.label_isian(k) for k in ("code", "cash_account_id", "due_date", "unit_cost", "po_number", "is_active",
+                                         "harga_coret")] == ["Kode", "Akun kas", "Tanggal jatuh tempo", "Biaya satuan",
+                                                             "Nomor PO", "Aktif", "Harga coret"]
+
+
 def test_konfirmasi_cocok():
     assert tdk.konfirmasi_cocok("Rp 1.250.000", "1250000")
     assert tdk.konfirmasi_cocok("1250000", "1250000")

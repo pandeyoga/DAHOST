@@ -81,6 +81,52 @@ def _doc_dari(r: Any) -> dict:
     return {}
 
 
+# Label isian untuk kartu (bukan nama kolom program — AGENTS.md: istilah program tidak ditampilkan ke pengguna).
+_KATA_ISIAN = {
+    "id": "", "account": "akun", "name": "nama", "code": "kode", "date": "tanggal", "qty": "jumlah",
+    "quantity": "jumlah", "unit": "satuan", "price": "harga", "cost": "biaya", "total": "total", "amount": "nominal",
+    "notes": "catatan", "note": "catatan", "reason": "alasan", "status": "status", "type": "jenis",
+    "category": "kategori", "description": "keterangan", "title": "judul", "start": "mulai", "end": "selesai",
+    "due": "jatuh tempo", "employee": "karyawan", "employees": "karyawan", "vendor": "vendor", "supplier": "pemasok",
+    "customer": "pelanggan", "order": "pesanan", "orders": "pesanan", "product": "produk", "products": "produk",
+    "material": "bahan", "materials": "bahan", "color": "warna", "colors": "warna", "size": "ukuran",
+    "sizes": "ukuran", "location": "lokasi", "period": "periode", "payment": "pembayaran", "method": "cara",
+    "bank": "bank", "cash": "kas", "is": "", "active": "aktif", "enabled": "aktif", "priority": "prioritas",
+    "department": "departemen", "email": "email", "phone": "telepon", "address": "alamat", "items": "rincian",
+    "item": "butir", "lines": "baris", "line": "baris", "platform": "platform", "platforms": "platform",
+    "session": "sesi", "shift": "shift", "style": "style", "model": "model", "time": "jam", "at": "waktu",
+    "deadline": "tenggat", "month": "bulan", "year": "tahun", "user": "pengguna", "role": "peran", "rating": "nilai",
+    "source": "sumber", "reference": "referensi", "ref": "referensi", "no": "nomor", "number": "nomor",
+    "stock": "stok", "min": "minimum", "max": "maksimum", "threshold": "ambang", "sample": "sampel",
+    "request": "permintaan", "tax": "pajak", "pct": "(%)", "file": "berkas", "url": "tautan", "photos": "foto",
+    "images": "foto", "content": "isi", "message": "pesan", "subject": "perihal", "city": "kota", "level": "tingkat",
+    "stage": "tahap", "job": "pekerjaan", "po": "PO", "pr": "PR", "sku": "SKU", "hpp": "HPP", "gl": "akun",
+    "coa": "akun", "debit": "debit", "credit": "kredit", "revenue": "omzet", "viewers": "penonton",
+    "terms": "syarat", "condition": "kondisi", "comments": "komentar", "comment": "komentar", "memo": "memo",
+    "approval": "persetujuan", "admin": "admin", "buyer": "pembeli", "client": "klien", "host": "host",
+    "creator": "kreator", "tracking": "resi", "courier": "kurir", "return": "retur", "needed": "dibutuhkan",
+    "by": "", "effective": "berlaku", "from": "dari", "to": "ke", "original": "asli", "base": "dasar",
+    "range": "rentang", "destination": "tujuan", "expense": "biaya", "per": "per", "pcs": "pcs", "default": "bawaan",
+    "duration": "durasi", "minutes": "menit", "tags": "label", "label": "label", "purpose": "keperluan",
+    "work": "kerja", "seq": "urutan", "business": "usaha", "gender": "jenis kelamin", "season": "musim",
+    "action": "tindakan", "mode": "mode", "key": "kunci", "values": "nilai", "value": "nilai", "hex": "kode warna",
+    "manager": "manajer", "contract": "kontrak", "template": "templat", "catalog": "katalog", "target": "target",
+    "assigned": "ditugaskan", "username": "nama pengguna", "uom": "satuan", "input": "masukan",
+    "harga": "harga", "jual": "jual", "coret": "coret", "catatan": "catatan", "setujui": "setujui",
+}
+
+
+def label_isian(kunci: str) -> str:
+    """'cash_account_id' → 'Kas akun'; kunci yang tidak dikenal tetap terbaca (garis bawah → spasi)."""
+    bag = [k for k in re.split(r"[_\-.]+", str(kunci).lower()) if k]
+    kata = [_KATA_ISIAN.get(k, k) for k in bag]
+    dikenal = [k for k in bag if k in _KATA_ISIAN and _KATA_ISIAN[k]]
+    if len(dikenal) == 2 and len([k for k in kata if k]) == 2 and bag[0] not in ("harga", "catatan"):
+        kata = [k for k in kata if k][::-1]       # susunan Inggris (penjelas-inti) → Indonesia (inti-penjelas)
+    teks = " ".join(k for k in kata if k).strip() or str(kunci)
+    return teks[:1].upper() + teks[1:]
+
+
 def _identitas(doc: dict, cadangan: str = "") -> str:
     for k in _KUNCI_IDENTITAS:
         v = (doc or {}).get(k)
@@ -292,10 +338,10 @@ def _perubahan_satu(a: dict, row: dict, lama: Optional[dict], badan: Optional[di
     for k, v in (row["isian"] or {}).items():
         if jenis == "ubah" and lama is not None and k in lama and _sama(lama.get(k), v):
             continue
-        out.append({"label": k.replace("_", " "), "sebelum": _tampil(lama.get(k)) if lama and k in lama else "—",
+        out.append({"label": label_isian(k), "sebelum": _tampil(lama.get(k)) if lama and k in lama else "—",
                     "sesudah": _tampil(v)})
     for k, v in (row["query"] or {}).items():
-        out.append({"label": k.replace("_", " "), "sebelum": "—", "sesudah": _tampil(v)})
+        out.append({"label": label_isian(k), "sebelum": "—", "sesudah": _tampil(v)})
     if jenis == "ubah" and not out and (a.get("isian") or {}).get("bentuk") in ("bertipe", "bebas"):
         raise AlatError(400, "Tidak ada yang berubah dibanding data sekarang.")
     if not out:
