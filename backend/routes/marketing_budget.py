@@ -169,6 +169,23 @@ def period_bounds(period: str, days: int = DEFAULT_PERIOD_DAYS) -> tuple:
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
+def awal_periode_berjalan(today: str, mode: str, days: int = DEFAULT_PERIOD_DAYS) -> str:
+    """Periode anggaran yang sedang berjalan untuk tanggal `today` ('YYYY-MM-DD').
+
+    2026-11-11 (owner: "mingguannya dari hari Senin, kenapa mulai dari hari ini?") — periode
+    mingguan dulu dimulai dari HARI INI, sehingga daftar pilihan bergeser setiap hari (11–17 Nov,
+    4–10 Nov, …) dan tidak pernah sama dengan minggu kerja. Sekarang periode yang panjangnya
+    kelipatan 7 hari dimulai hari SENIN minggu ini; daftar mundur per `days` dari sana tetap
+    selalu jatuh pada Senin. Panjang lain (mis. 10 hari) tetap mulai hari ini.
+    """
+    if mode != 'weekly':
+        return today[:7]
+    d = datetime.strptime(today, "%Y-%m-%d")
+    if int(days or DEFAULT_PERIOD_DAYS) % 7 == 0:
+        d = d - timedelta(days=d.weekday())      # weekday(): Senin = 0
+    return d.strftime("%Y-%m-%d")
+
+
 def _date_filter(period: str, days: int = DEFAULT_PERIOD_DAYS) -> dict:
     a, b = period_bounds(period, days)
     return {'$gte': a, '$lte': b + 'T23:59:59'}
@@ -321,7 +338,7 @@ async def read_period_settings(request: Request):
     db = get_db()
     st = await get_period_settings(db)
     today = wib_date_str()
-    st['current_period'] = (today if st['period_mode'] == 'weekly' else today[:7])
+    st['current_period'] = awal_periode_berjalan(today, st['period_mode'], st['period_days'])
     a, b = period_bounds(st['current_period'], st['period_days'])
     st['current_range'] = {'start': a, 'end': b}
     st['options'] = [
