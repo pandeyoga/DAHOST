@@ -224,13 +224,15 @@ def test_rekap_kembar_dipakai_yang_terbaru_dan_disebut():
 # 2. BUG #1 / #9 — tanpa batas 500 baris; semua layar sepakat dengan /analitik
 # ══════════════════════════════════════════════════════════════════════════════
 def _sembilan_toko_sebulan():
+    """Satu bulan Marketing penuh: Oktober 2026 = 26 Sep – 25 Okt (30 hari, aturan 26–25 owner 11 Nov)."""
+    from datetime import date as _date, timedelta as _td
     db = AggDB()
     accs = [_acc(f"T{i}", "shopee" if i < 5 else "tiktok") for i in range(9)]
     db.marketing_platform_accounts.docs += accs
     total = 0.0
     for i, a in enumerate(accs):
-        for d in range(1, 32):
-            date = f"2026-10-{d:02d}"
+        for d in range(30):
+            date = (_date(2026, 9, 26) + _td(days=d)).isoformat()
             rev = 100000.0 + i * 1000 + d
             total += rev
             db.marketing_sales_data.docs.append(_daily(a["id"], date, rev, 3))
@@ -245,22 +247,22 @@ def test_dashboard_laporan_performa_target_dan_analitik_sepakat_tanpa_batas_500(
     from routes import marketing_sales_performance_routes as perf
     from routes import marketing_targets as tgt
     db, total = _sembilan_toko_sebulan()
-    assert len(db.marketing_sales_data.docs) == 558          # > 500: dulu terpotong
+    assert len(db.marketing_sales_data.docs) == 540          # > 500: dulu terpotong
     for mod in (dash, rep, perf, ma, tgt):
         monkeypatch.setattr(mod, "get_db", lambda: db)
         if hasattr(mod, "require_auth"):
             monkeypatch.setattr(mod, "require_auth", _auth(ADMIN))
     req = FakeRequest()
     req.state.user = ADMIN
-    d = run(dash.get_dashboard_overview(req, date_from="2026-10-01", date_to="2026-10-31"))
-    p = run(perf.performance_overview(req, start_date="2026-10-01", end_date="2026-10-31", date_from=None,
+    d = run(dash.get_dashboard_overview(req, date_from="2026-09-26", date_to="2026-10-25"))
+    p = run(perf.performance_overview(req, start_date="2026-09-26", end_date="2026-10-25", date_from=None,
                                       date_to=None, platform=None, account=None, account_id=None))
     m = run(rep.monthly_report(req, year=2026, month=10))
     t = run(tgt.monthly_summary(req, year=2026, month=10))
-    a = run(ma.analitik_penjualan(req, dari="2026-10-01", sampai="2026-10-31", kelompok="toko",
+    a = run(ma.analitik_penjualan(req, dari="2026-09-26", sampai="2026-10-25", kelompok="toko",
                                   bandingkan="tidak", toko_id=None, limit=None))
     assert d["summary"]["total_revenue"] == round(total)
-    assert d["summary"]["total_orders"] == 9 * 31 * 3
+    assert d["summary"]["total_orders"] == 9 * 30 * 3
     assert round(p["data"]["total_revenue"]) == round(total) == round(a["total"]["omzet"])
     assert round(m["summary"]["rev_actual"]) == round(total) == round(t["summary"]["rev_actual"])
     assert p["data"]["total_orders"] == a["total"]["pesanan"] == m["summary"]["ord_actual"]
@@ -847,7 +849,9 @@ def test_analitik_target_proyeksi_bulan_berjalan():
     out = run(U.analitik_target(db, [_acc("A1")], ["2026-10"], hari_ini=datetime(2026, 10, 2).date()))
     r = out["baris"][0]
     assert r["aktual_omzet"] == 2200 and r["capaian_omzet_persen"] == 22.0 and r["bulan_berjalan"]
-    assert r["proyeksi_omzet_akhir_bulan"] == 34100 and r["status"] == "sesuai_jalur"
+    # bulan Marketing Oktober = 26 Sep–25 Okt (30 hari); 2 Okt = hari ke-7
+    assert r["hari_berlalu"] == 7 and r["hari_dalam_bulan"] == 30
+    assert r["proyeksi_omzet_akhir_bulan"] == round(2200 / 7 * 30) and r["status"] == "sesuai_jalur"
 
 
 def test_analitik_setoran_per_tanggal_dana_dilepas_dan_biaya_per_jenis():

@@ -40,7 +40,6 @@ menjaga kewenangan & bentuk permintaan.
 """
 import uuid
 import logging
-import calendar
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Query
@@ -49,6 +48,7 @@ from database import get_db
 from auth import require_auth, serialize_doc
 from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
+from core import bulan_marketing as _bulan
 from core import marketing_account_scope as _scope
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
@@ -160,13 +160,29 @@ def period_bounds(period: str, days: int = DEFAULT_PERIOD_DAYS) -> tuple:
     Dipakai SEMUA pembaca angka realisasi supaya periode 7 hari membaca rentang
     tanggal yang benar (regex '^YYYY-MM' hanya bekerja untuk periode bulanan).
     """
-    if len(period) == 7:                       # YYYY-MM
-        start = datetime.strptime(period + "-01", "%Y-%m-%d")
-        last = calendar.monthrange(start.year, start.month)[1]
-        return period + "-01", f"{period}-{last:02d}"
+    if len(period) == 7:                       # YYYY-MM = bulan Marketing 26 bulan lalu … 25 (owner 11 Nov 2026)
+        datetime.strptime(period + "-01", "%Y-%m-%d")
+        return _bulan.rentang_periode(period)
     start = datetime.strptime(period, "%Y-%m-%d")
     end = start + timedelta(days=max(1, int(days)) - 1)
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+def awal_periode_berjalan(today: str, mode: str, days: int = DEFAULT_PERIOD_DAYS) -> str:
+    """Periode anggaran yang sedang berjalan untuk tanggal `today` ('YYYY-MM-DD').
+
+    2026-11-11 (owner: "mingguannya dari hari Senin, kenapa mulai dari hari ini?") — periode
+    mingguan dulu dimulai dari HARI INI, sehingga daftar pilihan bergeser setiap hari (11–17 Nov,
+    4–10 Nov, …) dan tidak pernah sama dengan minggu kerja. Sekarang periode yang panjangnya
+    kelipatan 7 hari dimulai hari SENIN minggu ini; daftar mundur per `days` dari sana tetap
+    selalu jatuh pada Senin. Panjang lain (mis. 10 hari) tetap mulai hari ini.
+    """
+    if mode != 'weekly':
+        return _bulan.periode_dari(today)      # tanggal 26 ke atas sudah bulan berikutnya
+    d = datetime.strptime(today, "%Y-%m-%d")
+    if int(days or DEFAULT_PERIOD_DAYS) % 7 == 0:
+        d = d - timedelta(days=d.weekday())      # weekday(): Senin = 0
+    return d.strftime("%Y-%m-%d")
 
 
 def _date_filter(period: str, days: int = DEFAULT_PERIOD_DAYS) -> dict:
@@ -264,7 +280,8 @@ async def _livehost_auto_spend(db, account_id: str, period: str):
         info = sal.get(h['id']) or {'salary': 0.0, 'source': 'none', 'reason': ''}
         salary = _num(info.get('salary'), 0)
         share = salary / max(1, len(accs))
-        prorated = round(share * _cycle.month_share(start, end), 2)   # pola P5: bulan kalender, bukan ÷30
+        # pola P5: bulan kalender, bukan ÷30; periode bulanan Marketing (26–25) = satu bulan gaji penuh
+        prorated = round(share * (1.0 if len(period) == 7 else _cycle.month_share(start, end)), 2)
         total += prorated
         detail.append({
             'host_id': h['id'], 'host_name': h.get('name', ''),
@@ -321,7 +338,7 @@ async def read_period_settings(request: Request):
     db = get_db()
     st = await get_period_settings(db)
     today = wib_date_str()
-    st['current_period'] = (today if st['period_mode'] == 'weekly' else today[:7])
+    st['current_period'] = awal_periode_berjalan(today, st['period_mode'], st['period_days'])
     a, b = period_bounds(st['current_period'], st['period_days'])
     st['current_range'] = {'start': a, 'end': b}
     st['options'] = [

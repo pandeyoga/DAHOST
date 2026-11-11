@@ -262,7 +262,7 @@ async def evaluate_marketing_alerts(db=None, settings_override: dict = None, dry
     if settings.get("alert_cycle", True):
         try:
             from core import marketing_cycle as _cycle
-            period = _cycle.today_wib().strftime("%Y-%m")
+            period = _cycle.period_from_date(_cycle.today_wib().strftime("%Y-%m-%d"))   # bulan Marketing 26–25
             accounts = await db.marketing_platform_accounts.find(
                 {"status": "active"}, {"_id": 0}).to_list(300)
             for acc in accounts:

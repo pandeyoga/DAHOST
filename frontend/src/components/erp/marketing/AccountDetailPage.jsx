@@ -22,6 +22,7 @@ import { AccountBadge, getPlatformConfig } from './AccountBadge';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { bulanMarketingDari, bulanMarketingWIB, rentangBulanMarketing, labelRentangBulanMarketing } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -40,7 +41,8 @@ const pct = (n) => n != null ? `${(n * 100).toFixed(1)}%` : '-';
 /** Tanggal WIB: awal bulan berjalan dan awal riwayat (60 hari, minimal awal bulan). */
 function rentangDetail() {
   const hariIni = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-  const awalBulan = `${hariIni.slice(0, 8)}01`;
+  // awal bulan Marketing berjalan (tanggal 26 bulan lalu — owner 11 Nov 2026), sama dengan periode target
+  const awalBulan = rentangBulanMarketing(bulanMarketingDari(hariIni)).dari;
   const d60 = new Date(`${hariIni}T00:00:00Z`);
   d60.setUTCDate(d60.getUTCDate() - 59);
   const dari60 = d60.toISOString().slice(0, 10);
@@ -377,7 +379,6 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const cfg = getPlatformConfig(account.platform);
 
-  const now = new Date();
   const [salesData, setSalesData] = useState([]);
   const [creators, setCreators] = useState([]);
   const [hosts, setHosts] = useState([]);
@@ -417,7 +418,7 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
     try {
       const [crRes, tgRes] = await Promise.all([
         fetch(`${API}/api/marketing/kol/creators?account_id=${account.id}&limit=50`, { headers }),
-        fetch(`${API}/api/marketing/targets/creator?year=${now.getFullYear()}&month=${now.getMonth()+1}`, { headers }),
+        fetch(`${API}/api/marketing/targets/creator?year=${bulanMarketingWIB().slice(0, 4)}&month=${Number(bulanMarketingWIB().slice(5, 7))}`, { headers }),
       ]);
       if (crRes.ok) {
         const data = await crRes.json();
@@ -454,7 +455,7 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
     fetchCreators();
     fetchHosts();
     // Fetch target bulan ini
-    fetch(`${API}/api/marketing/targets?account_id=${account.id}&year=${now.getFullYear()}&month=${now.getMonth() + 1}`, { headers })
+    fetch(`${API}/api/marketing/targets?account_id=${account.id}&year=${bulanMarketingWIB().slice(0, 4)}&month=${Number(bulanMarketingWIB().slice(5, 7))}`, { headers })
       .then(r => r.ok ? r.json() : [])
       .then(data => setTarget(Array.isArray(data) && data.length > 0 ? data[0] : null))
       .catch(() => {});
@@ -510,7 +511,9 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
   const healthColor = account.health_score >= 80 ? 'success'
     : account.health_score >= 60 ? 'warning'
     : account.health_score != null ? 'danger' : 'default';
-  const bulanIni = now.toLocaleString('id-ID', { month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' });
+  const [_bmY, _bmM] = bulanMarketingWIB().split('-').map(Number);
+  const bulanIni = new Date(Date.UTC(_bmY, _bmM - 1, 1)).toLocaleString('id-ID', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const rentangBulanIni = labelRentangBulanMarketing(_bmY, _bmM);
   const tombolUnduh = (tab === 'sales' && salesData.length > 0) ? (
     <TombolUnduh namaBerkas={`riwayat-sales-${account.account_code}`} namaLembar="Riwayat sales" baris={salesData} testId="detail-sales-unduh"
       kolom={[
@@ -552,7 +555,7 @@ export function AccountDetailPage({ account, token, onBack, onNavigate }) {
       {/* Target bulan ini */}
       <section className="space-y-2" data-testid="account-target-section">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-base font-semibold">Target {bulanIni}</p>
+          <p className="text-base font-semibold">Target {bulanIni} <span className="text-sm font-normal text-muted-foreground">({rentangBulanIni})</span></p>
           <Button size="sm" variant="outline" onClick={() => onNavigate?.('marketing-targets')} data-testid="goto-set-target">
             <Target />{target ? 'Ubah target' : 'Isi target'}
           </Button>

@@ -22,7 +22,7 @@ import { AccountDetailPage } from './marketing/AccountDetailPage';
 import { MarketingCycleStrip } from './marketing/MarketingCycleStrip';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
-import { todayWIB, monthStartWIB, thisMonthWIB } from '@/lib/waktu';
+import { todayWIB, monthStartWIB, bulanMarketingWIB, bulanMarketingDari } from '@/lib/waktu';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL;
 const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok Shop', tiktokshop: 'TikTok Shop', tokopedia: 'Tokopedia', lazada: 'Lazada' };
@@ -53,7 +53,7 @@ export default function MarketingDashboard({ token, onNavigate }) {
   // Bulan yang dipakai untuk angka RESMI (target/anggaran/ROI) — diambil dari
   // tanggal akhir rentang supaya layar dan SSOT siklus bicara tentang bulan sama.
   const cyclePeriod = useMemo(
-    () => (period.date_to ? period.date_to.slice(0, 7) : thisMonthWIB()),
+    () => (period.date_to ? bulanMarketingDari(period.date_to) : bulanMarketingWIB()),   // bulan Marketing 26–25
     [period.date_to]
   );
 

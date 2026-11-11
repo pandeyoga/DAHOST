@@ -1,5 +1,4 @@
 """marketing_kol — Admin: KOL Creator CRUD."""
-from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import Request, HTTPException
 from pydantic import BaseModel, Field
@@ -9,7 +8,6 @@ from auth import hash_password, require_auth, serialize_doc, log_activity
 from routes.shared import require_perm  # T-01 2.3
 from routes.marketing_kol_shared import router, _uid, _now, _get_user, CreatorCreate, CreatorUpdate
 from collections import defaultdict as _dd
-from utils.waktu import fmt_wib
 
 
 @router.post('/kol/creators')
@@ -70,11 +68,9 @@ async def list_creators(
     creators = await db.marketing_kol_creators.find(
         query, {'_id': 0, 'login_password_hash': 0}
     ).sort('created_at', -1).skip(skip).limit(limit).to_list(500)
-    month = fmt_wib('%Y-%m')
-    date_from = f'{month}-01'
-    year, mon = int(month.split('-')[0]), int(month.split('-')[1])
-    next_month = datetime(year, mon, 1, tzinfo=timezone.utc) + timedelta(days=32)
-    date_to = (next_month.replace(day=1) - timedelta(days=1)).strftime('%Y-%m-%d')
+    # "bulan ini" = bulan Marketing berjalan, tanggal 26–25 (owner 11 Nov 2026) — sama dengan Target KOL
+    from core import bulan_marketing as _bulan
+    date_from, date_to = _bulan.rentang(*_bulan.bulan_berjalan())
     creator_ids = [c['id'] for c in creators]
     all_sessions = await db.marketing_creator_sessions.find(
         {'creator_id': {'$in': creator_ids}, 'date': {'$gte': date_from, '$lte': date_to}},

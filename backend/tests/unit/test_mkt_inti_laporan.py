@@ -68,15 +68,17 @@ def test_m04_capaian_gabungan_murni():
 
 def test_m04_m21_rapat_mingguan_prorata_bulan_bertarget_dan_retur_dari_rekap(db):
     from core import marketing_weekly_report as W
-    # minggu 27 Jul–2 Agt: Juli TANPA target, Agustus bertarget (2 hari)
-    db.marketing_sales_data.docs.append(rekap_doc(TTK, "2026-07-28", 3_000_000, 30, retur=150_000))
-    rep = run(W.build_weekly_report(db, "2026-07-27"))
+    # Bulan Marketing 26–25 (owner 11 Nov 2026): minggu 24–30 Agt memotong dua bulan —
+    # 24–25 Agt = bulan Agustus (bertarget, 2 hari), 26–30 Agt = bulan September (TANPA target).
+    db.marketing_sales_data.docs.append(rekap_doc(TTK, "2026-08-25", 1_000_000, 10))
+    db.marketing_sales_data.docs.append(rekap_doc(TTK, "2026-08-27", 3_000_000, 30, retur=150_000))
+    rep = run(W.build_weekly_report(db, "2026-08-24"))
     ttk = next(s for s in rep["per_toko"] if s["account_code"] == TTK)
-    assert ttk["omzet"] == 3_000_000 + TTK_AUG                           # omzet minggu itu tetap
-    assert ttk["omzet_bertarget"] == TTK_AUG                             # hanya hari Agustus
-    tgt = round(10_000_000 * 2 / 31)
+    assert ttk["omzet"] == 4_000_000                                     # omzet minggu itu tetap
+    assert ttk["omzet_bertarget"] == 1_000_000                           # hanya hari bulan Agustus
+    tgt = round(10_000_000 * 2 / 31)                                     # Agustus = 26 Jul–25 Agt (31 hari)
     assert ttk["target"]["revenue"] == tgt
-    assert ttk["pencapaian_target_persen"] == round(TTK_AUG / tgt * 100, 1)
+    assert ttk["pencapaian_target_persen"] == round(1_000_000 / tgt * 100, 1)
     assert ttk["nilai_retur"] == 150_000                                 # M-21: dari rekap (K36)
     g = rep["gabungan"]
     assert g["pencapaian_target_persen"] == ttk["pencapaian_target_persen"]
@@ -107,7 +109,8 @@ def test_m05_q3_anggaran_mingguan_membaca_rentang_7_hari(db, monkeypatch):
     assert (out["date_from"], out["date_to"]) == ("2026-08-11", "2026-08-17")
     month = run(mb.budget_summary(Req(), account_id=SHP, period="2026-08"))
     assert month["sales"] == SHP_AUG                                      # bulanan tidak berubah
-    assert next(c for c in month["categories"] if c["category"] == "ads")["spend"] == 310_000
+    # bulan Marketing Agustus = 26 Jul–25 Agt: laporan iklan 1–31 Agt masuk 25/31 bagian
+    assert next(c for c in month["categories"] if c["category"] == "ads")["spend"] == 250_000
 
 
 def test_q1_diskon_hanya_voucher_paket_dan_subsidi_ongkir_penjual(db):

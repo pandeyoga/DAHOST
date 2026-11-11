@@ -2536,10 +2536,10 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
                 continue
             d = r.get("data") or {}
             raw = d.get("date") or d.get("order_date") or d.get("session_date")
-            if isinstance(raw, datetime):
-                touched_periods.add(raw.strftime("%Y-%m"))
+            if isinstance(raw, datetime):   # bulan Marketing 26–25 (owner 11 Nov 2026)
+                touched_periods.add(_cycle.period_from_date(raw.strftime("%Y-%m-%d")))
             elif isinstance(raw, str) and len(raw) >= 7:
-                touched_periods.add(raw[:7])
+                touched_periods.add(_cycle.period_from_date(raw[:10]))
         # Berkas Ekspor B/C TIDAK punya kolom tanggal pesanan; yang ada hanya waktu
         # kirim/batal. Periode yang benar diambil dari BULAN PESANAN TUJUAN.
         if st.update_only:
@@ -2551,9 +2551,9 @@ async def _commit_blockers(db, st: SourceType, s: dict, built: List[dict],
                         {"_id": 0, "order_date": 1}):
                     raw = row.get("order_date")
                     if isinstance(raw, datetime):
-                        touched_periods.add(raw.strftime("%Y-%m"))
+                        touched_periods.add(_cycle.period_from_date(raw.strftime("%Y-%m-%d")))
                     elif isinstance(raw, str) and len(raw) >= 7:
-                        touched_periods.add(raw[:7])
+                        touched_periods.add(_cycle.period_from_date(raw[:10]))
         locked_hits = []
         for p in sorted(touched_periods):
             if await _cycle.is_locked(db, s["account_id"], p):

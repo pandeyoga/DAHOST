@@ -57,6 +57,42 @@ export function thisMonthWIB(now = new Date()) {
   return todayWIB(now).slice(0, 7);
 }
 
+/**
+ * Bulan Marketing = tanggal 26 bulan lalu s/d tanggal 25 (owner 11 Nov 2026: "target bulanan
+ * cutoffnya dari tanggal 26 - 25"). Dinamai menurut bulan tempat periodenya berakhir:
+ * November 2026 = 26 Okt – 25 Nov 2026; mulai 26 Nov sudah Desember.
+ * Sama dengan `backend/core/bulan_marketing.py` — ubah keduanya bersamaan.
+ */
+export const HARI_TUTUP_BULAN_MARKETING = 25;
+const _BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+/** 'YYYY-MM-DD' → 'YYYY-MM' bulan Marketing (tanggal 26 ke atas ikut bulan berikutnya). */
+export function bulanMarketingDari(tgl) {
+  const s = String(tgl || '');
+  let y = Number(s.slice(0, 4)); let m = Number(s.slice(5, 7)); const d = Number(s.slice(8, 10));
+  if (d > HARI_TUTUP_BULAN_MARKETING) { m += 1; if (m > 12) { m = 1; y += 1; } }
+  return `${y}-${pad(m)}`;
+}
+
+/** 'YYYY-MM' bulan Marketing yang sedang berjalan (WIB). */
+export function bulanMarketingWIB(now = new Date()) {
+  return bulanMarketingDari(todayWIB(now));
+}
+
+/** 'YYYY-MM' bulan Marketing → { dari: 'YYYY-MM-26' bulan lalu, sampai: 'YYYY-MM-25' }. */
+export function rentangBulanMarketing(ym) {
+  const y = Number(String(ym).slice(0, 4)); const m = Number(String(ym).slice(5, 7));
+  const py = m === 1 ? y - 1 : y; const pm = m === 1 ? 12 : m - 1;
+  return { dari: `${py}-${pad(pm)}-${HARI_TUTUP_BULAN_MARKETING + 1}`, sampai: `${y}-${pad(m)}-${HARI_TUTUP_BULAN_MARKETING}` };
+}
+
+/** '26 Okt – 25 Nov 2026' untuk bulan Marketing (tahun, bulan 1–12). */
+export function labelRentangBulanMarketing(y, m) {
+  const py = m === 1 ? y - 1 : y; const pm = m === 1 ? 12 : m - 1;
+  const kiri = `${HARI_TUTUP_BULAN_MARKETING + 1} ${_BLN[pm - 1]}${py !== y ? ` ${py}` : ''}`;
+  return `${kiri} – ${HARI_TUTUP_BULAN_MARKETING} ${_BLN[m - 1]} ${y}`;
+}
+
 /** Tahun berjalan (WIB). */
 export function thisYearWIB(now = new Date()) {
   return wibDateParts(now).y;
