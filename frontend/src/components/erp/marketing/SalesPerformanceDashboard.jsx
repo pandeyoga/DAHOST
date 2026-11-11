@@ -23,7 +23,7 @@ const API = process.env.REACT_APP_BACKEND_URL;
 
 function fmt(n) { return new Intl.NumberFormat('id-ID').format(n || 0); }
 function fmtRp(n) { return `Rp ${fmt(n)}`; }
-const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada', whatsapp: 'WhatsApp', website: 'Website', lainnya: 'Lainnya' };
 const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
 // Tanpa tanggal, server memakai 30 hari terakhir — pilihan bawaan diberi nama itu (bukan "semua waktu").
 const BAWAAN_30 = { key: 'all', label: '30 hari terakhir' };

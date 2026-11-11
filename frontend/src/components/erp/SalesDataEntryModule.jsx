@@ -39,7 +39,7 @@ const kanalDariRekap = (row) => {
   return Object.fromEntries(KANAL_RINCIAN.map(([k]) => [k, m[k] ? String(m[k]) : '']));
 };
 const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
-const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
+const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada', whatsapp: 'WhatsApp', website: 'Website', lainnya: 'Lainnya' };
 const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
 
 function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, preSelectedAccountId }) {
@@ -366,7 +366,9 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
         </Notice>
       )}
 
-      <CommonMetricsForm form={form} setForm={setForm} lockedMetrics={lockedMetrics} />
+      {/* Rekap total yang sudah ada: hanya rincian kanal yang disimpan — kolom angka lain tidak
+          ditampilkan supaya tidak ada isian yang diam-diam tidak tersimpan. */}
+      {!hanyaKanal && <CommonMetricsForm form={form} setForm={setForm} lockedMetrics={lockedMetrics} />}
 
       {activeTab === 'total' && (
         <RincianKanal nilai={kanal} rincian={rincian} batas={batasKanal} kanalPesanan={kanalPesanan}
