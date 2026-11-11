@@ -429,6 +429,8 @@ PROYEKSI_PESANAN = {
     "revenue_product": 1, "revenue": 1, "total_payment": 1, "price_final": 1, "quantity": 1,
     "catalog_item_id": 1, "fg_material_id": 1, "sku_id": 1, "product_name": 1, "variation": 1,
     "buyer_username": 1, "customer_phone": 1, "customer_name": 1, "items": 1,
+    # 11 Nov 2026 — atribusi kreator (kolom "Creator Handle" TikTok / "Akun kreator" manual)
+    "creator_handle": 1, "creator_id": 1, "creator_name": 1,
     **PROYEKSI_STATUS,
 }
 
@@ -516,6 +518,16 @@ def kanal_pesanan(o: dict) -> str:
     return ch if ch in TRAFFIC_LABEL else "other"
 
 
+def kreator_pesanan(o: dict) -> str:
+    """11 Nov 2026 — akun kreator yang tercatat di pesanan ("" = bukan lewat kreator).
+
+    TikTok menulis kanal (LIVE/Video/Kartu produk) dan kreator di DUA kolom terpisah, jadi
+    "lewat kreator" adalah lapisan di ATAS kanal — bagian dari omzet kanalnya, bukan kanal
+    tambahan (dijumlah ke kanal = dihitung dua kali).
+    """
+    return str(o.get("creator_handle") or o.get("creator_name") or o.get("creator_id") or "").strip()
+
+
 def kunci_item(line: dict, kat: Dict[str, dict], cara: str) -> Tuple[str, str, str]:
     """→ (kunci, label, sku) untuk ``cara`` ∈ katalog | produk | sku."""
     cid = line.get("catalog_item_id")
@@ -590,12 +602,15 @@ def rincian_kanal(orders: Sequence[dict], rows: Optional[Sequence[dict]] = None)
     setiap (toko, tanggal) yang punya pecahan; tanggal tanpa pecahan memakai pesanannya.
     Tanpa ini, omzet yang diinput manual per kanal tidak pernah muncul di laporan.
     Jumlah pesanan/unit/pembeli selalu dari pesanan (rekap tidak menyimpannya per kanal).
+    ``lewat_kreator``/``pesanan_kreator`` = bagian kanal itu yang pesanannya mencatat akun
+    kreator (:func:`kreator_pesanan`) — BAGIAN dari omzet kanal, tidak dijumlah ke total.
     """
     acc: Dict[str, dict] = {}
 
     def bucket(k: str) -> dict:
         return acc.setdefault(k, {"kunci": k, "label": TRAFFIC_LABEL[k], "omzet": 0.0,
-                                  "pesanan": 0, "unit": 0, "_pembeli": set()})
+                                  "pesanan": 0, "unit": 0, "_pembeli": set(),
+                                  "lewat_kreator": 0.0, "pesanan_kreator": 0})
 
     hari_berkanal = set()
     for r in rows or ():
@@ -617,11 +632,41 @@ def rincian_kanal(orders: Sequence[dict], rows: Optional[Sequence[dict]] = None)
         pk = kunci_pembeli(o)
         if pk:
             b["_pembeli"].add(pk)
+        if kreator_pesanan(o):
+            b["lewat_kreator"] += _rollup.order_revenue_product(o)
+            b["pesanan_kreator"] += 1
     out = [{"kunci": b["kunci"], "label": b["label"], "omzet": _rp(b["omzet"]),
-            "pesanan": b["pesanan"], "unit": b["unit"], "pembeli": len(b["_pembeli"])}
+            "pesanan": b["pesanan"], "unit": b["unit"], "pembeli": len(b["_pembeli"]),
+            "lewat_kreator": _rp(b["lewat_kreator"]), "pesanan_kreator": b["pesanan_kreator"]}
            for b in acc.values()]
     out.sort(key=lambda r: -r["omzet"])
     return out
+
+
+def ringkas_kreator(orders: Sequence[dict]) -> dict:
+    """11 Nov 2026 — omzet yang tercatat LEWAT KREATOR (afiliasi) pada pesanan yang dihitung.
+
+    → ``{omzet, pesanan, kreator, kreator_belum_terdaftar}``. Hanya JUMLAH yang keluar
+    (tidak ada nama/akun kreator maupun data pembeli). ``kreator_belum_terdaftar`` = akun
+    kreator di pesanan yang belum tertaut ke master KOL & Kreator — omzetnya tetap terhitung
+    di sini, tetapi belum muncul di laporan per kreator.
+    """
+    omzet = 0.0
+    pesanan = 0
+    akun: set = set()
+    belum: set = set()
+    for o in orders:
+        h = kreator_pesanan(o)
+        if not h:
+            continue
+        omzet += _rollup.order_revenue_product(o)
+        pesanan += 1
+        k = _norm(h)
+        akun.add(k)
+        if not o.get("creator_id"):
+            belum.add(k)
+    return {"omzet": _rp(omzet), "pesanan": pesanan, "kreator": len(akun),
+            "kreator_belum_terdaftar": len(belum)}
 
 
 KANAL_UTAMA = ("live", "video", "product_card", "affiliate")
@@ -631,7 +676,8 @@ def kanal_per_toko(rows: Sequence[dict], orders: Sequence[dict],
                    toko: Dict[str, dict]) -> List[dict]:
     """11 Nov 2026 — pecahan omzet per kanal untuk SETIAP toko dalam periode.
 
-    → ``[{account_id, account_name, platform, omzet, kanal{kode: omzet}, belum_dirinci}]``.
+    → ``[{account_id, account_name, platform, omzet, kanal{kode: omzet}, belum_dirinci,
+    lewat_kreator}]``.
     ``belum_dirinci`` = omzet rekap yang tidak punya pecahan kanal (hari tanpa pesanan
     berkanal dan tanpa rincian ketikan) — ditampilkan apa adanya, tidak ditebak.
     """
@@ -646,14 +692,18 @@ def kanal_per_toko(rows: Sequence[dict], orders: Sequence[dict],
         rs = per_rows.get(aid, [])
         omzet = jumlahkan(rs)["omzet"]
         kanal = {k: 0.0 for k in TRAFFIC_LABEL}
+        lewat_kreator = 0.0
         for c in rincian_kanal(per_orders.get(aid, []), rs):
             kanal[c["kunci"]] = c["omzet"]
+            lewat_kreator += c["lewat_kreator"]
         terinci = sum(kanal.values())
         a = toko.get(aid) or {}
         out.append({"account_id": aid, "account_name": a.get("account_name") or aid,
                     "platform": _platform(a.get("platform")), "omzet": _rp(omzet),
                     "kanal": {k: _rp(v) for k, v in kanal.items()},
-                    "belum_dirinci": _rp(max(0.0, omzet - terinci))})
+                    "belum_dirinci": _rp(max(0.0, omzet - terinci)),
+                    # bagian omzet toko yang pesanannya mencatat akun kreator (bukan tambahan)
+                    "lewat_kreator": _rp(lewat_kreator)})
     out.sort(key=lambda r: (-r["omzet"], r["account_name"]))
     return out
 

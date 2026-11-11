@@ -230,6 +230,28 @@ def scope_query(account_id: Optional[str], field: str = "account_id") -> dict:
 
 
 # ── kreator & host: harus SUDAH di-assign ke toko itu ────────────────────────
+async def creator_for_handle(db, handle: Any) -> Optional[dict]:
+    """11 Nov 2026 — master kreator untuk satu akun kreator (``@nama`` / kode kreator).
+
+    Aturan cocoknya SAMA dengan impor pesanan marketplace (atribusi "Creator Handle"):
+    username di ``platforms`` atau ``creator_code``, dibandingkan lewat :func:`norm`.
+    ``None`` = belum terdaftar di KOL & Kreator (omzetnya tetap tercatat).
+    """
+    key = norm(handle)          # "@nama.kreator" → "namakreator"
+    if not key:
+        return None
+    creators = await db[CREATORS].find(
+        {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1, "creator_code": 1}).to_list(2000)
+    by_code = None
+    for c in creators:
+        for h in (c.get("platforms") or {}).values():
+            if h and norm(h) == key:
+                return c
+        if by_code is None and c.get("creator_code") and norm(c["creator_code"]) == key:
+            by_code = c
+    return by_code
+
+
 async def assert_creator_assigned(db, creator_id: str, account_id: str) -> dict:
     creator = await db[CREATORS].find_one({"id": creator_id}, {"_id": 0})
     if not creator:
