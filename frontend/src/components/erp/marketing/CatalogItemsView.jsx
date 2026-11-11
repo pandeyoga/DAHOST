@@ -30,6 +30,7 @@ import { PRODUCT_STATUS_OPTIONS, PRODUCT_STATUS_UNSET, productStatusLabel, produ
 import { alatUrl, batalkanAksi, panggil, ringkasLewati } from './catalogToolsApi';
 import CatalogPriceUrlDialog from './CatalogPriceUrlDialog';
 import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -962,8 +963,8 @@ export default function CatalogItemsView({
 /* Satu kartu di tampilan galeri (fitur lama: melihat foto produk sekilas). */
 function ItemTile({ r, picked, onPick, onOpen, aksi }) {
   return (
-    <div className="space-y-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3"
-      data-testid={`catalog-item-card-${r.sku}`}>
+    // Kartu standar (latar padat) — owner 11 Nov 2026: dulu tanpa latar sehingga gradasi halaman tembus.
+    <GlassCard className="space-y-2 p-3" data-testid={`catalog-item-card-${r.sku}`}>
       <div className="flex items-start gap-2">
         <Checkbox checked={picked} onCheckedChange={onPick} aria-label={`Pilih ${r.name}`} />
         <div className="min-w-0 flex-1">
@@ -992,6 +993,6 @@ function ItemTile({ r, picked, onPick, onOpen, aksi }) {
         <Button size="sm" variant="link" className="px-0" onClick={onOpen}><Eye />Rincian</Button>
         {aksi}
       </div>
-    </div>
+    </GlassCard>
   );
 }

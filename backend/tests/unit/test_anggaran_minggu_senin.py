@@ -25,6 +25,7 @@ def test_panjang_bukan_kelipatan_tujuh_mulai_hari_ini():
 
 def test_bulanan():
     assert awal_periode_berjalan("2026-11-11", "monthly", 7) == "2026-11"
+    assert awal_periode_berjalan("2026-11-27", "monthly", 7) == "2026-12"   # bulan Marketing 26–25
 
 
 def test_daftar_mundur_selalu_senin():

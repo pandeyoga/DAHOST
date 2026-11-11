@@ -15,7 +15,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { formatTanggalID } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
-import { thisMonthWIB } from '@/lib/waktu';
+import { bulanMarketingWIB } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
 import { monthOptions } from '../finance/PeriodPicker';
 import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
@@ -47,7 +47,7 @@ function Capaian({ actual, target, pct, status, fmt }) {
 }
 
 export default function MonthlyReportModule({ token }) {
-  const [ym] = useState(() => thisMonthWIB().split('-').map(Number));
+  const [ym] = useState(() => bulanMarketingWIB().split('-').map(Number));   // bulan Marketing 26–25
   const [year, setYear]     = useState(ym[0]);
   const [month, setMonth]   = useState(ym[1]);
   const [report, setReport] = useState(null);

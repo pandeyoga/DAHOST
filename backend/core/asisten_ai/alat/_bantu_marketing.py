@@ -80,8 +80,9 @@ def padatkan(data: Dict[str, Any], *, maks: int = MAKS_KARAKTER - _RUANG) -> Dic
 
 
 def bulan_ini(ctx) -> str:
-    t = hari_ini(ctx)
-    return f"{t.year:04d}-{t.month:02d}"
+    """Bulan Marketing berjalan ``YYYY-MM`` — tanggal 26–25 (owner 11 Nov 2026): 26 Nov sudah Desember."""
+    from core import bulan_marketing as _bulan
+    return _bulan.periode_dari(hari_ini(ctx))
 
 
 def angka(v: Optional[Any], lo: int, hi: int, bawaan: int) -> int:

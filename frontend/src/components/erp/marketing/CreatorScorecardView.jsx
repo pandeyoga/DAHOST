@@ -36,6 +36,7 @@ import DetailPopup from '@/components/ui/detail-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah, formatDateID } from '@/lib/format';
 import { monthOptions } from '../finance/PeriodPicker';
+import { bulanMarketingWIB, thisMonthWIB } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
@@ -60,8 +61,9 @@ const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
 const STATUS_KONTEN = { draft: 'Draf', scheduled: 'Terjadwal', posted: 'Tayang', cancelled: 'Batal' };
 
 export default function CreatorScorecardView({ token, onNavigate }) {
-  const bulanPilihan = monthOptions(24);
-  const [bulan, setBulan] = useState(() => bulanPilihan[0]?.value);
+  // bulan Marketing 26–25 (owner 11 Nov 2026): mulai tanggal 26 bulan berjalan sudah bulan depan
+  const bulanPilihan = monthOptions(24, bulanMarketingWIB() !== thisMonthWIB() ? 1 : 0);
+  const [bulan, setBulan] = useState(() => bulanMarketingWIB());
   const year = Number(String(bulan).slice(0, 4));
   const month = Number(String(bulan).slice(5, 7));
   const [accountId, setAccountId] = useState('');

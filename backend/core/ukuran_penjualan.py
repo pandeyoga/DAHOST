@@ -37,11 +37,11 @@ Pembeli hanya dihitung (jumlah unik), tidak pernah ditampilkan.
 """
 from __future__ import annotations
 
-import calendar
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from core import marketing_daily_rollup as _rollup
+from core import bulan_marketing as _bulan
 from core import marketing_sales_shape as _shape
 
 DAILY = "marketing_sales_data"
@@ -849,13 +849,13 @@ async def analitik_target(db, accounts: Sequence[dict], bulan: Sequence[str], *,
     today = hari_ini or _today_wib()
     ids = [a["id"] for a in accounts]
     first, last = bulan[0], bulan[-1]
-    ly, lm = int(last[:4]), int(last[5:7])
-    d0 = f"{first}-01"
-    d1 = f"{last}-{calendar.monthrange(ly, lm)[1]:02d}"
+    # bulan Marketing = 26 bulan lalu … 25 (owner 11 Nov 2026)
+    d0 = _bulan.rentang_periode(first)[0]
+    d1 = _bulan.rentang_periode(last)[1]
     rows, _dup = await baca_rekap(db, ids, d0, d1)
     per: Dict[Tuple[str, str], List[dict]] = {}
     for r in rows:
-        per.setdefault((r["account_id"], r["date"][:7]), []).append(r)
+        per.setdefault((r["account_id"], _bulan.periode_dari(r["date"])), []).append(r)
     targets: Dict[Tuple[str, str], dict] = {}
     years = sorted({int(b[:4]) for b in bulan})
     async for t in db[TARGETS].find({"account_id": {"$in": ids}, "year": {"$in": years}},
@@ -868,9 +868,9 @@ async def analitik_target(db, accounts: Sequence[dict], bulan: Sequence[str], *,
     tot = {"target_omzet": 0.0, "aktual_omzet": 0.0, "target_pesanan": 0, "aktual_pesanan": 0}
     for ym in bulan:
         y, m = int(ym[:4]), int(ym[5:7])
-        dim = calendar.monthrange(y, m)[1]
-        berjalan = (today.year, today.month) == (y, m)
-        hari_lewat = today.day if berjalan else (dim if (y, m) < (today.year, today.month) else 0)
+        dim = _bulan.jumlah_hari(y, m)
+        berjalan = _bulan.bulan_dari(today) == (y, m)
+        hari_lewat = _bulan.hari_berlalu(y, m, today)
         for a in accounts:
             t = targets.get((a["id"], ym)) or {}
             s = jumlahkan(per.get((a["id"], ym), []))
@@ -878,7 +878,7 @@ async def analitik_target(db, accounts: Sequence[dict], bulan: Sequence[str], *,
             tgt_o = _int(t.get("orders_target")) or None
             cap = _pct(s["omzet"], tgt) if tgt else None
             row = {"toko_id": a["id"], "toko": a.get("account_name"), "bulan": ym,
-                   "label_bulan": label_bulan(ym), "target_omzet": _rp(tgt) if tgt else None,
+                   "label_bulan": label_bulan(ym), "rentang_bulan": _bulan.label(y, m), "target_omzet": _rp(tgt) if tgt else None,
                    "aktual_omzet": s["omzet"], "capaian_omzet_persen": cap,
                    "target_pesanan": tgt_o, "aktual_pesanan": s["pesanan"],
                    "capaian_pesanan_persen": _pct(s["pesanan"], tgt_o) if tgt_o else None,

@@ -1,5 +1,4 @@
 """marketing_kol — Admin: KOL Sessions + Item Requests + Catalog + FG Products + Leaderboard + Seed."""
-from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import Request, HTTPException
 from fastapi.params import Query
@@ -254,16 +253,15 @@ async def list_fg_products(request: Request, search: Optional[str] = Query(None)
 async def get_leaderboard(request: Request, month: Optional[str] = Query(None, description="YYYY-MM")):
     await require_auth(request)
     db = get_db()
+    from core import bulan_marketing as _bulan
     if not month:
-        month = fmt_wib('%Y-%m')
+        month = _bulan.periode_dari(fmt_wib('%Y-%m-%d'))   # bulan Marketing 26–25 (owner 11 Nov 2026)
     # BUG-R11-A (FASE 11): `int(month.split('-')[1])` dulu dieksekusi mentah,
     # jadi `?month=99` melempar ValueError/IndexError → HTTP 500.
     # Sekarang periode divalidasi lebih dulu dan input salah dibalas HTTP 400.
     year, mon = q_period(month, name='month')
     month = f'{year:04d}-{mon:02d}'
-    date_from = f'{month}-01'
-    next_month = datetime(year, mon, 1, tzinfo=timezone.utc) + timedelta(days=32)
-    date_to = (next_month.replace(day=1) - timedelta(days=1)).strftime('%Y-%m-%d')
+    date_from, date_to = _bulan.rentang(year, mon)
     creators = await db.marketing_kol_creators.find({'status': 'active'}, {'_id': 0, 'login_password_hash': 0}).to_list(500)
     leaderboard = []
     for creator in creators:

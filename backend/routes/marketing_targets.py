@@ -14,6 +14,7 @@ import uuid
 from database import get_db
 from auth import require_auth, serialize_doc
 from core import marketing_cycle as _cycle
+from core import bulan_marketing as _bulan
 from core import ukuran_penjualan as _ukuran
 from core import marketing_returns as _ret
 from core import marketing_account_scope as _scope
@@ -169,12 +170,12 @@ async def list_targets(
     """List target. Default: bulan & tahun berjalan."""
     user = await require_auth(request)
     db = get_db()
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())   # bawaan = bulan Marketing berjalan (26–25)
     # F6 (sesi #10) — daftar target adalah ANGKA per toko: staf pemegang satu toko
     # tidak boleh membaca target sembilan toko.
     q: dict = await _scope.scope_filter(db, user, {
-        "year":  year  or now.year,
-        "month": month or now.month,
+        "year":  year  or _by,
+        "month": month or _bm,
     })
     if account_id:
         q["account_id"] = account_id
@@ -195,20 +196,13 @@ async def monthly_summary(
     """
     await require_auth(request)
     db  = get_db()
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y   = year  or now.year
-    m   = month or now.month
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y   = year  or _by
+    m   = month or _bm
 
-    month_start = datetime(y, m, 1,  0, 0, 0, tzinfo=timezone.utc)
-    if m == 12:
-        month_end = datetime(y + 1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    else:
-        month_end = datetime(y, m + 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-
-    date_from = f"{y:04d}-{m:02d}-01"
-    import calendar
-    last_day  = calendar.monthrange(y, m)[1]
-    date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
+    month_start, month_end = _bulan.rentang_utc(y, m)
+    date_from, date_to = _bulan.rentang(y, m)
 
     # F6 — daftar toko dipotong ke yang di-assign ke pemakai ini
     _user = getattr(request.state, "user", None) or {}
@@ -294,7 +288,8 @@ async def monthly_summary(
     _cap_o = _ukuran.capaian_gabungan(result, lambda r: r["target"]["orders"],
                                       lambda r: r["actual"]["orders"])
     return serialize_doc({
-        "period":  {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
+        "period":  {"year": y, "month": m, "date_from": date_from, "date_to": date_to,
+             "label": _bulan.label(y, m)},
         "summary": {
             "total_accounts":  len(accounts),
             "rev_target":      total_rev_target,
@@ -320,7 +315,6 @@ async def monthly_summary(
 #           revenue_target, sessions_target, viewers_target, notes }
 # ══════════════════════════════════════════════════════════════════════════════
 
-import calendar as _calendar
 
 
 class CreatorTargetUpsert(BaseModel):
@@ -405,8 +399,8 @@ async def list_creator_targets(
     """List target creator. Default: bulan & tahun berjalan."""
     user = await require_auth(request)
     db = get_db()
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    q: dict = {"year": year or now.year, "month": month or now.month}
+    _by, _bm = _bulan.bulan_berjalan(now_wib())   # bawaan = bulan Marketing berjalan (26–25)
+    q: dict = {"year": year or _by, "month": month or _bm}
     # F6 (sesi #10) — `marketing_creator_targets` tidak punya `account_id`; kreator
     # menempel ke toko lewat `assigned_account_ids`. Jadi lingkupnya dibaca dari
     # daftar kreator toko yang boleh dilihat pemakai ini.
@@ -430,19 +424,21 @@ async def creator_monthly_summary(
     """Semua creator aktif + target vs aktual sessions bulan ini."""
     user = await require_auth(request)
     db  = get_db()
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y   = year  or now.year
-    m   = month or now.month
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y    = year  or _by
+    m    = month or _bm
 
-    date_from = f"{y:04d}-{m:02d}-01"
-    last_day  = _calendar.monthrange(y, m)[1]
-    date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
+    date_from, date_to = _bulan.rentang(y, m)
 
     _cq: dict = {"status": "active"}
     _vis = await _scope.visible_account_ids(db, user)
     if _vis is not None:
         _cq["assigned_account_ids"] = {"$in": _vis}
     creators = await db.marketing_kol_creators.find(_cq, {"_id": 0}).to_list(500)
+    # Toko tempat kreator ditugaskan (owner 11 Nov 2026: "ditugaskan ke akun tiktok mana belum ada infonya")
+    _toko = {a["id"]: a async for a in db.marketing_platform_accounts.find(
+        {}, {"_id": 0, "id": 1, "account_code": 1, "account_name": 1, "platform": 1})}
 
     result = []
     total_rev_tgt = 0.0
@@ -488,6 +484,9 @@ async def creator_monthly_summary(
             "creator_name": c.get("name", ""),
             "creator_code": c.get("creator_code", ""),
             "status":       c.get("status", ""),
+            "accounts":     [{"id": i, "code": _toko[i].get("account_code", ""),
+                              "name": _toko[i].get("account_name", ""), "platform": _toko[i].get("platform", "")}
+                             for i in (c.get("assigned_account_ids") or []) if i in _toko],
             "target": {
                 "revenue":  rev_tgt,
                 "sessions": sess_tgt,
@@ -511,7 +510,8 @@ async def creator_monthly_summary(
         total_rev_act += rev_actual
 
     return serialize_doc({
-        "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
+        "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to,
+            "label": _bulan.label(y, m)},
         "summary": {
             "total_creators": len(creators),
             "rev_target":     total_rev_tgt,
@@ -534,13 +534,12 @@ async def export_creator_targets_pdf(
     """Export PDF Target KOL/Creator untuk bulan tertentu."""
     user = await require_auth(request)
     db  = get_db()
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y   = year  or now.year
-    m   = month or now.month
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y    = year  or _by
+    m    = month or _bm
 
-    date_from = f"{y:04d}-{m:02d}-01"
-    last_day  = _calendar.monthrange(y, m)[1]
-    date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
+    date_from, date_to = _bulan.rentang(y, m)
 
     # Lingkup toko sama dengan layar (dulu PDF memuat kreator SEMUA toko)
     _cq: dict = {"status": "active"}
@@ -592,7 +591,8 @@ async def export_creator_targets_pdf(
         total_rev_act += rev_actual
 
     summary_payload = {
-        "period":  {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
+        "period":  {"year": y, "month": m, "date_from": date_from, "date_to": date_to,
+             "label": _bulan.label(y, m)},
         "summary": {
             "total_creators": len(creators),
             "rev_target":     total_rev_tgt,
@@ -649,13 +649,12 @@ async def creator_scorecard(
     """
     user = await require_auth(request)
     db   = get_db()
-    now  = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y    = year  or now.year
-    m    = month or now.month
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y    = year  or _by
+    m    = month or _bm
 
-    date_from = f"{y:04d}-{m:02d}-01"
-    last_day  = _calendar.monthrange(y, m)[1]
-    date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
+    date_from, date_to = _bulan.rentang(y, m)
 
     # ── lingkup toko (F6): staf hanya boleh melihat tokonya ───────────────────
     acc_filter: Optional[dict] = None
@@ -697,9 +696,7 @@ async def creator_scorecard(
     oq: dict = {"creator_id": {"$nin": [None, ""]},
                 "$or": [
                     {"order_date": {"$gte": date_from, "$lte": date_to + "\uffff"}},
-                    {"order_date": {"$gte": datetime(y, m, 1, tzinfo=timezone.utc),
-                                    "$lt": datetime(y + (m // 12), (m % 12) + 1, 1,
-                                                    tzinfo=timezone.utc)}},
+                    {"order_date": dict(zip(("$gte", "$lt"), _bulan.rentang_utc(y, m)))},
                 ]}
     if acc_filter is not None:
         oq["account_id"] = acc_filter
@@ -828,7 +825,8 @@ async def creator_scorecard(
 
     return serialize_doc({
         "success": True,
-        "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
+        "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to,
+            "label": _bulan.label(y, m)},
         "rows": rows,
         "totals": tot,
         "creators_without_target": without_target,
@@ -884,12 +882,11 @@ async def creator_detail(
     """
     user = await require_auth(request)
     db   = get_db()
-    now  = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y    = year  or now.year
-    m    = month or now.month
-    date_from = f"{y:04d}-{m:02d}-01"
-    last_day  = _calendar.monthrange(y, m)[1]
-    date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y    = year  or _by
+    m    = month or _bm
+    date_from, date_to = _bulan.rentang(y, m)
 
     creator = await db.marketing_kol_creators.find_one({"id": creator_id}, {"_id": 0})
     if not creator:
@@ -948,9 +945,7 @@ async def creator_detail(
     oq = {"creator_id": creator_id,
           "$or": [
               {"order_date": {"$gte": date_from, "$lte": date_to + "\uffff"}},
-              {"order_date": {"$gte": datetime(y, m, 1, tzinfo=timezone.utc),
-                              "$lt": datetime(y + (m // 12), (m % 12) + 1, 1,
-                                              tzinfo=timezone.utc)}},
+              {"order_date": dict(zip(("$gte", "$lt"), _bulan.rentang_utc(y, m)))},
           ]}
     if acc_filter is not None:
         oq["account_id"] = acc_filter
@@ -1023,7 +1018,8 @@ async def creator_detail(
         "creator": {"id": creator_id, "name": creator.get("name"),
                     "creator_code": creator.get("creator_code"),
                     "status": creator.get("status")},
-        "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to},
+        "period": {"year": y, "month": m, "date_from": date_from, "date_to": date_to,
+            "label": _bulan.label(y, m)},
         "target": {"revenue": (float(tgt["revenue_target"]) if tgt else None),
                    "sessions": (tgt or {}).get("sessions_target"),
                    "viewers": (tgt or {}).get("viewers_target"),
