@@ -109,7 +109,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
         </Isian>
         <Isian label="Tanggal beli" wajib>
           <DatePicker value={form.purchase_date} onChange={v => set('purchase_date', v)} bolehKosong={false}
-            testId="asset-purchase-date" />
+            pilihTahun="lampau" testId="asset-purchase-date" />
         </Isian>
         <Isian label="Harga beli (Rp)" wajib htmlFor="asset-cost">
           <MoneyInput id="asset-cost" placeholder="5.000.000" value={form.purchase_cost}
@@ -154,7 +154,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
       <div className="grid gap-4 sm:grid-cols-2">
         <Isian label="Garansi berakhir">
           <DatePicker value={form.warranty_expiry_date} onChange={v => set('warranty_expiry_date', v)}
-            placeholder="Tanpa garansi" testId="asset-warranty-date" />
+            placeholder="Tanpa garansi" pilihTahun testId="asset-warranty-date" />
         </Isian>
         <Isian label="Penyedia garansi" htmlFor="asset-warranty-provider">
           <Input id="asset-warranty-provider" placeholder="Dealer resmi, toko" value={form.warranty_provider}
@@ -178,7 +178,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
         </Isian>
         <Isian label="Asuransi berakhir">
           <DatePicker value={form.insurance_expiry_date} onChange={v => set('insurance_expiry_date', v)}
-            placeholder="Tanpa asuransi" testId="asset-insurance-date" />
+            placeholder="Tanpa asuransi" pilihTahun testId="asset-insurance-date" />
         </Isian>
         <Isian label="Nilai pertanggungan (Rp)" htmlFor="asset-insured-value">
           <MoneyInput id="asset-insured-value" placeholder="50.000.000" value={form.insurance_value}

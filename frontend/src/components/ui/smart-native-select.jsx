@@ -103,6 +103,7 @@ export default function SmartNativeSelect({
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const inputRef = React.useRef(null)
+  const listRef = React.useRef(null)
 
   const selected = React.useMemo(
     () => options.find((o) => o.value === String(value)),
@@ -197,6 +198,13 @@ export default function SmartNativeSelect({
               // fokus ke kotak cari (bukan opsi pertama); tanpa kotak cari fokus tetap di tombol
               e.preventDefault()
               if (enabled) requestAnimationFrame(() => inputRef.current?.focus())
+              // 2026-11-11: daftar panjang (mis. tahun lahir) langsung tergulir ke pilihan saat ini, seperti <select> asli.
+              // Hanya menggeser daftar itu sendiri (scrollTop) — bukan scrollIntoView, yang bisa ikut menggeser halaman.
+              requestAnimationFrame(() => {
+                const list = listRef.current
+                const opt = list?.querySelector('[aria-selected="true"]')
+                if (list && opt) list.scrollTop = Math.max(0, opt.offsetTop - (list.clientHeight - opt.offsetHeight) / 2)
+              })
             }}
             style={enabled
               // daftar bisa dicari = biasanya daftar master panjang → panel selebar isinya (dibatasi layar)
@@ -230,7 +238,7 @@ export default function SmartNativeSelect({
                 />
               </div>
             )}
-            <div className="overflow-y-auto p-1" role="listbox"
+            <div ref={listRef} className="relative overflow-y-auto p-1" role="listbox"
               style={{ maxHeight: `min(${enabled ? 360 : 240}px, calc(var(--radix-popover-content-available-height, 300px) - 48px))` }}
               data-testid={dataTestId ? `${dataTestId}-list` : "select-option-list"}>
               {filtered.length === 0 ? (

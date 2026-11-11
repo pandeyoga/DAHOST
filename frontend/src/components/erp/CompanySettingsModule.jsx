@@ -340,7 +340,7 @@ export default function CompanySettingsModule({ token, userRole }) {
         </div>
         {tax.pkp && (
           <Isian label="PKP sejak" wajib petunjuk="Tanggal pengukuhan PKP dari KPP. NPWP wajib diisi di profil.">
-            <DatePicker value={tax.pkp_since} onChange={(v) => setTax(t => ({ ...t, pkp_since: v || '' }))} testId="tax-pkp-since" />
+            <DatePicker value={tax.pkp_since} onChange={(v) => setTax(t => ({ ...t, pkp_since: v || '' }))} pilihTahun="lampau" testId="tax-pkp-since" />
           </Isian>
         )}
       </FormPopup>
