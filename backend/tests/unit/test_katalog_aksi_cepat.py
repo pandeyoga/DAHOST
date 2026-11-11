@@ -411,6 +411,70 @@ def test_daftar_master_untuk_katalog_membawa_harga_sku_dan_status(env):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 11 Nov — Isi dari master: cakupan per toko (matriks produk × toko)
+# ══════════════════════════════════════════════════════════════════════════════
+def _aktifkan_toko(db):
+    for a in db.marketing_platform_accounts.docs:
+        a["status"] = "active"
+
+
+def test_cakupan_per_toko_sama_dengan_aturan_sudah_ada(env):
+    """Katalog toko + item lama tanpa katalog = "sudah ada"; toko tanpa katalog tetap tampil (kosong)."""
+    db, cm = env["db"], env["cm"]
+    _aktifkan_toko(db)
+    db.marketing_catalog_items.docs = [
+        _item("i1", "cat-a", "fg-1", "UJA-HTM-M"),
+        _item("i2", "cat-b", "fg-1", "UJA-HTM-M", is_active=False),     # nonaktif tetap dihitung ada (anti-kembar)
+        _hidden("h1", "acc-b", "fg-4", "UJA-PTH-M"),                     # item lama tanpa katalog
+        _hidden("h2", "acc-c", "fg-2", "UJA-HTM-S", merged_into="i9"),   # sudah dirapikan → tidak dihitung
+    ]
+    out = run(cm.list_master_products_for_catalog(FakeRequest(), q=None, account_id=None, only_sellable=False,
+                                                  limit=1000, coverage=True))
+    assert [a["account_code"] for a in out["accounts"]] == ["SHP-UJ1", "SHP-UJ3", "TTK-UJ2"]
+    assert {a["id"]: a["catalog_id"] for a in out["accounts"]} == {"acc-a": "cat-a", "acc-b": "cat-b", "acc-c": None}
+    v = {x["code"]: x for p in out["products"] for x in p["variants"]}
+    assert v["UJA-HTM-M"]["in_accounts"] == ["acc-a", "acc-b"] and v["UJA-HTM-M"]["hidden_accounts"] == []
+    assert v["UJA-PTH-M"]["in_accounts"] == ["acc-b"] and v["UJA-PTH-M"]["hidden_accounts"] == ["acc-b"]
+    assert v["UJA-HTM-S"]["in_accounts"] == [] and v["UJB-PTH-L"]["in_accounts"] == []
+    assert out["more"] is False
+
+
+def test_cakupan_hanya_toko_yang_boleh_dilihat(env):
+    db, cm = env["db"], env["cm"]
+    _aktifkan_toko(db)
+    db.marketing_platform_accounts.docs[1]["pic_user_id"] = PIC["id"]           # PIC hanya memegang acc-b
+    db.marketing_catalog_items.docs = [_item("i1", "cat-a", "fg-1", "UJA-HTM-M")]
+    env["pakai"](PIC)
+    out = run(cm.list_master_products_for_catalog(FakeRequest(), q=None, account_id=None, only_sellable=False,
+                                                  limit=1000, coverage=True))
+    assert [a["id"] for a in out["accounts"]] == ["acc-b"]
+    v = {x["code"]: x for p in out["products"] for x in p["variants"]}
+    assert v["UJA-HTM-M"]["in_accounts"] == []                                   # toko lain tidak bocor
+
+
+def test_tanpa_cakupan_bentuk_lama_tetap_dan_batas_dilaporkan(env):
+    db, cm = env["db"], env["cm"]
+    out = run(cm.list_master_products_for_catalog(FakeRequest(), q=None, account_id=None, only_sellable=False,
+                                                  limit=1))
+    assert "accounts" not in out and "in_accounts" not in out["products"][0]["variants"][0]
+    assert out["more"] is True and len(out["products"]) == 1
+
+
+def test_tombol_tambahkan_hanya_membuat_yang_belum_ada_di_matriks(env):
+    """Yang ditandai "sudah ada" di matriks memang dilewati tombol Tambahkan (tidak ada kembar)."""
+    db, cm = env["db"], env["cm"]
+    _aktifkan_toko(db)
+    db.marketing_catalog_items.docs = [_hidden("h1", "acc-b", "fg-4", "UJA-PTH-M")]
+    body = cm.AssignFromMasterBody(account_ids=["acc-b"], fg_material_ids=["fg-1", "fg-4"])
+    out = run(cm.assign_from_master(body, FakeRequest()))
+    assert out["summary"]["created"] == 1 and out["summary"]["skipped"] == 1
+    lst = run(cm.list_master_products_for_catalog(FakeRequest(), q=None, account_id=None, only_sellable=False,
+                                                  limit=1000, coverage=True))
+    v = {x["code"]: x for p in lst["products"] for x in p["variants"]}
+    assert v["UJA-HTM-M"]["in_accounts"] == ["acc-b"] and v["UJA-PTH-M"]["in_accounts"] == ["acc-b"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # D4 — unggah harga & URL dari Excel
 # ══════════════════════════════════════════════════════════════════════════════
 class _Up:

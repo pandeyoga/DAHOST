@@ -122,27 +122,35 @@ test('aksi massal tanpa perubahan: tidak ada konfirmasi, alasannya disebut', asy
   expect(global.fetch).toHaveBeenCalledTimes(1);
 });
 
-test('isi dari master: harga & status per SKU tampil, model tercentang tanpa SKU Stop/Dead', async () => {
-  const calls = [];
-  global.fetch = jest.fn((url, opts) => {
-    calls.push({ url, body: opts?.body ? JSON.parse(opts.body) : null });
-    if (url.includes('/api/marketing/accounts')) return jawab([{ id: 'acc-1', account_code: 'SHP-U', account_name: 'Toko Uji', platform: 'shopee' }]);
-    if (url.includes('/assign-from-master')) {
-      return jawab({ message: '1 item katalog dibuat', results: [{ account_id: 'acc-1', account_name: 'Toko Uji', created: 1, skipped: 0, rejected: 0, skipped_status: 0, notes: [] }] });
-    }
-    return jawab({ products: [{
-      model_id: 'm-1', code: 'UJA', name: 'Blus Uji', category_name: 'Blouse', hpp: 40000, retail_price_master: 0,
-      retail_price_min: 85000, retail_price_max: 89000, variant_count: 2, in_catalog_count: 0,
+// Isi dari master (11 Nov): matriks produk × toko — data cakupan per toko dari `master-products?coverage=true`.
+const TOKO = [
+  { id: 'acc-1', account_code: 'SHP-U', account_name: 'Shopee Uji', platform: 'shopee', catalog_id: 'cat-1' },
+  { id: 'acc-2', account_code: 'TTK-U', account_name: 'Tiktok Uji', platform: 'tiktok', catalog_id: null },
+];
+const varian = (id, code, status, ada = [], extra = {}) => ({
+  fg_material_id: id, code, color: 'Hitam', size_code: code.slice(-1), hpp: 40000, sellable_stock: 2, in_catalog: false,
+  retail_price_master: 89000, retail_price_source: 'sku', product_status: status, in_accounts: ada, hidden_accounts: [],
+  ...extra,
+});
+const masterMatriks = () => ({
+  accounts: TOKO,
+  products: [
+    { model_id: 'm-1', code: 'UJA', name: 'Blus Uji', category_name: 'Blouse', hpp: 40000, variant_count: 3,
       variants: [
-        { fg_material_id: 'fg-1', code: 'UJA-HTM-M', color: 'Hitam', size_code: 'M', hpp: 40000, sellable_stock: 2,
-          in_catalog: false, retail_price_master: 89000, retail_price_source: 'sku', product_status: 'best_seller' },
-        { fg_material_id: 'fg-2', code: 'UJA-HTM-S', color: 'Hitam', size_code: 'S', hpp: 40000, sellable_stock: 0,
-          in_catalog: false, retail_price_master: 85000, retail_price_source: 'sku', product_status: 'stop' },
-      ],
-    }] });
-  });
+        varian('fg-1', 'UJA-HTM-M', 'best_seller', ['acc-1']),
+        varian('fg-2', 'UJA-HTM-S', 'stop', [], { retail_price_master: 85000 }),
+        varian('fg-3', 'UJA-HTM-L', null, ['acc-1', 'acc-2']),
+      ] },
+    { model_id: 'm-2', code: 'UJB', name: 'Rok Uji', category_name: 'Rok', hpp: 0, variant_count: 1,
+      variants: [varian('fg-4', 'UJB-PTH-L', 'new', ['acc-1', 'acc-2'])] },
+  ],
+});
+
+test('isi dari master: harga & status per SKU tampil, model tercentang tanpa SKU Stop/Dead', async () => {
+  global.fetch = jest.fn(() => jawab(masterMatriks()));
   await act(async () => { root.render(<CatalogFromMasterModule token="t" />); });
   await tunggu(() => q('cfm-toggle-UJA'));
+  expect(global.fetch.mock.calls[0][0]).toContain('coverage=true');
   await klik(q('cfm-toggle-UJA'));
   await tunggu(() => q('cfm-price-UJA-HTM-M'));
   expect(q('cfm-price-UJA-HTM-M').textContent).toContain('89.000');
@@ -150,6 +158,53 @@ test('isi dari master: harga & status per SKU tampil, model tercentang tanpa SKU
   await klik(q('cfm-model-UJA'));
   expect(q('cfm-variant-UJA-HTM-M').getAttribute('data-state')).toBe('checked');
   expect(q('cfm-variant-UJA-HTM-S').getAttribute('data-state')).toBe('unchecked');   // Stop tidak ikut
+  expect(q('cfm-variant-UJA-HTM-L').getAttribute('data-state')).toBe('unchecked');   // sudah ada di semua toko
+});
+
+test('isi dari master: kolom per toko menunjukkan yang sudah ada / belum; penyaring Belum lengkap', async () => {
+  global.fetch = jest.fn(() => jawab(masterMatriks()));
+  await act(async () => { root.render(<CatalogFromMasterModule token="t" />); });
+  await tunggu(() => q('cfm-cov-UJA-SHP-U'));
+  // UJA: 2 varian dijual (Stop tidak dihitung) — Shopee 2/2 lengkap, TikTok 1/2
+  expect(q('cfm-cov-UJA-SHP-U').textContent).toBe('2/2');
+  expect(q('cfm-cov-UJA-TTK-U').textContent).toBe('1/2');
+  expect(q('cfm-store-total-SHP-U').textContent).toBe('3/3');
+  expect(q('cfm-store-total-TTK-U').textContent).toBe('2/3');
+  expect(q('cfm-row-UJB')).toBeNull();                                  // bawaan "Belum lengkap": UJB lengkap di semua toko
+  expect(q('cfm-filter-belum').textContent).toContain('(1)');
+  await klik(q('cfm-filter-lengkap'));
+  await tunggu(() => q('cfm-row-UJB'));
+  expect(q('cfm-row-UJA')).toBeNull();
+  // Toko tujuan hanya Shopee → UJA lengkap di toko tujuan
+  await klik(q('cfm-target-SHP-U'));
+  await tunggu(() => q('cfm-row-UJA'));
+  expect(q('cfm-filter-belum').textContent).toContain('(0)');
+});
+
+test('isi dari master: Tambahkan mengirim per toko hanya varian yang belum ada', async () => {
+  const calls = [];
+  global.fetch = jest.fn((url, opts) => {
+    const body = opts?.body ? JSON.parse(opts.body) : null;
+    if (url.includes('/assign-from-master')) {
+      calls.push(body);
+      return jawab({ results: [{ account_id: body.account_ids[0], catalog_created: true, created: body.fg_material_ids.length,
+        skipped: 0, rejected: 0, skipped_status: 0, notes: [] }] });
+    }
+    return jawab(masterMatriks());
+  });
+  await act(async () => { root.render(<CatalogFromMasterModule token="t" />); });
+  await tunggu(() => q('cfm-target-SHP-U'));
+  await klik(q('cfm-target-SHP-U'));
+  await klik(q('cfm-target-TTK-U'));
+  await klik(q('cfm-model-UJA'));                                       // fg-1 (belum di TikTok); fg-3 sudah di keduanya
+  expect(q('cfm-new-count').textContent).toBe('1');
+  await klik(q('cfm-submit'));
+  await tunggu(() => q('cfm-form-simpan'));
+  await klik(q('cfm-form-simpan'));
+  await tunggu(() => q('cfm-result'));
+  expect(calls).toHaveLength(1);                                        // Shopee sudah punya fg-1 → tidak dikirim
+  expect(calls[0]).toMatchObject({ account_ids: ['acc-2'], fg_material_ids: ['fg-1'], include_stop_dead: false });
+  expect(q('cfm-result').textContent).toContain('1 item katalog dibuat di 2 toko');
 });
 
 test('harga jual per SKU: isi sama untuk semua SKU → Simpan mengirim perubahan saja', async () => {

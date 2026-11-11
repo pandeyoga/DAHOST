@@ -444,7 +444,8 @@ async def list_master_products_for_catalog(
     q: Optional[str] = Query(None, description="Cari kode/nama produk atau varian"),
     account_id: Optional[str] = Query(None, description="Tandai varian yang SUDAH ada di katalog toko ini"),
     only_sellable: bool = Query(False, description="Hanya varian yang stok jualnya > 0"),
-    limit: int = Query(60, ge=1, le=300),
+    limit: int = Query(60, ge=1, le=1000),
+    coverage: bool = False,
 ):
     """Master produk internal (model R&D) + varian FG-nya, siap dipilih untuk katalog toko.
 
@@ -457,8 +458,15 @@ async def list_master_products_for_catalog(
     HPP-nya berapa, harga resminya berapa, stok jual berapa, dan **varian mana yang
     sudah ada di katalog toko itu** — supaya tidak memilih ulang yang sudah ada.
     Semua dibaca dari SSOT (`core.product_master`, `core.catalog_stock`).
+
+    2026-11-11 (owner: "saya tidak bisa lihat apa yang sudah ada di toko mana yang belum") — `coverage=true`
+    menambahkan CAKUPAN PER TOKO untuk semua toko aktif yang boleh dilihat pemakai: tiap varian membawa
+    `in_accounts` (toko yang katalognya sudah memuat varian itu, termasuk item impor lama tanpa katalog —
+    aturan "sudah ada" yang sama dengan `create_item_from_fg`) dan `hidden_accounts` (yang hanya ada sebagai item
+    lama). Batas model dinaikkan (layar meminta semua model; dulu 60 pertama saja). Stok jual dibaca sekaligus
+    (`sellable_map`), bukan satu kueri per varian.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     mq: dict = {'$or': [{'active': True}, {'active': {'$exists': False}}]}
@@ -499,9 +507,17 @@ async def list_master_products_for_catalog(
     vstatus = await _tools.status_by_sku(db, (fg.get('code') for fg in fgs))
     model_by_id = {m['id']: m for m in models}
 
+    # 2026-11-11 — cakupan per toko (lihat docstring)
+    cov_accounts: list = []
+    in_acc: dict = {}        # fg_id → {account_id} (katalog toko ATAU item lama tanpa katalog)
+    hid_acc: dict = {}       # fg_id → {account_id} yang HANYA ada sebagai item lama tanpa katalog
+    if coverage:
+        cov_accounts, in_acc, hid_acc = await _catalog_coverage(db, user, [fg['id'] for fg in fgs])
+
+    stock_by_fg = await _cstock.sellable_map(db, [fg['id'] for fg in fgs])
     by_model: dict = {}
     for fg in fgs:
-        stock = await _cstock.sellable_stock(db, fg['id'])
+        stock = stock_by_fg.get(fg['id']) or _cstock.EMPTY
         sellable = float(stock['available'])
         if only_sellable and sellable <= 0:
             continue
@@ -531,6 +547,11 @@ async def list_master_products_for_catalog(
             'reserved': float(stock['reserved']),
             'in_catalog': fg['id'] in in_catalog or fg['id'] in in_hidden,
         })
+        if coverage:
+            by_model[fg['model_id']][-1].update({
+                'in_accounts': sorted(in_acc.get(fg['id'], ())),
+                'hidden_accounts': sorted(hid_acc.get(fg['id'], ())),
+            })
 
     out = []
     for m in models:
@@ -566,10 +587,66 @@ async def list_master_products_for_catalog(
             'variants': variants,
         })
 
-    return {'ok': True, 'catalog_id': catalog_id,
-            'products': out,
-            'total_products': len(out),
-            'total_variants': sum(p['variant_count'] for p in out)}
+    res = {'ok': True, 'catalog_id': catalog_id,
+           'products': out,
+           'total_products': len(out),
+           'total_variants': sum(p['variant_count'] for p in out),
+           # True = masih ada model lain di luar batas `limit` (layar memberi tahu, tidak diam-diam terpotong)
+           'more': len(models) >= limit}
+    if coverage:
+        res['accounts'] = cov_accounts
+    return res
+
+
+async def _catalog_coverage(db, user: dict, fg_ids: list) -> tuple:
+    """Cakupan katalog per toko untuk varian `fg_ids` → ``(accounts, in_acc, hid_acc)``.
+
+    * ``accounts`` — toko AKTIF yang boleh dilihat pemakai (`marketing_account_scope`, urut kode toko), masing-masing
+      dengan ``catalog_id`` katalognya (None bila belum punya — katalog dibuat otomatis saat diisi).
+    * ``in_acc[fg_id]`` — toko yang SUDAH memuat varian itu: item di katalog toko tersebut (aktif atau tidak — sama
+      dengan pemeriksaan kembar `create_item_from_fg`) **atau** item impor lama tanpa katalog milik toko itu (D7).
+    * ``hid_acc[fg_id]`` — toko yang memuatnya HANYA sebagai item lama tanpa katalog (layar menandai "perlu dirapikan").
+
+    Katalog toko = katalog PERTAMA yang ditemukan untuk toko itu — sama dengan `assign_from_master`, supaya layar dan
+    tombol "Tambahkan" tidak pernah berbeda pendapat tentang apa yang "sudah ada".
+    """
+    accounts = await _scope.visible_accounts(
+        db, user, base={'status': 'active'},
+        projection={'_id': 0, 'id': 1, 'account_code': 1, 'account_name': 1, 'name': 1, 'platform': 1},
+        sort=[('account_code', 1)])
+    acc_ids = [a['id'] for a in accounts if a.get('id')]
+    cat_by_acc: dict = {}
+    async for c in db.marketing_catalogs.find({'account_id': {'$in': acc_ids}}, {'_id': 0, 'id': 1, 'account_id': 1}):
+        cat_by_acc.setdefault(c.get('account_id'), c.get('id'))
+    acc_by_cat = {cid: aid for aid, cid in cat_by_acc.items() if cid}
+
+    wanted = set(fg_ids or [])
+    in_cat: dict = {}
+    if acc_by_cat and wanted:
+        async for it in db.marketing_catalog_items.find(
+                {'catalog_id': {'$in': list(acc_by_cat)}, 'fg_material_id': {'$in': list(wanted)}},
+                {'_id': 0, 'catalog_id': 1, 'fg_material_id': 1}):
+            in_cat.setdefault(it['fg_material_id'], set()).add(acc_by_cat[it['catalog_id']])
+    hidden: dict = {}
+    if acc_ids and wanted:
+        async for it in db.marketing_catalog_items.find(
+                {'$and': [_tools.LIVE_HIDDEN, {'account_id': {'$in': acc_ids}}]},
+                {'_id': 0, 'account_id': 1, 'fg_material_id': 1, 'material_id': 1}):
+            # sama dengan `find_hidden_twin`: cocok lewat fg_material_id ATAU material_id
+            for fid in {it.get('fg_material_id'), it.get('material_id')}:
+                if fid in wanted:
+                    hidden.setdefault(fid, set()).add(it['account_id'])
+
+    in_acc = {fid: in_cat.get(fid, set()) | hidden.get(fid, set()) for fid in set(in_cat) | set(hidden)}
+    hid_acc = {fid: accs - in_cat.get(fid, set()) for fid, accs in hidden.items()}
+    out_accounts = [{
+        'id': a['id'],
+        'account_code': a.get('account_code') or '',
+        'account_name': a.get('account_name') or a.get('name') or a.get('account_code') or '',
+        'platform': a.get('platform') or '',
+        'catalog_id': cat_by_acc.get(a['id']),
+    } for a in accounts if a.get('id')]
+    return out_accounts, in_acc, hid_acc
 
 
 class AssignFromMasterBody(BaseModel):
