@@ -539,7 +539,7 @@ function AssetFormDialog({ initial, onSave, onClose }) {
         </Isian>
         <Isian label="Tanggal beli">
           <DatePicker value={form.purchase_date || ''} onChange={v => setForm(f => ({ ...f, purchase_date: v }))}
-            max={todayWIB()} testId="asset-purchase-date" />
+            max={todayWIB()} pilihTahun="lampau" testId="asset-purchase-date" />
         </Isian>
         <Isian label="Harga beli (Rp)">
           <MoneyInput value={form.purchase_price}

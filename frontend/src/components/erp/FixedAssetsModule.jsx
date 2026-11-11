@@ -608,7 +608,7 @@ export default function FixedAssetsModule({ token }) {
               </SmartNativeSelect>
             </div>
             <Isian label="Tanggal pembelian" wajib>
-              <DatePicker max={maxDate} value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} testId="asset-purchase-date" />
+              <DatePicker max={maxDate} value={form.purchase_date} onChange={v => setForm(f => ({ ...f, purchase_date: v }))} pilihTahun="lampau" testId="asset-purchase-date" />
             </Isian>
             <div><label className="block text-sm font-medium text-foreground mb-1.5">Harga perolehan (Rp) *</label>
               <MoneyInput glass placeholder="0" value={form.purchase_cost} onChange={e => setForm(v => ({...v, purchase_cost: e.target.value}))} data-testid="asset-cost" />

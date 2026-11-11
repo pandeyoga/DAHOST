@@ -763,17 +763,17 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
               <Sel value={form.contract_type || ''} onChange={set('contract_type')} options={CONTRACT_TYPES} testId="emp-contract-type" />
             </Isian>
             <Isian label="Mulai kontrak">
-              <DatePicker value={ymdOf(form.contract_start_date)} onChange={set('contract_start_date')} testId="emp-contract-start" />
+              <DatePicker value={ymdOf(form.contract_start_date)} onChange={set('contract_start_date')} pilihTahun="lampau" testId="emp-contract-start" />
             </Isian>
             <Isian label="Berakhir kontrak" petunjuk="Wajib untuk PKWT dan magang.">
-              <DatePicker value={ymdOf(form.contract_end_date)} onChange={set('contract_end_date')}
+              <DatePicker value={ymdOf(form.contract_end_date)} onChange={set('contract_end_date')} pilihTahun
                 min={ymdOf(form.contract_start_date) || undefined} testId="emp-contract-end" />
             </Isian>
             <Isian label="Tanggal masuk kerja" petunjuk="Dipakai penggajian untuk gaji prorata di bulan pertama.">
-              <DatePicker value={ymdOf(form.join_date)} onChange={set('join_date')} testId="emp-join-date" />
+              <DatePicker value={ymdOf(form.join_date)} onChange={set('join_date')} pilihTahun="lampau" testId="emp-join-date" />
             </Isian>
             <Isian label="Tanggal keluar" petunjuk="Diisi saat karyawan berhenti — gaji bulan terakhir prorata.">
-              <DatePicker value={ymdOf(form.resign_date)} onChange={set('resign_date')}
+              <DatePicker value={ymdOf(form.resign_date)} onChange={set('resign_date')} pilihTahun="lampau"
                 min={ymdOf(form.join_date) || undefined} placeholder="Belum keluar" testId="emp-resign-date" />
             </Isian>
             <Isian label="Gaji" petunjuk="Diatur di Penggajian › Profil Gaji (satu sumber gaji).">
@@ -819,7 +819,8 @@ function EmployeeDialog({ initial, locations, employees = [], masters = {}, head
                 <Input id="emp-birth-place" value={form.birth_place} onChange={set('birth_place')} placeholder="Kota kelahiran" />
               </Isian>
               <Isian label="Tanggal lahir">
-                <DatePicker value={ymdOf(form.birth_date)} onChange={set('birth_date')} testId="emp-birth-date" />
+                <DatePicker value={ymdOf(form.birth_date)} onChange={set('birth_date')} pilihTahun="lahir"
+                  placeholder="Pilih atau ketik tanggal" testId="emp-birth-date" />
               </Isian>
               <Isian label="Agama">
                 <Sel value={form.religion} onChange={set('religion')} options={RELIGIONS.map(r => ({ value: r, label: r }))} />

@@ -244,7 +244,7 @@ export default function MyDocumentsModule({ token }) {
         </Isian>
         <Isian label="Berlaku sampai (opsional)">
           <DatePicker value={formData.expiry_date} onChange={(v) => setFormData({ ...formData, expiry_date: v || '' })}
-            bolehKosong placeholder="Tanpa batas" testId="mydoc-expiry" />
+            bolehKosong placeholder="Tanpa batas" pilihTahun testId="mydoc-expiry" />
         </Isian>
       </FormPopup>
     </PageLayout>
