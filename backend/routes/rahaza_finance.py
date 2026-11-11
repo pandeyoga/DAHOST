@@ -324,7 +324,10 @@ async def delete_cost_center(cid: str, request: Request, hard: bool = False):
 
 # ── AR INVOICES ──────────────────────────────────────────────────────────────
 @router.get("/ar-invoices")
-async def list_ar(request: Request, status: Optional[str] = None, customer_id: Optional[str] = None):
+async def list_ar(request: Request, status: Optional[str] = None, customer_id: Optional[str] = None,
+                  limit: int = Query(500, ge=1, le=5000)):
+    """11 Nov 2026 (owner, Keuangan › Piutang satu daftar): `limit` (bawaan 500 seperti dulu) dan penanda
+    `maklon` per baris (core.entities.is_maklon_doc) supaya layar bisa menyaring jenis piutang."""
     await require_auth(request)
     db = get_db()
     ent = entity_from_request(request, allow_all=True)   # Tahap 8
@@ -333,10 +336,12 @@ async def list_ar(request: Request, status: Optional[str] = None, customer_id: O
         q["status"] = status
     if customer_id:
         q["customer_id"] = customer_id
-    rows = await db.rahaza_ar_invoices.find(q, {"_id": 0}).sort("issue_date", -1).to_list(2000)
-    rows = [r for r in rows if matches_entity(entity_of_doc(r), ent)][:500]
+    rows = await db.rahaza_ar_invoices.find(q, {"_id": 0}).sort("issue_date", -1).to_list(max(2000, limit))
+    rows = [r for r in rows if matches_entity(entity_of_doc(r), ent)][:limit]
+    from core.entities import is_maklon_doc
     for r in rows:
         r["entity"] = entity_of_doc(r)
+        r["maklon"] = is_maklon_doc(r)
     # enrich customer
     cids = list({r.get("customer_id") for r in rows if r.get("customer_id")})
     cs = await db.rahaza_customers.find({"id": {"$in": cids}}, {"_id": 0}).to_list(500) if cids else []

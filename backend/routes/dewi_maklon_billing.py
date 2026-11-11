@@ -8,7 +8,7 @@ Collections:
 - dewi_maklon_hpp: HPP (Cost of Goods) breakdown per order
 """
 import logging
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from routes.production_rbac import deny_external_dep
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -841,14 +841,30 @@ RECEIVABLE_GROUPS = {
 
 
 @router.get('/receivables')
-async def list_receivables(status: Optional[str] = None, client_id: Optional[str] = None,
+async def list_receivables(request: Request, status: Optional[str] = None, client_id: Optional[str] = None,
                            search: Optional[str] = None, user: dict = Depends(require_auth)):
+    """Piutang klien maklon per PO — SATU sumber untuk Portal Maklon › Piutang klien DAN Keuangan › Piutang
+    (11 Nov 2026, owner: satu daftar piutang tanpa tab). Keuangan mengirim pilihan CV (header ``X-CV``); Portal
+    Maklon tidak → tanpa saringan (perilaku lama). Setiap baris membawa umur sejak kirim ke CMT (core.umur_kirim)."""
     db = get_db()
     q: dict = {'source_module': 'maklon_po'}
     if client_id:
         q['customer_id'] = client_id
     docs = await db.rahaza_ar_invoices.find(q, {'_id': 0}).sort('created_at', -1).to_list(2000)
-    rows = [r for r in (_receivable_row(d) for d in docs) if r['status'] != 'draft' or r['mode'] == 'terjadwal']
+    from core.entities import ALL, entity_from_request, entity_of_doc
+    ent = entity_from_request(request, allow_all=True, default=None)
+    if ent and ent != ALL:
+        docs = [d for d in docs if entity_of_doc(d) == ent]
+    rows = []
+    for d in docs:
+        r = _receivable_row(d)
+        if r['status'] != 'draft' or r['mode'] == 'terjadwal':
+            rows.append({**r, 'entity': entity_of_doc(d)})
+    from core import umur_kirim
+    kirim = await umur_kirim.tanggal_kirim_cmt(db, [r.get('po_id') for r in rows])
+    today = today_wib()
+    for r in rows:
+        r.update(umur_kirim.umur_fields(umur_kirim.tanggal_untuk(kirim, r.get('po_id')), today))
     if search:
         s = search.strip().lower()
         rows = [r for r in rows if s in (r.get('po_number') or '').lower()

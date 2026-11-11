@@ -80,8 +80,10 @@ const WarehouseDashboard  = lazyRetry(() => import('./WarehouseDashboard'));
 const FinanceHomeModule   = lazyRetry(() => import('./finance/FinanceHomeModule'));  // 2026-11-04: Beranda Keuangan
 // 2026-11-04 (owner, audit Keuangan tahap 3-4): menu Keuangan 8 grup — hub per jenis dokumen/laporan
 const FinanceMarketplaceHub   = lazyRetry(() => import('./hubs/FinanceMarketplaceHub'));
-const FinanceARHub            = lazyRetry(() => import('./hubs/FinanceARHub'));
-const FinanceAPHub            = lazyRetry(() => import('./hubs/FinanceAPHub'));
+// 11 Nov 2026 (owner): menu Piutang / Hutang = SATU daftar dengan penyaring (dulu hub ber-tab FinanceARHub/FinanceAPHub);
+// id menu tetap fin-ar-hub / fin-ap-hub — petunjuk tab tautan lama dibaca layar sebagai pil status awal.
+const PiutangModule           = lazyRetry(() => import('./finance/PiutangModule'));
+const HutangModule            = lazyRetry(() => import('./finance/HutangModule'));
 const FinancePnLHub           = lazyRetry(() => import('./hubs/FinancePnLHub'));
 const FinanceBalanceSheetHub  = lazyRetry(() => import('./hubs/FinanceBalanceSheetHub'));
 // Tahap 8 fase 2: Transaksi & Saldo antar CV (CV Dewi Aditya ↔ CV Sukma)
@@ -735,7 +737,7 @@ export const MODULE_REGISTRY = {
   // REMOVED in Session #11.17 (post Phase D). Backend routes already 404 (Session #11.16 Phase D).
   // Use SSOT routes instead: fin-ar-invoices, fin-ar-360, fin-ap-aging, maklon-billing.
   'fin-3way-match':    ThreeWayMatchModule,         // Phase 27 — PO ↔ GR ↔ AP 3-way reconciliation
-  'fin-ar-360':        makeRedirect('fin-ar-hub', 'aging'),   // 2026-11-04 → Piutang Reseller › Umur piutang
+  'fin-ar-360':        makeRedirect('fin-ar-hub', 'aging'),   // 11 Nov 2026 → Piutang, pil Belum dibayar (dulu tab Umur piutang)
   'fin-approval':      ApprovalModule,
   'fin-recap':         makeRedirect('finance-dashboard'),  // 2026-11-04 (owner): Rekap digabung ke Beranda
   // Finance · Bank Reconciliation (P1)
@@ -874,9 +876,9 @@ export const MODULE_REGISTRY = {
 
   // Finance · Enhanced (Fase 8.5)
   'fin-cost-centers':  makeRedirect('fin-settings-hub', 'costcenter'),  // 2026-11-04 → Pengaturan Keuangan
-  'fin-ar-invoices':   makeRedirect('fin-ar-hub', 'invoices'),  // 2026-11-04 → Piutang Reseller › Faktur
-  'fin-ar-hub':        FinanceARHub,
-  'fin-ap-hub':        FinanceAPHub,
+  'fin-ar-invoices':   makeRedirect('fin-ar-hub', 'invoices'),  // 11 Nov 2026 → Piutang, pil Belum lunas (dulu tab Faktur)
+  'fin-ar-hub':        PiutangModule,
+  'fin-ap-hub':        HutangModule,
   'fin-channel-gl':    FinChannelGLMappingModule,   // P3 — Channel GL Mapping (revenue routing)
   'fin-cash':          RahazaCashAccountsModule,
   'fin-expenses':      FinanceExpenseHub,  // RC-FLOW-UX de-dup: hub ber-tab (Pengeluaran + Klaim Disbursement)
@@ -934,7 +936,7 @@ export const MODULE_REGISTRY = {
   'fin-balance-sheet':     makeRedirect('fin-bs', 'date'),
   'fin-bs':                FinanceBalanceSheetHub,
   'fin-journal-list':      makeRedirect('fin-journal-hub', 'list'),    // T3.3 → hub
-  'fin-ap-aging':          makeRedirect('fin-ap-hub', 'aging'),  // 2026-11-04 → Hutang Pemasok & CMT › Umur hutang
+  'fin-ap-aging':          makeRedirect('fin-ap-hub', 'aging'),  // 11 Nov 2026 → Hutang, pil Belum dibayar (dulu tab Umur hutang)
 
   // Finance · Accounting Core (Phase F3)
   'fin-cash-flow':         makeRedirect('fin-cashflow', 'actual'),

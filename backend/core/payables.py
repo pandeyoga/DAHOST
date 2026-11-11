@@ -3,7 +3,7 @@
 Kenapa ada: audit menemukan 6 rumus "hutang belum dibayar" di 6 layar (Rekap, Aging Hutang, Faktur
 Supplier, Nota Debit, Prediksi Kas, Diskon Pembelian) dan tak satu pun menghitung tagihan CMT
 (`dewi_cmt_payments`). Umur Hutang juga hanya membaca 500 faktur pertama. Owner (4 Nov 2026):
-tagihan pemasok & CMT satu daftar "Hutang Pemasok & CMT".
+tagihan pemasok & CMT satu daftar "Hutang Pemasok & CMT" (11 Nov 2026: menu "Hutang", satu daftar tanpa tab).
 
 Aturan:
   · AP terbuka  = `rahaza_ap_invoices` status sent/partial_paid/overdue dengan sisa > 0 (draf bukan hutang).

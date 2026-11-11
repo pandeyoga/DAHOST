@@ -97,12 +97,12 @@ export default function FinanceHomeModule({ token, onNavigate }) {
             onClick={() => go(onNavigate, 'fin-marketplace-settlement', 'balances')} />
           <StatTile label="Piutang reseller" value={nilaiKartu(ar.total)} testId="home-kpi-ar"
             sub={ar.overdue ? `${formatRupiahShort(ar.overdue)} lewat jatuh tempo` : `${ar.count} faktur belum lunas`}
-            hint="Buka umur piutang"
+            hint="Buka piutang"
             subTone={ar.overdue ? 'danger' : undefined}
             onClick={() => go(onNavigate, 'fin-ar-hub', 'aging')} />
           <StatTile label="Hutang pemasok & CMT" value={nilaiKartu(ap.total)} testId="home-kpi-ap"
             sub={ap.overdue ? `${formatRupiahShort(ap.overdue)} lewat jatuh tempo` : `${ap.count} tagihan terbuka`}
-            hint="Buka umur hutang"
+            hint="Buka hutang"
             subTone={ap.overdue ? 'danger' : undefined}
             onClick={() => go(onNavigate, 'fin-ap-hub', 'aging')} />
         </div>
