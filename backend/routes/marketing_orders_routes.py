@@ -689,6 +689,28 @@ class OrderCreateBody(BaseModel):
     tracking_number: Optional[str] = None
     payment_method: Optional[str] = ""
     note: Optional[str] = ""
+    # ── 11 Nov 2026 (keputusan owner: kanal WAJIB dipilih) ────────────────────
+    # Kanal penjualan pesanan ini — kode atau label dari
+    # `core.marketing_import_schema.ORDER_CHANNEL_LABELS` (Live, Video, Kartu produk, …,
+    # Lainnya). Dulu semua pesanan manual tercatat "other" sehingga omzet live/video/
+    # afiliasi yang diinput tangan tidak pernah terpisah di rekap harian.
+    order_channel: Optional[str] = None
+    # Akun kreator (opsional; untuk penjualan afiliasi) — sama dengan kolom
+    # "Creator Handle" di ekspor TikTok.
+    creator_handle: Optional[str] = ""
+
+
+def _manual_order_channel(body: "OrderCreateBody") -> str:
+    """Kanal pesanan manual yang sah, atau 400 dengan pilihan yang tersedia."""
+    from core.marketing_import_schema import ORDER_CHANNEL_LABELS, norm_order_channel
+    ch = norm_order_channel(body.order_channel)
+    if ch:
+        return ch
+    pilihan = ", ".join(lbl for _k, lbl in ORDER_CHANNEL_LABELS)
+    if not str(body.order_channel or "").strip():
+        raise HTTPException(400, f"Pilih kanal penjualan pesanan ini ({pilihan}). Pilih "
+                                 "\"Lainnya\" bila tidak tahu.")
+    raise HTTPException(400, f"Kanal \"{body.order_channel}\" tidak dikenal. Pilihan: {pilihan}.")
 
 
 async def _resolve_order_link(db, *, catalog_item_id=None, variant_id=None,
@@ -886,6 +908,8 @@ async def create_order(body: OrderCreateBody, request: Request):
     # tidak terlihat middleware lingkup).
     await _scope.assert_account_visible(db, user, _acc.get("id"))
     order_wall_in, ref_in = await _manual_order_identity(db, _acc, body)
+    order_channel = _manual_order_channel(body)
+    creator_handle = str(body.creator_handle or "").strip()
 
     # ── K-8b — SETIAP baris order ditautkan & direservasi, bukan hanya yang pertama
     # Dulu hanya `items[0]` yang ditautkan ke master dan hanya stok baris itu yang
@@ -1077,7 +1101,9 @@ async def create_order(body: OrderCreateBody, request: Request):
         "revenue_gross":          round(gross_before_discount, 2),
         "seller_discount_total":  round(seller_discount_total, 2),
         "platform_discount_total": 0.0,
-        "order_channel":          "other",
+        # 11 Nov 2026 — kanal dipilih staf (wajib); dasar pecahan kanal rekap harian
+        "order_channel":          order_channel,
+        "creator_handle":         creator_handle,
         "payment_method":  body.payment_method or "",
         "status":          "new",
         # 2026-11-09 (audit gudang G11, keputusan ★ = K15): pesanan manual juga keluar lewat Gudang → Scan

@@ -26,8 +26,18 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { todayWIB, daysAgoWIB } from '@/lib/waktu';
+import {
+  KANAL_PESANAN, KANAL_RINCIAN, hitungRincian, rincianBersih, labelKanal, adaPecahan,
+} from '@/lib/kanalPenjualan';
+import RincianKanal from './marketing/RincianKanal';
 
 const fmt = formatRupiah;
+// 11 Nov 2026 — rincian omzet per kanal (keputusan owner). Kosong = belum dirinci.
+const KANAL_KOSONG = Object.fromEntries(KANAL_RINCIAN.map(([k]) => [k, '']));
+const kanalDariRekap = (row) => {
+  const m = row?.traffic_manual || {};
+  return Object.fromEntries(KANAL_RINCIAN.map(([k]) => [k, m[k] ? String(m[k]) : '']));
+};
 const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
 const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
 const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
@@ -45,6 +55,8 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
   const [overrideMode, setOverrideMode] = useState(false);
   const [overrideReason, setOverrideReason] = useState('');
   const [saveError, setSaveError] = useState('');          // pesan galat yang MENETAP
+  const [kanal, setKanal] = useState(KANAL_KOSONG);        // rincian omzet per kanal (jenis Total)
+  const [liveRow, setLiveRow] = useState(null);            // rekap jenis Live tanggal yang sama
   const [form, setForm] = useState({
     account_id: '',
     date: todayWIB(),
@@ -77,6 +89,7 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
     if (!open) {
       // reset form on close
       setActiveTab('total');
+      setKanal(KANAL_KOSONG);
       setForm({
         account_id: preSelectedAccountId || '',
         date: todayWIB(),
@@ -112,20 +125,28 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
      Diperiksa SEBELUM tombol simpan ditekan supaya staf tahu kuncinya lebih
      dulu, bukan setelah formnya diisi penuh lalu ditolak 409.                */
   useEffect(() => {
-    if (!open || !form.account_id || !form.date) { setExistingRow(null); return; }
+    if (!open || !form.account_id || !form.date) { setExistingRow(null); setLiveRow(null); return; }
     let alive = true;
     (async () => {
       setCheckingLock(true);
       try {
+        // Kedua jenis sekaligus: rekap Total (kunci + rincian kanal) dan rekap Live (petunjuk
+        // "pakai angka live" supaya omzet live tidak diketik dua kali dengan angka berbeda).
         const qs = new URLSearchParams({
-          date_from: form.date, date_to: form.date, revenue_type: activeTab,
+          date_from: form.date, date_to: form.date, revenue_type: 'all',
         });
         const r = await fetch(
           `/api/marketing/accounts/${form.account_id}/sales?${qs.toString()}`, { headers });
         const list = r.ok ? await r.json().catch(() => []) : [];
-        if (alive) setExistingRow(Array.isArray(list) && list.length ? list[0] : null);
+        const rows = Array.isArray(list) ? list : [];
+        const ex = rows.find((x) => x.revenue_type === activeTab) || null;
+        if (alive) {
+          setExistingRow(ex);
+          setLiveRow(rows.find((x) => x.revenue_type === 'live') || null);
+          setKanal(ex && activeTab === 'total' ? kanalDariRekap(ex) : KANAL_KOSONG);
+        }
       } catch (e) {
-        if (alive) setExistingRow(null);
+        if (alive) { setExistingRow(null); setLiveRow(null); }
       } finally {
         if (alive) setCheckingLock(false);
       }
@@ -136,8 +157,17 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
 
   const derivedRow = !!existingRow
     && (existingRow.locked_source === true || existingRow.source === 'orders_auto');
-  const lockedMetrics = derivedRow && !overrideMode;
   const existingMetrics = existingRow?.metrics || {};
+  // 11 Nov 2026 — rincian kanal. Rekap Total yang SUDAH ada (turunan pesanan maupun manual):
+  // yang disimpan hanya rinciannya (PUT /sales-data/kanal), omzet tidak berubah.
+  const hanyaKanal = activeTab === 'total' && !!existingRow && !overrideMode;
+  const lockedMetrics = (derivedRow && !overrideMode) || hanyaKanal;
+  // Hari berpesanan: kanal dari pesanan tetap; rincian hanya membagi bagian "Lainnya" pesanan.
+  const kanalPesanan = derivedRow && !overrideMode
+    ? (existingRow.traffic_orders || existingRow.traffic || {}) : null;
+  const batasKanal = kanalPesanan ? Number(kanalPesanan.other || 0)
+    : Number((hanyaKanal ? existingMetrics.revenue : form.revenue) || 0);
+  const rincian = hitungRincian(kanal, batasKanal);
 
   useEffect(() => {
     // ganti tanggal / toko / tipe ⇒ mode override & galat lama tidak boleh menempel
@@ -161,6 +191,33 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
         + 'membuat perubahan angka bisa dipertanggungjawabkan.');
       return;
     }
+    if (activeTab === 'total' && rincian.lebih) {
+      setSaveError(`Jumlah rincian kanal ${fmt(rincian.jumlah)} lebih besar dari `
+        + `${kanalPesanan ? 'omzet pesanan tanpa kanal' : 'omzet'} ${fmt(batasKanal)}. `
+        + 'Rincian kanal adalah bagian dari omzet, bukan tambahan.');
+      return;
+    }
+
+    if (hanyaKanal) {
+      setSubmitting(true);
+      try {
+        const res = await fetch('/api/marketing/sales-data/kanal', {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ account_id: form.account_id, date: form.date, kanal: rincianBersih(kanal) }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || `Gagal menyimpan rincian kanal (HTTP ${res.status})`);
+        toast.success(body.message || 'Rincian kanal tersimpan');
+        onOpenChange(false);
+        if (onSaved) onSaved();
+      } catch (err) {
+        setSaveError(err.message);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -182,6 +239,8 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
         response_rate: num(form.response_rate),
         response_time_hours: num(form.response_time_hours),
       };
+
+      if (activeTab === 'total') payload.kanal = rincianBersih(kanal);
 
       if (activeTab === 'live') {
         payload.viewers = num(form.viewers);
@@ -230,9 +289,9 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
   return (
     <FormPopup open={open} onClose={() => onOpenChange(false)} ukuran="panjang" onSimpan={handleSubmit}
       menyimpan={submitting} galat={saveError ? <span data-testid="sd-save-error">{saveError}</span> : null}
-      labelSimpan={overrideMode ? 'Simpan penggantian' : 'Simpan'} testId="sales-data-dialog"
+      labelSimpan={overrideMode ? 'Simpan penggantian' : hanyaKanal ? 'Simpan rincian kanal' : 'Simpan'} testId="sales-data-dialog"
       judul="Input sales harian"
-      keterangan="Pilih akun, tanggal, dan jenis omzet, lalu isi angkanya. Skor kesehatan toko dihitung ulang otomatis.">
+      keterangan="Pilih akun, tanggal, dan jenis omzet, lalu isi angkanya dan rincian per kanal. Skor kesehatan toko dihitung ulang otomatis.">
       <div className="grid gap-4 sm:grid-cols-3">
         <Isian label="Akun" wajib petunjuk={accSel ? `Input ke: ${accSel.account_name}` : undefined}>
           <SmartNativeSelect className="w-full" value={form.account_id} onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))}
@@ -265,7 +324,7 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
           <p>
             Omzet <b>{fmt(existingMetrics.revenue)}</b> dari <b>{fmtNum(existingMetrics.orders)} pesanan</b>. Kolom omzet dan
             jumlah pesanan dikunci supaya tidak ada dua angka omzet untuk satu hari. Kalau salah, perbaiki pesanannya
-            (Impor Data / Order Terpadu) — bukan diketik ulang di sini.
+            (Impor Data / Order Terpadu) — bukan diketik ulang di sini. Rincian per kanal di bawah tetap bisa diisi.
           </p>
           {!overrideMode ? (
             <Button type="button" size="sm" variant="outline" className="mt-2"
@@ -297,7 +356,25 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
         </Notice>
       )}
 
+      {hanyaKanal && !derivedRow && (
+        <Notice tone="info" icon={Lock} testId="sd-exists-notice"
+          title={`Rekap total ${formatTanggalID(form.date)} sudah ada`}>
+          <p>
+            Omzet <b>{fmt(existingMetrics.revenue)}</b> dari <b>{fmtNum(existingMetrics.orders)} pesanan</b>. Di sini yang bisa
+            diubah hanya rincian per kanal.
+          </p>
+        </Notice>
+      )}
+
       <CommonMetricsForm form={form} setForm={setForm} lockedMetrics={lockedMetrics} />
+
+      {activeTab === 'total' && (
+        <RincianKanal nilai={kanal} rincian={rincian} batas={batasKanal} kanalPesanan={kanalPesanan}
+          status={existingRow?.traffic_manual_status}
+          onUbah={(k, v) => setKanal((x) => ({ ...x, [k]: v }))}
+          liveTercatat={Number(liveRow?.metrics?.revenue || 0)}
+          onPakaiLive={() => setKanal((x) => ({ ...x, live: String(liveRow?.metrics?.revenue || '') }))} />
+      )}
 
       {activeTab === 'live' && (
         <>
@@ -385,6 +462,22 @@ const SOURCE_META = {
   task_action:     { label: 'Dari tugas',           tone: 'muted' },
 };
 const sumberLabel = (row) => (SOURCE_META[row.source] || { label: row.source ? 'Lainnya' : 'Manual' }).label;
+
+/** 11 Nov 2026 — pecahan kanal satu rekap Total, dalam persen omzet terinci (3 kanal terbesar). */
+function PecahanKanal({ row }) {
+  if (row.revenue_type !== 'total') return <span className="text-muted-foreground">—</span>;
+  const t = row.traffic || {};
+  if (!adaPecahan(t)) return <span className="text-xs text-muted-foreground">Belum dirinci</span>;
+  const total = Object.values(t).reduce((s, v) => s + (Number(v) || 0), 0);
+  const isi = Object.entries(t).filter(([, v]) => Number(v) > 0).sort((a, b) => b[1] - a[1]);
+  const teks = isi.slice(0, 3).map(([k, v]) => `${labelKanal(k)} ${Math.round((Number(v) / total) * 100)}%`).join(' · ');
+  return (
+    <span className="text-xs md:whitespace-nowrap" title={isi.map(([k, v]) => `${labelKanal(k)} ${fmt(v)}`).join('\n')}
+      data-testid={`sd-pecahan-${row.id || ''}`}>
+      {teks}{isi.length > 3 ? ` · +${isi.length - 3}` : ''}
+    </span>
+  );
+}
 
 function SourceBadge({ row }) {
   const meta = SOURCE_META[row.source] || { label: row.source ? 'Lainnya' : 'Manual', tone: 'muted' };
@@ -478,6 +571,7 @@ export default function SalesDataEntryModule({ token }) {
     { kunci: 'sumber', label: 'Sumber angka', isi: (row) => <SourceBadge row={row} /> },
     { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (row) => <span className="tabular-nums md:whitespace-nowrap">{fmt(row.metrics?.revenue)}</span> },
     { kunci: 'order', label: 'Pesanan', rata: 'kanan', isi: (row) => <span className="tabular-nums">{fmtNum(row.metrics?.orders)}</span> },
+    { kunci: 'kanal', label: 'Pecahan kanal', isi: (row) => <PecahanKanal row={row} /> },
     { kunci: 'aov', label: 'AOV', rata: 'kanan', isi: (row) => <span className="tabular-nums md:whitespace-nowrap">{fmt(row.metrics?.aov)}</span> },
     // F0: satuan kanonik = PERSEN 0–100, jadi TIDAK dikali 100 lagi
     { kunci: 'cr', label: 'Konversi', rata: 'kanan', isi: (row) => <span className="tabular-nums">{row.metrics?.conversion_rate ? `${Number(row.metrics.conversion_rate).toLocaleString('id-ID', { maximumFractionDigits: 2 })}%` : '—'}</span> },
@@ -524,6 +618,10 @@ export default function SalesDataEntryModule({ token }) {
             { label: 'Sumber angka', nilai: sumberLabel },
             { label: 'Omzet', nilai: (r) => r.metrics?.revenue ?? '' }, { label: 'Pesanan', nilai: (r) => r.metrics?.orders ?? '' },
             { label: 'AOV', nilai: (r) => r.metrics?.aov ?? '' }, { label: 'Konversi (%)', nilai: (r) => r.metrics?.conversion_rate ?? '' },
+            // 11 Nov 2026 — pecahan omzet per kanal (jenis Total)
+            ...[...KANAL_PESANAN, ['organic', 'Organik']].map(([k, label]) => ({
+              label: `Kanal ${label}`, nilai: (r) => (r.revenue_type === 'total' ? Number(r.traffic?.[k] || 0) : ''),
+            })),
             { label: 'Alasan penggantian', nilai: (r) => r.override_reason || '' },
           ]} />
         <Button onClick={fetchData} variant="outline" size="icon" disabled={loading} title="Muat ulang" aria-label="Muat ulang"

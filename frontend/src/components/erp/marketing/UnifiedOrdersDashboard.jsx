@@ -31,6 +31,7 @@ import { parseServerTime } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
+import { labelKanal } from '@/lib/kanalPenjualan';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -127,6 +128,9 @@ function OrderDetailPopup({ order, onClose, onStatusChange }) {
             <BarisDetail label="Ongkir">{fmtRp(order.shipping_cost)}</BarisDetail>
             <BarisDetail label="Total dibayar"><b>{fmtRp(order.total_payment)}</b></BarisDetail>
             <BarisDetail label="Metode bayar">{order.payment_method || '—'}</BarisDetail>
+            {/* 11 Nov 2026 — dari mana pembeli datang (dasar pecahan kanal di rekap harian) */}
+            <BarisDetail label="Kanal">{order.order_channel ? labelKanal(order.order_channel) : 'Lainnya (tanpa kanal)'}</BarisDetail>
+            <BarisDetail label="Akun kreator">{order.creator_handle || '—'}</BarisDetail>
           </dl>
         </section>
         <section className="space-y-1">

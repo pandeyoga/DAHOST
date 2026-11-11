@@ -9,7 +9,7 @@ import uuid
 import html
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Dict, Optional, List
 
 from core import marketing_sales_shape as _shape
 from utils.waktu import today_wib, wib_date_str, wib_date_of, fmt_wib
@@ -96,6 +96,18 @@ class SalesDataEntry(BaseModel):
     live_sessions: Optional[float] = None
     # F2 — wajib diisi bila SPV MENGGANTI angka turunan (?override=true)
     override_reason: Optional[str] = None
+    # 11 Nov 2026 — rincian omzet TOTAL per kanal yang diketik staf, mis.
+    # {"live": 3000000, "video": 1500000}. Kunci: `marketing_sales_shape.MANUAL_TRAFFIC_KEYS`;
+    # sisa omzet otomatis "Lainnya". Hanya untuk jenis omzet "total".
+    kanal: Optional[Dict[str, Optional[float]]] = None
+
+
+class SalesKanalEntry(BaseModel):
+    """11 Nov 2026 — simpan HANYA rincian kanal untuk rekap total yang sudah ada
+    (termasuk hari yang omzetnya turunan pesanan). ``kanal`` kosong = rincian dihapus."""
+    account_id: str
+    date: str
+    kanal: Dict[str, Optional[float]] = Field(default_factory=dict)
 
 # 2026-11-06 (pola P1): model Tugas di bawah ini "diekstrak ulang" (sesi #11.20) TANPA field yang
 # dibaca handler marketing_tasks.py / marketing_task_templates.py / scheduler, mis. `data.recurrence`,

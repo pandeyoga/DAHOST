@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
-from routes.marketing_shared import _uid, _now, _get_user, _sanitize, SalesDataEntry, _recalculate_health_score, _is_pic_role
+from routes.marketing_shared import _uid, _now, _get_user, _sanitize, SalesDataEntry, SalesKanalEntry, _recalculate_health_score, _is_pic_role
 from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
 from utils.waktu import today_wib
@@ -51,6 +51,20 @@ async def create_sales_data(
     # Validate revenue_type
     if data.revenue_type not in ["total", "live"]:
         raise HTTPException(400, "revenue_type harus 'total' atau 'live'")
+
+    # 11 Nov 2026 — rincian omzet per kanal (Live, Video, Kartu produk, …) yang diketik
+    # staf. Hanya untuk jenis Total; sisanya otomatis "Lainnya". Lihat
+    # `core.marketing_sales_shape.merge_traffic`.
+    try:
+        manual_kanal = _shape.clean_manual_traffic(data.kanal)
+        if manual_kanal and data.revenue_type != "total":
+            raise _shape.KanalTidakSah(
+                "Rincian kanal hanya diisi pada jenis omzet Total. Omzet live cukup diisi di "
+                "kanal Live pada jenis Total — bagian dari omzet total, bukan tambahan.")
+        _shape.assert_manual_fits(manual_kanal, data.revenue or 0, _shape.DASAR_OMZET)
+    except _shape.KanalTidakSah as e:
+        raise HTTPException(400, str(e)) from None
+    flat_in = data.dict(exclude={"account_id", "date", "revenue_type", "override_reason", "kanal"})
 
     # F5.3 — bulan yang sudah DITUTUP tidak bisa lagi menerima rekap baru maupun
     # override (HTTP 423). Kunci periode adalah satu-satunya cara membuat angka
@@ -94,11 +108,27 @@ async def create_sales_data(
         if not reason:
             raise HTTPException(400, "Alasan wajib diisi saat mengganti angka turunan — "
                                      "ini yang membuat perubahan bisa dipertanggungjawabkan")
+        # 11 Nov 2026 — angka pengganti SPV berdiri sendiri (bukan turunan pesanan): rincian
+        # kanal dihitung terhadap omzet pengganti. Tanpa rincian baru, rincian lama dipakai
+        # ulang; tanpa rincian sama sekali, pecahan kanal lama dibiarkan.
+        kanal_pakai = manual_kanal
+        if not kanal_pakai and data.revenue_type == "total":
+            try:
+                kanal_pakai = _shape.clean_manual_traffic(existing.get("traffic_manual"))
+            except _shape.KanalTidakSah:
+                kanal_pakai = {}
+        flat_ovr = dict(flat_in)
+        extra_ovr = {}
+        if kanal_pakai:
+            traffic_ovr, status_ovr = _shape.merge_traffic(None, kanal_pakai, data.revenue)
+            if traffic_ovr:
+                flat_ovr["traffic"] = traffic_ovr
+            extra_ovr = {"traffic_manual": kanal_pakai, "traffic_manual_status": status_ovr}
         doc = _shape.build_daily_doc(
             account=account,
             date=data.date,
             revenue_type=data.revenue_type,
-            flat=data.dict(exclude={"account_id", "date", "revenue_type", "override_reason"}),
+            flat=flat_ovr,
             source=_shape.SOURCE_MANUAL_OVERRIDE,
             extra={
                 "override_reason": reason,
@@ -107,11 +137,12 @@ async def create_sales_data(
                 "previous_source": existing.get("source"),
                 "previous_metrics": existing.get("metrics") or {},
                 "updated_by": user.get("email", "system"),
+                **extra_ovr,
             },
         )
         # grup milik sumber lain tidak boleh hilang gara-gara override omzet
         for g in ("funnel", "buyers_mix", "customer_satisfaction",
-                  "live_metrics", "content_metrics"):
+                  "live_metrics", "content_metrics", "traffic"):
             if not doc.get(g) and existing.get(g):
                 doc[g] = existing[g]
         await db.marketing_sales_data.update_one({"id": existing["id"]}, {"$set": doc})
@@ -129,17 +160,24 @@ async def create_sales_data(
     # F0.2 (2026-08-12) — bentuk dokumen dibuat oleh SATU pembuat kanonik
     # (`core.marketing_sales_shape`). Dulu dict-nya disusun di sini, dan pintu
     # impor menyusun bentuk yang BERBEDA ⇒ satu angka, empat jawaban di layar (D01).
+    flat_new = dict(flat_in)
+    extra_new = {}
+    if manual_kanal:
+        traffic_new, status_new = _shape.merge_traffic(None, manual_kanal, data.revenue)
+        flat_new["traffic"] = traffic_new
+        extra_new = {"traffic_manual": manual_kanal, "traffic_manual_status": status_new}
     sales_entry = _shape.build_daily_doc(
         account=account,
         date=data.date,
         revenue_type=data.revenue_type,
-        flat=data.dict(exclude={"account_id", "date", "revenue_type", "override_reason"}),
+        flat=flat_new,
         source=_shape.SOURCE_MANUAL,
         extra={
             "id": _uid(),
             "import_history_id": None,   # entri manual, bukan hasil impor
             "created_at": _now(),
             "created_by": _get_user(request).get("email", "system"),
+            **extra_new,
         },
     )
 
@@ -157,6 +195,53 @@ async def create_sales_data(
     )
     
     return serialize_doc({"message": "Sales data created", "entry": sales_entry})
+
+
+@router.put("/sales-data/kanal")
+async def save_sales_kanal(data: SalesKanalEntry, request: Request):
+    """11 Nov 2026 — simpan RINCIAN OMZET PER KANAL untuk rekap total yang sudah ada.
+
+    Boleh untuk hari yang omzetnya turunan pesanan (tanpa override): angka omzet tidak
+    berubah, yang disimpan hanya ``traffic_manual``. Aturan gabung (keputusan owner):
+    hari berpesanan → kanal dari pesanan tetap, rincian ini hanya membagi bagian
+    "Lainnya" (pesanan tanpa kanal); hari tanpa pesanan → rincian ⊆ omzet total.
+    ``kanal`` kosong = rincian dihapus.
+    """
+    await require_auth(request)
+    db = get_db()
+    account = await db.marketing_platform_accounts.find_one({"id": data.account_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(404, "Akun toko tidak ditemukan")
+    date = _shape.norm_date(data.date)
+    await _cycle.assert_period_open(db, data.account_id, date,
+                                    action='mengubah rincian kanal')
+    key = {"account_id": data.account_id, "date": date, "revenue_type": "total"}
+    existing = await db.marketing_sales_data.find_one(key, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, f"Belum ada rekap omzet total {date} untuk toko ini. Isi Input "
+                                 "sales (jenis Total) dulu, atau impor pesanan hari itu.")
+    try:
+        manual = _shape.clean_manual_traffic(data.kanal)
+        cap, dasar = _shape.manual_traffic_cap(existing)
+        _shape.assert_manual_fits(manual, cap, dasar)
+    except _shape.KanalTidakSah as e:
+        raise HTTPException(400, str(e)) from None
+
+    user = _get_user(request)
+    upd = _shape.manual_traffic_update(existing, manual, actor=user.get("email", "system"))
+    upd["updated_at"] = _now()
+    upd["updated_by"] = user.get("email", "system")
+    await db.marketing_sales_data.update_one(key, {"$set": upd})
+    ringkas = ", ".join(f"{_shape.TRAFFIC_LABELS[k]} {_shape.rp_teks(v)}" for k, v in manual.items())
+    await log_activity(
+        user.get("id", "system"), user.get("name") or user.get("email", "system"),
+        "update", "marketing_sales_data",
+        f"Rincian kanal {account['account_name']} {date}: {ringkas or 'dihapus'}")
+    saved = await db.marketing_sales_data.find_one(key, {"_id": 0})
+    return serialize_doc({
+        "message": "Rincian kanal tersimpan" if manual else "Rincian kanal dihapus",
+        "entry": saved,
+    })
 
 
 @router.post("/sales/recompute")

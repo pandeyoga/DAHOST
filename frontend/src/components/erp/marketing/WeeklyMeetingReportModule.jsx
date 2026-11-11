@@ -36,7 +36,7 @@ const bersihkanIstilah = (t) => String(t || '').replace(/Pencairan\s*\/\s*Settle
 const pct = (v) => (v === null || v === undefined ? '—' : `${v}%`);
 
 const KANAL = [
-  ['live', 'Live'], ['video', 'Video'], ['product_card', 'Kartu Produk'],
+  ['live', 'Live'], ['video', 'Video'], ['product_card', 'Kartu produk'],
   ['ads', 'Iklan'], ['affiliate', 'Afiliasi'], ['campaign', 'Kampanye'],
   ['search', 'Pencarian'], ['organic', 'Organik'], ['other', 'Lainnya'],
 ];
@@ -273,7 +273,12 @@ export default function WeeklyMeetingReportModule({ token }) {
             <BarisDetail label="Setelah retur">{rp(detail.omzet_setelah_retur)}</BarisDetail>
             <BarisDetail label="Pesanan / pcs">{num(detail.pesanan)} pesanan · {num(detail.pcs)} pcs · rata-rata {rp(detail.aov)}</BarisDetail>
             <BarisDetail label="Target prorata">{detail.target?.lengkap ? `${rp(detail.target.revenue)} · capai ${pct(detail.pencapaian_target_persen)}` : 'Belum ada target'}</BarisDetail>
-            <BarisDetail label="Kanal">Live {rp(detail.kanal?.live)} · Video {rp(detail.kanal?.video)} · Kartu produk {rp(detail.kanal?.product_card)}</BarisDetail>
+            {/* 11 Nov 2026 — termasuk rincian kanal yang diisi staf di Input Sales */}
+            <BarisDetail label="Kanal">
+              Live {rp(detail.kanal?.live)} · Video {rp(detail.kanal?.video)} · Kartu produk {rp(detail.kanal?.product_card)}
+              {' '}· Afiliasi {rp(detail.kanal?.affiliate)} · Lainnya {rp(KANAL.filter(([k]) => !['live', 'video', 'product_card', 'affiliate'].includes(k))
+                .reduce((s, [k]) => s + Number(detail.kanal?.[k] || 0), 0))}
+            </BarisDetail>
             <BarisDetail label="Pemenuhan">{pct(detail.pemenuhan?.fulfillment_rate)} · batal {num(detail.pesanan_mentah?.batal)} · belum kirim {num(detail.pesanan_mentah?.belum_dikirim)}</BarisDetail>
             <BarisDetail label="Iklan">{detail.iklan?.terisi ? `${rp(detail.iklan.spend)} · omzet ÷ iklan ${detail.iklan.roas ?? '—'}` : 'Belum diimpor'}</BarisDetail>
             <BarisDetail label="Hari berdata">{detail.hari_berdata}/7</BarisDetail>

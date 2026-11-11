@@ -40,7 +40,7 @@ ATURAN MODUL INI
 from __future__ import annotations
 
 from datetime import datetime, date as _date, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 # ── basis omzet (K1) ─────────────────────────────────────────────────────────
 BASIS_PRODUCT = "produk_setelah_diskon"
@@ -94,6 +94,16 @@ TRAFFIC_FIELDS: Dict[str, float] = {
     "live": 0.0, "video": 0.0, "ads": 0.0, "affiliate": 0.0,
     "campaign": 0.0, "organic": 0.0, "product_card": 0.0,
     "search": 0.0, "other": 0.0,
+}
+# 11 Nov 2026 (keputusan owner "Ya, tambahkan") — kanal yang boleh DIKETIK staf sebagai
+# rincian omzet TOTAL (Input Sales & impor Sales Harian). Sama dengan pilihan kanal pesanan
+# (`core.marketing_import_schema._ORDER_CHANNEL_LABELS`); "Lainnya" tidak diketik: ia SISA
+# yang dihitung sistem (omzet total − jumlah kanal yang diketik).
+MANUAL_TRAFFIC_KEYS = ("live", "video", "product_card", "affiliate", "ads", "campaign", "search")
+TRAFFIC_LABELS: Dict[str, str] = {
+    "live": "Live", "video": "Video", "product_card": "Kartu produk", "affiliate": "Afiliasi",
+    "ads": "Iklan", "campaign": "Kampanye", "search": "Pencarian", "organic": "Organik",
+    "other": "Lainnya",
 }
 # 4 field pertama WAJIB ada (dipakai skor kesehatan); sisanya tambahan F2/F3.
 FULFILLMENT_FIELDS: Dict[str, float] = {
@@ -461,7 +471,10 @@ PROTECTED_ROOT_FIELDS = ("id", "account_id", "date", "revenue_type", "source",
                          "locked_source", "derived_from", "derived_at",
                          "override_reason", "override_by", "override_at",
                          "created_at", "created_by", "_import_session_id",
-                         "_import_source_type")
+                         "_import_source_type",
+                         # 11 Nov 2026 — pecahan kanal dari pesanan & hasil gabungnya
+                         # hanya ditulis rollup / :func:`manual_traffic_update`.
+                         "traffic_orders", "traffic_manual_status")
 
 # Label manusiawi untuk pesan di layar (staf tidak mengenal nama field).
 _DERIVED_FIELD_LABELS = {
@@ -548,3 +561,163 @@ def derived_lock_message(date: Any, protected: Optional[list] = None,
             "Marketplace, atau pakai Override SPV di layar Input Sales "
             "(alasannya akan tercatat).")
     return msg
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RINCIAN KANAL YANG DIKETIK STAF (11 Nov 2026, keputusan owner)
+# ══════════════════════════════════════════════════════════════════════════════
+# Masalah: staf mengisi omzet harian secara manual, tetapi isian manual hanya kenal
+# "Total" dan "Live". Semua omzet manual jatuh ke "Lainnya" — owner tidak bisa melihat
+# berapa yang datang dari live, video, kartu produk, atau afiliasi.
+#
+# Kepemilikan field (satu penulis per angka):
+#   * ``traffic_orders`` — pecahan kanal dari PESANAN; ditulis HANYA oleh
+#     ``core.marketing_daily_rollup``.
+#   * ``traffic_manual`` — rincian yang DIKETIK staf (Input Sales, impor Sales Harian);
+#     TIDAK PERNAH ditimpa rollup.
+#   * ``traffic`` — angka EFEKTIF yang dibaca semua layar & laporan; selalu hasil
+#     :func:`merge_traffic` dari dua field di atas.
+#
+# Aturan gabung (keputusan owner 11 Nov 2026: "Isi bagian Lainnya"):
+#   * hari TANPA pesanan → rincian ketik dipakai, sisa omzet = "Lainnya";
+#   * hari DENGAN pesanan → kanal dari pesanan TETAP (mis. TikTok LIVE/Video/Kartu produk);
+#     rincian ketik hanya MEMBAGI bagian "Lainnya" dari pesanan (pesanan tanpa kanal,
+#     mis. Shopee yang ekspornya tidak punya kolom kanal). Bila rincian ketik lebih
+#     besar dari bagian itu (mis. pesanan diimpor belakangan), rincian TIDAK dipakai dan
+#     alasannya disimpan di ``traffic_manual_status`` supaya tampil di layar;
+#   * "Live" pada rincian adalah BAGIAN dari omzet total, bukan tambahan — omzet tidak
+#     pernah dihitung dua kali.
+class KanalTidakSah(ValueError):
+    """Rincian kanal yang tidak bisa diterima. Pesannya ditujukan untuk staf."""
+
+
+_TOLERANSI_RP = 1.0
+DASAR_OMZET = "omzet"                      # hari tanpa pesanan: rincian <= omzet total
+DASAR_LAINNYA_PESANAN = "lainnya_pesanan"  # hari berpesanan: rincian <= pesanan tanpa kanal
+
+
+def rp_teks(v: Any) -> str:
+    """Rupiah untuk pesan staf: ``Rp1.250.000``."""
+    return "Rp" + f"{round(_num(v)):,.0f}".replace(",", ".")
+
+
+def clean_manual_traffic(raw: Any) -> Dict[str, float]:
+    """Rincian ketikan → ``{kanal: nilai > 0}``.
+
+    Kanal yang tidak dikenal atau nilai minus DITOLAK (:class:`KanalTidakSah`), bukan
+    dibuang diam-diam. "Lainnya" tidak bisa diketik: ia selalu sisa hitungan sistem.
+    """
+    if raw in (None, "", {}):
+        return {}
+    if not isinstance(raw, dict):
+        raise KanalTidakSah("Rincian kanal harus berupa daftar kanal beserta nilainya.")
+    out: Dict[str, float] = {}
+    for k, v in raw.items():
+        if v is None or v == "":
+            continue
+        key = str(k or "").strip().lower()
+        if key not in MANUAL_TRAFFIC_KEYS:
+            pilihan = ", ".join(TRAFFIC_LABELS[x] for x in MANUAL_TRAFFIC_KEYS)
+            raise KanalTidakSah(f"Kanal \"{k}\" tidak dikenal. Pilihan: {pilihan}. "
+                                "Kanal Lainnya tidak diisi: itu sisa yang dihitung sistem.")
+        n = _num(v, None)
+        if n is None:
+            raise KanalTidakSah(f"Nilai kanal {TRAFFIC_LABELS[key]} bukan angka.")
+        if n < 0:
+            raise KanalTidakSah(f"Nilai kanal {TRAFFIC_LABELS[key]} tidak boleh minus.")
+        if n > 0:
+            out[key] = round(n, 2)
+    return out
+
+
+def order_traffic_of(doc: Optional[dict]) -> Optional[Dict[str, float]]:
+    """Pecahan kanal dari PESANAN pada dokumen ini; ``None`` = hari ini bukan turunan pesanan."""
+    if not doc or not is_derived(doc):
+        return None
+    t = doc.get("traffic_orders")
+    if not (isinstance(t, dict) and t):
+        # dokumen turunan sebelum 11 Nov 2026: `traffic` masih murni dari pesanan
+        t = read_group(doc, "traffic")
+    return {k: round(_num((t or {}).get(k)), 2) for k in TRAFFIC_FIELDS}
+
+
+def manual_traffic_cap(doc: Optional[dict]) -> Tuple[float, str]:
+    """Batas rincian ketikan untuk dokumen yang SUDAH ada → ``(batas_rp, dasar)``."""
+    ot = order_traffic_of(doc)
+    if ot is not None:
+        return round(ot.get("other", 0.0), 2), DASAR_LAINNYA_PESANAN
+    return round(_num(read_metrics(doc).get("revenue")), 2), DASAR_OMZET
+
+
+def assert_manual_fits(manual: Dict[str, float], cap: Any, dasar: str) -> None:
+    """Tolak rincian yang lebih besar dari batasnya, dengan pesan yang menjelaskan sebabnya."""
+    s = round(sum(_num(v) for v in (manual or {}).values()), 2)
+    if s <= _num(cap) + _TOLERANSI_RP:
+        return
+    if dasar == DASAR_LAINNYA_PESANAN:
+        raise KanalTidakSah(
+            f"Hari ini sudah punya pesanan impor. Kanal dari pesanan tetap dipakai; yang bisa "
+            f"dirinci hanya omzet pesanan tanpa kanal ({rp_teks(cap)}). Rincian yang diisi "
+            f"{rp_teks(s)} — perkecil rinciannya.")
+    raise KanalTidakSah(
+        f"Jumlah rincian kanal {rp_teks(s)} lebih besar dari omzet {rp_teks(cap)}. Live, Video, "
+        "dan kanal lain adalah BAGIAN dari omzet total, bukan tambahan.")
+
+
+def merge_traffic(order_traffic: Optional[Dict[str, Any]], manual: Optional[Dict[str, Any]],
+                  revenue: Any) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    """Gabungkan kanal dari pesanan & rincian ketikan → ``(traffic, status)``.
+
+    ``order_traffic=None`` berarti hari ini tidak punya pesanan turunan. ``status`` kosong
+    berarti tidak ada rincian ketikan; selain itu ``{"dipakai": bool, ...}``.
+    """
+    man = {k: round(_num(v), 2) for k, v in (manual or {}).items()
+           if k in MANUAL_TRAFFIC_KEYS and _num(v) > 0}
+    s = round(sum(man.values()), 2)
+    if order_traffic is None:
+        if not man:
+            return {}, {}
+        rev = round(_num(revenue), 2)
+        if s > rev + _TOLERANSI_RP:
+            return {}, {"dipakai": False, "dasar": DASAR_OMZET, "jumlah": s, "batas": rev,
+                        "alasan": f"Rincian kanal {rp_teks(s)} lebih besar dari omzet {rp_teks(rev)}, "
+                                  "jadi rincian tidak dipakai. Perbaiki rinciannya di Input Sales."}
+        out = {k: 0.0 for k in TRAFFIC_FIELDS}
+        out.update(man)
+        out["other"] = round(max(0.0, rev - s), 2)
+        return out, {"dipakai": True, "dasar": DASAR_OMZET, "jumlah": s, "batas": rev,
+                     "sisa_lainnya": out["other"]}
+    base = {k: round(_num(order_traffic.get(k)), 2) for k in TRAFFIC_FIELDS}
+    if not man:
+        return base, {}
+    pool = base["other"]
+    if s > pool + _TOLERANSI_RP:
+        return base, {"dipakai": False, "dasar": DASAR_LAINNYA_PESANAN, "jumlah": s, "batas": pool,
+                      "alasan": f"Rincian kanal yang diisi ({rp_teks(s)}) lebih besar dari omzet "
+                                f"pesanan tanpa kanal ({rp_teks(pool)}). Kanal dari pesanan yang "
+                                "dipakai; perkecil rinciannya bila perlu."}
+    out = dict(base)
+    for k, v in man.items():
+        out[k] = round(out[k] + v, 2)
+    out["other"] = round(max(0.0, pool - s), 2)
+    return out, {"dipakai": True, "dasar": DASAR_LAINNYA_PESANAN, "jumlah": s, "batas": pool,
+                 "sisa_lainnya": out["other"]}
+
+
+def manual_traffic_update(doc: dict, manual: Dict[str, float], *,
+                          actor: str = "system") -> Dict[str, Any]:
+    """``$set`` untuk menyimpan rincian ketikan pada dokumen rekap yang SUDAH ada.
+
+    ``manual`` kosong = rincian dihapus (kanal kembali ke pesanan, atau kosong).
+    """
+    ot = order_traffic_of(doc)
+    merged, status = merge_traffic(ot, manual, read_metrics(doc).get("revenue"))
+    out = {"traffic_manual": dict(manual or {}), "traffic": merged,
+           "traffic_manual_status": status, "traffic_manual_by": actor,
+           "traffic_manual_at": _now()}
+    if ot is not None:
+        # Dokumen turunan lama (sebelum 11 Nov) belum punya `traffic_orders`: simpan pecahan
+        # pesanannya sekarang, supaya penyimpanan BERIKUTNYA tidak membaca `traffic` hasil
+        # gabung sebagai angka pesanan (rincian ketikan akan terhitung dua kali).
+        out["traffic_orders"] = ot
+    return out

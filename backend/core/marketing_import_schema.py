@@ -227,6 +227,28 @@ _DATE_SYN = ("tanggal", "date", "tgl", "order date", "tanggal pesanan",
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. SALES HARIAN (rekap per akun per hari)
 # ═══════════════════════════════════════════════════════════════════════════════
+# 11 Nov 2026 — kolom rincian kanal: nama field `kanal_<kode kanal>` →
+# `marketing_sales_shape.MANUAL_TRAFFIC_KEYS`. Dibaca `routes.marketing_data_import._finish`.
+SALES_KANAL_PREFIX = "kanal_"
+SALES_KANAL_FIELDS = (
+    Field("kanal_live", "Kanal Live (Rp)", "money", False,
+          ("omzet live", "penjualan live", "kanal live", "gmv live"), example="3000000",
+          note="Bagian omzet dari live streaming (termasuk dalam Revenue)"),
+    Field("kanal_video", "Kanal Video (Rp)", "money", False,
+          ("omzet video", "penjualan video", "kanal video", "gmv video"), example="1500000"),
+    Field("kanal_product_card", "Kanal Kartu Produk (Rp)", "money", False,
+          ("kartu produk", "omzet kartu produk", "kanal kartu produk", "product card",
+           "product cards")),
+    Field("kanal_affiliate", "Kanal Afiliasi (Rp)", "money", False,
+          ("afiliasi", "omzet afiliasi", "kanal afiliasi", "affiliate")),
+    Field("kanal_ads", "Kanal Iklan (Rp)", "money", False,
+          ("omzet iklan", "kanal iklan", "penjualan iklan")),
+    Field("kanal_campaign", "Kanal Kampanye (Rp)", "money", False,
+          ("kampanye", "omzet kampanye", "kanal kampanye", "campaign")),
+    Field("kanal_search", "Kanal Pencarian (Rp)", "money", False,
+          ("pencarian", "omzet pencarian", "kanal pencarian", "search")),
+)
+
 SALES = SourceType(
     key="sales_daily",
     label="Sales Harian per Akun",
@@ -242,10 +264,16 @@ SALES = SourceType(
         Field("revenue_type", "Jenis Revenue", "enum", True,
               ("tipe", "jenis", "revenue type", "sumber"),
               ("total", "live"), example="total",
-              note="'total' = seluruh penjualan hari itu; 'live' = khusus dari live streaming"),
+              note="Isi 'total' = seluruh penjualan hari itu. Omzet live diisi di kolom "
+                   "Kanal Live (Rp), bukan sebagai baris 'live'"),
         Field("revenue", "Revenue (Rp)", "money", True,
               ("penjualan", "omzet", "total penjualan", "sales", "gmv terjual",
                "total pembayaran", "net sales"), example="12500000"),
+        # 11 Nov 2026 (keputusan owner) — rincian omzet total per kanal. BAGIAN dari
+        # Revenue, bukan tambahan; sisanya otomatis "Lainnya". Hari yang sudah punya
+        # pesanan impor: kanal dari pesanan tetap, kolom ini hanya membagi bagian
+        # "Lainnya" pesanan (lihat `core.marketing_sales_shape.merge_traffic`).
+        *SALES_KANAL_FIELDS,
         Field("orders", "Jumlah Order", "int", False,
               ("order", "pesanan", "jumlah pesanan", "total order", "transaksi"),
               example="48"),
@@ -403,6 +431,21 @@ _ORDER_CHANNEL_LABELS = (
     ("search", "Pencarian"), ("ads", "Iklan"), ("affiliate", "Afiliasi"),
     ("campaign", "Kampanye"), ("other", "Lainnya"),
 )
+# 11 Nov 2026 — dipakai juga pesanan MANUAL (Order Terpadu): satu daftar kanal untuk
+# impor dan input tangan, supaya rekap harian tidak punya dua kamus.
+ORDER_CHANNEL_LABELS = _ORDER_CHANNEL_LABELS
+
+
+def norm_order_channel(value) -> Optional[str]:
+    """Kanal pesanan dari kode (``product_card``) atau labelnya (``Kartu produk``);
+    ``None`` bila kosong atau tidak dikenal."""
+    s = str(value or "").strip().lower()
+    if not s:
+        return None
+    for key, label in _ORDER_CHANNEL_LABELS:
+        if s in (key, label.lower()):
+            return key
+    return None
 
 # Kamus kurir: nama kurir baru TIDAK boleh menghapus omzet ⇒ fallback `lainnya`
 # + peringatan (bukan tolak).
