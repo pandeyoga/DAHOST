@@ -534,6 +534,8 @@ def _acc_row(mat, src: dict, *, key, factor, uom, label, est_now, plan, before, 
         "default_handover": round(_f(default), 4), "qty_handover": qty_hand, "edited": edited,
         "qty_base": qty_base, "unit_cost": unit_cost, "value": round(qty_base * unit_cost, 2),
         "source": source or ss.SOURCE_BOM, "kind": KIND_AKSESORIS, "_material": m,
+        # owner 11 Nov 2026: harga jual ke CMT yang diisi di PO → isian nota terisi otomatis (tetap bisa diubah)
+        "harga_jual_po": ss.harga_untuk(src, factor),
         "options": ss.handover_unit(mat)["options"] if mat else [],
     }
 

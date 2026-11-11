@@ -101,6 +101,9 @@ def accessory_plan_row(a: dict) -> dict:
         'handover_factor': _f(a.get('handover_factor')) if has_handover else None,
         'bom_qty_handover': _f(a.get('bom_qty_handover')) if a.get('bom_qty_handover') is not None else None,
         'plan_qty_handover': _f(a.get('plan_qty_handover')) if a.get('plan_qty_handover') is not None else None,
+        # owner 11 Nov 2026: harga jual ke CMT per satuan serah (diisi di PO; nota terbit saat Kirim ke CMT)
+        'harga_jual_cmt': (round(_f(a.get('harga_jual_cmt_dasar')) * (_f(a.get('handover_factor')) or 1.0), 2)
+                           if a.get('harga_jual_cmt_dasar') not in (None, '') else None),
         'notes': a.get('notes') or '',
     }
 

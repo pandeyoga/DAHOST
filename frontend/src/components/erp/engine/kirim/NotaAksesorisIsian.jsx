@@ -51,11 +51,11 @@ export function notaPayload(rows, harga, caraBayar) {
     harga: kosong(harga[r.key]) ? '' : Number(harga[r.key]) })) };
 }
 
-export default function NotaAksesorisIsian({ rows, harga, onHarga, caraBayar, onCaraBayar, vendorName, testId = 'nota-aksesoris' }) {
+export default function NotaAksesorisIsian({ rows, harga, onHarga, caraBayar, onCaraBayar, vendorName, dariPo = {}, testId = 'nota-aksesoris' }) {
   const total = totalNota(rows, harga);
   return (
     <div className="space-y-2" data-testid={testId}>
-      <SectionLabel aside={<span className="text-xs text-muted-foreground">dibeli CMT · harga diketik setiap kiriman, isi 0 bila gratis</span>}>
+      <SectionLabel aside={<span className="text-xs text-muted-foreground">dibeli CMT · harga dari PO bila sudah diisi (bisa diubah), isi 0 bila gratis</span>}>
         Nota aksesoris{vendorName ? ` ke ${vendorName}` : ' ke CMT'}
       </SectionLabel>
       <div className="overflow-x-auto">
@@ -87,6 +87,7 @@ export default function NotaAksesorisIsian({ rows, harga, onHarga, caraBayar, on
                     <MoneyInput value={harga[r.key] ?? ''} onChange={(e) => onHarga(r.key, e.target.value)}
                       className={`h-8 w-32 ml-auto text-right ${belum ? 'border-[hsl(var(--warning))]' : ''}`}
                       aria-label={`Harga jual ${r.name}`} placeholder="Ketik harga" data-testid={`${testId}-harga-${r.code || r.key}`} />
+                    {dariPo[r.key] && <span className="block text-xs text-muted-foreground">dari PO</span>}
                   </TableCell>
                   <TableCell className="text-right tabular-nums whitespace-nowrap">
                     {belum ? <span className="text-muted-foreground">—</span> : fmtRp(jumlahBaris(r, harga))}

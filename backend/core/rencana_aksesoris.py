@@ -42,7 +42,7 @@ async def apply_rows(db, po_id: str, rows: list, *, replace_tambahan: bool = Tru
             if not t:
                 continue
             keep.add(t["id"])
-            if raw.get("plan_qty_handover") in (None, "") and not raw.get("handover_uom"):
+            if raw.get("plan_qty_handover") in (None, "") and not raw.get("handover_uom") and "harga_jual_cmt" not in raw:
                 continue
             mat = mats.get(t.get("accessory_id"))
             est = t.get("bom_qty_base") if t.get("bom_qty_base") not in (None, "") else t.get("qty_needed")
@@ -53,6 +53,8 @@ async def apply_rows(db, po_id: str, rows: list, *, replace_tambahan: bool = Tru
                                 handover_uom=raw.get("handover_uom") or t.get("handover_uom"),
                                 usage_unit=t.get("unit") or "")
             pf["plan_edited"] = abs(_f(pf["plan_qty_handover"]) - _f(pf["bom_qty_handover"])) > 1e-9
+            if "harga_jual_cmt" in raw:     # owner 11 Nov 2026: harga jual ke CMT diisi di PO (per satuan serah)
+                pf.update(ss.harga_fields(mat, raw.get("harga_jual_cmt"), pf.get("handover_uom")))
             await db.po_accessories.update_one({"id": t["id"]}, {"$set": {**pf, "updated_at": now()}})
             out["bom_updated"] += 1
             continue
@@ -67,6 +69,8 @@ async def apply_rows(db, po_id: str, rows: list, *, replace_tambahan: bool = Tru
                "accessory_name": (mat or {}).get("name") or raw.get("accessory_name") or "",
                "accessory_code": (mat or {}).get("code") or raw.get("accessory_code") or "",
                "notes": raw.get("notes") or "", "unlinked": mat is None, **pf}
+        if "harga_jual_cmt" in raw:
+            doc.update(ss.harga_fields(mat, raw.get("harga_jual_cmt"), pf.get("handover_uom")))
         if maklon:
             doc["ownership"] = raw.get("ownership") or "cv_da_stock"   # tambahan di PO maklon = disediakan DA
         if target and not ss.is_auto_row(target):
