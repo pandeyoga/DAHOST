@@ -204,7 +204,9 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
                             onClick={() => setPicks(p => ({
                               ...p, [u.platform_sku_id]: u.suggestion.catalog_item_id }))}
                             data-testid={`sku-map-apply-suggestion-${u.platform_sku_id}`}>
-                            Pakai usulan: {u.suggestion.name} ({Math.round(u.suggestion.score * 100)}% mirip)
+                            Pakai usulan: {u.suggestion.name} ({u.suggestion.sumber === 'kode_model'
+                              ? 'nomor model, warna & ukuran cocok'
+                              : `${Math.round(u.suggestion.score * 100)}% mirip`})
                           </Button>
                         )}
                       </td>

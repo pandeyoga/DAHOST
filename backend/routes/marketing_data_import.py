@@ -120,8 +120,12 @@ def _norm_plat(s: Any) -> str:
 
 
 def _platform_matches(account_platform: Any, file_value: Any) -> bool:
-    """True bila nama platform di berkas menunjuk platform toko yang sama."""
-    a, f = _norm_plat(account_platform), _norm_plat(file_value)
+    """True bila nama platform di berkas menunjuk platform toko yang sama.
+
+    "Aplikasi TikTok" (ekspor berbahasa Indonesia) dibaca "TikTok" — 2026-11-11.
+    """
+    a = _norm_plat(account_platform)
+    f = _norm_plat(eng.kanal_platform(file_value))
     if not a or not f:
         return True
     if a == f:
@@ -1362,8 +1366,16 @@ async def _reference_index(db, st: SourceType, session: dict) -> dict:
                   "reviews", "complaints", "live_session_products", "marketplace_orders"):
         cat_ids = [c["id"] for c in await db.marketing_catalogs.find(
             {"account_id": aid}, {"_id": 0, "id": 1}).to_list(200)]
+        # 2026-11-11 — 640 item katalog hasil impor master 12 Sep (`master_template_v1`) punya
+        # `account_id` tetapi TANPA `catalog_id`. Dulu item itu tidak masuk indeks ⇒ pesanan yang
+        # sudah ditautkan ke item itu kembali "tak tertaut" setiap kali diimpor ulang (ekspor
+        # 7 hari menimpa tautan ekspor 28 hari). Pemilik item = toko (`account_id`).
+        q_items: Dict[str, Any] = (
+            {"$or": [{"catalog_id": {"$in": cat_ids}}, {"account_id": aid}]} if aid and cat_ids
+            else {"account_id": aid} if aid
+            else {"catalog_id": {"$in": cat_ids}} if cat_ids else {"catalog_id": "__none__"})
         items = await db.marketing_catalog_items.find(
-            {"catalog_id": {"$in": cat_ids}} if cat_ids else {"catalog_id": "__none__"},
+            q_items,
             {"_id": 0, "id": 1, "sku": 1, "name": 1, "hpp": 1, "harga_jual": 1,
              "price": 1, "fg_material_id": 1, "category": 1,
              "platform_sku_ids": 1, "bridge_keys": 1, "variant_id": 1, "model_id": 1,
@@ -2956,11 +2968,35 @@ async def sku_map_list(session_id: str, request: Request,
     name_keys = list(by_name.keys())
     catalog_items = [{"id": v["id"], "name": v.get("name"), "sku": v.get("sku"),
                       "hpp": v.get("hpp")} for v in by_name.values()]
+    # 2026-11-11 (keputusan owner) — usulan PASTI dari kode model (SKU penjual = nomor model
+    # master, variasi = warna + ukuran) didahulukan atas kemiripan nama. Baris seperti ini
+    # langsung ditautkan saat impor disimpan.
+    from core import sku_bridge as _sb
+    kpool = await _sb.kode_pool(db)
+    item_by_sku: Dict[str, dict] = {}
+    if aid:
+        async for it in db.marketing_catalog_items.find(
+                {"account_id": aid, "is_active": {"$ne": False}},
+                {"_id": 0, "id": 1, "name": 1, "sku": 1}):
+            if it.get("sku"):
+                item_by_sku.setdefault(str(it["sku"]).strip().upper(), it)
     out = []
     for g in groups.values():
         suggestion = None
+        km = _sb.cocok_kode_model(kpool, g["seller_sku"], g["variation_raw"], g["product_name_raw"])
+        if km.get("variant"):
+            vsku = str(km["variant"].get("sku") or "")
+            g["kode_model"] = {"model_code": km["model_code"], "variant_sku": vsku,
+                               "cara": km["cara"], "otomatis": True}
+            cand = item_by_sku.get(vsku.upper())
+            if cand:
+                suggestion = {"catalog_item_id": cand["id"], "name": cand.get("name"),
+                              "sku": cand.get("sku"), "score": 1.0, "sumber": "kode_model"}
+        elif km.get("model_code"):
+            g["kode_model"] = {"model_code": km["model_code"], "alasan": km["alasan"],
+                               "otomatis": False}
         key = scope.norm(g["product_name_raw"])
-        if key:
+        if key and not suggestion:
             close = _dl.get_close_matches(key, name_keys, n=1, cutoff=0.7)
             if close:
                 cand = by_name[close[0]]
@@ -4005,6 +4041,21 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
     if st.key == "returns" and (inserted or updated):
         returns_bridge_result = await _after_returns_import(db, session_id, user)
 
+    # ── 2026-11-11 (keputusan owner) — TAUTAN PASTI lewat KODE MODEL ─────────────
+    # SKU penjual di ekspor toko = nomor model master ("1512" = DA-1512) dan variasinya
+    # warna + ukuran. Baris yang menunjuk tepat satu varian langsung ditautkan (jembatan SKU),
+    # sisanya menunggu di Pemetaan SKU. Tidak menyentuh stok maupun jurnal (K15).
+    tautan_kode = None
+    if account and st.key in ROLLUP_ORDER_TYPES and (inserted or updated):
+        try:
+            from core import sku_bridge as _sb
+            tautan_kode = await _sb.tautkan_kode_model(
+                db, account_id=account["id"], user=user,
+                order_query={"$or": [{"_import_session_id": session_id},
+                                     {"id": {"$in": list(updated_ids or [])}}]})
+        except Exception:
+            logger.exception("tautan kode model sesudah impor gagal (sesi=%s)", session_id)
+
     # ── F2 — REKAP HARIAN TURUNAN dihitung ulang untuk tanggal yang terdampak ─
     rollup_result = None
     # 2026-11-07 (audit #13) — impor pesanan format lama juga menulis `marketing_orders`,
@@ -4039,7 +4090,10 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
             "daily_rollup": ({k: v for k, v in rollup_result.items() if k != "details"}
                              if rollup_result else None),
             "returns_bridge": returns_bridge_result,
-            "message": _commit_message(st, len(inserted), updated, rejected)}
+            "tautan_kode_model": tautan_kode,
+            "message": _commit_message(st, len(inserted), updated, rejected)
+            + (f" {tautan_kode['ditautkan']} SKU langsung tertaut ke master lewat kode model."
+               if tautan_kode and tautan_kode.get("ditautkan") else "")}
 
 
 def import_fulfillment_status(order: dict) -> tuple:

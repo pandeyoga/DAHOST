@@ -68,11 +68,13 @@ async def unmapped(account_id: Optional[str] = None, q: Optional[str] = None,
     if with_suggestion and res['rows']:
         pool = await bridge._candidate_pool(db, account_id=None)
         models = await bridge._model_pool(db)
+        kpool = await bridge.kode_pool(db)
         for r in res['rows']:
             sg = await bridge.suggest(db, product_name=r['product_name'],
                                      variation=r['variation'],
                                      account_id=r.get('account_id'), limit=1,
-                                     pool=pool, models=models)
+                                     pool=pool, models=models,
+                                     seller_sku=r.get('seller_sku') or '', kpool=kpool)
             best = sg.get('best')
             mm = sg.get('model_match') or {}
             r['parsed'] = sg.get('parsed')
@@ -82,7 +84,9 @@ async def unmapped(account_id: Optional[str] = None, q: Optional[str] = None,
             r['suggestion'] = ({'target_id': best['target_id'], 'kind': best['kind'],
                                 'label': best['label'], 'sku': best.get('sku') or '',
                                 'confidence': best['confidence'], 'reasons': best['reasons'],
+                                # 11 Nov 2026 — hanya model yang dipastikan SKU penjual
                                 'auto_ok': (sg.get('recommended_action') == 'map'
+                                            and mm.get('source') == bridge.SUMBER_KODE
                                             and bridge._f(mm.get('match_confidence'))
                                             >= bridge.AUTO_MIN_CONFIDENCE)}
                                if best else None)
@@ -93,6 +97,7 @@ async def unmapped(account_id: Optional[str] = None, q: Optional[str] = None,
 async def suggest_targets(platform_sku_id: Optional[str] = None,
                           product_name: str = '', variation: str = '',
                           account_id: Optional[str] = None,
+                          seller_sku: str = '',
                           limit: int = Query(default=8, ge=1, le=50),
                           user: dict = Depends(require_auth)):
     """Usulan sasaran untuk satu SKU. Daftar kosong = masternya belum ada."""
@@ -107,11 +112,12 @@ async def suggest_targets(platform_sku_id: Optional[str] = None,
                 if str(ln.get('platform_sku_id') or '') == str(platform_sku_id).strip():
                     product_name = ln.get('product_name_raw') or ln.get('product_name') or ''
                     variation = ln.get('variation_raw') or ''
+                    seller_sku = seller_sku or str(ln.get('seller_sku') or '')
                     break
     if not (product_name or variation):
         raise HTTPException(400, 'Butuh product_name/variation, atau platform_sku_id yang ada di pesanan.')
     res = await bridge.suggest(db, product_name=product_name, variation=variation,
-                              account_id=account_id, limit=limit)
+                              account_id=account_id, limit=limit, seller_sku=seller_sku)
     res['product_name'] = product_name
     res['variation'] = variation
     return res
