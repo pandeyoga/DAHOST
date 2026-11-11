@@ -25,6 +25,7 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 import ai_cost_tracker as tracker
+from core.asisten_ai.katalog_aksi import aturan as aturan_aksi
 from core.asisten_ai.tindakan import BATAS_BAWAAN as BATAS_TINDAKAN_BAWAAN
 from utils.waktu import today_wib, wib_day_bounds_utc
 
@@ -81,6 +82,8 @@ def aturan_dari(udoc: Optional[dict], role: Optional[str], settings: dict) -> di
         aktif, sumber = bawaan["aktif"], "bawaan"
     bp, bt = bilangan_batas(cfg.get("batas_pertanyaan_harian")), bilangan_batas(cfg.get("batas_tindakan_harian"))
     return {"aktif": aktif, "sumber": sumber, "selalu_aktif": peran in PERAN_SELALU_AKTIF,
+            # 12 Nov 2026 (K3): golongan aksi katalog yang boleh dipakai akun ini (A selalu; B/C/D per orang).
+            "golongan": aturan_aksi.golongan_efektif(peran, cfg.get("golongan")),
             "batas_pertanyaan": bawaan["batas_pertanyaan"] if bp is None else bp,
             "batas_pertanyaan_sumber": "bawaan" if bp is None else "akun",
             "batas_tindakan": bawaan["batas_tindakan"] if bt is None else bt,
@@ -153,9 +156,31 @@ def rapikan_masukan(body: dict, *, peran_target: str) -> dict:
         if iv is None:
             raise ValueError(f"{label} harus bilangan bulat 0–{MAKS_BATAS} (kosongkan untuk ikut bawaan).")
         out[k] = iv
+    if "golongan" in body:
+        g = body.get("golongan")
+        if not isinstance(g, dict) or any(k not in aturan_aksi.GOLONGAN_SAKLAR for k in g):
+            raise ValueError("Golongan aksi hanya Stok (B), Uang (C), dan Pengaturan (D).")
+        peran = str(peran_target or "").lower()
+        if peran in aturan_aksi.PERAN_SEMUA_GOLONGAN:
+            raise ValueError("Owner dan superadmin selalu boleh semua golongan aksi; tidak perlu diatur.")
+        gol = {}
+        for k, v in g.items():
+            if v is not None and not isinstance(v, bool):
+                raise ValueError("Saklar golongan aksi harus Nyala, Mati, atau kosong.")
+            if k == "D" and v is True and peran not in aturan_aksi.PERAN_BOLEH_D:
+                raise ValueError("Golongan Pengaturan hanya bisa dinyalakan untuk peran admin.")
+            gol[k] = v
+        out["golongan"] = gol
     if not out:
         raise ValueError("Tidak ada isian yang diubah.")
     return out
+
+
+def golongan_tersimpan(cfg: Optional[dict]) -> dict:
+    """Saklar golongan B/C/D yang tersimpan untuk satu akun ({B|C|D: True|False|None})."""
+    g = (cfg or {}).get("golongan") if isinstance(cfg, dict) else None
+    g = g if isinstance(g, dict) else {}
+    return {k: (g.get(k) if isinstance(g.get(k), bool) else None) for k in aturan_aksi.GOLONGAN_SAKLAR}
 
 
 async def simpan(db, uid: str, isian: dict, *, oleh: str) -> dict:
@@ -163,6 +188,11 @@ async def simpan(db, uid: str, isian: dict, *, oleh: str) -> dict:
     lama = await db.users.find_one({"id": uid}, {"_id": 0, KOLOM: 1})
     cfg = (lama or {}).get(KOLOM)
     cfg = dict(cfg) if isinstance(cfg, dict) else {}
+    isian = dict(isian)
+    if isinstance(isian.get("golongan"), dict):      # digabung per kunci (B/C/D yang tidak dikirim tetap)
+        gol = dict(cfg.get("golongan") or {}) if isinstance(cfg.get("golongan"), dict) else {}
+        gol.update(isian.pop("golongan"))
+        cfg["golongan"] = {k: v for k, v in gol.items() if isinstance(v, bool)}
     cfg.update(isian)
     cfg.update({"diubah_oleh": oleh, "diubah_at": datetime.now(timezone.utc).isoformat()})
     await db.users.update_one({"id": uid}, {"$set": {KOLOM: cfg}})

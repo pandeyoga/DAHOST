@@ -282,7 +282,7 @@ def test_dekorator_tindakan_registri_dan_deskripsi(dummy):
         ab._DAFTAR.pop("uji_aksi_polos", None)
     with pytest.raises(ValueError):
         ab.tindakan(name="uji_salah_risiko", label="x", description="x", input_schema={"type": "object"},
-                    risiko="tinggi")
+                    risiko="kritis")   # 12 Nov 2026: "tinggi" kini sah (K4)
     with pytest.raises(TypeError):
         ab.tindakan(name="uji_tanpa_jalankan", label="x", description="x",
                     input_schema={"type": "object"})(type("X", (), {"siapkan": staticmethod(_siapkan)}))
@@ -1026,7 +1026,9 @@ def test_route_tindakan_lengkap_lewat_asgi(env, dummy, monkeypatch):
     assert st["tindakan_aktif"] is True and st["batas_tindakan_harian"] == 30 and st["tindakan_hari_ini"] == 0
     row = daftar["items"][0]
     assert daftar["total"] == 1 and set(row) == {"id", "dibuat", "pengguna", "sesi_id", "nama", "label", "judul",
-                                                  "keadaan", "risiko", "ringkas", "bisa_dibalikkan"}
+                                                  "keadaan", "risiko", "ringkas", "bisa_dibalikkan",
+                                                  # 12 Nov 2026 (katalog aksi, K4)
+                                                  "golongan", "nominal", "boleh_putuskan_kedua"}
     assert row["judul"] == "Pasang nilai uji 2026-12" and row["pengguna"] == {"id": "u-owner", "nama": "Pemilik Uji"}
     assert det["rencana"]["judul"] == row["judul"] and "pembatalan" not in det and "kunci_proses" not in det
     assert galat == [400, 400, 400, 404, 409, 400]
@@ -1059,7 +1061,8 @@ def test_pengaturan_monitor_ai_kunci_tindakan(monkeypatch):
     out = run(mon.update_settings(R("owner"), payload={"asisten_tindakan_aktif": False,
                                                       "asisten_batas_tindakan_harian": 5}))
     assert out["data"]["asisten_tindakan_aktif"] is False and out["data"]["asisten_batas_tindakan_harian"] == 5
-    assert run(tdk.pengaturan()) == {"aktif": False, "batas": 5}
+    assert run(tdk.pengaturan()) == {"aktif": False, "batas": 5, "batas_nominal_transaksi": 0,
+                                     "batas_nominal_harian": 0}
     got = run(mon.get_settings(R("manager")))
     assert got["data"]["asisten_tindakan_aktif"] is False
     for bad in ({"asisten_batas_tindakan_harian": -1}, {"asisten_batas_tindakan_harian": "banyak"},

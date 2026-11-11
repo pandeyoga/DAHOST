@@ -367,7 +367,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
    * bila semua tindakan giliran itu sudah diputuskan (bila belum, aliran berhenti setelah status).
    * Tombol Hentikan memutus aliran seperti jawaban biasa. Mengembalikan `{ ok }` ke kartu.
    */
-  const putuskan = useCallback(async (id, { keputusan, ubahan, alasan } = {}) => {
+  const putuskan = useCallback(async (id, { keputusan, ubahan, alasan, konfirmasi } = {}) => {
     if (!id || mengalirRef.current) return { ok: false };
     const sid = aktifRef.current;
     mengalirRef.current = true;
@@ -381,7 +381,7 @@ export default function AsistenAIModule({ user, onNavigate, deepLinkParams, ruan
     let ok = true;
     const ubahLanjutan = (fn) => { const k = kA; setPesan((prev) => prev.map((p) => (p.kunci === k ? fn(p) : p))); };
     try {
-      const hasil = await asistenApi.putuskan(id, { keputusan, ubahan, alasan, cv }, {
+      const hasil = await asistenApi.putuskan(id, { keputusan, ubahan, alasan, konfirmasi, cv }, {
         signal: ctrl.signal,
         onEvent: ({ event, data }) => {
           if (aktifRef.current !== sid) return;

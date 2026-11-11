@@ -9,12 +9,17 @@
  *   GET  /api/asisten-ai/tindakan?status=&dari=&sampai=&halaman=&semua=1
  *   GET  /api/asisten-ai/tindakan/{id}
  *   POST /api/asisten-ai/tindakan/{id}/balikkan {alasan}
+ *   POST /api/asisten-ai/tindakan/{id}/putuskan-kedua {keputusan, alasan}   (12 Nov 2026)
+ *
+ * 12 Nov 2026: kartu uang di atas batas nominal berstatus "Menunggu persetujuan kedua" sampai owner/superadmin
+ * (bukan pembuat kartu, `boleh_putuskan_kedua`) menekan "Setujui & jalankan" atau "Tolak" di popup rincian
+ * (alasan ≥ 10 huruf). Kolom golongan aksi dan nominal ikut tampil.
  *
  * PANDUAN_UI: PageLayout (penyaring status FilterChips + PeriodPicker di `filters`, unduh + muat ulang di `tools`),
  * tabel ui/table, rincian DetailPopup, paginasi di `footer`.
  */
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, ChevronRight, ListChecks, MessageSquare, RefreshCw, Undo2 } from 'lucide-react';
+import { AlertCircle, Check, ChevronRight, ListChecks, MessageSquare, RefreshCw, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -26,15 +31,16 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { formatDateTimeID } from '@/lib/format';
+import { formatDateTimeID, formatRupiah } from '@/lib/format';
 import { parseServerTime } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from '../finance/PeriodPicker';
 import { KUNCI_SESI_AKTIF, asistenApi } from './asistenApi';
-import { CatatanRencana, TabelPerubahan } from './KartuTindakan';
+import { CatatanRencana, PeringatanKedua, TabelPerubahan } from './KartuTindakan';
 import {
-  STATUS_PENYARING, bacaDaftarTindakan, bolehSemuaPengguna, keadaanTindakan, queryDaftar, ratakanNilai,
+  LABEL_RISIKO, STATUS_PENYARING, bacaDaftarTindakan, bolehSemuaPengguna, keadaanTindakan, labelGolongan, queryDaftar,
+  ratakanNilai, risikoTindakan,
 } from './tindakanAsisten';
 
 const WAKTU_RINCIAN = [
@@ -49,6 +55,12 @@ const WAKTU_RINCIAN = [
 const waktu = (v) => formatDateTimeID(parseServerTime(v));
 // siapa yang memutuskan/membalikkan (inti: `diputuskan_oleh`/`dibalikkan_oleh` = {id, nama})
 const OLEH = { diputuskan_pada: 'diputuskan_oleh', dibalikkan_pada: 'dibalikkan_oleh' };
+const ALASAN_MIN = 10;
+
+const adaNominal = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+const teksNominal = (v) => (adaNominal(v) ? formatRupiah(Number(v)) : '');
+/** "Risiko menengah" / "Risiko tinggi" (rendah tidak ditulis). */
+const teksRisiko = (r) => { const k = risikoTindakan(r); return k === 'rendah' ? '' : `Risiko ${LABEL_RISIKO[k].toLowerCase()}`; };
 
 /** Nilai sebelum/sesudah/hasil sebagai daftar label → nilai (kunci teknis disembunyikan, lihat `ratakanNilai`). */
 function DaftarNilai({ judul, nilai, baris: barisLangsung, testId }) {
@@ -101,6 +113,7 @@ function RincianTindakan({ row, rincian, bolehBuka, onBukaSesi }) {
       {rencana.ringkas && <p className="text-sm text-foreground/85">{String(rencana.ringkas)}</p>}
       <TabelPerubahan perubahan={rencana.perubahan} testId="tindakan-ai-perubahan" />
       <CatatanRencana rencana={rencana} />
+      {['menunggu', 'menunggu_kedua'].includes(row.keadaan) && <PeringatanKedua rencana={rencana} testId="tindakan-ai-kedua" />}
       <div className="grid gap-4 lg:grid-cols-2">
         <DaftarNilai judul="Sebelum" nilai={d.sebelum} testId="tindakan-ai-sebelum" />
         <DaftarNilai judul="Sesudah" nilai={d.sesudah} testId="tindakan-ai-sesudah" />
@@ -141,6 +154,7 @@ export default function TindakanAIModule({ user, onNavigate }) {
   const [bukaId, setBukaId] = useState(null);
   const [rincian, setRincian] = useState({});
   const [membalik, setMembalik] = useState(null);
+  const [memutus, setMemutus] = useState(null); // id kartu yang sedang diputuskan (persetujuan kedua)
   const urut = useRef(0);
 
   const muat = useCallback(async () => {
@@ -219,6 +233,49 @@ export default function TindakanAIModule({ user, onNavigate }) {
     }
   };
 
+  // Persetujuan kedua (owner/superadmin, bukan pembuat kartu): server yang menentukan lewat `boleh_putuskan_kedua`.
+  const bolehKedua = (row) => !!row && row.keadaan === 'menunggu_kedua'
+    && (row.boleh_putuskan_kedua === true || rincian[row.id]?.data?.boleh_putuskan_kedua === true);
+
+  const putuskanKedua = async (row, keputusan) => {
+    if (memutus) return;
+    const setuju = keputusan === 'setujui';
+    const nama = row.judul || row.label || 'Tindakan AI';
+    const alasan = await confirmDialog({
+      title: setuju ? 'Setujui dan jalankan perubahan ini?' : 'Tolak perubahan ini?',
+      body: setuju
+        ? `${nama}. Data langsung diubah setelah Anda menekan "Setujui & jalankan". Alasan Anda tercatat di jejak Tindakan AI.`
+        : `${nama}. Perubahan dibatalkan dan tidak ada data yang diubah. Alasan Anda tercatat di jejak Tindakan AI.`,
+      confirmLabel: setuju ? 'Setujui & jalankan' : 'Tolak',
+      cancelLabel: 'Kembali',
+      danger: !setuju,
+      input: {
+        label: `Alasan (minimal ${ALASAN_MIN} huruf)`, minLength: ALASAN_MIN,
+        placeholder: setuju ? 'Mis. sudah dicek dengan bukti transfer' : 'Mis. nominal belum sesuai tagihan',
+      },
+    });
+    if (!alasan) return;
+    setMemutus(row.id);
+    const segarkanBaris = () => {
+      setRincian((x) => { const n = { ...x }; delete n[row.id]; return n; });
+      if (bukaId === row.id) muatRincian(row.id);
+    };
+    try {
+      const r = await asistenApi.putuskanKedua(row.id, { keputusan, alasan });
+      if (r?.keadaan === 'gagal') toast.error(r.pesan || r.ringkas || 'Perubahan gagal dijalankan. Tidak ada data yang diubah.');
+      else if (r?.keadaan === 'dibatalkan') toast.success(r.pesan || 'Perubahan ditolak. Tidak ada data yang diubah.');
+      else toast.success(r?.ringkas || r?.pesan || 'Disetujui dan dijalankan.');
+      segarkanBaris();
+      await muat();
+    } catch (e) {
+      toast.error(e?.message || 'Keputusan gagal dikirim. Coba lagi.');
+      // 409 = sudah diputuskan orang lain / kedaluwarsa → tampilkan keadaan server
+      if (e?.status === 409 || e?.status === 404) { segarkanBaris(); await muat(); }
+    } finally {
+      setMemutus(null);
+    }
+  };
+
   const { baris, total, perHalaman, jumlah } = data;
   const opsiStatus = [
     { key: '', label: 'Semua', count: jumlah ? STATUS_PENYARING.reduce((s, k) => s + (jumlah[k] || 0), 0) : undefined },
@@ -256,7 +313,9 @@ export default function TindakanAIModule({ user, onNavigate }) {
               { label: 'Tindakan', nilai: (r) => r.judul || r.label || 'Tindakan AI' },
               { label: 'Jenis', nilai: (r) => (r.judul && r.label ? r.label : '') },
               { label: 'Ringkas', nilai: (r) => r.ringkas || '' },
-              { label: 'Risiko', nilai: (r) => (r.risiko === 'menengah' ? 'Menengah' : 'Rendah') },
+              { label: 'Golongan', nilai: (r) => labelGolongan(r.golongan) },
+              { label: 'Nominal (Rp)', nilai: (r) => (adaNominal(r.nominal) ? Number(r.nominal) : '') },
+              { label: 'Risiko', nilai: (r) => LABEL_RISIKO[risikoTindakan(r.risiko)] },
               { label: 'Status', nilai: (r) => keadaanTindakan(r.keadaan).label },
             ]} />
           <Button variant="outline" size="icon" onClick={muat} title="Muat ulang" aria-label="Muat ulang" data-testid="tindakan-ai-muat-ulang">
@@ -291,6 +350,8 @@ export default function TindakanAIModule({ user, onNavigate }) {
                 <TableHead className="hidden md:table-cell">Pengguna</TableHead>
                 <TableHead>Tindakan</TableHead>
                 <TableHead className="hidden md:table-cell">Ringkas</TableHead>
+                <TableHead className="hidden lg:table-cell">Golongan</TableHead>
+                <TableHead className="hidden text-right md:table-cell">Nominal</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
@@ -314,16 +375,30 @@ export default function TindakanAIModule({ user, onNavigate }) {
                       <TableCell className="whitespace-normal sm:min-w-[9rem]">
                         <p className="text-sm font-medium text-foreground">{row.judul || row.label || 'Tindakan AI'}</p>
                         {row.judul && row.label && <p className="text-xs text-muted-foreground">{row.label}</p>}
-                        {row.risiko === 'menengah' && <p className="text-xs text-muted-foreground">Risiko menengah</p>}
+                        {teksRisiko(row.risiko) && (
+                          <p className={risikoTindakan(row.risiko) === 'tinggi' ? 'text-xs text-[hsl(var(--danger-text))]' : 'text-xs text-muted-foreground'}
+                            data-testid={`tindakan-ai-risiko-${row.id}`}>{teksRisiko(row.risiko)}</p>
+                        )}
                         <p className="text-xs text-muted-foreground sm:hidden">{waktu(row.dibuat)}</p>
                       </TableCell>
                       <TableCell className="hidden max-w-[22rem] whitespace-normal text-sm text-foreground/80 md:table-cell">{row.ringkas || '—'}</TableCell>
+                      <TableCell className="hidden text-sm text-foreground/80 lg:table-cell" data-testid={`tindakan-ai-golongan-${row.id}`}>
+                        {labelGolongan(row.golongan, '—')}
+                      </TableCell>
+                      <TableCell className="hidden whitespace-nowrap text-right tabular-nums md:table-cell" data-testid={`tindakan-ai-nominal-${row.id}`}>
+                        {teksNominal(row.nominal) || '—'}
+                      </TableCell>
                       <TableCell><StatusBadge status={row.keadaan} label={info.label} tone={info.tone} testId={`tindakan-ai-status-${row.id}`} /></TableCell>
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         {row.bisa_dibalikkan && row.keadaan === 'dijalankan' ? (
                           <Button size="sm" variant="outline" onClick={() => balikkan(row)} disabled={!!membalik}
                             title="Balikkan ke nilai lama" aria-label="Balikkan" data-testid={`tindakan-ai-balikkan-${row.id}`}>
                             <Undo2 className="h-4 w-4" /><span className="hidden sm:inline">Balikkan</span>
+                          </Button>
+                        ) : bolehKedua(row) ? (
+                          <Button size="sm" variant="link" className="h-auto px-0" onClick={() => toggle(row.id)}
+                            title="Setujui atau tolak sebagai persetujuan kedua" data-testid={`tindakan-ai-tinjau-${row.id}`}>
+                            Tinjau
                           </Button>
                         ) : row.keadaan === 'menunggu' && sendiri && row.sesi_id ? (
                           <Button size="sm" variant="link" className="h-auto px-0" onClick={() => bukaSesi(row.sesi_id)}
@@ -344,8 +419,8 @@ export default function TindakanAIModule({ user, onNavigate }) {
       {barisBuka && (
         <DetailPopup open onClose={() => setBukaId(null)} testId={`tindakan-ai-detail-${barisBuka.id}`}
           judul={barisBuka.judul || barisBuka.label || 'Tindakan AI'}
-          keterangan={[waktu(barisBuka.dibuat), barisBuka.pengguna?.nama, barisBuka.risiko === 'menengah' ? 'Risiko menengah' : null]
-            .filter(Boolean).join(' · ')}
+          keterangan={[waktu(barisBuka.dibuat), barisBuka.pengguna?.nama, teksRisiko(barisBuka.risiko),
+            labelGolongan(barisBuka.golongan), teksNominal(barisBuka.nominal)].filter(Boolean).join(' · ')}
           status={<StatusBadge status={barisBuka.keadaan} label={keadaanTindakan(barisBuka.keadaan).label}
             tone={keadaanTindakan(barisBuka.keadaan).tone} />}
           aksi={barisBuka.bisa_dibalikkan && barisBuka.keadaan === 'dijalankan' ? (
@@ -353,6 +428,17 @@ export default function TindakanAIModule({ user, onNavigate }) {
               data-testid="tindakan-ai-popup-balikkan">
               <Undo2 />Balikkan
             </Button>
+          ) : bolehKedua(barisBuka) ? (
+            <>
+              <Button size="sm" variant="success" onClick={() => putuskanKedua(barisBuka, 'setujui')} disabled={!!memutus}
+                data-testid="tindakan-ai-kedua-setujui">
+                <Check />Setujui &amp; jalankan
+              </Button>
+              <Button size="sm" variant="destructive" onClick={() => putuskanKedua(barisBuka, 'batal')} disabled={!!memutus}
+                data-testid="tindakan-ai-kedua-tolak">
+                <X />Tolak
+              </Button>
+            </>
           ) : null}>
           <RincianTindakan row={barisBuka} rincian={rincian[barisBuka.id]} bolehBuka={milikSendiri(barisBuka)} onBukaSesi={bukaSesi} />
         </DetailPopup>

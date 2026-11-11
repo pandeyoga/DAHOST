@@ -11,7 +11,7 @@ import TindakanAIModule from '../TindakanAIModule';
 
 jest.mock('../asistenApi', () => ({
   KUNCI_SESI_AKTIF: 'asisten_ai_sesi_aktif',
-  asistenApi: { daftarTindakan: jest.fn(), detailTindakan: jest.fn(), balikkanTindakan: jest.fn() },
+  asistenApi: { daftarTindakan: jest.fn(), detailTindakan: jest.fn(), balikkanTindakan: jest.fn(), putuskanKedua: jest.fn() },
 }));
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
 // lib/entitas (dipakai PageLayout) mengimpor axios versi ESM yang tidak diubah jest; cukup tiruan interceptor.
@@ -146,4 +146,90 @@ test('Balikkan berhasil: daftar dimuat ulang, toast ringkas', async () => {
   await tunggu(() => q('tindakan-ai-baris-tnd-1')?.getAttribute('data-keadaan') === 'dibalikkan');
   expect(toast.success).toHaveBeenCalledWith('Nilai lama dipulihkan.');
   expect(q('tindakan-ai-balikkan-tnd-1')).toBeNull();
+});
+
+// ── 12 Nov 2026: persetujuan kedua kartu uang di atas batas nominal ──
+const BARIS_KEDUA = {
+  ...BARIS, id: 'tnd-2', nama: 'catat_pembayaran', label: 'Mencatat pembayaran pemasok', judul: 'Bayar tagihan Aneka Yuchi',
+  keadaan: 'menunggu_kedua', risiko: 'tinggi', ringkas: '', bisa_dibalikkan: false, golongan: 'C', nominal: 12000000,
+  boleh_putuskan_kedua: true, pengguna: { id: 'u2', nama: 'Staf Keuangan' },
+};
+const DETAIL_KEDUA = {
+  ...BARIS_KEDUA,
+  rencana: {
+    judul: BARIS_KEDUA.judul, perubahan: [{ label: 'Tagihan INV-9', sebelum: 'Sisa Rp 12.000.000', sesudah: 'Lunas' }],
+    persetujuan_kedua: { perlu: true, alasan: 'Nominal Rp 12.000.000 di atas batas Rp 5.000.000 per transaksi.' },
+  },
+  sebelum: [], sesudah: [], milik_sendiri: false,
+};
+
+async function tampilkanKedua(baris, user = { id: 'u1', role: 'owner' }) {
+  asistenApi.daftarTindakan.mockResolvedValue({ items: [baris], total: 1, halaman: 1, per_halaman: 25, semua: true });
+  asistenApi.detailTindakan.mockResolvedValue({ ...DETAIL_KEDUA, ...baris });
+  await act(async () => { root.render(<><ConfirmDialogHost /><TindakanAIModule user={user} /></>); });
+  await tunggu(() => q(`tindakan-ai-baris-${baris.id}`));
+}
+
+test('menunggu persetujuan kedua: pil penyaring, kolom golongan & nominal, risiko tinggi', async () => {
+  await tampilkanKedua(BARIS_KEDUA);
+  expect(q('tindakan-ai-status-menunggu_kedua').textContent).toBe('Menunggu persetujuan kedua');
+  expect(q('tindakan-ai-status-tnd-2').textContent).toBe('Menunggu persetujuan kedua');
+  expect(q('tindakan-ai-golongan-tnd-2').textContent).toBe('Uang / buku besar');
+  expect(q('tindakan-ai-nominal-tnd-2').textContent).toBe('Rp 12.000.000');
+  expect(q('tindakan-ai-risiko-tnd-2').textContent).toBe('Risiko tinggi');
+  const kepala = [...container.querySelectorAll('thead th')].map((th) => th.textContent.trim().toLowerCase());
+  expect(kepala).toEqual(expect.arrayContaining(['golongan', 'nominal']));
+  klik(q('tindakan-ai-status-menunggu_kedua'));
+  await tunggu(() => asistenApi.daftarTindakan.mock.calls.some(([s]) => s.startsWith('status=menunggu_kedua&')));
+});
+
+test('owner: Tinjau → popup → Setujui & jalankan (alasan ≥ 10 huruf) → putuskan-kedua → daftar dimuat ulang', async () => {
+  asistenApi.putuskanKedua.mockResolvedValue({ ok: true, id: 'tnd-2', keadaan: 'dijalankan', ringkas: 'Pembayaran Rp 12.000.000 tercatat.' });
+  await tampilkanKedua(BARIS_KEDUA);
+  klik(q('tindakan-ai-tinjau-tnd-2'));
+  await tunggu(() => q('tindakan-ai-rincian-tnd-2'));
+  expect(q('tindakan-ai-kedua').textContent).toContain('Perlu persetujuan kedua owner: Nominal Rp 12.000.000 di atas batas');
+  expect(q('tindakan-ai-detail-tnd-2').textContent).toContain('Uang / buku besar');
+  const panggilAwal = asistenApi.daftarTindakan.mock.calls.length;
+  asistenApi.daftarTindakan.mockResolvedValue({ items: [{ ...BARIS_KEDUA, keadaan: 'dijalankan', boleh_putuskan_kedua: false }], total: 1, halaman: 1, per_halaman: 25 });
+  klik(q('tindakan-ai-kedua-setujui'));
+  await tunggu(() => q('confirm-dialog-input'));
+  expect(q('confirm-dialog').textContent).toContain('Setujui dan jalankan perubahan ini?');
+  ketik(q('confirm-dialog-input'), 'pendek');
+  expect(q('confirm-dialog-ok').disabled).toBe(true);
+  ketik(q('confirm-dialog-input'), 'Sudah dicek dengan tagihan asli');
+  expect(q('confirm-dialog-ok').disabled).toBe(false);
+  klik(q('confirm-dialog-ok'));
+  await tunggu(() => asistenApi.putuskanKedua.mock.calls.length === 1);
+  expect(asistenApi.putuskanKedua).toHaveBeenCalledWith('tnd-2', { keputusan: 'setujui', alasan: 'Sudah dicek dengan tagihan asli' });
+  await tunggu(() => toast.success.mock.calls.length > 0);
+  expect(toast.success).toHaveBeenCalledWith('Pembayaran Rp 12.000.000 tercatat.');
+  await tunggu(() => asistenApi.daftarTindakan.mock.calls.length > panggilAwal);
+  await tunggu(() => q('tindakan-ai-baris-tnd-2')?.getAttribute('data-keadaan') === 'dijalankan');
+  expect(q('tindakan-ai-kedua-setujui')).toBeNull();
+});
+
+test('owner: Tolak → alasan → putuskan-kedua keputusan batal; galat server ditampilkan apa adanya', async () => {
+  asistenApi.putuskanKedua.mockRejectedValue(Object.assign(new Error('Anda pembuat kartu ini; persetujuan kedua harus orang lain.'), { status: 403 }));
+  await tampilkanKedua(BARIS_KEDUA);
+  klik(q('tindakan-ai-buka-tnd-2'));
+  await tunggu(() => q('tindakan-ai-kedua-tolak'));
+  klik(q('tindakan-ai-kedua-tolak'));
+  await tunggu(() => q('confirm-dialog-input'));
+  expect(q('confirm-dialog').textContent).toContain('Tolak perubahan ini?');
+  ketik(q('confirm-dialog-input'), 'Nominal belum sesuai tagihan');
+  klik(q('confirm-dialog-ok'));
+  await tunggu(() => asistenApi.putuskanKedua.mock.calls.length === 1);
+  expect(asistenApi.putuskanKedua).toHaveBeenCalledWith('tnd-2', { keputusan: 'batal', alasan: 'Nominal belum sesuai tagihan' });
+  await tunggu(() => toast.error.mock.calls.length > 0);
+  expect(toast.error).toHaveBeenCalledWith('Anda pembuat kartu ini; persetujuan kedua harus orang lain.');
+});
+
+test('tanpa hak persetujuan kedua (boleh_putuskan_kedua=false): tidak ada Tinjau/Setujui/Tolak', async () => {
+  await tampilkanKedua({ ...BARIS_KEDUA, boleh_putuskan_kedua: false }, { id: 'u2', role: 'manager' });
+  expect(q('tindakan-ai-tinjau-tnd-2')).toBeNull();
+  klik(q('tindakan-ai-buka-tnd-2'));
+  await tunggu(() => q('tindakan-ai-rincian-tnd-2'));
+  expect(q('tindakan-ai-kedua-setujui')).toBeNull();
+  expect(q('tindakan-ai-kedua-tolak')).toBeNull();
 });

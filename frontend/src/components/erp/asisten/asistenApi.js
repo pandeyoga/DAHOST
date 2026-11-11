@@ -72,11 +72,13 @@ export const asistenApi = {
    * `tindakan_status` (disetujui → dijalankan/gagal, atau dibatalkan), lalu — bila semua tindakan giliran itu
    * sudah diputuskan — lanjutan jawaban `mulai` … `selesai` seperti Kontrak B.
    */
-  putuskan: (id, { keputusan, ubahan, alasan, cv }, { signal, onEvent } = {}) => {
+  putuskan: (id, { keputusan, ubahan, alasan, konfirmasi, cv }, { signal, onEvent } = {}) => {
     const c = normalizeCv(cv);
     const body = { keputusan, cv: c };
     if (ubahan && Object.keys(ubahan).length) body.ubahan = ubahan;
     if (alasan) body.alasan = alasan;
+    // 12 Nov 2026: risiko "tinggi" — teks yang diketik ulang pengguna (server memeriksa kecocokannya)
+    if (konfirmasi) body.konfirmasi = konfirmasi;
     return sseFetch(`${BASE}/tindakan/${encodeURIComponent(id)}/putuskan`, {
       body,
       headers: { [CV_HEADER]: c },
@@ -88,6 +90,13 @@ export const asistenApi = {
   detailTindakan: (id) => apiFetch(`${BASE}/tindakan/${encodeURIComponent(id)}`),
   balikkanTindakan: (id, alasan) => apiFetch(`${BASE}/tindakan/${encodeURIComponent(id)}/balikkan`, {
     method: 'POST', body: alasan ? { alasan } : {},
+  }),
+  /**
+   * Persetujuan kedua kartu uang di atas batas nominal (12 Nov 2026; owner/superadmin, bukan pembuat kartu).
+   * JSON biasa (bukan SSE) → `{ok, id, keadaan: "dijalankan"|"gagal"|"dibatalkan", ringkas?, pesan?}`.
+   */
+  putuskanKedua: (id, { keputusan, alasan }) => apiFetch(`${BASE}/tindakan/${encodeURIComponent(id)}/putuskan-kedua`, {
+    method: 'POST', body: { keputusan, alasan },
   }),
 
   // ── Tahap D (D1): Ingatan AI — hanya milik sendiri. Bentuk jawaban dibaca `adapterTahapCD.js` (A1, A2). ──

@@ -46,19 +46,22 @@ log = logging.getLogger(__name__)
 
 KOLEKSI = "ai_actions"
 KUNCI = "kunci_proses"
-KEADAAN = ("menunggu", "disetujui", "dijalankan", "dibatalkan", "gagal", "kedaluwarsa", "dibalikkan")
+KEADAAN = ("menunggu", "disetujui", "dijalankan", "dibatalkan", "gagal", "kedaluwarsa", "dibalikkan",
+           "menunggu_kedua")   # 12 Nov 2026 (K4): kartu uang di atas batas → menunggu persetujuan kedua owner
 KEADAAN_TERBUKA = ("menunggu", "disetujui")
 KEADAAN_TERHITUNG = ("disetujui", "dijalankan", "dibalikkan")   # dihitung ke batas harian
 PERAN_SEMUA = frozenset({"owner", "superadmin"})               # boleh melihat tindakan semua pengguna
 
 MASA_BERLAKU = timedelta(hours=24)
+MASA_KEDUA = timedelta(days=3)      # kartu `menunggu_kedua` kedaluwarsa bila owner tidak memutuskan
 BATAS_DETIK_TINDAKAN = 60.0
 MAKS_KARTU_GILIRAN = 5
-BATAS_RENCANA = 8000
+BATAS_RENCANA = 16000   # 12 Nov 2026 (K10): kartu kelompok sampai 50 baris
 BATAS_PEMBATALAN = 20000
 BATAS_HASIL_SIMPAN = 4000
-BATAS_BAWAAN = 30
+BATAS_BAWAAN = 100   # 12 Nov 2026 (K10, dulu 30)
 MIN_ALASAN_MENENGAH = 10
+PERAN_KEDUA = frozenset({"owner", "superadmin"})   # penyetuju kedua kartu uang (K4)
 JENIS_UBAH = ("rupiah", "angka", "teks", "tanggal", "pilihan")
 PER_HALAMAN = 25
 
@@ -83,6 +86,13 @@ LAYAR_MATI = "Tindakan AI sedang dimatikan admin, jadi kartu ini tidak bisa dise
 LAYAR_BATAS = ("Batas tindakan Asisten AI hari ini sudah tercapai ({batas} tindakan per pengguna). Lakukan "
                "perubahan langsung di layar terkait atau coba lagi besok.")
 LAYAR_ALASAN = f"Tindakan berisiko menengah wajib diberi alasan (minimal {MIN_ALASAN_MENENGAH} karakter)."
+LAYAR_ALASAN_TINGGI = f"Tindakan berisiko tinggi wajib diberi alasan (minimal {MIN_ALASAN_MENENGAH} karakter)."
+LAYAR_KONFIRMASI = "Ketik ulang sesuai petunjuk di kartu untuk menyetujui tindakan berisiko tinggi."
+LAYAR_KONFIRMASI_SALAH = "Teks yang diketik tidak sama dengan petunjuk di kartu. Periksa lagi lalu setujui."
+HASIL_MENUNGGU_KEDUA = ("Disetujui pengguna, tetapi BELUM dijalankan: menunggu persetujuan kedua owner di layar "
+                        "Tindakan AI ({alasan}). Sampaikan ini ke pengguna; jangan menganggapnya sudah berhasil.")
+PESAN_MENUNGGU_KEDUA = "Menunggu persetujuan kedua owner sebelum dijalankan."
+PESAN_KEDUA_KEDALUWARSA = "Persetujuan kedua tidak diberikan dalam 3 hari, jadi tindakan tidak dijalankan."
 LAYAR_SUDAH = {
     "disetujui": "Tindakan ini sedang dijalankan. Tunggu sebentar lalu muat ulang.",
     "dijalankan": "Tindakan ini sudah disetujui dan dijalankan.",
@@ -191,15 +201,39 @@ def pasang_path(obj: Any, kunci: str, nilai: Any) -> None:
 
 
 # ── Pengaturan (dok `ai_config` yang sama dengan Monitor AI) ─────────────────
+def _rupiah_int(v) -> int:
+    try:
+        iv = int(v)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, iv) if not isinstance(v, bool) else 0
+
+
 async def pengaturan() -> dict:
-    """{"aktif": bool, "batas": int} — saklar "Tindakan AI aktif" + batas tindakan per pengguna per hari."""
+    """{"aktif", "batas", "batas_nominal_transaksi", "batas_nominal_harian"} — saklar "Tindakan AI aktif", batas
+    tindakan per pengguna per hari, dan batas nominal kartu uang (K4; 0 = belum diisi → selalu persetujuan kedua)."""
     s = await tracker.get_ai_settings()
     aktif = s.get("asisten_tindakan_aktif", True)
     try:
         batas = int(s.get("asisten_batas_tindakan_harian", BATAS_BAWAAN))
     except (TypeError, ValueError):
         batas = BATAS_BAWAAN
-    return {"aktif": aktif is not False, "batas": max(0, batas)}
+    return {"aktif": aktif is not False, "batas": max(0, batas),
+            "batas_nominal_transaksi": _rupiah_int(s.get("asisten_batas_nominal_transaksi")),
+            "batas_nominal_harian": _rupiah_int(s.get("asisten_batas_nominal_harian"))}
+
+
+async def nominal_hari_ini(db, user_id: str, tanggal: Optional[str] = None) -> float:
+    """Jumlah nominal kartu uang (golongan C) pengguna ini yang sudah/sedang dijalankan hari ini (WIB)."""
+    total = 0.0
+    async for r in db.ai_actions.find({"user_id": user_id, "tanggal_jalan": tanggal or tanggal_wib(),
+                                       "golongan": "C", "keadaan": {"$in": list(KEADAAN_TERHITUNG)}},
+                                      {"_id": 0, "nominal": 1}):
+        try:
+            total += float(r.get("nominal") or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 async def jumlah_hari_ini(db, user_id: str, tanggal: Optional[str] = None) -> int:
@@ -254,6 +288,24 @@ def rapikan_rencana(rencana: Any, args: dict, alat: ab.Alat) -> dict:
         out["tautan"] = {"label": _teks(taut.get("label"), 80) or "Buka layar terkait", "menu": taut["menu"]}
     elif alat.menu:
         out["tautan"] = {"label": "Buka layar terkait", "menu": alat.menu}
+    # 12 Nov 2026 (katalog aksi, K3/K4): risiko per kartu, golongan, konfirmasi ketik ulang, persetujuan kedua,
+    # sidik nilai lama (diperiksa ulang saat dijalankan), nominal kartu uang.
+    if rencana.get("risiko") in ab.RISIKO:
+        out["risiko"] = rencana["risiko"]
+    if rencana.get("golongan") in ("A", "B", "C", "D"):
+        out["golongan"] = rencana["golongan"]
+        out["golongan_label"] = _teks(rencana.get("golongan_label"), 60)
+    k = rencana.get("konfirmasi")
+    if isinstance(k, dict) and _teks(k.get("teks"), 80):
+        out["konfirmasi"] = {"teks": _teks(k.get("teks"), 80), "petunjuk": _teks(k.get("petunjuk"), 200)}
+    pk = rencana.get("persetujuan_kedua")
+    if isinstance(pk, dict) and pk.get("perlu"):
+        out["persetujuan_kedua"] = {"perlu": True, "alasan": _teks(pk.get("alasan"), 300)}
+    if isinstance(rencana.get("sidik"), str) and re.fullmatch(r"[0-9a-f]{8,64}", rencana["sidik"]):
+        out["sidik"] = rencana["sidik"]
+    nom = rencana.get("nominal")
+    if isinstance(nom, (int, float)) and not isinstance(nom, bool) and math.isfinite(nom) and nom >= 0:
+        out["nominal"] = nom
     out = _json_aman(out)
     if len(json.dumps(out, ensure_ascii=False)) > BATAS_RENCANA:
         raise ab.AlatError(400, "Rencana perubahan terlalu besar untuk satu kartu. Persempit perubahannya "
@@ -359,7 +411,9 @@ async def buat(db, *, user: dict, sesi_id: str, pesan_id: Optional[str], tool_us
         "id": tindakan_id or id_baru(), "user_id": user.get("id"),
         "pengguna": {"id": user.get("id"), "nama": nama_pengguna(user)},
         "sesi_id": sesi_id, "pesan_id": pesan_id, "tool_use_id": tool_use_id,
-        "nama": alat.name, "label": alat.label, "risiko": alat.risiko or "rendah", "menu": alat.menu,
+        "nama": alat.name, "label": alat.label, "risiko": rencana.get("risiko") or alat.risiko or "rendah",
+        "menu": alat.menu or (rencana.get("tautan") or {}).get("menu"),
+        "golongan": rencana.get("golongan"), "nominal": rencana.get("nominal"),
         "args": _json_aman(args), "args_awal": _json_aman(args), "rencana": rencana, "keadaan": "menunggu",
         "cv": cv, "periode": periode, "tanggal": tanggal_wib(now), "dibuat": _iso(now), "diperbarui": _iso(now),
         "kedaluwarsa_pada": _iso(now + MASA_BERLAKU), KUNCI: None, f"{KUNCI}_at": None,
@@ -377,6 +431,10 @@ async def rawat(db, filt: dict) -> None:
         {**base, "keadaan": "menunggu", "kedaluwarsa_pada": {"$lt": _iso(now)}, **doc_lock.lock_free(KUNCI)},
         {"$set": {"keadaan": "kedaluwarsa", "pesan": PESAN_KEDALUWARSA_WAKTU, "selesai_pada": _iso(now),
                   "diperbarui": _iso(now)}})
+    await db.ai_actions.update_many(
+        {**base, "keadaan": "menunggu_kedua", "kedaluwarsa_pada": {"$lt": _iso(now)}, **doc_lock.lock_free(KUNCI)},
+        {"$set": {"keadaan": "kedaluwarsa", "pesan": PESAN_KEDUA_KEDALUWARSA, "selesai_pada": _iso(now),
+                  "diperbarui": _iso(now), "kedua_selesai": True}})
     await db.ai_actions.update_many(
         {**base, "keadaan": "disetujui", f"{KUNCI}_at": {"$lt": now - doc_lock.STALE}},
         {"$set": {"keadaan": "gagal", "pesan": PESAN_PROSES_TERHENTI, "selesai_pada": _iso(now),
@@ -433,6 +491,9 @@ def teks_hasil(doc: dict) -> tuple[str, bool]:
         return HASIL_GAGAL.format(pesan=doc.get("pesan") or "tindakan tidak berhasil."), True
     if k == "kedaluwarsa":
         return HASIL_KEDALUWARSA, False
+    if k == "menunggu_kedua":
+        alasan = ((doc.get("rencana") or {}).get("persetujuan_kedua") or {}).get("alasan") or "kartu uang"
+        return HASIL_MENUNGGU_KEDUA.format(alasan=alasan), False
     return HASIL_MASIH_PROSES, True
 
 
@@ -537,12 +598,30 @@ async def kabar_dibalikkan(db, user_id: str, sesi_id: str) -> Optional[str]:
     hasilnya dikabarkan ke model (append-only: riwayat lama tidak diubah)."""
     rows = await db.ai_actions.find({"sesi_id": sesi_id, "user_id": user_id, "keadaan": "dibalikkan",
                                      "dikabarkan_balik": {"$ne": True}}, {"_id": 0}).to_list(20)
-    if not rows:
+    # 12 Nov 2026 (K4): hasil persetujuan kedua yang belum dikabarkan ke model.
+    kedua = await db.ai_actions.find({"sesi_id": sesi_id, "user_id": user_id, "kedua_selesai": True,
+                                      "dikabarkan_kedua": False}, {"_id": 0}).to_list(20)
+    if not rows and not kedua:
         return None
-    await db.ai_actions.update_many({"id": {"$in": [r["id"] for r in rows]}}, {"$set": {"dikabarkan_balik": True}})
-    baris = "\n".join(f"- Tindakan \"{(r.get('rencana') or {}).get('judul') or r.get('label')}\" yang sebelumnya "
-                      "dijalankan sudah DIBALIKKAN pengguna (nilai lama dipulihkan)." for r in rows)
-    return f"<konteks_sistem>\nCatatan sistem sejak pesan terakhir:\n{baris}\n</konteks_sistem>"
+    if rows:
+        await db.ai_actions.update_many({"id": {"$in": [r["id"] for r in rows]}}, {"$set": {"dikabarkan_balik": True}})
+    if kedua:
+        await db.ai_actions.update_many({"id": {"$in": [r["id"] for r in kedua]}},
+                                        {"$set": {"dikabarkan_kedua": True}})
+    baris = [f"- Tindakan \"{(r.get('rencana') or {}).get('judul') or r.get('label')}\" yang sebelumnya "
+             "dijalankan sudah DIBALIKKAN pengguna (nilai lama dipulihkan)." for r in rows]
+    for r in kedua:
+        judul = (r.get("rencana") or {}).get("judul") or r.get("label")
+        k = r.get("keadaan")
+        if k == "dijalankan":
+            baris.append(f"- Tindakan \"{judul}\" sudah mendapat persetujuan kedua dan DIJALANKAN: "
+                         f"{r.get('ringkas') or 'selesai'}.")
+        elif k == "gagal":
+            baris.append(f"- Tindakan \"{judul}\" mendapat persetujuan kedua tetapi GAGAL: {r.get('pesan') or ''}")
+        else:
+            baris.append(f"- Tindakan \"{judul}\" TIDAK dijalankan: {r.get('pesan') or 'persetujuan kedua ditolak'}.")
+    isi = "\n".join(baris)
+    return f"<konteks_sistem>\nCatatan sistem sejak pesan terakhir:\n{isi}\n</konteks_sistem>"
 
 
 # ── Konteks alat untuk siapkan / jalankan / batalkan ─────────────────────────
@@ -571,8 +650,21 @@ def _galat_keadaan(doc: dict) -> GalatTindakan:
     return GalatTindakan(409, LAYAR_SUDAH.get(doc.get("keadaan"), "Tindakan ini tidak lagi menunggu keputusan."))
 
 
+def konfirmasi_cocok(diketik: Any, harus: str) -> bool:
+    """Teks ketik ulang (risiko tinggi) sama dengan petunjuk kartu. Angka: dibandingkan digitnya saja (titik, koma,
+    "Rp", spasi diabaikan); teks lain: tanpa beda huruf besar/kecil dan spasi tepi."""
+    harus = str(harus or "").strip()
+    d = str(diketik or "").strip()
+    if not harus or not d:
+        return False
+    if re.fullmatch(r"\d+", harus):
+        return re.sub(r"\D", "", d.split(",")[0]) == harus
+    return " ".join(d.lower().split()) == " ".join(harus.lower().split())
+
+
 async def periksa_dan_kunci(db, user: dict, doc: dict, *, keputusan: str, ubahan: Any, alasan: str,
-                            buat_ctx_baca: Callable[[dict], ab.AlatContext], batas: Optional[int] = None) -> Putusan:
+                            buat_ctx_baca: Callable[[dict], ab.AlatContext], batas: Optional[int] = None,
+                            konfirmasi: Any = None) -> Putusan:
     """Semua pemeriksaan SEBELUM aliran dimulai (galat → HTTP 4xx), lalu klaim atomik kartu.
 
     Setujui: saklar menyala, alat masih ada, alasan (risiko menengah), batas harian, ubahan sah → `siapkan`
@@ -593,8 +685,18 @@ async def periksa_dan_kunci(db, user: dict, doc: dict, *, keputusan: str, ubahan
         if alat is None:
             raise GalatTindakan(409, "Alat untuk tindakan ini tidak tersedia lagi, jadi kartu tidak bisa disetujui. "
                                      "Kartu masih bisa dibatalkan.")
-        if (doc.get("risiko") or alat.risiko) == "menengah" and len(alasan) < MIN_ALASAN_MENENGAH:
+        risiko = doc.get("risiko") or alat.risiko
+        if risiko == "menengah" and len(alasan) < MIN_ALASAN_MENENGAH:
             raise GalatTindakan(400, LAYAR_ALASAN)
+        if risiko == "tinggi":
+            # 12 Nov 2026 (K4): alasan + ketik ulang nominal / nomor dokumen sesuai petunjuk kartu.
+            if len(alasan) < MIN_ALASAN_MENENGAH:
+                raise GalatTindakan(400, LAYAR_ALASAN_TINGGI)
+            harus = ((doc.get("rencana") or {}).get("konfirmasi") or {}).get("teks") or "SETUJU"
+            if not str(konfirmasi or "").strip():
+                raise GalatTindakan(400, LAYAR_KONFIRMASI)
+            if not konfirmasi_cocok(konfirmasi, harus):
+                raise GalatTindakan(400, LAYAR_KONFIRMASI_SALAH)
         batas = aturan["batas"] if batas is None else batas
         if await jumlah_hari_ini(db, doc["user_id"]) >= batas:
             raise GalatTindakan(409, LAYAR_BATAS.format(batas=batas))
@@ -691,6 +793,18 @@ async def laksanakan(db, p: Putusan, ctx: ab.AlatContext, *, user: dict,
         await db.ai_actions.update_one({"id": tid, KUNCI: p.kunci}, {"$set": upd})
         kirim({"id": tid, "keadaan": "dibatalkan", "pesan": upd["pesan"]})
         return {**p.doc, **upd}
+    pk = (p.rencana or {}).get("persetujuan_kedua") or {}
+    if pk.get("perlu") and str(user.get("role") or "").lower() not in PERAN_KEDUA:
+        # 12 Nov 2026 (K4): kartu uang di atas batas → disimpan menunggu persetujuan kedua owner; TIDAK dijalankan.
+        upd = {"keadaan": "menunggu_kedua", "keputusan": "setujui", "diputuskan_pada": now,
+               "diputuskan_oleh": pemutus, "diperbarui": now, "pesan": PESAN_MENUNGGU_KEDUA,
+               "kedaluwarsa_pada": _iso(_sekarang() + MASA_KEDUA), KUNCI: None, f"{KUNCI}_at": None}
+        if p.alasan:
+            upd["alasan"] = p.alasan
+        await db.ai_actions.update_one({"id": tid, KUNCI: p.kunci}, {"$set": upd})
+        kirim({"id": tid, "keadaan": "menunggu_kedua", "pesan": PESAN_MENUNGGU_KEDUA})
+        await _kabari_penyetuju_kedua(db, {**p.doc, **upd})
+        return {**p.doc, **upd}
     upd0 = {"keadaan": "disetujui", "keputusan": "setujui", "diputuskan_pada": now, "diputuskan_oleh": pemutus,
             "dijalankan_pada": now, "tanggal_jalan": tanggal_wib(), "diperbarui": now}
     if p.alasan:
@@ -726,6 +840,123 @@ async def laksanakan(db, p: Putusan, ctx: ab.AlatContext, *, user: dict,
     await db.ai_actions.update_one({"id": tid, KUNCI: p.kunci}, {"$set": upd})
     kirim(ev)
     return {**p.doc, **upd0, **upd}
+
+
+# ── Persetujuan kedua (12 Nov 2026, keputusan owner K4) ──────────────────────
+async def _kabari_penyetuju_kedua(db, doc: dict) -> None:
+    """Notifikasi ke owner/superadmin aktif (selain pembuat kartu) bahwa ada kartu menunggu persetujuan kedua."""
+    try:
+        from routes.notifications import create_notification
+        judul = (doc.get("rencana") or {}).get("judul") or doc.get("label") or "Tindakan Asisten AI"
+        nama = (doc.get("pengguna") or {}).get("nama") or "Pengguna"
+        isi = f"{nama} menyetujui \"{judul}\" lewat Asisten AI. Perlu persetujuan kedua Anda di layar Tindakan AI."
+        async for u in db.users.find({"role": {"$in": sorted(PERAN_KEDUA)}}, {"_id": 0, "id": 1, "is_active": 1,
+                                                                             "status": 1, "active": 1}):
+            if not u.get("id") or u["id"] == doc.get("user_id"):
+                continue
+            if u.get("is_active") is False or u.get("active") is False or str(u.get("status") or "").lower() in (
+                    "inactive", "nonaktif", "disabled"):
+                continue
+            await create_notification(db, u["id"], "system", "Persetujuan kedua Asisten AI", isi,
+                                      source_type="asisten_ai", source_id=doc.get("id") or "",
+                                      source_url="tindakan-ai")
+    except Exception:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan keputusan
+        log.exception("Notifikasi persetujuan kedua gagal dikirim")
+
+
+def boleh_putuskan_kedua(user: dict, doc: dict) -> bool:
+    return (doc.get("keadaan") == "menunggu_kedua" and str(user.get("role") or "").lower() in PERAN_KEDUA
+            and doc.get("user_id") != user.get("id"))
+
+
+async def _token_pembuat(db, user_id: str) -> tuple[str, dict]:
+    """Token baru untuk PEMBUAT kartu: tindakan dijalankan sebagai dia (izin perannya sendiri), bukan sebagai
+    penyetuju kedua. Akun harus masih ada dan aktif."""
+    from auth import create_token
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0, "password_hash": 0})
+    if not u or u.get("is_active") is False or u.get("active") is False or \
+            str(u.get("status") or "").lower() in ("inactive", "nonaktif", "disabled"):
+        raise GalatTindakan(409, "Akun pembuat kartu sudah tidak aktif, jadi tindakan tidak bisa dijalankan.")
+    if not u.get("email") or not u.get("role"):
+        raise GalatTindakan(409, "Data akun pembuat kartu tidak lengkap, jadi tindakan tidak bisa dijalankan.")
+    u.setdefault("name", u.get("email"))
+    return create_token(u), u
+
+
+async def putuskan_kedua(db, user: dict, tindakan_id: str, *, keputusan: str, alasan: str, app=None,
+                         klien_api=None) -> dict:
+    """Owner/superadmin (bukan pembuat kartu) menyetujui / menolak kartu `menunggu_kedua`.
+
+    Setujui → `jalankan` alat SEKALI dengan token PEMBUAT kartu (izin & CV pembuat tetap berlaku), alasan kedua ikut
+    dicatat. Tolak → `dibatalkan`. Hasil dikabarkan ke model di pesan berikutnya percakapan asal (`kabar_dibalikkan`)."""
+    if keputusan not in ("setujui", "batal"):
+        raise GalatTindakan(400, "Keputusan harus setujui atau batal.")
+    doc = await ambil(db, tindakan_id)
+    if not doc:
+        raise GalatTindakan(404, LAYAR_TIDAK_ADA)
+    if str(user.get("role") or "").lower() not in PERAN_KEDUA:
+        raise GalatTindakan(403, "Hanya owner atau superadmin yang boleh memberi persetujuan kedua.")
+    if doc.get("user_id") == user.get("id"):
+        raise GalatTindakan(403, "Persetujuan kedua harus diberikan orang lain, bukan pembuat kartu.")
+    if doc.get("keadaan") != "menunggu_kedua":
+        raise _galat_keadaan(doc) if doc.get("keadaan") in LAYAR_SUDAH else \
+            GalatTindakan(409, "Kartu ini tidak sedang menunggu persetujuan kedua.")
+    alasan = str(alasan or "").strip()[:500]
+    if len(alasan) < MIN_ALASAN_MENENGAH:
+        raise GalatTindakan(400, f"Alasan persetujuan kedua wajib diisi (minimal {MIN_ALASAN_MENENGAH} karakter).")
+    alat = ab.cari_tindakan(doc.get("nama") or "")
+    if keputusan == "setujui":
+        aturan = await pengaturan()
+        if not aturan["aktif"]:
+            raise GalatTindakan(409, LAYAR_MATI)
+        if alat is None:
+            raise GalatTindakan(409, "Alat untuk tindakan ini tidak tersedia lagi. Kartu masih bisa ditolak.")
+    try:
+        kunci = await doc_lock.claim(db, KOLEKSI, doc["id"], field=KUNCI, extra={"keadaan": "menunggu_kedua"},
+                                     busy=LAYAR_SIBUK, not_found=LAYAR_TIDAK_ADA, actor=user)
+    except Exception as e:  # noqa: BLE001
+        raise GalatTindakan(getattr(e, "status_code", 409), str(getattr(e, "detail", "") or LAYAR_SIBUK)) from None
+    now = _iso()
+    oleh = {"id": user.get("id"), "nama": nama_pengguna(user)}
+    dasar = {"kedua_oleh": oleh, "kedua_pada": now, "alasan_kedua": alasan, "kedua_selesai": True,
+             "dikabarkan_kedua": False, "diperbarui": now}
+    if keputusan == "batal":
+        pesan = f"Ditolak pada persetujuan kedua oleh {oleh['nama']}: {alasan}"
+        upd = {**dasar, "keadaan": "dibatalkan", "keputusan_kedua": "batal", "pesan": pesan, "selesai_pada": now,
+               KUNCI: None, f"{KUNCI}_at": None}
+        await db.ai_actions.update_one({"id": doc["id"], KUNCI: kunci}, {"$set": upd})
+        return {"ok": True, "id": doc["id"], "keadaan": "dibatalkan", "pesan": pesan}
+    try:
+        token, pembuat = await _token_pembuat(db, doc["user_id"])
+    except GalatTindakan:
+        await doc_lock.release(db, KOLEKSI, doc["id"], kunci, field=KUNCI)
+        raise
+    await db.ai_actions.update_one({"id": doc["id"], KUNCI: kunci},
+                                   {"$set": {**dasar, "keadaan": "disetujui", "keputusan_kedua": "setujui",
+                                             "dijalankan_pada": now, "tanggal_jalan": tanggal_wib()}})
+    ctx = buat_ctx(user=pembuat, doc=doc, token=token, app=app, klien_api=klien_api, tulis=True)
+    ctx.alasan = "; ".join(x for x in (doc.get("alasan"), f"Persetujuan kedua {oleh['nama']}: {alasan}") if x)
+    p = Putusan(doc=doc, alat=alat, keputusan="setujui", kunci=kunci, alasan=doc.get("alasan") or "",
+                args=copy.deepcopy(doc.get("args") or {}), rencana=copy.deepcopy(doc.get("rencana") or {}))
+    try:
+        out = await asyncio.wait_for(alat.jalankan(ctx, copy.deepcopy(p.args), copy.deepcopy(p.rencana)),
+                                     timeout=BATAS_DETIK_TINDAKAN)
+        upd = {"keadaan": "dijalankan", **_rapikan_hasil(out, p)}
+    except ab.AlatError as e:
+        upd = {"keadaan": "gagal", "pesan": e.pesan}
+    except asyncio.TimeoutError:
+        upd = {"keadaan": "gagal", "pesan": "Tindakan terlalu lama berjalan dan dihentikan. Periksa layar terkait."}
+    except Exception:  # noqa: BLE001
+        log.exception("Persetujuan kedua: tindakan %s gagal dijalankan", doc.get("nama"))
+        upd = {"keadaan": "gagal", "pesan": "Terjadi kesalahan saat menjalankan tindakan. Periksa layar terkait."}
+    finally:
+        await ctx.tutup()
+    selesai = _iso()
+    upd.update({"selesai_pada": selesai, "diperbarui": selesai, KUNCI: None, f"{KUNCI}_at": None})
+    await db.ai_actions.update_one({"id": doc["id"], KUNCI: kunci}, {"$set": upd})
+    return {"ok": True, "id": doc["id"], "keadaan": upd["keadaan"],
+            **({"ringkas": upd["ringkas"]} if upd.get("ringkas") else {}),
+            **({"pesan": upd["pesan"]} if upd.get("pesan") else {})}
 
 
 # ── Pembalikan (undo) ────────────────────────────────────────────────────────
@@ -784,13 +1015,15 @@ def baris(doc: dict) -> dict:
     return {"id": doc.get("id"), "dibuat": doc.get("dibuat"), "pengguna": doc.get("pengguna") or {},
             "sesi_id": doc.get("sesi_id"), "nama": doc.get("nama"), "label": doc.get("label"),
             "judul": (doc.get("rencana") or {}).get("judul") or doc.get("label"), "keadaan": doc.get("keadaan"),
-            "risiko": doc.get("risiko"), "ringkas": _ringkas_baris(doc), "bisa_dibalikkan": _bisa_dibalikkan(doc)}
+            "risiko": doc.get("risiko"), "ringkas": _ringkas_baris(doc), "bisa_dibalikkan": _bisa_dibalikkan(doc),
+            "golongan": doc.get("golongan"), "nominal": doc.get("nominal")}
 
 
 async def daftar(db, user: dict, *, status: Optional[str] = None, dari: Optional[str] = None,
                  sampai: Optional[str] = None, halaman: int = 1, semua: bool = False,
                  per_halaman: int = PER_HALAMAN) -> dict:
-    lihat_semua = bool(semua) and boleh_semua(user)
+    # 12 Nov 2026 (K4): penyetuju kedua melihat kartu `menunggu_kedua` semua pengguna.
+    lihat_semua = (bool(semua) or str(status or "").strip() == "menunggu_kedua") and boleh_semua(user)
     q: dict = {} if lihat_semua else {"user_id": user.get("id")}
     await rawat(db, dict(q))
     if status:
@@ -810,7 +1043,8 @@ async def daftar(db, user: dict, *, status: Optional[str] = None, dari: Optional
     total = await db.ai_actions.count_documents(q)
     rows = await db.ai_actions.find(q, {"_id": 0}).sort("dibuat", -1).skip((halaman - 1) * per_halaman) \
         .limit(per_halaman).to_list(per_halaman)
-    return {"items": [baris(r) for r in rows], "total": total, "halaman": halaman, "per_halaman": per_halaman,
+    return {"items": [{**baris(r), "boleh_putuskan_kedua": boleh_putuskan_kedua(user, r)} for r in rows],
+            "total": total, "halaman": halaman, "per_halaman": per_halaman,
             "semua": lihat_semua}
 
 
@@ -833,6 +1067,8 @@ async def detail(db, user: dict, tindakan_id: str) -> dict:
         "dibalikkan_pada": doc.get("dibalikkan_pada"), "dibalikkan_oleh": doc.get("dibalikkan_oleh"),
         "alasan_balik": doc.get("alasan_balik"), "hasil_balik": doc.get("hasil_balik"),
         "balik_gagal": doc.get("balik_gagal"), "milik_sendiri": doc.get("user_id") == user.get("id"),
+        "boleh_putuskan_kedua": boleh_putuskan_kedua(user, doc), "kedua_oleh": doc.get("kedua_oleh"),
+        "kedua_pada": doc.get("kedua_pada"), "alasan_kedua": doc.get("alasan_kedua"),
     })
     return out
 

@@ -5,12 +5,18 @@
  * hari per akun, dengan pemakaian hari ini. Data: GET /api/ai/usage/asisten-pengguna (owner/superadmin/admin),
  * ubah: PUT /api/ai/usage/asisten-pengguna/{id} (HANYA owner/superadmin; server juga memeriksa).
  * Akun yang belum diatur ikut bawaan (Monitor AI › Ubah pengaturan). Owner & superadmin selalu aktif.
+ *
+ * 12 Nov 2026: saklar golongan aksi per akun — Stok (B), Uang (C), Pengaturan (D). Data biasa (A) selalu boleh.
+ * GET membawa `golongan` (efektif) + `atur.golongan` (tersimpan: true|false|null); PUT menerima
+ * `golongan: {B, C, D}`. Owner/superadmin selalu semua golongan; Pengaturan hanya untuk peran admin (server menolak
+ * peran lain dengan pesan yang ditampilkan apa adanya).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Pencil, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
@@ -44,7 +50,46 @@ export function bacaBatas(v) {
   return n <= BATAS_MAKS ? n : undefined;
 }
 
-const KOSONG_FORM = { aktif: '', batas_pertanyaan_harian: '', batas_tindakan_harian: '' };
+/** Saklar golongan aksi yang bisa diatur per akun (A = data biasa selalu boleh). */
+export const GOLONGAN_SAKLAR = [
+  { kunci: 'B', label: 'Stok', keterangan: 'Gerak stok: barang masuk, keluar, dan penyesuaian.' },
+  { kunci: 'C', label: 'Uang', keterangan: 'Pembayaran dan buku besar. Di atas batas nominal perlu persetujuan kedua owner.' },
+  { kunci: 'D', label: 'Pengaturan', keterangan: 'Pengaturan dan keamanan. Hanya bisa dinyalakan untuk peran admin.' },
+];
+const LABEL_GOLONGAN_PENDEK = { A: 'Data', B: 'Stok', C: 'Uang', D: 'Pengaturan' };
+
+/** Server sudah mengenal golongan aksi (baris membawa `golongan` atau `atur.golongan`)? */
+export const punyaGolongan = (row) => !!row && (
+  (!!row.golongan && typeof row.golongan === 'object') || (!!row.atur?.golongan && typeof row.atur.golongan === 'object'));
+
+/**
+ * Saklar golongan tersimpan (`atur.golongan`) atau null. Saklar di form hanya tampil (dan dikirim) bila nilai
+ * tersimpan diketahui — supaya "Nyala" yang tersimpan tidak pernah terhapus diam-diam.
+ */
+export const aturGolongan = (row) => (row?.atur?.golongan && typeof row.atur.golongan === 'object' ? row.atur.golongan : null);
+
+/** Golongan efektif → "Data · Stok · Uang" ('' bila server belum mengirimnya). */
+export function teksGolongan(row) {
+  const g = row?.golongan;
+  if (!g || typeof g !== 'object') return '';
+  const nyala = ['A', 'B', 'C', 'D'].filter((k) => g[k] === true).map((k) => LABEL_GOLONGAN_PENDEK[k]);
+  return nyala.length ? nyala.join(' · ') : 'Tidak ada';
+}
+
+/**
+ * Saklar di form → `golongan` untuk PUT. Saklar yang tidak diubah mengirim nilai tersimpan apa adanya
+ * (true|false|null), supaya akun yang ikut bawaan tidak berubah jadi "diatur" tanpa sengaja.
+ */
+export function susunGolongan(saklar, tersimpan) {
+  const simpan = tersimpan && typeof tersimpan === 'object' ? tersimpan : {};
+  return Object.fromEntries(GOLONGAN_SAKLAR.map(({ kunci }) => {
+    const lama = typeof simpan[kunci] === 'boolean' ? simpan[kunci] : null;
+    const baru = !!saklar?.[kunci];
+    return [kunci, baru === (lama === true) ? lama : baru];
+  }));
+}
+
+const KOSONG_FORM = { aktif: '', batas_pertanyaan_harian: '', batas_tindakan_harian: '', golongan: {} };
 
 export default function AsistenPerPengguna({ token, onBawaan }) {
   const BASE = process.env.REACT_APP_BACKEND_URL;
@@ -81,7 +126,7 @@ export default function AsistenPerPengguna({ token, onBawaan }) {
   useEffect(() => { muat(); }, [muat]);
 
   const items = useMemo(() => data?.items || [], [data]);
-  const bawaan = data?.bawaan || { aktif: false, batas_pertanyaan: 0, batas_tindakan: 30 };
+  const bawaan = data?.bawaan || { aktif: false, batas_pertanyaan: 0, batas_tindakan: 100 };
   const bolehUbah = !!data?.boleh_ubah;
   const q = cari.trim().toLowerCase();
   const tampil = useMemo(() => items
@@ -89,13 +134,16 @@ export default function AsistenPerPengguna({ token, onBawaan }) {
     .filter((x) => !q || `${x.name} ${x.email} ${labelKodePeran(x.role)}`.toLowerCase().includes(q)),
   [items, saring, q]);
   const nAktif = items.filter((x) => x.aktif).length;
+  const adaGolongan = items.some(punyaGolongan); // server lama tanpa golongan → kolom & saklar tidak tampil
 
   const buka = (row) => {
     const a = row.atur || {};
+    const g = aturGolongan(row) || {};
     setForm({
       aktif: a.aktif === true ? 'aktif' : a.aktif === false ? 'mati' : '',
       batas_pertanyaan_harian: a.batas_pertanyaan_harian ?? '',
       batas_tindakan_harian: a.batas_tindakan_harian ?? '',
+      golongan: Object.fromEntries(GOLONGAN_SAKLAR.map(({ kunci }) => [kunci, g[kunci] === true])),
     });
     setUbah(row);
   };
@@ -110,6 +158,8 @@ export default function AsistenPerPengguna({ token, onBawaan }) {
     }
     const body = { batas_pertanyaan_harian: bp, batas_tindakan_harian: bt };
     if (!ubah.selalu_aktif) body.aktif = form.aktif === 'aktif' ? true : form.aktif === 'mati' ? false : null;
+    // golongan hanya dikirim ke server yang sudah mengenalnya; owner/superadmin selalu semua golongan
+    if (!ubah.selalu_aktif && aturGolongan(ubah)) body.golongan = susunGolongan(form.golongan, aturGolongan(ubah));
     setMenyimpan(true);
     try {
       const r = await fetch(`${BASE}/api/ai/usage/asisten-pengguna/${encodeURIComponent(ubah.id)}`, {
@@ -170,6 +220,7 @@ export default function AsistenPerPengguna({ token, onBawaan }) {
                   { label: 'Peran', nilai: (x) => labelKodePeran(x.role) },
                   { label: 'Asisten AI', nilai: (x) => (x.aktif ? 'Aktif' : 'Mati') },
                   { label: 'Asal status', nilai: (x) => asalStatus(x) },
+                  { label: 'Golongan aksi', nilai: (x) => teksGolongan(x) },
                   { label: 'Pertanyaan hari ini', nilai: (x) => x.pertanyaan_hari_ini },
                   { label: 'Batas pertanyaan per hari (0 = tanpa batas)', nilai: (x) => x.batas_pertanyaan },
                   { label: 'Tindakan hari ini', nilai: (x) => x.tindakan_hari_ini },
@@ -197,6 +248,8 @@ export default function AsistenPerPengguna({ token, onBawaan }) {
                   <StatusBadge status={x.aktif ? 'aktif' : 'mati'} label={x.aktif ? 'Aktif' : 'Mati'} tone={x.aktif ? 'success' : 'muted'} />
                   <span className="text-xs text-muted-foreground">{asalStatus(x)}</span>
                 </div>) },
+              ...(adaGolongan ? [{ kunci: 'golongan', label: 'Golongan aksi',
+                isi: (x) => <span className="text-sm" data-testid={`ai-asisten-pengguna-golongan-${x.id}`}>{teksGolongan(x) || '—'}</span> }] : []),
               { kunci: 'pertanyaan', label: 'Pertanyaan hari ini', rata: 'kanan',
                 isi: (x) => <span className="tabular-nums">{teksPakai(x.pertanyaan_hari_ini, x.batas_pertanyaan)}</span> },
               { kunci: 'tindakan', label: 'Tindakan hari ini', rata: 'kanan',
@@ -239,6 +292,27 @@ export default function AsistenPerPengguna({ token, onBawaan }) {
               onChange={(e) => setForm((f) => ({ ...f, batas_tindakan_harian: e.target.value }))} data-testid="ai-ap-tindakan" />
           </Isian>
         </div>
+        {(aturGolongan(ubah) || (ubah?.selalu_aktif && punyaGolongan(ubah))) && (
+          <div className="space-y-1" data-testid="ai-ap-golongan">
+            <p className="text-sm font-medium text-foreground">Golongan aksi</p>
+            <p className="text-xs text-muted-foreground">
+              {ubah?.selalu_aktif
+                ? 'Owner dan superadmin selalu boleh semua golongan.'
+                : 'Perubahan data biasa selalu boleh. Nyalakan golongan lain yang boleh disetujui akun ini lewat kartu Asisten AI.'}
+            </p>
+            {GOLONGAN_SAKLAR.map((g) => (
+              <label key={g.kunci} className="flex items-center justify-between gap-3 border-b border-[var(--glass-border)] py-2 text-sm text-foreground">
+                <span className="min-w-0">
+                  <span className="block">{g.label}</span>
+                  <span className="block text-xs text-muted-foreground">{g.keterangan}</span>
+                </span>
+                <Switch checked={ubah?.selalu_aktif ? true : !!form.golongan?.[g.kunci]} disabled={!!ubah?.selalu_aktif}
+                  onCheckedChange={(v) => setForm((f) => ({ ...f, golongan: { ...f.golongan, [g.kunci]: v } }))}
+                  aria-label={`Golongan ${g.label.toLowerCase()}`} data-testid={`ai-ap-golongan-${g.kunci}`} />
+              </label>
+            ))}
+          </div>
+        )}
         <Notice tone="info">
           Ruang yang bisa dibuka tetap mengikuti portal dan izin peran akun ini (termasuk centang “Asisten AI” di
           Peran &amp; Hak Akses). Aktif di sini tidak membuka portal baru.

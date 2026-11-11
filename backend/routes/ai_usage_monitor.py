@@ -282,6 +282,8 @@ async def update_settings(request: Request, payload: dict = Body(...)):
         "asisten_tindakan_aktif", "asisten_batas_tindakan_harian",
         # Asisten AI per pengguna (10 Nov 2026): bawaan akun yang belum diatur + batas pertanyaan bawaan.
         "asisten_pengguna_bawaan_aktif", "asisten_batas_pertanyaan_harian",
+        # Katalog aksi (12 Nov 2026, K4): batas nominal kartu uang (Rupiah; 0 = setiap kartu uang perlu persetujuan kedua).
+        "asisten_batas_nominal_transaksi", "asisten_batas_nominal_harian",
         # Asisten AI (proaktif) — Tahap D: ingatan + briefing/peringatan/laporan mingguan.
         *_PROAKTIF_BOOL, *_PROAKTIF_JAM, "asisten_briefing_penerima",
     }
@@ -307,6 +309,15 @@ async def update_settings(request: Request, payload: dict = Body(...)):
                 raise HTTPException(400, f"{label} per pengguna per hari harus bilangan bulat")
             if isinstance(v, bool) or iv < 0 or iv > 1000 or (isinstance(v, float) and not v.is_integer()):
                 raise HTTPException(400, f"{label} per pengguna per hari harus 0–1000")
+            update[k] = iv
+        elif k in ("asisten_batas_nominal_transaksi", "asisten_batas_nominal_harian"):
+            label = "Batas nominal per transaksi" if k.endswith("transaksi") else "Batas nominal per hari"
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{label} harus bilangan bulat Rupiah")
+            if isinstance(v, bool) or iv < 0 or iv > 10**13 or (isinstance(v, float) and not v.is_integer()):
+                raise HTTPException(400, f"{label} harus 0 sampai 10 triliun Rupiah")
             update[k] = iv
         elif k in ("daily_budget_usd", "monthly_budget_usd", "per_feature_daily_usd"):
             try:
@@ -335,6 +346,9 @@ async def update_settings(request: Request, payload: dict = Body(...)):
         for k in ("asisten_pengguna_bawaan_aktif", "asisten_batas_pertanyaan_harian"):
             if k in update and update[k] != lama.get(k):
                 raise HTTPException(403, "Hanya owner atau superadmin yang boleh mengubah bawaan Asisten AI per pengguna.")
+        for k in ("asisten_batas_nominal_transaksi", "asisten_batas_nominal_harian"):
+            if k in update and update[k] != int(lama.get(k) or 0):
+                raise HTTPException(403, "Hanya owner atau superadmin yang boleh mengubah batas nominal Asisten AI.")
 
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
     update["updated_by"] = user.get("email") or user.get("id")
@@ -391,7 +405,8 @@ def _baris_pengguna_ai(u: dict, settings: dict, pemakaian: tuple) -> dict:
         "role": u.get("role") or "", **aturan,
         "atur": {"aktif": cfg.get("aktif") if isinstance(cfg.get("aktif"), bool) else None,
                  "batas_pertanyaan_harian": akp.bilangan_batas(cfg.get("batas_pertanyaan_harian")),
-                 "batas_tindakan_harian": akp.bilangan_batas(cfg.get("batas_tindakan_harian"))},
+                 "batas_tindakan_harian": akp.bilangan_batas(cfg.get("batas_tindakan_harian")),
+                 "golongan": akp.golongan_tersimpan(cfg)},
         "diubah_oleh": cfg.get("diubah_oleh"), "diubah_at": cfg.get("diubah_at"),
         "pertanyaan_hari_ini": int(pertanyaan.get(uid, 0)), "tindakan_hari_ini": int(tindakan.get(uid, 0)),
         "biaya_hari_ini_usd": round(float(biaya.get(uid, 0.0)), 4),
@@ -422,7 +437,8 @@ async def daftar_asisten_pengguna(request: Request):
 
 @router.put("/asisten-pengguna/{uid}")
 async def ubah_asisten_pengguna(uid: str, request: Request, payload: dict = Body(...)):
-    """{aktif: true|false|null, batas_pertanyaan_harian: n|null, batas_tindakan_harian: n|null} — null = ikut bawaan."""
+    """{aktif: true|false|null, batas_pertanyaan_harian: n|null, batas_tindakan_harian: n|null,
+    golongan: {B|C|D: true|false|null}} — null = ikut bawaan (golongan: mati)."""
     from core.asisten_ai import akses_pengguna as akp
     from routes.rahaza_audit import log_audit
     user = await require_auth(request)
