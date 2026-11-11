@@ -203,7 +203,7 @@ export default function MaklonBillingModule({ token }) {
   );
 }
 
-function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
+export function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [openShip, setOpenShip] = useState(null);
@@ -235,7 +235,7 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
       title={d ? `${d.po_number} · ${d.client_name}` : 'Memuat…'}
       description={d && (v2
         ? `Piutang ${d.invoice_number}. Nilai PO ${fmt(d.scheduled_total)} · tertagih ${fmt(d.billed_total)} · dibayar ${fmt(d.paid_total)} · sisa PO ${fmt(d.outstanding_total)}.`
-        : `Faktur lama ${d.invoice_number} — dikelola dengan alur lama (Keuangan › Faktur Penjualan).`)}
+        : `Faktur lama ${d.invoice_number} — dikelola dengan alur lama (Keuangan › Piutang).`)}
       actions={d && <>
         <Button variant="outline" onClick={printPo} data-testid="mkl-ar-print-po"><FileText className="w-4 h-4" />Cetak faktur PO</Button>
         {canPay && <Button onClick={() => setPaying(true)} data-testid="mkl-ar-pay"><CreditCard className="w-4 h-4" />Catat pembayaran</Button>}
@@ -388,7 +388,7 @@ function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
   );
 }
 
-function PaymentForm({ receivable, headers, token, onClose, onDone }) {
+export function PaymentForm({ receivable, headers, token, onClose, onDone }) {
   // rekening kas/bank AKTIF (SSOT yang sama dengan pemilih rekening Keuangan/SDM)
   const [accounts, setAccounts] = useState([]);
   const [loaded, setLoaded] = useState(false);

@@ -423,7 +423,7 @@ def test_layar_satu_form_produksi_maklon_portal_vendor_dan_keuangan():
     assert "NotaAksesorisKiriman" in detail
     vendor = (erp / "engine" / "VendorPortalApp.jsx").read_text(encoding="utf-8")
     assert "VendorNotaAksesoris" in vendor and "Nota Aksesoris" in vendor
-    ar = (erp / "RahazaARInvoicesModule.jsx").read_text(encoding="utf-8")
+    ar = (erp / "finance" / "PiutangModule.jsx").read_text(encoding="utf-8")   # 11 Nov: Keuangan › Piutang satu daftar
     assert "cmt_accessory" in ar
     bill = (erp / "ProductionCMTBillingModule.jsx").read_text(encoding="utf-8")
     assert "potongan_nota_aksesoris" in bill

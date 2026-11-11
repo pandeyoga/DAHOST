@@ -353,8 +353,8 @@ async def list_cmt_ap_schedules(request: Request):
     dikonfirmasi, plus nilai lolos QC (matang), dibayar, tertahan (selisih), bisa dibayar.
     WAJIB berada sebelum ``/{payment_id}``.
 
-    11 Nov 2026 (owner, "kenapa tidak ada hutang CMT" di Keuangan): Keuangan › Hutang Pemasok & CMT › "Hutang CMT
-    terjadwal" memakai endpoint ini dengan pilihan CV (header ``X-CV`` / ``?entity=``) dan ``perkiraan_internal=1``:
+    11 Nov 2026 (owner, "kenapa tidak ada hutang CMT" di Keuangan): Keuangan › Hutang (baris "Terjadwal" di satu
+    daftar, dulu tab "Hutang CMT terjadwal") memakai endpoint ini dengan pilihan CV (header ``X-CV`` / ``?entity=``) dan ``perkiraan_internal=1``:
       · CV Sukma        → jadwal PO maklon (tersimpan);
       · CV Dewi Aditya  → PERKIRAAN hutang jahit PO DA — hitungan yang sama (`maklon_ledger.ap_schedule_rows`),
                           TIDAK disimpan, tanpa jurnal; hutang nyata tetap lahir saat barang lolos QC;
@@ -384,9 +384,15 @@ async def list_cmt_ap_schedules(request: Request):
             r.update({'entity': SMU, 'jenis': 'jadwal'})
     if show_internal:
         rows += await _internal_estimates(db, po_id=sp.get('po_id'), vendor_id=vendor_id)
+    # 11 Nov 2026 (owner, kolom Umur seperti Excel): hari sejak kirim ke CMT — hijau 0–7 · kuning 8–14 · merah > 14
+    from core import umur_kirim
+    from utils.waktu import today_wib
+    kirim = await umur_kirim.tanggal_kirim_cmt(db, [r.get('po_id') for r in rows])
+    today = today_wib()
     for r in rows:
         r['remaining_amount'] = round(max(0.0, float(r.get('scheduled_amount') or 0) - float(r.get('matured_amount') or 0)), 2)
         r['remaining_qty'] = max(0, int(r.get('scheduled_qty') or 0) - int(r.get('matured_pcs') or 0))
+        r.update(umur_kirim.umur_fields(umur_kirim.tanggal_untuk(kirim, r.get('po_id'), r.get('vendor_id')), today))
     tot = {k: round(sum(float(r.get(k) or 0) for r in rows), 2)
            for k in ('scheduled_amount', 'matured_amount', 'paid_amount', 'blocked_amount', 'payable_amount',
                      'remaining_amount')}

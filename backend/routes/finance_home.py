@@ -127,13 +127,14 @@ async def _todo(db, today: date, ar: dict, ap: dict, entity: str = DA) -> list[d
             items.append({"key": key, "count": n, "label": label, "module": module, "tab": tab,
                           "amount": amount, "level": level})
 
-    add("ap_overdue", ap["overdue_count"], "tagihan pemasok/CMT lewat jatuh tempo", "fin-ap-hub", "aging",
+    # 11 Nov 2026: Hutang/Piutang = satu daftar tanpa tab; `tab` = pil status awal (finance/HutangModule, PiutangModule)
+    add("ap_overdue", ap["overdue_count"], "tagihan pemasok/CMT lewat jatuh tempo", "fin-ap-hub", "lewat",
         ap["overdue"], "danger")
-    add("ar_overdue", ar["overdue_count"], "faktur penjualan lewat jatuh tempo", "fin-ar-hub", "aging",
+    add("ar_overdue", ar["overdue_count"], "faktur penjualan lewat jatuh tempo", "fin-ar-hub", "lewat",
         ar["overdue"], "danger")
-    add("ap_due7", ap["due_7d_count"], "tagihan jatuh tempo 7 hari ke depan", "fin-ap-hub", "aging", ap["due_7d"],
+    add("ap_due7", ap["due_7d_count"], "tagihan jatuh tempo 7 hari ke depan", "fin-ap-hub", "belum_dibayar", ap["due_7d"],
         "warning")
-    add("cmt_unposted", ap["unposted_cmt_count"], "tagihan CMT belum dijurnal", "fin-ap-hub", "bills",
+    add("cmt_unposted", ap["unposted_cmt_count"], "tagihan CMT belum dijurnal", "fin-ap-hub", "belum_dibayar",
         ap["unposted_cmt"], "warning")
     add("settle_unverified", await db[SETTLEMENTS].count_documents({"math_verified": False}) if entity in (DA, ALL) else 0,
         "laporan dana marketplace masih ada selisih hitungan", "fin-marketplace-settlement", "settlements",

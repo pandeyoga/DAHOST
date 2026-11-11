@@ -498,13 +498,13 @@ export const PORTAL_NAV = {
             // Faktur DIBUAT di Portal Penjualan (Nota Penjualan) & Maklon — di sini terbit + terima bayar.
             items: [
               { id: 'fin-marketplace-settlement', label: 'Marketplace',      icon: Store },
-              { id: 'fin-ar-hub',                 label: 'Piutang Reseller', icon: ScrollText },
+              { id: 'fin-ar-hub',                 label: 'Piutang',          icon: ScrollText },  // 11 Nov 2026 (owner): satu daftar, tanpa tab
             ],
           },
           {
             label: 'Pembelian & Hutang',
             items: [
-              { id: 'fin-ap-hub',      label: 'Hutang Pemasok & CMT', icon: ReceiptText },
+              { id: 'fin-ap-hub',      label: 'Hutang',               icon: ReceiptText },  // 11 Nov 2026 (owner): pemasok + CMT satu daftar
               { id: 'fin-debit-notes', label: 'Nota Debit (Retur)',   icon: RotateCcw },
             ],
           },

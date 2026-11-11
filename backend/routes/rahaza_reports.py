@@ -1018,7 +1018,7 @@ async def reports_hub_summary(request: Request):
                          else _f(r.get("total_amount")) - _f(r.get("amount_paid"))),
                 "jatuh_tempo": _as_iso_date(r.get("due_date")), "status": r.get("status"),
             } for r in ar], key=lambda r: r["tanggal"], reverse=True)[:10],
-            "fin-ar-hub", "Buka Piutang Reseller", "Belum ada faktur penjualan."))
+            "fin-ar-hub", "Buka Piutang", "Belum ada faktur penjualan."))
         tables.append(_table(
             "maklon-inv", "Tagihan Maklon", "Dokumen tagihan dari modul maklon",
             [{"key": "no_invoice", "label": "NO"}, {"key": "klien", "label": "KLIEN"},

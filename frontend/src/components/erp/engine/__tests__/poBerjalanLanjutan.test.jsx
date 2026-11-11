@@ -1,14 +1,13 @@
 // 11 Nov 2026 (owner) — PO berjalan lanjutan:
 //  • Tutup PO: kolom "Kurang" hanya angka; kekurangan dijumlah per ukuran di rincian baris; rincian menampilkan model/warna.
-//  • Keuangan › Hutang Pemasok & CMT › "Hutang CMT terjadwal": jadwal PO maklon (CV Sukma) + perkiraan PO DA (CV Dewi
-//    Aditya), tabel bersama dengan Portal Maklon; tagihan CMT membawa CV dari server.
+//  • Jadwal hutang CMT per PO (Portal Maklon); tagihan CMT membawa CV dari server. Keuangan menampilkan jadwal ini sebagai
+//    baris "Terjadwal" di SATU daftar Keuangan › Hutang (uji di finance/__tests__/hutangPiutang.test.jsx).
 // Data di bawah ini contoh buatan, bukan data klien.
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { apiGet } from '../../../../lib/api';
 import POClosureModule, { shortBySize, shortText } from '../POClosureModule';
 import JadwalHutangCmtTabel from '../JadwalHutangCmtTabel';
-import HutangCmtTerjadwal from '../../finance/HutangCmtTerjadwal';
 import { cmtToRow } from '../../procurement/SupplierInvoiceModule';
 
 jest.mock('../../../../lib/api', () => ({ apiGet: jest.fn(), apiPost: jest.fn(), apiFetch: jest.fn() }));
@@ -78,36 +77,14 @@ const JADWAL = [
     lines: [{ po_item_id: 'pi1', sku: 'UJI-1-HTM-M', product_name: 'Kemeja uji', color: 'Hitam', size: 'M', qty: 40, cmt_rate: 12000, amount: 480000 }] },
 ];
 
-test('tabel jadwal (mode Keuangan): CV, tanda Perkiraan, belum jatuh tempo, rincian per barang', async () => {
-  act(() => { root.render(<JadwalHutangCmtTabel items={JADWAL} keuangan />); });
-  expect(q('cmt-ap-row-sch-1').textContent).toContain('CV Sukma');
-  expect(q('cmt-ap-row-perkiraan-po1-vp1').textContent).toContain('CV Dewi Aditya');
-  expect(q('cmt-ap-perkiraan-PO-INT-1').textContent).toBe('Perkiraan');
-  expect(q('cmt-ap-perkiraan-PO-MKL-1')).toBeNull();
+test('tabel jadwal (Portal Maklon): kolom bisa dibayar + rincian per barang di bawah baris', async () => {
+  act(() => { root.render(<JadwalHutangCmtTabel items={JADWAL} />); });
+  expect(q('cmt-ap-payable-PO-MKL-1').textContent).toBe('Rp 85.000dari Rp 340.000');
   expect(q('cmt-ap-sisa-PO-INT-1').textContent).toBe('Rp 360.000');
-  expect(q('cmt-ap-payable-PO-MKL-1')).toBeNull();          // kolom bayar hanya di Portal Maklon
+  expect(q('cmt-ap-row-sch-1').textContent).not.toContain('CV Sukma');
   klik(q('cmt-ap-row-perkiraan-po1-vp1').querySelector('button'));
   await tunggu(() => q('cmt-ap-lines-perkiraan-po1-vp1'));
   expect(q('cmt-ap-lines-perkiraan-po1-vp1').textContent).toContain('Kemeja uji · Hitam');
-});
-
-test('tabel jadwal (Portal Maklon) tetap punya kolom bisa dibayar', () => {
-  act(() => { root.render(<JadwalHutangCmtTabel items={JADWAL.slice(0, 1)} />); });
-  expect(q('cmt-ap-payable-PO-MKL-1').textContent).toBe('Rp 85.000dari Rp 340.000');
-  expect(q('cmt-ap-row-sch-1').textContent).not.toContain('CV Sukma');
-});
-
-test('Keuangan › Hutang CMT terjadwal memuat jadwal + perkiraan dan meringkas belum jatuh tempo', async () => {
-  apiGet.mockResolvedValue({ items: JADWAL, totals: {} });
-  act(() => { root.render(<HutangCmtTerjadwal />); });
-  await tunggu(() => q('cmt-ap-row-sch-1'));
-  expect(apiGet).toHaveBeenCalledWith('/production/cmt-billing/schedules?perkiraan_internal=1');
-  const ringkas = q('fin-cmt-terjadwal-ringkasan').textContent;
-  expect(ringkas).toContain('Belum jatuh tempo Rp 615.000');
-  expect(ringkas).toContain('Bukan hutang yang bisa dibayar');
-  klik(q('fin-cmt-terjadwal-jenis-perkiraan'));
-  await tunggu(() => !q('cmt-ap-row-sch-1'));
-  expect(q('cmt-ap-row-perkiraan-po1-vp1')).not.toBeNull();
 });
 
 test('tagihan CMT di daftar Keuangan memakai CV dari server (PO maklon = CV Sukma)', () => {

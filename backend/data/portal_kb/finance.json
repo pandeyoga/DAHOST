@@ -26,7 +26,7 @@
         "Invoice AR dibuat dari pengiriman (maklon/marketing) atau manual.",
         "Invoice diposting → jurnal Dr Piutang / Cr Pendapatan.",
         "Pembayaran dicatat di 'Rekening & Mutasi' → jurnal Dr Kas / Cr Piutang.",
-        "Sisa umur piutang dipantau di 'Piutang Reseller' › Umur piutang."
+        "Sisa dan umur piutang dipantau di menu 'Piutang' (satu daftar; penyaring status, jenis, nama)."
       ]
     },
     {
@@ -166,8 +166,8 @@
     },
     {
       "modul": "fin-ar-360",
-      "nama": "Piutang Reseller › Umur piutang",
-      "deskripsi": "Umur piutang per pelanggan."
+      "nama": "Piutang",
+      "deskripsi": "Satu daftar semua piutang (reseller, maklon, marketplace) dengan umur dan rekening koran pelanggan."
     },
     {
       "modul": "fin-channel-gl",
