@@ -115,10 +115,15 @@ export default function SalesPerformanceDashboard({ token }) {
   // 11 Nov 2026 — pecahan omzet per kanal (kanal pesanan + rincian yang diisi staf di Input Sales)
   const totalKanal = Object.values(overview?.by_channel || {}).reduce((s, d) => s + Number(d.revenue || 0), 0);
   const perKanal = Object.entries(overview?.by_channel || {})
-    .map(([k, d]) => ({ k, label: d.label || labelKanal(k), revenue: Number(d.revenue || 0), orders: Number(d.orders || 0) }))
+    .map(([k, d]) => ({
+      k, label: d.label || labelKanal(k), revenue: Number(d.revenue || 0), orders: Number(d.orders || 0),
+      viaKreator: Number(d.via_creator || 0),
+    }))
     .filter((r) => r.revenue > 0 || r.orders > 0)
     .sort((a, b) => b.revenue - a.revenue);
   const perTokoKanal = (overview?.by_store_channel || []).map((r) => ({ ...r, utama: kanalUtama(r.kanal) }));
+  // 11 Nov 2026 — lewat kreator/afiliasi: BAGIAN dari omzet kanal, bukan kanal tambahan
+  const kreator = overview?.creator_summary || null;
   const persen = (v, t) => (t > 0 ? `${Math.round((v / t) * 1000) / 10}%`.replace('.', ',') : '—');
   const kolomRp = (k, label) => ({
     kunci: k, label, rata: 'kanan',
@@ -165,12 +170,26 @@ export default function SalesPerformanceDashboard({ token }) {
           <div>
             <p className="text-base font-semibold">Omzet per kanal</p>
             {overview?.channel_note && <p className="text-xs text-muted-foreground">{overview.channel_note}</p>}
+            {kreator && (
+              <p className="mt-1 text-sm" data-testid="sales-kreator-ringkas">
+                Lewat kreator: <b className="tabular-nums">{fmtRp(kreator.omzet)}</b>
+                {kreator.persen_omzet != null && <> ({String(kreator.persen_omzet).replace('.', ',')}% dari omzet)</>}
+                {' '}· {fmt(kreator.kreator)} akun kreator · {fmt(kreator.pesanan)} pesanan.
+                {kreator.kreator_belum_terdaftar > 0 && (
+                  <span className="block text-xs text-muted-foreground" data-testid="sales-kreator-belum-terdaftar">
+                    {fmt(kreator.kreator_belum_terdaftar)} akun kreator belum terdaftar di KOL &amp; Kreator — omzetnya sudah
+                    terhitung di sini, tetapi belum muncul di laporan per kreator.
+                  </span>
+                )}
+              </p>
+            )}
           </div>
           <TombolUnduh namaBerkas="omzet-per-kanal" namaLembar="Per kanal" baris={perKanal} testId="sales-kanal-unduh"
             kolom={[
               { label: 'Kanal', nilai: (r) => r.label }, { label: 'Omzet', nilai: (r) => r.revenue },
               { label: 'Bagian (%)', nilai: (r) => (totalKanal ? Math.round((r.revenue / totalKanal) * 1000) / 10 : 0) },
               { label: 'Pesanan tercatat', nilai: (r) => r.orders },
+              { label: 'Lewat kreator', nilai: (r) => r.viaKreator },
             ]} />
         </div>
         <TabelData baris={perKanal} kunci={(r) => r.k} testId="sales-kanal-table"
@@ -179,6 +198,8 @@ export default function SalesPerformanceDashboard({ token }) {
             { kunci: 'kanal', label: 'Kanal', hp: 'judul', isi: (r) => <span className="font-medium">{r.label}</span> },
             { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmtRp(r.revenue)}</span> },
             { kunci: 'bagian', label: 'Bagian', rata: 'kanan', isi: (r) => <span className="tabular-nums">{persen(r.revenue, totalKanal)}</span> },
+            { kunci: 'kreator', label: 'Lewat kreator', rata: 'kanan', isi: (r) => (
+              <span className="tabular-nums md:whitespace-nowrap">{r.viaKreator ? fmtRp(r.viaKreator) : '—'}</span>) },
             { kunci: 'pesanan', label: 'Pesanan tercatat', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.orders ? fmt(r.orders) : '—'}</span> },
           ]} />
       </section>
@@ -192,6 +213,7 @@ export default function SalesPerformanceDashboard({ token }) {
               { label: 'Omzet', nilai: (r) => Number(r.omzet || 0) },
               ...[...KANAL_PESANAN, ['organic', 'Organik']].map(([k, label]) => ({ label, nilai: (r) => Number(r.kanal?.[k] || 0) })),
               { label: 'Belum dirinci', nilai: (r) => Number(r.belum_dirinci || 0) },
+              { label: 'Lewat kreator', nilai: (r) => Number(r.lewat_kreator || 0) },
             ]} />
         </div>
         <TabelData baris={perTokoKanal} kunci={(r) => r.account_id} testId="sales-kanal-toko-table"
@@ -203,10 +225,13 @@ export default function SalesPerformanceDashboard({ token }) {
             kolomRp('other', 'Lainnya'),
             { kunci: 'belum', label: 'Belum dirinci', rata: 'kanan', isi: (r) => (
               <span className="tabular-nums text-muted-foreground md:whitespace-nowrap">{r.belum_dirinci ? fmtRp(r.belum_dirinci) : '—'}</span>) },
+            { kunci: 'kreator', label: 'Lewat kreator', rata: 'kanan', isi: (r) => (
+              <span className="tabular-nums md:whitespace-nowrap">{r.lewat_kreator ? fmtRp(r.lewat_kreator) : '—'}</span>) },
             { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (r) => <span className="tabular-nums font-semibold md:whitespace-nowrap">{fmtRp(r.omzet)}</span> },
           ]} />
         <p className="text-xs text-muted-foreground">
           Lainnya = iklan, kampanye, pencarian, dan pesanan tanpa kanal. Belum dirinci = omzet hari yang belum punya pecahan kanal.
+          Lewat kreator = bagian omzet toko dari pesanan yang mencatat akun kreator (sudah termasuk di kanal-kanalnya).
         </p>
       </section>
 

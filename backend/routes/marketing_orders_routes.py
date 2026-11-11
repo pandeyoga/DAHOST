@@ -910,6 +910,9 @@ async def create_order(body: OrderCreateBody, request: Request):
     order_wall_in, ref_in = await _manual_order_identity(db, _acc, body)
     order_channel = _manual_order_channel(body)
     creator_handle = str(body.creator_handle or "").strip()
+    # 11 Nov 2026 — tautkan ke master kreator dengan aturan yang sama seperti impor pesanan,
+    # supaya omzet pesanan manual ikut terbaca di laporan kreator.
+    creator = await _scope.creator_for_handle(db, creator_handle) if creator_handle else None
 
     # ── K-8b — SETIAP baris order ditautkan & direservasi, bukan hanya yang pertama
     # Dulu hanya `items[0]` yang ditautkan ke master dan hanya stok baris itu yang
@@ -1104,6 +1107,8 @@ async def create_order(body: OrderCreateBody, request: Request):
         # 11 Nov 2026 — kanal dipilih staf (wajib); dasar pecahan kanal rekap harian
         "order_channel":          order_channel,
         "creator_handle":         creator_handle,
+        "creator_id":             (creator or {}).get("id"),
+        "creator_name":           (creator or {}).get("name") or "",
         "payment_method":  body.payment_method or "",
         "status":          "new",
         # 2026-11-09 (audit gudang G11, keputusan ★ = K15): pesanan manual juga keluar lewat Gudang → Scan
