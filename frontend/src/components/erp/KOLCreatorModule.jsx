@@ -28,7 +28,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import { todayWIB, thisMonthWIB } from '@/lib/waktu';
+import { todayWIB, bulanMarketingWIB, thisMonthWIB } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import PaginationBar from './PaginationBar';
@@ -307,7 +307,7 @@ export default function KOLCreatorModule({ token }) {
   // SESI #34 — insentif per kreator (konfigurasi + tracker pcs) & pembuatan akun portal.
   const [incentiveCreator, setIncentiveCreator] = useState(null);
   const [showSessionForm, setShowSessionForm] = useState(false);
-  const [leaderMonth, setLeaderMonth] = useState(() => thisMonthWIB());
+  const [leaderMonth, setLeaderMonth] = useState(() => bulanMarketingWIB());   // bulan Marketing 26–25
   const [creatorTargets, setCreatorTargets] = useState({});
   const [creatorPage, setCreatorPage] = useState(1);
   const [creatorPagination, setCreatorPagination] = useState(null);
@@ -319,7 +319,7 @@ export default function KOLCreatorModule({ token }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [cy, cm] = thisMonthWIB().split('-').map(Number);
+    const [cy, cm] = bulanMarketingWIB().split('-').map(Number);
     try {
       const [crRes, ac, sess, reqs, lb, tgtsRaw] = await Promise.all([
         fetch(`${API}/api/marketing/kol/creators?page=${creatorPage}&limit=${ITEMS_PER_PAGE}`, { headers }).then(r => r.json()),
@@ -563,7 +563,7 @@ export default function KOLCreatorModule({ token }) {
         </>}
         {tab === 'leaderboard' && (
           <SmartNativeSelect value={leaderMonth} onChange={(e) => setLeaderMonth(e.target.value)} className="w-44" searchable={false} data-testid="leader-month">
-            {monthOptions(24).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            {monthOptions(24, bulanMarketingWIB() !== thisMonthWIB() ? 1 : 0).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
           </SmartNativeSelect>
         )}
       </>}

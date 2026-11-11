@@ -40,6 +40,11 @@ PLATFORM_LABELS = {
     'tokopedia': 'Tokopedia',
 }
 
+
+def _bulan_label(y: int, m: int) -> str:
+    from core import bulan_marketing as _bulan
+    return _bulan.label(y, m)
+
 def _fmt_rp(n):
     n = n or 0
     if n >= 1e9:
@@ -118,7 +123,8 @@ def build_monthly_report_pdf(report_data: dict, company_name: str = 'CV. Dewi Ad
     period = report_data.get('period', {})
     year   = period.get('year', now_wib().year)
     month  = period.get('month', now_wib().month)
-    period_label = f"{MONTH_NAMES[month]} {year}"
+    from core import bulan_marketing as _bulan
+    period_label = f"{MONTH_NAMES[month]} {year} ({_bulan.label(year, month)})"   # bulan Marketing 26–25
     summary = report_data.get('summary', {})
     accounts = report_data.get('accounts', [])
     generated_at = now_wib().strftime('%d %B %Y, %H:%M')
@@ -285,7 +291,7 @@ def build_creator_target_pdf(summary_data: dict, company_name: str = 'CV. Dewi A
     # ── HEADER ──────────────────────────────────────────────────────────────
     elements.append(Paragraph("TARGET KOL / CREATOR BULANAN", S['title']))
     elements.append(Paragraph(
-        f"{company_name}  ·  Periode: {MONTH_NAMES[m]} {y}  ·  Digenerate: {gen_at}",
+        f"{company_name}  ·  Periode: {MONTH_NAMES[m]} {y} ({_bulan_label(y, m)})  ·  Digenerate: {gen_at}",
         S['subtitle']
     ))
     elements.append(HRFlowable(width='100%', thickness=1.5, color=BRAND, spaceAfter=8))

@@ -54,6 +54,7 @@ from core import marketing_sales_shape as _shape
 from core import marketing_daily_rollup as _rollup
 from core import marketing_returns as _ret
 from core import ukuran_penjualan as _ukuran
+from core import bulan_marketing as _bulan
 from utils.waktu import WIB, now_wib
 
 logger = logging.getLogger(__name__)
@@ -161,9 +162,8 @@ def period_range(period: str, days: int = 7) -> Tuple[str, str]:
     """
     raw = str(period or '').strip()
     if len(raw) == 7:
-        y, m = valid_period(raw)
-        dim = calendar.monthrange(y, m)[1]
-        return f"{raw}-01", f"{raw}-{dim:02d}"
+        valid_period(raw)
+        return _bulan.rentang_periode(raw)   # bulan Marketing = 26 bulan lalu … 25 (owner 11 Nov 2026)
     start = datetime.strptime(raw, '%Y-%m-%d')
     end = start + timedelta(days=max(1, int(days or 7)) - 1)
     return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
@@ -195,15 +195,16 @@ def month_progress(period: str, today: Optional[datetime] = None) -> Dict[str, A
     "capaian 60%" pada tanggal 3 dibaca sebagai gagal, padahal bulannya baru mulai.
     """
     y, m = valid_period(period)
-    days_total = calendar.monthrange(y, m)[1]
+    days_total = _bulan.jumlah_hari(y, m)          # bulan Marketing 26–25 (owner 11 Nov 2026)
     now = (today or today_wib())
     if now.tzinfo is None:
         now = now.replace(tzinfo=WIB)
     now = now.astimezone(WIB)
-    if (now.year, now.month) == (y, m):
-        days_elapsed = min(days_total, now.day)
+    cur = _bulan.bulan_dari(now)
+    if cur == (y, m):
+        days_elapsed = _bulan.hari_berlalu(y, m, now)
         state = 'running'
-    elif (now.year, now.month) > (y, m):
+    elif cur > (y, m):
         days_elapsed = days_total
         state = 'closed_month'
     else:
@@ -212,8 +213,9 @@ def month_progress(period: str, today: Optional[datetime] = None) -> Dict[str, A
     pace = round(days_elapsed / days_total * 100, 2) if days_total else 0.0
     return {'days_total': days_total, 'days_elapsed': days_elapsed,
             'pace_pct': pace, 'month_state': state,
-            'date_from': f"{y:04d}-{m:02d}-01",
-            'date_to': f"{y:04d}-{m:02d}-{days_total:02d}"}
+            'date_from': _bulan.rentang(y, m)[0],
+            'date_to': _bulan.rentang(y, m)[1],
+            'label': _bulan.label(y, m)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -288,11 +290,8 @@ async def margin_from_orders(db, account_id: str, period: str) -> Dict[str, Any]
     layar wajib menyebut cakupannya.
     """
     y, m = valid_period(period)
-    days_total = calendar.monthrange(y, m)[1]
-    start = datetime(y, m, 1, tzinfo=timezone.utc)
-    end = start + timedelta(days=days_total)
-    date_from = f"{y:04d}-{m:02d}-01"
-    date_to = f"{y:04d}-{m:02d}-{days_total:02d}"
+    start, end = _bulan.rentang_utc(y, m)          # bulan Marketing 26–25
+    date_from, date_to = _bulan.rentang(y, m)
 
     orders = await db[ORDERS].find({
         'account_id': account_id,
@@ -587,7 +586,8 @@ async def _auto_livehost(db, account_id: str, period: str, days: int = 7) -> Dic
     """
     lo, hi = period_range(period, days)
     days = (datetime.strptime(hi, '%Y-%m-%d') - datetime.strptime(lo, '%Y-%m-%d')).days + 1
-    share = month_share(lo, hi)   # pola P5: porsi bulan kalender, bukan hari ÷ 30
+    # pola P5: porsi bulan kalender, bukan hari ÷ 30; periode bulanan Marketing (26–25) = satu bulan gaji penuh
+    share = 1.0 if len(str(period).strip()) == 7 else month_share(lo, hi)
 
     shifts = await db.marketing_livehost_shifts.find(
         {'date': {'$gte': lo, '$lte': hi + 'T23:59:59'}},
@@ -712,7 +712,14 @@ async def locked_periods(db, account_id: Optional[str] = None) -> List[dict]:
 
 
 def period_from_date(date_str: str) -> str:
-    return str(date_str or '')[:7]
+    """Tanggal → bulan Marketing ``YYYY-MM`` (tanggal 26–31 ikut bulan berikutnya)."""
+    s = str(date_str or '')
+    if len(s) < 10:
+        return s[:7]
+    try:
+        return _bulan.periode_dari(s)
+    except ValueError:
+        return s[:7]
 
 
 async def assert_period_open(db, account_id: str, period_or_date: str, *,

@@ -14,7 +14,8 @@ import { Target, RefreshCw, ChevronLeft, ChevronRight, Loader2, FileDown } from 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
-import { thisMonthWIB } from '@/lib/waktu';
+import { bulanMarketingWIB, labelRentangBulanMarketing } from '@/lib/waktu';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -176,9 +177,9 @@ function CreatorTargetFormDialog({ open, onOpenChange, creator, year, month, exi
 }
 
 export default function AccountTargetsModule({ token, scope = 'marketing', moduleId }) {
-  // Bulan berjalan menurut kalender WIB, bukan zona perangkat.
-  const [year, setYear]   = useState(() => Number(thisMonthWIB().slice(0, 4)));
-  const [month, setMonth] = useState(() => Number(thisMonthWIB().slice(5, 7)));
+  // Bulan Marketing berjalan (WIB): tanggal 26 bulan lalu s/d 25 — owner 11 Nov 2026.
+  const [year, setYear]   = useState(() => Number(bulanMarketingWIB().slice(0, 4)));
+  const [month, setMonth] = useState(() => Number(bulanMarketingWIB().slice(5, 7)));
   // Tab awal ditentukan dari PROP (bukan sessionStorage): pelajaran sesi #5 —
   // petunjuk tab lewat sessionStorage bergantung urutan mount, sehingga deep-link
   // mendarat di tab pertama dan layar yang diminta seolah tidak ada.
@@ -200,6 +201,8 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
   const [editCreatorTarget, setEditCreatorTarget] = useState(null);
   const [creatorDialogOpen, setCreatorDialogOpen] = useState(false);
   const [exportingCreator, setExportingCreator]   = useState(false);
+  // Penyaring toko di tab Target KOL (owner 11 Nov: "ditugaskan ke akun tiktok mana belum ada infonya")
+  const [tokoKol, setTokoKol] = useState('');
 
   const authH = { Authorization: `Bearer ${token}` };
 
@@ -272,6 +275,13 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
   const s  = summary?.summary || {};
   const cs = creatorSummary?.summary || {};
   const periodeLabel = `${MONTH_NAMES[month - 1]} ${year}`;
+  const rentangLabel = labelRentangBulanMarketing(year, month);
+  const semuaKreator = creatorSummary?.creators || [];
+  const tokoKolPilihan = [...new Map(semuaKreator.flatMap((c) => c.accounts || []).map((a) => [a.id, a])).values()]
+    .sort((a, b) => (a.code || '').localeCompare(b.code || ''));
+  const kreatorTampil = !tokoKol ? semuaKreator
+    : tokoKol === '-' ? semuaKreator.filter((c) => !(c.accounts || []).length)
+      : semuaKreator.filter((c) => (c.accounts || []).some((a) => a.id === tokoKol));
   const nadaPct = (p) => (p == null ? 'default' : p >= 90 ? 'success' : p >= 70 ? 'warning' : 'danger');
 
   return (
@@ -282,8 +292,19 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
       filters={(
         <div className="flex items-center gap-1">
           <Button variant="outline" size="icon" onClick={prevMonth} data-testid="cycle-prev-month" title="Bulan sebelumnya" aria-label="Bulan sebelumnya"><ChevronLeft /></Button>
-          <span className="min-w-[96px] text-center text-sm font-semibold" data-testid="cycle-period-label">{periodeLabel}</span>
+          <span className="min-w-[96px] text-center leading-tight" data-testid="cycle-period-label">
+            <span className="block text-sm font-semibold">{periodeLabel}</span>
+            <span className="block text-xs text-muted-foreground" data-testid="cycle-period-range">{rentangLabel}</span>
+          </span>
           <Button variant="outline" size="icon" onClick={nextMonth} data-testid="cycle-next-month" title="Bulan berikutnya" aria-label="Bulan berikutnya"><ChevronRight /></Button>
+          {activeTab === 'creators' && (
+            <SmartNativeSelect value={tokoKol} onChange={(e) => setTokoKol(e.target.value)} searchable={false}
+              className="ml-2 h-9 w-56" aria-label="Toko KOL" data-testid="creator-toko-filter">
+              <option value="">Semua toko</option>
+              {tokoKolPilihan.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {semuaKreator.some((c) => !(c.accounts || []).length) && <option value="-">Belum ditugaskan</option>}
+            </SmartNativeSelect>
+          )}
         </div>
       )}
       tools={(
@@ -303,7 +324,7 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
         {/* ── TAB SIKLUS (F5) ── */}
         <TabsContent value="cycle" className="mt-0">
           <CycleView token={token} scope={scope} moduleId={moduleId}
-            period={`${year}-${String(month).padStart(2, '0')}`} monthLabel={periodeLabel} />
+            period={`${year}-${String(month).padStart(2, '0')}`} monthLabel={`${periodeLabel} · ${rentangLabel}`} />
         </TabsContent>
 
         {/* ── TAB AKUN ── */}
@@ -406,11 +427,12 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
             <div className="flex flex-wrap items-start justify-between gap-2">
               <p className="text-base font-semibold text-foreground">Target vs aktual per KOL / kreator</p>
               <div className="flex flex-wrap items-center gap-2">
-                <TombolUnduh namaBerkas={`target-kreator-${year}-${month}`} namaLembar="Target per kreator" baris={creatorSummary?.creators || []}
+                <TombolUnduh namaBerkas={`target-kreator-${year}-${month}`} namaLembar="Target per kreator" baris={kreatorTampil}
                   testId="creator-targets-unduh"
                   kolom={[
                     { label: 'Kreator', nilai: (r) => r.creator_name },
                     { label: 'Kode', nilai: (r) => r.creator_code },
+                    { label: 'Toko', nilai: (r) => (r.accounts || []).map((a) => a.name).join(', ') },
                     { label: 'Omzet aktual (Rp)', nilai: (r) => r.actual?.revenue ?? 0 },
                     { label: 'Target omzet (Rp)', nilai: (r) => r.target?.revenue ?? '' },
                     { label: 'Pencapaian omzet (%)', nilai: (r) => r.achievement?.revenue_pct ?? '' },
@@ -432,6 +454,7 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
                   <TableHeader>
                     <TableRow>
                       <TableHead>Kreator</TableHead>
+                      <TableHead className="hidden md:table-cell">Toko</TableHead>
                       <TableHead className="text-right">Omzet</TableHead>
                       <TableHead className="text-right">Sesi live</TableHead>
                       <TableHead className="hidden text-right md:table-cell">Penonton</TableHead>
@@ -439,16 +462,28 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {!creatorSummary?.creators?.length && (
+                    {!kreatorTampil.length && (
                       <TableRow className="hover:bg-transparent">
-                        <TableCell colSpan={5} className="p-0 [&>div]:py-8"><EmptyState title="Belum ada kreator aktif" /></TableCell>
+                        <TableCell colSpan={6} className="p-0 [&>div]:py-8">
+                          <EmptyState title={semuaKreator.length ? 'Tidak ada kreator di toko ini' : 'Belum ada kreator aktif'} />
+                        </TableCell>
                       </TableRow>
                     )}
-                    {(creatorSummary?.creators || []).map((row) => (
+                    {kreatorTampil.map((row) => (
                       <TableRow key={row.creator_id} data-testid={`creator-target-row-${row.creator_code}`}>
                         <TableCell>
                           <div className="font-medium">{row.creator_name}</div>
                           <div className="text-xs text-muted-foreground">{row.creator_code}</div>
+                          <div className="text-xs text-muted-foreground md:hidden" data-testid={`creator-target-toko-hp-${row.creator_code}`}>
+                            {(row.accounts || []).map((a) => a.name).join(', ') || 'Belum ditugaskan ke toko'}
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell" data-testid={`creator-target-toko-${row.creator_code}`}>
+                          {(row.accounts || []).length
+                            ? (row.accounts || []).map((a) => (
+                              <div key={a.id}><span className="font-medium">{a.name}</span> <span className="text-xs text-muted-foreground">{a.code}</span></div>
+                            ))
+                            : <StatusBadge status="belum" label="Belum ditugaskan" tone="warning" />}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="font-medium tabular-nums">{fmtRp(row.actual.revenue)}</div>
@@ -481,7 +516,7 @@ export default function AccountTargetsModule({ token, scope = 'marketing', modul
         {/* ── TAB ANGGARAN & ALOKASI ── */}
         <TabsContent value="budget" className="mt-0">
           <BudgetAllocationTab token={token} accounts={accounts}
-            period={`${year}-${String(month).padStart(2, '0')}`} monthLabel={periodeLabel} />
+            period={`${year}-${String(month).padStart(2, '0')}`} monthLabel={`${periodeLabel} · ${rentangLabel}`} />
         </TabsContent>
       </Tabs>
 

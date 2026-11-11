@@ -16,13 +16,13 @@ from fastapi import APIRouter, Request, Query
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-import calendar
 
 from database import get_db
 from auth import require_auth, serialize_doc
 from core import marketing_sales_shape as _shape
 # 2026-11-07 (Asisten AI) — aktual bulanan lewat SATU definisi omzet.
 from core import ukuran_penjualan as _ukuran
+from core import bulan_marketing as _bulan
 # F6 (sesi #9) — layar daftar WAJIB berlingkup toko: staf pemegang satu toko
 # tidak boleh melihat omzet/tugas delapan toko lain di laporan harian & bulanan.
 from core import marketing_account_scope as _scope
@@ -218,20 +218,14 @@ async def monthly_report(
     """
     user = await require_auth(request)
     db  = get_db()
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y   = year  or now.year
-    m   = month or now.month
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y = year  or _by
+    m = month or _bm
 
-    month_start = datetime(y, m, 1, 0, 0, 0, tzinfo=timezone.utc)
-    if m == 12:
-        month_end = datetime(y + 1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    else:
-        month_end = datetime(y, m + 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-
-    date_from  = f"{y:04d}-{m:02d}-01"
-    last_day   = calendar.monthrange(y, m)[1]
-    date_to    = f"{y:04d}-{m:02d}-{last_day:02d}"
-    total_days = last_day
+    month_start, month_end = _bulan.rentang_utc(y, m)
+    date_from, date_to = _bulan.rentang(y, m)
+    total_days = _bulan.jumlah_hari(y, m)
 
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
     await refresh_stale_health_scores(db, accounts)
@@ -345,21 +339,15 @@ async def export_monthly_report_pdf(
         if hasattr(monthly_report, '__wrapped__') else None
 
     # Call the internal function directly
-    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
-    y = year  or now.year
-    m = month or now.month
+    # periode bawaan = bulan Marketing berjalan (No.54a; tanggal 26–25, owner 11 Nov 2026)
+    _by, _bm = _bulan.bulan_berjalan(now_wib())
+    y = year  or _by
+    m = month or _bm
     db = get_db()
 
-    month_start = datetime(y, m, 1, 0, 0, 0, tzinfo=timezone.utc)
-    if m == 12:
-        month_end = datetime(y + 1, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    else:
-        month_end = datetime(y, m + 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-
-    date_from = f"{y:04d}-{m:02d}-01"
-    last_day  = calendar.monthrange(y, m)[1]
-    date_to   = f"{y:04d}-{m:02d}-{last_day:02d}"
-    total_days = last_day
+    month_start, month_end = _bulan.rentang_utc(y, m)
+    date_from, date_to = _bulan.rentang(y, m)
+    total_days = _bulan.jumlah_hari(y, m)
 
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
     await refresh_stale_health_scores(db, accounts)

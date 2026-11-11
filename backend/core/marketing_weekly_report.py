@@ -29,7 +29,6 @@ Minggu = **Senin–Minggu** (kesepakatan owner 2026-08-12).
 """
 from __future__ import annotations
 
-import calendar
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +36,7 @@ from core import marketing_sales_shape as _shape
 from core import marketing_daily_rollup as _rollup
 from core import marketing_returns as _ret
 from core import ukuran_penjualan as _ukuran
+from core import bulan_marketing as _bulan
 from utils.waktu import today_wib
 
 DAILY = "marketing_sales_data"
@@ -239,8 +239,8 @@ async def _target_prorata(db, account_id: str, dates: List[str]) -> Dict[str, An
     """
     per_month: Dict[tuple, int] = {}
     for d in dates:
-        dt = datetime.strptime(d, "%Y-%m-%d").date()
-        per_month[(dt.year, dt.month)] = per_month.get((dt.year, dt.month), 0) + 1
+        ym = _bulan.bulan_dari(d)          # bulan Marketing 26–25 (owner 11 Nov 2026)
+        per_month[ym] = per_month.get(ym, 0) + 1
     rev = ord_ = 0.0
     lengkap = True
     bulan_tanpa_target = []
@@ -253,7 +253,7 @@ async def _target_prorata(db, account_id: str, dates: List[str]) -> Dict[str, An
             bulan_tanpa_target.append(f"{_BULAN[m - 1]} {y}")
             continue
         bulan_bertarget.append(f"{y:04d}-{m:02d}")
-        dim = calendar.monthrange(y, m)[1]
+        dim = _bulan.jumlah_hari(y, m)
         rev += _num(tgt.get("revenue_target")) * days / dim
         ord_ += _num(tgt.get("orders_target")) * days / dim
     hari = sum(d for (y, m), d in per_month.items() if f"{y:04d}-{m:02d}" in bulan_bertarget)
@@ -306,7 +306,7 @@ async def build_weekly_report(db, week_start: Any = None,
         # M-04 — pencapaian membandingkan omzet HARI yang bulannya bertarget saja dengan
         # target prorata hari-hari itu (minggu 27 Jul–2 Agt tanpa target Juli dulu 1.062,6%).
         rev_bertarget = sum(_num(_shape.read_metrics(r).get("revenue")) for r in rows
-                            if str(r.get("date") or "")[:7] in tgt.get("bulan_bertarget", []))
+                            if _bulan.periode_dari(str(r.get("date") or "")[:10]) in tgt.get("bulan_bertarget", []))
         rekap_retur = _returns_from_rekap(rows)
 
         per_store.append({

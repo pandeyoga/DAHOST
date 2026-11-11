@@ -105,8 +105,8 @@ async def analitik_target(
 ):
     """Target vs aktual per toko per bulan (`marketing_account_targets`), + proyeksi bulan berjalan."""
     user, db, cv, accounts = await _konteks(request, toko_id)
-    now = today_wib()
-    b0 = dari_bulan or sampai_bulan or f"{now.year:04d}-{now.month:02d}"
+    from core import bulan_marketing as _bulan
+    b0 = dari_bulan or sampai_bulan or _bulan.periode_dari(today_wib())   # bulan Marketing 26–25
     b1 = sampai_bulan or b0
     try:
         bulan = U.bulan_dalam(b0, b1)
