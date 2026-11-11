@@ -50,6 +50,7 @@ ATURAN KERAS
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import uuid
@@ -206,6 +207,185 @@ def parse_variation(text) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# KODE MODEL dari SKU penjual — keputusan owner 11 Nov 2026 ("Ya, semua rekomendasi")
+# ══════════════════════════════════════════════════════════════════════════════
+# Ekspor asli toko (Shopee GHS, TikTok Rayona): SKU penjual = NOMOR MODEL tanpa awalan CV
+# ("1512" = model DA-1512), variasi = warna (+ ukuran): "Red Elegant, M / STANDAR".
+# Mesin usulan nama (di bawah) mengabaikan SKU penjual: ia menebak model dari kemiripan kata
+# judul ("celana" di judul MELA → model "Stela celana") dan warna lewat kamus warna umum
+# ("Red Elegant" → merah → "Pita merah"). Pratinjau "Petakan otomatis" pada berkas asli menulis
+# ±25 dari 39 tautan SALAH. Aturan sekarang:
+#   * tautan OTOMATIS (impor, Petakan otomatis, Selesaikan massal) HANYA bila SKU penjual
+#     menunjuk tepat SATU model master DAN warna + ukuran variasi menunjuk tepat SATU varian
+#     model itu — warna dibandingkan dengan NAMA WARNA MODEL ITU SENDIRI, bukan kamus umum;
+#   * tebakan dari judul tetap ditampilkan sebagai USULAN untuk dicek staf, tidak ditulis.
+SUMBER_KODE = 'kode_model'
+SUMBER_NAMA = 'nama'
+METODE_KODE = 'kode_model'          # `marketing_sku_bridge.method` untuk tautan aturan ini
+
+#: Keterangan ukuran yang BUKAN kode ukuran master ("M / STANDAR", "XL / JUMBO").
+_KATA_UKURAN = frozenset({'standar', 'standard', 'std', 'reguler', 'regular', 'jumbo', 'jmb',
+                          'big', 'bigsize', 'big size'})
+_ALIAS_UKURAN = {'2xl': 'xxl', '3xl': 'xxxl', 'onesize': 'allsize', 'freesize': 'allsize',
+                 'fitl': 'allsize'}
+_AMBANG_MIRIP_WARNA = 0.9
+
+
+async def kode_pool(db) -> dict:
+    """Varian aktif per kode model + indeks kode tanpa awalan CV ("1512" → ["DA-1512"])."""
+    models: dict = defaultdict(list)
+    skus: dict = {}
+    tails: dict = defaultdict(set)
+    async for v in db[VARIANTS].find({'active': {'$ne': False}},
+                                     {'_id': 0, 'id': 1, 'sku': 1, 'model_id': 1,
+                                      'model_code': 1, 'model_name': 1, 'color_name': 1,
+                                      'size_code': 1}):
+        mc = str(v.get('model_code') or '').strip().upper()
+        if not mc:
+            continue
+        models[mc].append(v)
+        if v.get('sku'):
+            skus[str(v['sku']).strip().upper()] = v
+        tails[mc].add(mc)
+        if '-' in mc:
+            tails[mc.split('-', 1)[1]].add(mc)
+    return {'models': dict(models), 'skus': skus,
+            'tails': {k: sorted(s) for k, s in tails.items()}}
+
+
+def _kode_ukuran(part_norm: str, sizes: dict) -> Optional[str]:
+    """Kode ukuran MODEL INI yang disebut satu bagian variasi (``sizes``: norm → kode)."""
+    k = part_norm.replace(' ', '')
+    k = _ALIAS_UKURAN.get(k, k)
+    if k in sizes:
+        return sizes[k]
+    if k.startswith('allsize') and 'allsize' in sizes:      # "All Size Fit to L"
+        return sizes['allsize']
+    return None
+
+
+def _pilih_warna(warna: str, calon: list) -> tuple:
+    """Satu varian yang warnanya = ``warna`` (sudah dinormalkan) → ``(varian|None, cara)``.
+
+    Urutan: sama persis → frasa utuh termuat ("Bunga Emas" ⊂ "Digital Bunga Emas") → sangat
+    mirip (salah ketik "Blue Elegan") → terjemahan kamus warna ("White" → "Putih"). Setiap
+    langkah WAJIB menghasilkan tepat satu varian; lebih dari satu = ragu = tidak ditautkan.
+    """
+    nm = [(v, norm(v.get('color_name'))) for v in calon]
+    nm = [(v, c) for v, c in nm if c]
+    hit = [v for v, c in nm if c == warna]
+    if len(hit) == 1:
+        return hit[0], 'sama'
+    if hit:
+        return None, 'ganda'
+
+    def _frasa(a: str, b: str) -> bool:
+        return bool(re.search(r'(^| )' + re.escape(a) + r'($| )', b))
+
+    hit = [v for v, c in nm if _frasa(warna, c) or _frasa(c, warna)]
+    if len(hit) == 1:
+        return hit[0], 'termuat'
+    if hit:
+        return None, 'ganda'
+    skor = sorted(((difflib.SequenceMatcher(None, warna, c).ratio(), v) for v, c in nm),
+                  key=lambda t: -t[0])
+    if skor and skor[0][0] >= _AMBANG_MIRIP_WARNA and (
+            len(skor) == 1 or skor[1][0] < _AMBANG_MIRIP_WARNA):
+        return skor[0][1], 'mirip'
+    kanon = COLOR_ALIASES.get(warna)
+    if kanon:
+        hit = [v for v, c in nm if c == norm(kanon)]
+        if len(hit) == 1:
+            return hit[0], 'terjemahan'
+    return None, 'tidak_ada'
+
+
+def cocok_kode_model(pool: dict, seller_sku, variation='', product_name='') -> dict:
+    """SKU penjual + variasi → varian master PASTI, atau alasan kenapa tidak.
+
+    Return ``{model_code, model_name, model_id, variant, warna, ukuran, cara, alasan}``.
+    ``variant`` terisi hanya bila model DAN varian tunggal; ``model_code`` terisi bila SKU
+    penjual menunjuk tepat satu model (meski variannya belum ada / ragu).
+    """
+    s_raw = str(seller_sku or '').strip()
+    s = s_raw.upper()
+    out = {'model_code': '', 'model_name': '', 'model_id': None, 'variant': None,
+           'warna': '', 'ukuran': '', 'cara': '', 'alasan': ''}
+    if not s:
+        out['alasan'] = 'SKU penjual kosong'
+        return out
+    v = (pool.get('skus') or {}).get(s)
+    if v:                                       # SKU penjual = SKU varian master lengkap
+        out.update(model_code=str(v.get('model_code') or '').upper(),
+                   model_name=v.get('model_name') or '', model_id=v.get('model_id'),
+                   variant=v, warna=v.get('color_name') or '', ukuran=v.get('size_code') or '',
+                   cara='sku_varian')
+        return out
+    codes = (pool.get('tails') or {}).get(s) or []
+    if not codes:
+        out['alasan'] = f"SKU penjual '{s_raw}' bukan kode model di master"
+        return out
+    if len(codes) > 1:
+        out['alasan'] = f"SKU penjual '{s_raw}' cocok dengan beberapa model ({', '.join(codes)})"
+        return out
+    mc = codes[0]
+    vs = pool['models'][mc]
+    out.update(model_code=mc, model_name=vs[0].get('model_name') or '',
+               model_id=vs[0].get('model_id'))
+    sizes = {norm(x.get('size_code')).replace(' ', ''): x.get('size_code')
+             for x in vs if x.get('size_code')}
+    # "LUNARA - MOCA": nama model / kata pertama judul di depan warna bukan bagian warna
+    awalan = [p for p in {norm(out['model_name']),
+                          (norm(re.split(r'[-|(]', str(product_name or ''))[0]).split() or [''])[0]}
+              if p]
+    ukuran, warna = None, []
+    for part in re.split(r'[,;/|]+', str(variation or '')):
+        n = norm(re.sub(r'\(.*?\)', ' ', part))
+        if not n:
+            continue
+        u = _kode_ukuran(n, sizes)
+        if u:
+            ukuran = ukuran or u
+            continue
+        if n in _KATA_UKURAN:
+            continue
+        for a in sorted(awalan, key=len, reverse=True):
+            if n.startswith(a + ' '):
+                n = n[len(a) + 1:].strip()
+                break
+        if n:
+            warna.append(n)
+    if ukuran is None:
+        semua = sorted(set(sizes.values()))
+        if len(semua) == 1:
+            ukuran = semua[0]
+        else:
+            out['alasan'] = (f"ukuran tidak terbaca dari variasi '{variation}' "
+                             f"(model {mc} punya {', '.join(semua)})")
+            return out
+    out['ukuran'] = ukuran
+    calon = [x for x in vs if x.get('size_code') == ukuran]
+    if not calon:
+        out['alasan'] = f"model {mc} tidak punya ukuran {ukuran}"
+        return out
+    if not warna:
+        if len(calon) == 1:
+            out.update(variant=calon[0], warna=calon[0].get('color_name') or '', cara='satu_varian')
+        else:
+            out['alasan'] = f"warna tidak tertulis di variasi '{variation}'"
+        return out
+    out['warna'] = warna[0]
+    hit, cara = _pilih_warna(warna[0], calon)
+    if hit:
+        out.update(variant=hit, cara=cara)
+    elif cara == 'ganda':
+        out['alasan'] = f"warna '{warna[0]}' cocok dengan lebih dari satu varian {mc} · {ukuran}"
+    else:
+        out['alasan'] = f"warna '{warna[0]}' tidak ada di model {mc} ({out['model_name']}) · {ukuran}"
+    return out
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Daftar SKU platform yang BELUM tertaut master
 # ══════════════════════════════════════════════════════════════════════════════
 async def list_unmapped(db, *, account_id: str = None, q: str = None,
@@ -239,6 +419,8 @@ async def list_unmapped(db, *, account_id: str = None, q: str = None,
                 'key_kind': 'nama_variasi' if _skuk.kunci_nama(psid) else 'sku_platform',
                 'product_name': ln.get('product_name_raw') or ln.get('product_name') or '',
                 'variation': ln.get('variation_raw') or '',
+                # 11 Nov 2026 — dasar tautan pasti "kode model" (lihat cocok_kode_model)
+                'seller_sku': str(ln.get('seller_sku') or '').strip(),
                 'account_id': o.get('account_id'), 'account_name': o.get('account_name') or '',
                 'platform': o.get('purchase_channel') or '',
                 'first_order_date': o.get('order_date'), 'last_order_date': o.get('order_date'),
@@ -380,9 +562,48 @@ async def _match_model(db, name_toks: set, *, models: list = None) -> dict:
             'category': best['category'], 'confidence': round(best_s, 4)}
 
 
+def _usulan_kode(km: dict, seller_sku: str, parsed: dict) -> dict:
+    """Hasil :func:`suggest` bila SKU penjual menunjuk satu model master (aturan 11 Nov)."""
+    v = km.get('variant')
+    mm = {'model_id': km.get('model_id'), 'model_code': km.get('model_code'),
+          'model_name': km.get('model_name'), 'category': '', 'confidence': 1.0,
+          'source': SUMBER_KODE, 'variant_exists': bool(v),
+          'color_confirmed': bool(v), 'size_confirmed': bool(v),
+          'match_confidence': 1.0 if v else 0.0, 'match_how': km.get('cara') or '',
+          'color_text': km.get('warna') or '', 'size_code': km.get('ukuran') or ''}
+    cands = []
+    if v:
+        mm['variant_id'] = v['id']
+        mm['variant_sku'] = v.get('sku')
+        cands.append({
+            'kind': 'variant', 'target_id': v['id'],
+            'label': (f"{v.get('model_name') or ''} [{v.get('color_name') or ''} · "
+                      f"{v.get('size_code') or ''}]").strip(),
+            'sku': v.get('sku') or '', 'fg_material_id': None, 'variant_id': v['id'],
+            'model_id': v.get('model_id'), 'color': v.get('color_name') or '',
+            'size': v.get('size_code') or '', 'stock': None, 'account_id': None,
+            'already_mapped': [], 'confidence': 1.0,
+            'reasons': [f"SKU penjual {seller_sku} = model {km.get('model_code')}",
+                        f"warna {v.get('color_name')} ({km.get('cara')})",
+                        f"ukuran {v.get('size_code')}"]})
+        action = 'map'
+        reason = (f"SKU penjual {seller_sku} = model {km.get('model_code')} "
+                  f"({km.get('model_name')}); varian {v.get('sku')} cocok warna & ukurannya — "
+                  'ditautkan pasti.')
+    else:
+        action = 'create_variant'
+        reason = (f"SKU penjual {seller_sku} = model {km.get('model_code')} "
+                  f"({km.get('model_name')}), tetapi {km.get('alasan')}. Buat variannya di model "
+                  'itu atau petakan manual.')
+    return {'parsed': {'color': parsed['color'], 'size': parsed['size']},
+            'candidates': cands, 'best': cands[0] if cands else None,
+            'model_match': mm, 'recommended_action': action, 'reason': reason,
+            'auto_min_confidence': AUTO_MIN_CONFIDENCE}
+
+
 async def suggest(db, *, product_name: str = '', variation: str = '',
                   account_id: str = None, limit: int = 8, pool: list = None,
-                  models: list = None) -> dict:
+                  models: list = None, seller_sku: str = '', kpool: dict = None) -> dict:
     """Usulkan sasaran pemetaan untuk satu SKU platform + **aksi yang disarankan**.
 
     Return::
@@ -399,8 +620,18 @@ async def suggest(db, *, product_name: str = '', variation: str = '',
 
     Kandidat berkeyakinan 0 TIDAK dikembalikan — daftar kosong adalah jawaban
     yang sah, dan artinya "masternya belum ada, buat dulu" (bukan "coba tebak").
+
+    11 Nov 2026 — bila ``seller_sku`` menunjuk tepat satu model master, model itu PASTI
+    (``model_match.source = 'kode_model'``) dan tebakan nama tidak dipakai sama sekali.
+    Tanpa itu, hasilnya tebakan nama (``source = 'nama'``): hanya usulan, tidak pernah
+    ditautkan otomatis.
     """
     parsed = parse_variation(variation)
+    if str(seller_sku or '').strip():
+        kp = kpool if kpool is not None else await kode_pool(db)
+        km = cocok_kode_model(kp, seller_sku, variation, product_name)
+        if km['model_code']:
+            return _usulan_kode(km, str(seller_sku).strip(), parsed)
     # Nama dibandingkan dengan token IDENTITAS saja (tanpa warna/ukuran) — atribut
     # sudah punya bobotnya sendiri di `_score`. Variasi TIDAK ikut ke token nama:
     # isinya memang atribut, dan memasukkannya membuat setiap varian ber-ukuran
@@ -463,15 +694,18 @@ async def suggest(db, *, product_name: str = '', variation: str = '',
         mm['color_confirmed'] = color_confirmed
         mm['size_confirmed'] = size_confirmed
         mm['match_confidence'] = round(min(1.0, base), 4) if exact else 0.0
+        mm['source'] = SUMBER_NAMA          # tebakan judul — usulan saja (keputusan 11 Nov)
 
+    tebakan = (' Model ini DITEBAK dari judul produk (SKU penjual bukan kode model master) — '
+               'periksa dulu sebelum menautkan.')
     if exact and mm.get('confidence', 0) >= 0.35:
         action, reason = 'map', (f"Varian {exact.get('sku')} sudah ada di master "
-                                 f"({mm['model_name']}) — cukup ditautkan.")
+                                 f"({mm['model_name']}) — cukup ditautkan." + tebakan)
     elif mm and mm.get('confidence', 0) >= 0.35:
         action, reason = 'create_variant', (
             f"Model '{mm['model_name']}' sudah ada, tetapi varian "
             f"{parsed['color'] or '(warna?)'} · {want_size or 'ALLSIZE'} belum. "
-            'Buat variannya lalu tautkan.')
+            'Buat variannya lalu tautkan.' + tebakan)
     else:
         action, reason = 'create_master', ('Belum ada master yang mirip — buat model + '
                                            'varian baru dari SKU ini, lalu tautkan.')
@@ -774,18 +1008,20 @@ async def auto_map(db, *, min_confidence: float = AUTO_MIN_CONFIDENCE,
     un = await list_unmapped(db, account_id=account_id, limit=max(1, int(limit or 100)))
     pool = await _candidate_pool(db, account_id=None)
     models = await _model_pool(db)
+    kpool = await kode_pool(db)
 
     applied, skipped = [], []
     for row in un['rows']:
         sg = await suggest(db, product_name=row['product_name'], variation=row['variation'],
-                          account_id=row.get('account_id'), limit=1, pool=pool, models=models)
+                          account_id=row.get('account_id'), limit=1, pool=pool, models=models,
+                          seller_sku=row.get('seller_sku') or '', kpool=kpool)
         mm = sg.get('model_match') or {}
-        # Pemetaan OTOMATIS hanya untuk varian yang PERSIS ada (nama-keluarga +
-        # warna + ukuran dikonfirmasi). Kandidat hasil kemiripan bebas TIDAK
-        # dipakai untuk menulis — ia hanya usulan bagi manusia.
+        # Pemetaan OTOMATIS hanya untuk varian yang PERSIS ada DAN modelnya dipastikan
+        # SKU penjual (keputusan owner 11 Nov 2026). Tebakan dari judul — seyakin apa pun
+        # angkanya — hanya usulan bagi manusia: pada berkas asli ±25 dari 39 tebakan salah.
         conf = _f(mm.get('match_confidence'))
         if sg.get('recommended_action') != 'map' or not mm.get('variant_id') \
-                or conf < min_confidence:
+                or conf < min_confidence or mm.get('source') != SUMBER_KODE:
             best = sg.get('best')
             skipped.append({'platform_sku_id': row['platform_sku_id'],
                             'product_name': row['product_name'],
@@ -803,7 +1039,7 @@ async def auto_map(db, *, min_confidence: float = AUTO_MIN_CONFIDENCE,
         if not dry_run:
             res = await apply_mapping(
                 db, row['platform_sku_id'], variant_id=mm['variant_id'],
-                account_id=row.get('account_id'), user=user, method='auto',
+                account_id=row.get('account_id'), user=user, method=METODE_KODE,
                 confidence=conf, product_name=row['product_name'],
                 variation=row['variation'])
             entry['ok'] = res.get('ok', False)
@@ -822,6 +1058,55 @@ async def auto_map(db, *, min_confidence: float = AUTO_MIN_CONFIDENCE,
             'message': (('PRATINJAU — ' if dry_run else '')
                         + f'{len(applied)} SKU bisa dipetakan otomatis, '
                           f'{len(skipped)} perlu keputusan manusia.')}
+
+
+async def tautkan_kode_model(db, *, account_id: str, order_query: dict = None,
+                             user: dict = None) -> dict:
+    """Tautkan PASTI baris pesanan yang belum tertaut lewat aturan kode model (11 Nov 2026).
+
+    Dipanggil sesudah impor pesanan disimpan. Hanya baris ber-SKU penjual yang menunjuk tepat
+    satu model + satu varian (:func:`cocok_kode_model`). Satu tautan = satu pemetaan jembatan,
+    jadi pesanan lama & impor berikutnya ikut tertaut. Pemetaan yang sudah ada (keputusan
+    manusia) TIDAK pernah ditimpa. Stok tidak disentuh (aturan keras no. 2).
+    """
+    q = {'account_id': account_id, **(order_query or {})}
+    kunci: dict = {}
+    async for o in db[ORDERS].find(q, {'_id': 0, 'items': 1}):
+        for ln in (o.get('items') or []):
+            if not isinstance(ln, dict) or ln.get('fg_material_id'):
+                continue
+            psid = _skuk.kunci_baris(ln, account_id)
+            ss = str(ln.get('seller_sku') or '').strip()
+            if not psid or not ss or psid in kunci:
+                continue
+            kunci[psid] = (ss, ln.get('variation_raw') or '',
+                           ln.get('product_name_raw') or ln.get('product_name') or '')
+    # `pesanan_diperbarui` = jumlah pembaruan per pemetaan (pesanan ber-2 SKU tertaut terhitung 2×)
+    out = {'diperiksa': len(kunci), 'ditautkan': 0, 'pesanan_diperbarui': 0,
+           'sudah_dipetakan': 0, 'gagal': 0}
+    if not kunci:
+        return out
+    kp = await kode_pool(db)
+    for psid, (ss, var, pname) in kunci.items():
+        km = cocok_kode_model(kp, ss, var, pname)
+        v = km.get('variant')
+        if not v:
+            continue
+        if await db[BRIDGE].find_one({'platform_sku_id': psid, 'active': {'$ne': False}},
+                                     {'_id': 0, 'platform_sku_id': 1}):
+            out['sudah_dipetakan'] += 1
+            continue
+        res = await apply_mapping(db, psid, variant_id=v['id'], account_id=account_id,
+                                  user=user, method=METODE_KODE, confidence=1.0,
+                                  product_name=pname, variation=var)
+        if res.get('ok'):
+            out['ditautkan'] += 1
+            out['pesanan_diperbarui'] += int(res.get('orders_updated') or 0)
+        else:
+            out['gagal'] += 1
+            logger.warning('[sku-bridge] tautan kode model gagal %s → %s: %s',
+                           psid, v.get('sku'), res.get('message'))
+    return out
 
 
 async def relink_orders(db, *, platform_sku_id: str = None) -> dict:
@@ -1215,23 +1500,37 @@ async def bulk_resolve(db, *, actions: tuple = ('map', 'create_variant'),
     un = await list_unmapped(db, account_id=account_id, limit=max(1, int(limit or 200)))
     pool = await _candidate_pool(db, account_id=None)
     models = await _model_pool(db)
+    kpool = await kode_pool(db)
 
     applied, skipped = [], []
     created_models = created_variants = orders_touched = 0
 
     for row in un['rows']:
         sg = await suggest(db, product_name=row['product_name'], variation=row['variation'],
-                          account_id=row.get('account_id'), limit=1, pool=pool, models=models)
+                          account_id=row.get('account_id'), limit=1, pool=pool, models=models,
+                          seller_sku=row.get('seller_sku') or '', kpool=kpool)
         act = sg.get('recommended_action')
         mm = sg.get('model_match') or {}
         parsed = sg.get('parsed') or {}
+        dari_kode = mm.get('source') == SUMBER_KODE
         base = {'platform_sku_id': row['platform_sku_id'], 'pcs': row['pcs'],
                 'product_name': row['product_name'], 'variation': row['variation'],
-                'action': act, 'color': parsed.get('color'), 'size': parsed.get('size'),
+                'action': act,
+                'color': (mm.get('color_text') or parsed.get('color')) if dari_kode else parsed.get('color'),
+                'size': (mm.get('size_code') or parsed.get('size')) if dari_kode else parsed.get('size'),
                 'model_name': mm.get('model_name') or '', 'reason': sg.get('reason')}
 
         if act not in actions:
             skipped.append({**base, 'reason': f"aksi '{act}' tidak dipilih pada permintaan ini"})
+            continue
+
+        # Keputusan owner 11 Nov 2026 — tautan & varian baru di model yang SUDAH ADA hanya bila
+        # modelnya dipastikan SKU penjual. Model hasil tebakan judul pernah menautkan MELA ke
+        # "Stela celana" dan akan membuat varian nyasar di model yang salah.
+        if act in ('map', 'create_variant') and not dari_kode:
+            skipped.append({**base, 'reason': (
+                'Model ditebak dari judul produk (SKU penjual bukan kode model master) — '
+                'hanya usulan; periksa & petakan manual di tab SKU belum dikenal.')})
             continue
 
         if act == 'map':
@@ -1245,7 +1544,7 @@ async def bulk_resolve(db, *, actions: tuple = ('map', 'create_variant'),
             if not dry_run:
                 res = await apply_mapping(db, row['platform_sku_id'], variant_id=mm['variant_id'],
                                          account_id=row.get('account_id'), user=user,
-                                         method='auto', confidence=conf,
+                                         method=METODE_KODE, confidence=conf,
                                          product_name=row['product_name'],
                                          variation=row['variation'])
                 if not res.get('ok'):
@@ -1264,14 +1563,23 @@ async def bulk_resolve(db, *, actions: tuple = ('map', 'create_variant'),
                                            'di model itu — perlu keputusan manusia')})
                 continue
             base['confidence'] = round(conf, 3)
+            # model dari SKU penjual: warna ditulis APA ADANYA dari variasi ("Flower Blue", bukan
+            # kamus umum "biru"); ukuran harus terbaca dulu, kalau tidak → manusia.
+            warna_baru = str(mm.get('color_text') or '').strip().title() or None
+            ukuran_baru = mm.get('size_code') or None
+            if not ukuran_baru:
+                skipped.append({**base, 'reason': (sg.get('reason') or '')
+                                + ' Ukuran belum terbaca — tidak dibuat otomatis.'})
+                continue
             if dry_run:
-                base['will_create'] = f"varian {parsed.get('color') or 'Lainnya'} · " \
-                                      f"{parsed.get('size') or 'ALLSIZE'} di {mm.get('model_name')}"
+                base['will_create'] = f"varian {warna_baru or parsed.get('color') or 'Lainnya'} · " \
+                                      f"{ukuran_baru} di {mm.get('model_name')}"
             else:
                 res = await create_master_and_map(
                     db, row['platform_sku_id'], product_name=row['product_name'],
                     variation=row['variation'], account_id=row.get('account_id'),
-                    model_id=mm['model_id'], user=user)
+                    model_id=mm['model_id'], color_name=warna_baru, size_code=ukuran_baru,
+                    user=user)
                 if not res.get('ok'):
                     skipped.append({**base, 'reason': res.get('message', 'gagal')})
                     continue

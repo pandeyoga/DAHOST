@@ -934,6 +934,22 @@ def _n(s: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
 
 
+def kanal_platform(v: Any) -> str:
+    """Nama platform dari kolom "Purchase Channel", tanpa kata "aplikasi".
+
+    2026-11-11 (berkas asli toko TikTok, owner) — ekspor Seller Center berbahasa Indonesia
+    menulis "Aplikasi TikTok", versi Inggris "TikTok". Dulu "Aplikasi TikTok" tidak dikenali
+    sebagai TikTok: penjaga platform menolak SELURUH berkas toko TikTok yang benar.
+    """
+    pc = _n(v)
+    for awal in ("aplikasi ", "app "):
+        if pc.startswith(awal):
+            pc = pc[len(awal):].strip()
+    if pc.endswith(" app"):
+        pc = pc[:-4].strip()
+    return pc
+
+
 def _pasca_baris(st: SourceType, data: dict, warnings: List[str]) -> None:
     """Arti yang baru pasti bila DUA kolom dibaca bersama. Dipanggil per baris berkas."""
     from core import marketing_import_schema as S
@@ -947,13 +963,15 @@ def _pasca_baris(st: SourceType, data: dict, warnings: List[str]) -> None:
                 break
     if key == "marketplace_orders":
         # G17 — ekspor terpadu TikTok–Tokopedia: kanal Tokopedia = sub-kanal toko TikTok
-        pc = _n(data.get("purchase_channel"))
+        pc = kanal_platform(data.get("purchase_channel"))
         if pc:
             if pc in ("tokopedia", "toped"):
                 data["sales_channel"] = "tokopedia"
                 data["purchase_channel"] = "TikTok"
             elif pc.startswith("tiktok"):
                 data["sales_channel"] = "tiktok"
+                # "Aplikasi TikTok" → "TikTok" (nilai asli tetap di purchase_channel_raw)
+                data["purchase_channel"] = "TikTok"
     elif key == "returns":
         # G10 — sub-status yang memutuskan (permintaan dibatalkan pembeli)
         sub = _n(data.get("substatus_raw"))

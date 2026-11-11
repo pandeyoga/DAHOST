@@ -81,6 +81,33 @@ class Coll(fm.FakeCollection):
             fm._set_path(d, k, (fm._get(d, k) if fm._get(d, k) is not fm._MISSING else 0) + v)
         return copy.deepcopy(d)
 
+    async def update_many(self, q, upd, array_filters=None, **_kw):
+        """`array_filters` sederhana (pola jembatan SKU: ``items.$[it].x`` + ``{"it.f": v}``)."""
+        if not array_filters:
+            return await super().update_many(q, upd)
+        n = 0
+        for d in self.docs:
+            if not fm.match(d, q):
+                continue
+            changed = False
+            for path, val in (upd.get("$set") or {}).items():
+                if ".$[" not in path:
+                    fm._set_path(d, path, copy.deepcopy(val))
+                    continue
+                arr, rest = path.split(".$[", 1)
+                name, field = rest.split("].", 1)
+                cond = {k.split(".", 1)[1]: v for f in array_filters for k, v in f.items()
+                        if k.startswith(name + ".")}
+                lst = fm._get(d, arr)
+                for el in (lst if isinstance(lst, list) else []):
+                    if isinstance(el, dict) and all(
+                            (el.get(k) is None) if v is None else fm.match(el, {k: v})
+                            for k, v in cond.items()):
+                        fm._set_path(el, field, copy.deepcopy(val))
+                        changed = True
+            n += int(changed)
+        return fm._Result(matched=n, modified=n)
+
     async def distinct(self, key, q=None):
         out = []
         for d in self.docs:
