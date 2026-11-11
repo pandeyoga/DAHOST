@@ -6,12 +6,15 @@
  *     RENCANA SERAH yang diisi user (bawaan = perkiraan dibulatkan ke atas);
  *   • tambahan di luar BOM: satuan mengikuti material (bukan selalu "pcs"), jumlah dalam satuan serah.
  * Pratinjau = `POST /kirim-cmt/accessory-plan/preview` — rumus yang sama dengan yang ditulis server saat PO disimpan.
- * Baris yang dikirim ke server: {source:'bom'|'tambahan', accessory_id, plan_qty_handover, handover_uom, notes}.
+ * Baris yang dikirim ke server: {source:'bom'|'tambahan', accessory_id, plan_qty_handover, handover_uom, notes,
+ * harga_jual_cmt}. Owner 11 Nov 2026: harga jual aksesoris ke CMT boleh diisi di PO (per satuan serah); nota tetap
+ * terbit saat Kirim ke CMT dan harganya terisi otomatis dari sini (masih bisa diubah).
  */
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiPost } from '../../../../lib/api';
@@ -49,11 +52,12 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
   const extras = rows.map((r, idx) => ({ r, idx })).filter(({ r }) => r.source !== 'bom');
   const matById = Object.fromEntries((accessories || []).map((m) => [m.id, m]));
 
-  const setBom = (b, patch) => {
+  const setBom = (b, patch, { rencana = true } = {}) => {
     const k = keyOf(b);
     const cur = bomOverride[k];
     const next = { ...(cur || { source: 'bom', accessory_id: b.accessory_id, accessory_name: b.accessory_name,
-      accessory_code: b.accessory_code, handover_uom: b.handover_uom }), ...patch, plan_edited: true };
+      accessory_code: b.accessory_code, handover_uom: b.handover_uom }), ...patch,
+    ...(rencana ? { plan_edited: true } : {}) };
     onChange(cur ? rows.map((r) => (r === cur ? next : r)) : [...rows, next]);
   };
   const setExtra = (idx, patch) => onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -86,6 +90,7 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
             <TableHead>Satuan serah</TableHead>
             <TableHead className="text-right">Rencana serah</TableHead>
             <TableHead className="text-right">= Satuan dasar</TableHead>
+            <TableHead className="text-right">Harga jual ke CMT</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {preview.rows.map((b, i) => {
@@ -131,6 +136,13 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
                   <TableCell className="text-right tabular-nums whitespace-nowrap">
                     {client ? '—' : `${fmtNum(Number(planned || 0) * Number(factor || 1), 4)} ${b.usage_unit}`}
                   </TableCell>
+                  <TableCell className="text-right">
+                    {client ? <span className="text-xs text-muted-foreground">—</span> : (
+                      <MoneyInput value={o.harga_jual_cmt ?? ''} placeholder="per satuan serah" className="h-8 w-32 ml-auto text-right"
+                        aria-label={`Harga jual ${b.accessory_name} ke CMT`} data-testid={`po-bom-acc-harga-${i}`}
+                        onChange={(e) => setBom(b, { harga_jual_cmt: e.target.value, handover_uom: uom }, { rencana: false })} />
+                    )}
+                  </TableCell>
                 </TableRow>
               );
             })}
@@ -139,7 +151,9 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
       )}
       {preview.rows.length > 0 && (
         <p className="text-xs text-muted-foreground">Untuk {fmtNum(preview.total_pcs)} pcs. Baris BOM ditulis sistem saat PO disimpan;
-          rencana serah yang diubah ikut tersimpan dan dipakai sebagai jumlah bawaan saat Kirim ke CMT.</p>
+          rencana serah yang diubah ikut tersimpan dan dipakai sebagai jumlah bawaan saat Kirim ke CMT. Harga jual ke CMT
+          (per satuan serah, boleh kosong) mengisi nota aksesoris otomatis saat Kirim ke CMT; notanya baru terbit saat itu,
+          hanya untuk CMT luar.</p>
       )}
       {(preview.warnings || []).length > 0 && (
         <Notice tone="warning" icon={AlertTriangle} testId="po-bom-acc-warning">
@@ -157,7 +171,7 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
         const opt = ho.options.find((x) => x.uom === uom) || ho.options[0];
         const plan = r.plan_qty_handover ?? (r.qty_needed && opt ? Number(r.qty_needed) / (opt.factor || 1) : '');
         return (
-          <div key={r.id || idx} className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_14rem_9rem_auto] items-center gap-2" data-testid={`po-acc-row-${idx}`}>
+          <div key={r.id || idx} className="grid grid-cols-1 sm:grid-cols-[1fr_7rem_14rem_9rem_9rem_auto] items-center gap-2" data-testid={`po-acc-row-${idx}`}>
             <SmartNativeSelect value={r.accessory_id || ''} aria-label="Aksesoris tambahan" className="h-9 w-full"
               onChange={(e) => {
                 const m = matById[e.target.value];
@@ -175,6 +189,9 @@ export default function RencanaAksesorisPO({ businessType, items, rows = [], onC
               onChange={(e) => setExtra(idx, { handover_uom: e.target.value })}>
               {ho.options.map((x) => <option key={x.uom} value={x.uom}>{x.label}</option>)}
             </SmartNativeSelect>
+            <MoneyInput value={r.harga_jual_cmt ?? ''} placeholder="Harga jual ke CMT" className="h-9 text-right"
+              aria-label="Harga jual ke CMT per satuan serah" data-testid={`po-acc-harga-${idx}`}
+              onChange={(e) => setExtra(idx, { harga_jual_cmt: e.target.value, handover_uom: uom })} />
             <GlassInput value={r.notes || ''} onChange={(e) => setExtra(idx, { notes: e.target.value })} placeholder="Catatan" className="h-9" />
             <Button type="button" variant="outline" size="icon" title="Hapus aksesoris" aria-label="Hapus aksesoris"
               onClick={() => onChange(rows.filter((_, i) => i !== idx))}><X className="w-4 h-4" /></Button>
@@ -194,6 +211,9 @@ export function planRowsFromPo(list) {
       accessory_code: a.accessory_code || '', unit: a.usage_unit || a.unit || '', notes: a.notes || '',
       handover_uom: a.handover_uom || '', plan_qty_handover: a.plan_qty_handover ?? undefined, qty_needed: a.qty_needed,
       plan_edited: bom ? !!a.plan_edited : undefined,
+      // harga jual ke CMT per satuan serah baris ini (owner 11 Nov 2026)
+      harga_jual_cmt: (a.harga_jual_cmt_dasar ?? null) === null ? undefined
+        : Math.round(Number(a.harga_jual_cmt_dasar) * (Number(a.handover_factor) || 1) * 100) / 100,
     };
   }).map((r) => (r.source === 'bom' && !r.plan_edited ? { ...r, plan_qty_handover: undefined } : r));
 }

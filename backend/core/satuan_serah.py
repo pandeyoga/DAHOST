@@ -194,16 +194,46 @@ def row_key(row: dict) -> str:
                or row.get("accessory_name") or row.get("name") or "")).strip().lower()
 
 
+# ── Harga jual aksesoris ke CMT di PO (owner 11 Nov 2026: "tidak apa apa diinputkan di draft, saat terbuat notanya
+#    baru saat kirim ke cmt"). Diketik per SATUAN SERAH baris PO; disimpan juga per satuan dasar supaya tetap benar
+#    bila satuan serah kiriman berbeda. Nota tetap terbit saat Kirim ke CMT (`core.nota_aksesoris_cmt`).
+HARGA_KEYS = ("harga_jual_cmt", "harga_jual_cmt_uom", "harga_jual_cmt_dasar")
+
+
+def harga_fields(material: Optional[dict], harga: Any, uom: Any = None) -> dict:
+    """Isian harga jual ke CMT (per satuan serah `uom`) → field tersimpan. Kosong = harga dihapus."""
+    if harga in (None, ""):
+        return {k: None for k in HARGA_KEYS}
+    h = max(0.0, _f(harga))
+    hu = resolve_handover(material, uom) if material else {"uom": uom_core.normalize_code(uom) or "", "factor": 1.0}
+    factor = _f(hu.get("factor")) or 1.0
+    return {"harga_jual_cmt": round(h, 2), "harga_jual_cmt_uom": hu.get("uom") or "",
+            "harga_jual_cmt_dasar": round(h / factor, 6)}
+
+
+def harga_untuk(row: Optional[dict], factor: Any) -> Optional[float]:
+    """Harga jual ke CMT dari baris PO untuk satuan serah ber-isi `factor` (None = belum diisi di PO)."""
+    d = (row or {}).get("harga_jual_cmt_dasar")
+    if d in (None, ""):
+        return None
+    return round(_f(d) * (_f(factor) or 1.0), 2)
+
+
 def carry_plan(new_rows: list, old_rows: list) -> list:
     """Rencana yang SUDAH DIUBAH user (≠ perkiraan lama) dipertahankan saat BOM dihitung ulang.
 
-    Rencana yang masih sama dengan perkiraan lama ikut perkiraan baru (qty PO berubah → rencana ikut)."""
-    old = {}
+    Rencana yang masih sama dengan perkiraan lama ikut perkiraan baru (qty PO berubah → rencana ikut).
+    Harga jual ke CMT yang diisi di PO selalu ikut (tidak bergantung qty)."""
+    old, harga = {}, {}
     for r in old_rows or []:
+        if r.get("harga_jual_cmt_dasar") not in (None, ""):
+            harga[row_key(r)] = {k: r.get(k) for k in HARGA_KEYS}
         if r.get("plan_qty_handover") in (None, ""):
             continue
         old[row_key(r)] = r
     for r in new_rows:
+        if row_key(r) in harga:
+            r.update(harga[row_key(r)])
         prev = old.get(row_key(r))
         if not prev:
             continue

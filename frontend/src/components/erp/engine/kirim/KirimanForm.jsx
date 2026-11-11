@@ -91,7 +91,11 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
   // Nota aksesoris: hanya CMT luar (tim jahit CV sendiri tidak membeli aksesoris); harga wajib diketik (0 = gratis).
   const notaInfo = calc?.nota_aksesoris || null;
   const notaRows = notaInfo?.berlaku ? barisDariHitungan(calc?.aksesoris, accVals) : [];
-  const notaErr = notaRows.length ? notaGalat(notaRows, notaHarga) : '';
+  // Owner 11 Nov 2026: harga jual yang sudah diisi di PO mengisi nota otomatis; ketikan di sini menang.
+  const hargaDariPo = useMemo(() => Object.fromEntries((calc?.aksesoris || [])
+    .filter((a) => a.harga_jual_po !== null && a.harga_jual_po !== undefined).map((a) => [a.key, String(a.harga_jual_po)])), [calc]);
+  const hargaNota = useMemo(() => ({ ...hargaDariPo, ...notaHarga }), [hargaDariPo, notaHarga]);
+  const notaErr = notaRows.length ? notaGalat(notaRows, hargaNota) : '';
   const canSave = form.vendor_id && form.po_id && lines.length && calc && !calc.blocking && !loading && !saving
     && !overRemaining.length && !noRate.length && !notaErr;
 
@@ -105,7 +109,7 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
         handover_uom: accVals[a.key]?.uom || a.handover_uom }));
       const data = await apiPost('/vendor-shipments', {
         ...rest, po_number: po?.po_number || '', shipment_type: 'NORMAL', items: lines, accessory_items,
-        ...(notaRows.length ? { nota_aksesoris: notaPayload(notaRows, notaHarga, notaCara) } : {}),
+        ...(notaRows.length ? { nota_aksesoris: notaPayload(notaRows, hargaNota, notaCara) } : {}),
         ...docNumberPayload(numPolicy, 'shipment_number', typed) });
       const mi = data.material_issue;
       toast.success(`Kiriman ${data.shipment_number} dibuat${mi?.mi_number ? ` · stok berkurang (${mi.mi_number})` : ''}`
@@ -246,7 +250,8 @@ export default function KirimanForm({ businessType, onClose, onSaved, onNavigate
             )}
           </div>
           {notaRows.length > 0 && (
-            <NotaAksesorisIsian rows={notaRows} harga={notaHarga} caraBayar={notaCara} onCaraBayar={setNotaCara}
+            <NotaAksesorisIsian rows={notaRows} harga={hargaNota} caraBayar={notaCara} onCaraBayar={setNotaCara}
+              dariPo={Object.fromEntries(Object.keys(hargaDariPo).filter((k) => notaHarga[k] === undefined).map((k) => [k, true]))}
               vendorName={(vendors.find((v) => v.id === form.vendor_id) || {}).garment_name}
               onHarga={(key, v) => setNotaHarga((h) => ({ ...h, [key]: v }))} testId="kirim-nota" />
           )}

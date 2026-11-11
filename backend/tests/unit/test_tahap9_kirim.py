@@ -468,3 +468,44 @@ def test_spp_maklon_mencetak_aksesoris_satuan_serah_tanpa_potongan(env):
     ren = spp["aksesoris"][0]
     assert (ren["handover_label"], ren["qty_handover"], ren["qty_base"]) == ("roll isi 2.240 cm", 15, 33600.0)
     assert [c["accessory_name"] for c in spp["client_accessories"]] == ["Label klien"]
+
+
+# ── Owner 11 Nov 2026: harga jual aksesoris ke CMT diisi di PO; nota baru terbit saat Kirim ke CMT ─────────────────
+def test_harga_jual_cmt_murni():
+    f = ss.harga_fields(RENDA, 22400, "roll")                      # 1 roll = 2.240 cm
+    assert f == {"harga_jual_cmt": 22400.0, "harga_jual_cmt_uom": "roll", "harga_jual_cmt_dasar": 10.0}
+    assert ss.harga_untuk(f, 2240) == 22400.0 and ss.harga_untuk(f, 1) == 10.0
+    assert ss.harga_fields(RENDA, "", "roll") == {k: None for k in ss.HARGA_KEYS}
+    assert ss.harga_untuk({}, 5) is None
+
+
+def test_harga_jual_cmt_di_po_ikut_hitung_ulang_bom_dan_mengisi_kirim(env):
+    from core import rencana_aksesoris as ra
+    import routes.production_internal_adapter as pia
+    d = _db()
+    run(pia.explode_po_accessories_from_bom(d, "PO1"))
+    bom_kcg = next(r for r in d.po_accessories.docs if r["accessory_code"] == KCG["code"])
+    out = run(ra.apply_rows(d, "PO1", [
+        # harga saja (rencana tidak diubah) — baris BOM tetap diperbarui
+        {"id": bom_kcg["id"], "source": "bom", "accessory_id": "KCG1", "harga_jual_cmt": "150"},
+        {"accessory_id": "REN1", "accessory_name": "Renda", "plan_qty_handover": 2, "handover_uom": "roll",
+         "harga_jual_cmt": 33600}]))
+    assert out["bom_updated"] == 1 and out["tambahan_saved"] == 1
+    kcg = next(r for r in d.po_accessories.docs if r["id"] == bom_kcg["id"])
+    assert (kcg["harga_jual_cmt"], kcg["harga_jual_cmt_dasar"]) == (150.0, 150.0)
+    assert not kcg["plan_edited"]                                  # mengisi harga ≠ mengubah rencana serah
+    # qty PO berubah → baris BOM ditulis ulang, harga tetap ikut
+    d.po_items.docs[0]["qty"] = 120
+    run(pia.explode_po_accessories_from_bom(d, "PO1"))
+    kcg2 = next(r for r in d.po_accessories.docs if r["accessory_code"] == KCG["code"] and r.get("bom_origin"))
+    assert kcg2["harga_jual_cmt_dasar"] == 150.0
+    # Kirim ke CMT: isian nota terisi dari PO, per satuan serah kiriman
+    calc = run(kc.compute(d, po_id="PO1", lines=[{"po_item_id": "pi1", "qty": 60}]))
+    harga = {(a["code"], a["source"]): a["harga_jual_po"] for a in calc["aksesoris"]}
+    assert harga[(KCG["code"], "bom")] == 150.0
+    assert harga[(RENDA["code"], "tambahan")] == 33600.0           # 15 per cm × 2.240 cm per roll
+    assert harga[(RENDA["code"], "bom")] is None                  # baris BOM Renda belum diberi harga di PO
+    # rincian PO menampilkan harga per satuan serah baris
+    from core import po_detail
+    rows = {r["code"]: r for r in map(po_detail.accessory_plan_row, d.po_accessories.docs)}
+    assert rows[KCG["code"]]["harga_jual_cmt"] == 150.0
