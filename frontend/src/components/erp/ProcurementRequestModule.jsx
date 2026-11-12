@@ -40,6 +40,7 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { DepartmentSelect } from './hr/hrPickers';
+import { denganAlasanMerchandiser } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -239,8 +240,10 @@ function CreatePRModal({ onClose, onCreated, token }) {
     setSaving(true); setError('');
     try {
       const { request_number: _rn, ...rest } = form;
-      await axios.post(`${API}/api/procurement/requests`, {
+      // 12 Nov 2026 (K-M2): bahan yang hanya dipakai model lambat/tidak laku → dialog alasan lalu kirim ulang.
+      await denganAlasanMerchandiser((extra) => axios.post(`${API}/api/procurement/requests`, {
         ...rest,
+        ...extra,
         ...docNumberPayload(numPolicy, 'request_number', form.request_number),
         items: filled.map((it) => ({
           material_id: it.material_id || undefined,
@@ -251,10 +254,10 @@ function CreatePRModal({ onClose, onCreated, token }) {
           estimated_price: Number(it.estimated_price) || 0,
           notes: it.notes,
         })),
-      }, { headers: { Authorization: `Bearer ${token}` } });
+      }, { headers: { Authorization: `Bearer ${token}` } }));
       onCreated();
     } catch (e) {
-      setError(e.response?.data?.detail || 'Gagal membuat PR');
+      setError(e.response?.data?.detail || (e.dibatalkan ? e.message : 'Gagal membuat PR'));
     } finally { setSaving(false); }
   };
 

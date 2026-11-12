@@ -1091,6 +1091,17 @@ async def _rencana_draf(ctx, args: dict) -> Tuple[dict, dict]:
     perubahan.append({"label": "Total", "sebelum": "—", "sesudah": f"{TP.angka(total)} pcs ({len(baris)} SKU)"})
     if not args.get("tenggat_produksi"):
         peringatan.append("Tenggat produksi belum diisi; PO tanpa tenggat tidak terpantau telat di Pantau Produksi.")
+    # 12 Nov 2026 (K-M2): pengaman Merchandiser — pemeriksaan yang SAMA dengan server saat PO disimpan
+    # (server menolak 428 bila model lambat/mati tanpa alasan ≥ 10 huruf; alasan kartu ikut dikirim).
+    cek = await ctx.api("GET", "/api/merchandiser/check", params={
+        "langkah": "po_produksi", "varian": ",".join(f"{i['rahaza_variant_id']}:{i['qty']}" for i in items)}) or {}
+    if cek.get("perlu_alasan"):
+        for t in cek.get("temuan") or []:
+            peringatan.append(f"Merchandiser — {t.get('kode')} {t.get('nama')} +{TP.angka(t.get('qty') or 0)} pcs: "
+                              + "; ".join(t.get("alasan") or []) + ".")
+        if len(alasan) < int(cek.get("min_alasan") or 10):
+            raise AlatError(400, (cek.get("pesan") or "Model ini lambat/tidak laku.") + " Tanyakan alasan bisnisnya "
+                                 "ke pengguna lalu siapkan ulang dengan alasan itu.")
     ubah.insert(0, _ubah_alasan(args))
     nomor = (args.get("nomor_po") or "").strip() or None
     catatan = [f"Dibuat sebagai DRAF (belum dikonfirmasi). Nomor: {nomor or (pol.get('nomor_berikutnya') or 'otomatis')}"
@@ -1105,6 +1116,8 @@ async def _rencana_draf(ctx, args: dict) -> Tuple[dict, dict]:
     body = {"business_type": "internal", "customer_name": PELANGGAN_INTERNAL, "po_number": nomor or "",
             "po_date": B.hari_ini(ctx).isoformat(), "deadline": args.get("tenggat_produksi") or None,
             "delivery_deadline": args.get("tenggat_kirim") or None, "notes": notes[:1000], "items": items}
+    if cek.get("perlu_alasan"):
+        body["alasan_merchandiser"] = alasan
     return TP._batasi({
         "judul": "Buat draf PO produksi internal",
         "ringkas": f"{len(baris)} SKU, total {TP.angka(total)} pcs"

@@ -1,6 +1,6 @@
 """Peringatan harian Asisten AI (Tahap D2, keputusan owner no. 12) — BERBASIS ATURAN, tanpa panggilan AI.
 
-Empat kondisi diperiksa sekali sehari (jam `asisten_peringatan_jam`, bawaan 07:00 WIB):
+Kondisi berikut diperiksa sekali sehari (jam `asisten_peringatan_jam`, bawaan 07:00 WIB):
 
   omzet   toko yang omzet bulan berjalannya tertinggal > 10% dari laju target (target × hari lewat / hari
           dalam bulan; data s.d. kemarin). Sumber: `core.ukuran_penjualan.analitik_target` (definisi omzet
@@ -11,6 +11,10 @@ Empat kondisi diperiksa sekali sehari (jam `asisten_peringatan_jam`, bawaan 07:0
           `services.management_alerts.scan_management_alerts(dry_run=True)` (aturan yang sama dengan
           peringatan manajemen 07:00).
   piutang invoice piutang yang jatuh tempo hari ini atau sudah lewat dan masih bersisa. Sumber yang sama.
+  merchandiser (12 Nov 2026, keputusan owner K-M9) — sumber `core.merchandiser` (layar Analisa Merchandiser):
+          setiap hari model LARIS yang akan habis (persediaan + WIP < batas laris) dan model yang stoknya habis padahal
+          masih terjual; setiap SENIN ringkasan model lambat/mati (nilai stok HPP terbesar) + PO/PR sepekan terakhir
+          yang lolos pengaman Merchandiser dengan alasan. Penerima: owner, superadmin, PPIC.
 
 Penerima mengikuti aturan yang sudah ada: owner selalu; ditambah PIC toko (`pic_user_id`) untuk omzet tokonya
 sendiri, peran Gudang untuk stok (sama dengan notifikasi stok rendah), peran Produksi untuk PO, peran
@@ -30,12 +34,16 @@ log = logging.getLogger(__name__)
 
 BATAS_TERTINGGAL_PERSEN = 10.0
 MAKS_RINCI = 5
-KONDISI = ("omzet", "stok", "po", "piutang")
+KONDISI = ("omzet", "stok", "po", "piutang", "laris_habis", "merchandiser_senin")
 LABEL_KONDISI = {"omzet": "Omzet di bawah laju target", "stok": "Stok di bawah titik pesan ulang",
-                 "po": "PO produksi lewat tenggat", "piutang": "Piutang jatuh tempo"}
+                 "po": "PO produksi lewat tenggat", "piutang": "Piutang jatuh tempo",
+                 "laris_habis": "Model laris akan habis", "merchandiser_senin": "Ringkasan Merchandiser mingguan"}
 SUBTYPE = {"omzet": "asisten_ai_marketing_omzet", "stok": "asisten_ai_stock_alert",
-           "po": "asisten_ai_production_po", "piutang": "asisten_ai_invoice_due"}
-MENU = {"omzet": "marketing-targets", "stok": "wh-stock", "po": "prod-monitoring", "piutang": "fin-ar-360"}
+           "po": "asisten_ai_production_po", "piutang": "asisten_ai_invoice_due",
+           "laris_habis": "asisten_ai_merchandiser", "merchandiser_senin": "asisten_ai_merchandiser"}
+MENU = {"omzet": "marketing-targets", "stok": "wh-stock", "po": "prod-monitoring", "piutang": "fin-ar-360",
+        "laris_habis": "mgmt-merchandiser", "merchandiser_senin": "mgmt-merchandiser"}
+PERAN_MERCHANDISER = ("owner", "superadmin", "ppic")       # K-M9: owner + superadmin + PPIC
 _BULAN = ("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
 _BULAN_PANJANG = ("Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September",
                   "Oktober", "November", "Desember")
@@ -211,10 +219,76 @@ async def cek_po_dan_piutang(db, tanggal: date, *, pindai: Optional[dict] = None
     return out
 
 
+def _model(r: dict) -> str:
+    return f"{r.get('kode') or '-'} {str(r.get('nama') or '')[:24]}".strip()
+
+
+def _angka(v: float) -> str:
+    return f"{float(v or 0):,.0f}".replace(",", ".")
+
+
+async def cek_merchandiser(db, tanggal: date) -> list[Kabar]:
+    """Harian: model laris akan habis + habis padahal masih terjual. Senin: ringkasan lambat/mati + PO/PR yang lolos
+    pengaman dengan alasan (7 hari). Angka dari SATU sumber `core.merchandiser` (sama dengan layar)."""
+    from datetime import datetime, time, timezone
+    from core import merchandiser as mc
+    a = await mc.analisa(db, hari_ini=tanggal)
+    peran = list(PERAN_MERCHANDISER)
+    out: list[Kabar] = []
+    cak = a.get("cakupan") or {}
+    catatan = (f" Cakupan: {cak.get('persen_pcs_tertaut')}% penjualan terhubung ke model; stok memakai perkiraan."
+               if cak.get("persen_pcs_tertaut") is not None else "")
+    laris = sorted([r for r in a["baris"] if r["kelas"] == "laris"], key=lambda r: r["minggu_persediaan"])
+    habis = sorted([r for r in a["baris"] if r["kelas"] == "habis"], key=lambda r: -r["laju_mingguan"])
+    if laris or habis:
+        bagian = []
+        if laris:
+            bagian.append(f"{len(laris)} model laris persediaannya kurang dari {a['ambang']['laris']:g} minggu: "
+                          + ", ".join(f"{_model(r)} ({r['minggu_persediaan']:g} mgg, {r['laju_mingguan']:g} pcs/mgg)"
+                                      for r in laris[:MAKS_RINCI]) + _sisa(len(laris) - MAKS_RINCI) + ".")
+        if habis:
+            bagian.append(f"{len(habis)} model stoknya habis padahal masih terjual: "
+                          + ", ".join(f"{_model(r)} ({r['laju_mingguan']:g} pcs/mgg)" for r in habis[:MAKS_RINCI])
+                          + _sisa(len(habis) - MAKS_RINCI) + ".")
+        out.append(Kabar("laris_habis", "umum", LABEL_KONDISI["laris_habis"],
+                         " ".join(bagian) + " Cek bahan & jadwalkan PO produksi bila marginnya baik." + catatan,
+                         len(laris) + len(habis), target_roles=peran, severity="warning"))
+    if tanggal.weekday() == 0:
+        rugi = sorted([r for r in a["baris"] if r["kelas"] in ("lambat", "mati")],
+                      key=lambda r: -float(r.get("nilai_stok_hpp") or 0))
+        mulai = datetime.combine(tanggal - timedelta(days=7), time.min, tzinfo=timezone.utc) - timedelta(hours=7)
+        lolos = await mc.jejak_pengaman(db, sejak=mulai)
+        if rugi or lolos:
+            ring = a["ringkasan"]
+            bagian = []
+            if rugi:
+                nilai = sum(float(r.get("nilai_stok_hpp") or 0) for r in rugi)
+                bagian.append(
+                    f"{ring['lambat']['baris']} model lambat dan {ring['mati']['baris']} model mati, stok "
+                    f"{_angka(sum(r['stok_perkiraan'] for r in rugi))} pcs senilai {rp(nilai)} (HPP). Terbesar: "
+                    + ", ".join(f"{_model(r)} ({_kelas(mc, r)}, {rp(r.get('nilai_stok_hpp'))})"
+                                for r in rugi[:MAKS_RINCI]) + _sisa(len(rugi) - MAKS_RINCI)
+                    + ". Saran: stop produksi & pembelian bahannya, dorong penjualan (promo, pindah toko, bundling).")
+            if lolos:
+                bagian.append(f"{len(lolos)} dokumen sepekan terakhir lolos pengaman dengan alasan: "
+                              + "; ".join(f"{x['jenis']} {x['nomor'] or '-'} oleh {x['oleh'] or '-'} — "
+                                          f"\"{str(x['alasan'])[:60]}\"" for x in lolos[:MAKS_RINCI])
+                              + _sisa(len(lolos) - MAKS_RINCI) + ".")
+            out.append(Kabar("merchandiser_senin", "umum", LABEL_KONDISI["merchandiser_senin"],
+                             " ".join(bagian) + catatan, len(rugi) + len(lolos), target_roles=peran,
+                             severity="warning"))
+    return out
+
+
+def _kelas(mc, r: dict) -> str:
+    return str(mc.LABEL_KELAS.get(r["kelas"], r["kelas"])).lower()
+
+
 PEMERIKSA: tuple[tuple[str, Callable[..., Awaitable[list]]], ...] = (
     ("omzet", cek_omzet),
     ("stok", cek_stok),
     ("po_piutang", cek_po_dan_piutang),
+    ("merchandiser", cek_merchandiser),
 )
 
 

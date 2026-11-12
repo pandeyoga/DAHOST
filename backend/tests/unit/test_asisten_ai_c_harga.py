@@ -407,6 +407,13 @@ class Ctx:
             return await mb.list_period_locks(r, account_id=None)
         if (method, path) == ("POST", "/api/marketing/periods/lock"):
             return await mb.set_period_lock(mb.PeriodLockIn(**body), r)
+        if (method, path) == ("GET", "/api/merchandiser/check"):      # 12 Nov 2026 (K-M2): pengaman Merchandiser
+            from core import merchandiser as mcm
+            from routes import merchandiser as mr
+            items = mr._pasangan(p.get("model"), "model_id") + mr._pasangan(p.get("varian"), "rahaza_variant_id")
+            t = await mcm.periksa(e["db"], hari_ini=HARI, per_model=await mcm.model_dari_item(e["db"], items))
+            return {"perlu_alasan": bool(t), "temuan": t, "pesan": mcm.pesan(t, "po_produksi") if t else "",
+                    "min_alasan": mcm.MIN_ALASAN}
         raise AlatError(404, f"rute uji tidak ada: {method} {path}")
 
 
@@ -937,7 +944,8 @@ def test_tidak_ada_jalur_terlarang_di_modul():
     assert jalur <= {"/api/marketing/catalog-items/search", "/api/marketing/change-log", "/api/marketing/catalogs",
                      "/api/marketing/discounts", "/api/production-pos", "/api/rahaza/variants",
                      "/api/doc-number-policy", "/api/rahaza/stock-thresholds", "/api/marketing/periods/lock",
-                     "/api/marketing/periods/locks"}, jalur
+                     "/api/marketing/periods/locks",
+                     "/api/merchandiser/check"}, jalur      # 12 Nov 2026 (K-M2): cek pengaman, baca saja
     for kata in ("/status", "confirm", "quick-complete", "close-short", "stock-adjust", "adjustment", "journal",
                  "payment", "/close"):
         assert kata not in src, kata

@@ -5,6 +5,7 @@ Hanya membaca. Staf DA saja (klien & vendor CMT ditolak; peran portal marketing 
 """
 from __future__ import annotations
 
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -54,3 +55,48 @@ async def get_cek_rencana(request: Request, model_id: str = Query(..., max_lengt
     await _staff(request)
     return await mc.cek_rencana(get_db(), hari_ini=today_wib(), model_id=model_id, qty=qty,
                                 variant_id=variant_id or None)
+
+
+
+def _pasangan(teks: Optional[str], kunci: str) -> list:
+    out = []
+    for bagian in (teks or "").split(",")[:200]:
+        nama, _, q = bagian.strip().rpartition(":")
+        try:
+            qty = float(q)
+        except ValueError:
+            continue
+        if nama and qty > 0:
+            out.append({kunci: nama, "qty": qty})
+    return out
+
+
+@router.get("/check")
+async def get_check(request: Request,
+                    langkah: str = Query("po_produksi", pattern="^(po_produksi|pr_bahan|po_bahan|pr_aksesoris)$"),
+                    model: Optional[str] = Query(None, max_length=8000),
+                    varian: Optional[str] = Query(None, max_length=8000),
+                    bahan: Optional[str] = Query(None, max_length=8000)):
+    """Periksa rencana TANPA menyimpan apa pun (pengaman K-M2) — sama dengan yang diperiksa server saat PO/PR disimpan.
+
+    `model` = "id_model:qty,…", `varian` = "id_varian:qty,…" (rencana produksi), `bahan` = "id_bahan,…" (pembelian)
+    → {perlu_alasan, temuan, pesan, min_alasan, kunci_alasan}."""
+    await _staff(request)
+    db = get_db()
+    items = _pasangan(model, "model_id") + _pasangan(varian, "rahaza_variant_id")
+    mats = [m.strip() for m in (bahan or "").split(",") if m.strip()][:200]
+    per_model = await mc.model_dari_item(db, items) if items else None
+    temuan = await mc.periksa(db, hari_ini=today_wib(), per_model=per_model, material_ids=mats or None)
+    return {"langkah": langkah, "perlu_alasan": bool(temuan), "temuan": temuan,
+            "pesan": mc.pesan(temuan, langkah) if temuan else "", "min_alasan": mc.MIN_ALASAN,
+            "kunci_alasan": mc.KUNCI_ALASAN}
+
+
+@router.get("/pengaman")
+async def get_pengaman(request: Request, hari: int = Query(7, ge=1, le=92)):
+    """PO produksi / Permintaan Pengadaan / PO pembelian / PR aksesoris yang LOLOS pengaman Merchandiser dengan alasan
+    dalam `hari` hari terakhir (terbaru dulu): nomor dokumen, siapa, kapan, alasan, model/bahan yang ditahan."""
+    await _staff(request)
+    mulai = datetime.combine(today_wib() - timedelta(days=hari - 1), time.min) - timedelta(hours=7)   # 00:00 WIB
+    rows = await mc.jejak_pengaman(get_db(), sejak=mulai.replace(tzinfo=timezone.utc))
+    return {"hari": hari, "jumlah": len(rows), "baris": rows}

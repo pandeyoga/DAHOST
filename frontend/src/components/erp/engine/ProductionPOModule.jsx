@@ -36,6 +36,7 @@ import { PageLayoutSatuBaris } from './DataTable';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import RencanaAksesorisPO, { planRowsFromPo } from './kirim/RencanaAksesorisPO';   // Tahap 9 (kirim)
 import DendaTutupPO, { dendaAwal, dendaGalat, dendaPayload } from './DendaTutupPO';   // 10 Nov 2026: denda saat Tutup PO
+import { denganAlasanMerchandiser } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 // PO yang sudah ditutup terkunci untuk semua peran (Tahap 2) — tombol Ubah/Tutup tidak ditawarkan.
@@ -464,9 +465,10 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     // supaya tidak ada nomor yang "lolos" tanpa mengikuti pola.
     if (!editData && numPolicy?.mode === 'auto') delete payload.po_number;
     try {
-      const data = editData
-        ? await apiPut(`/production-pos/${editData.id}`, payload)
-        : await apiPost('/production-pos', payload);
+      // 12 Nov 2026 (K-M2): model lambat/tidak laku → server minta alasan (dialog) lalu dikirim ulang.
+      const data = await denganAlasanMerchandiser((extra) => (editData
+        ? apiPut(`/production-pos/${editData.id}`, { ...payload, ...extra })
+        : apiPost('/production-pos', { ...payload, ...extra })));
       // For create path, backend doesn't accept po_accessories in POST; keep legacy secondary call
       if (!editData && accPayload.length > 0) {
         try {

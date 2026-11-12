@@ -598,13 +598,37 @@ def sumber_peringatan(monkeypatch, env):
                               {"invoice_number": "INV-UJI-2", "days_left": -5, "outstanding": 10_500_000},
                               {"invoice_number": "INV-UJI-3", "days_left": 4, "outstanding": 9_000_000}]}
     monkeypatch.setattr(prg, "_pindai_manajemen", _pindai)
+
+    # 12 Nov 2026 (K-M9): sumber Merchandiser — satu model laris, satu habis, satu lambat, satu mati
+    from core import merchandiser as mc
+
+    def _b(kode, kelas, mgg, laju, stok, nilai):
+        return {"model_id": kode, "kode": kode, "nama": f"Model {kode}", "kelas": kelas, "minggu_persediaan": mgg,
+                "laju_mingguan": laju, "stok_perkiraan": stok, "nilai_stok_hpp": nilai}
+
+    async def _analisa(db_, *, hari_ini, **k):
+        dipanggil.setdefault("merchandiser", []).append(hari_ini)
+        baris = [_b("DA-9", "mati", 999, 0, 300, 9_000_000), _b("DA-4301", "lambat", 40, 25, 1000, 40_000_000),
+                 _b("DA-1512", "laris", 1.5, 200, 300, 15_000_000), _b("DA-1401", "habis", 0, 50, 0, 0),
+                 _b("DA-2000", "sehat", 5, 30, 150, 4_500_000)]
+        ring = {k: {"baris": sum(1 for r in baris if r["kelas"] == k)} for k in mc.KELAS}
+        return {"ambang": mc.rapikan_ambang(None), "baris": baris, "ringkasan": ring,
+                "cakupan": {"persen_pcs_tertaut": 88.8}}
+
+    async def _jejak(db_, *, sejak, batas=100):
+        dipanggil["jejak_sejak"] = sejak
+        return [{"jenis": "PO produksi", "nomor": "PO-INT-0099", "oleh": "Staf PPIC",
+                 "alasan": "Pesanan khusus toko offline sudah dibayar", "pada": "2026-11-05T03:00:00+00:00"}]
+    monkeypatch.setattr(mc, "analisa", _analisa)
+    monkeypatch.setattr(mc, "jejak_pengaman", _jejak)
     return dipanggil
 
 
 def test_peringatan_ambang_penerima_dan_sekali_sehari(env, sumber_peringatan):
     db = env["db"]
     out = run(pro.jalankan_peringatan(db, HARI, pemicu="manual"))
-    assert out["pemeriksa"] == {"omzet": "ok", "stok": "ok", "po_piutang": "ok"} and out["notifikasi"] == 5
+    assert out["pemeriksa"] == {"omzet": "ok", "stok": "ok", "po_piutang": "ok", "merchandiser": "ok"}
+    assert out["notifikasi"] == 6                                             # + model laris akan habis
     ids, bulan, hari_ini = sumber_peringatan["target"]
     assert ids == ["t-a", "t-b", "t-c", "t-d"] and bulan == ["2026-11"] and hari_ini == date(2026, 11, 7)
     by = {(n["subtype"], tuple(n["meta"]["target_user_ids"])): n for n in db.notifications.docs}
@@ -631,10 +655,10 @@ def test_peringatan_ambang_penerima_dan_sekali_sehari(env, sumber_peringatan):
     _setel(env, asisten_briefing_aktif=False)
     out3 = run(_detak(env, _jam(7, 0)))
     assert out3["dimulai"] == ["peringatan"] and out3["hasil"][0]["notifikasi"] == 0
-    assert run(_detak(env, _jam(7, 1)))["dimulai"] == [] and len(db.notifications.docs) == 5
+    assert run(_detak(env, _jam(7, 1)))["dimulai"] == [] and len(db.notifications.docs) == 6
     assert env["fake"].panggilan == []                                        # tanpa panggilan AI
-    # hari berikutnya boleh lagi
-    assert run(pro.jalankan_peringatan(db, date(2026, 11, 9)))["notifikasi"] == 5
+    # hari berikutnya boleh lagi (Senin: + ringkasan Merchandiser mingguan)
+    assert run(pro.jalankan_peringatan(db, date(2026, 11, 9)))["notifikasi"] == 7
 
 
 def test_peringatan_tanggal_satu_tanpa_omzet_dan_pemeriksa_gagal(env, sumber_peringatan, monkeypatch):
@@ -645,7 +669,25 @@ def test_peringatan_tanggal_satu_tanpa_omzet_dan_pemeriksa_gagal(env, sumber_per
     monkeypatch.setattr(stock_thresholds, "low_stock_alerts", _rusak)
     out = run(pro.jalankan_peringatan(env["db"], date(2026, 12, 1)))
     assert out["pemeriksa"]["stok"] == "gagal" and "target" not in sumber_peringatan
-    assert sorted(k["kondisi"] for k in out["kondisi"]) == ["piutang", "po"]
+    assert sorted(k["kondisi"] for k in out["kondisi"]) == ["laris_habis", "piutang", "po"]
+
+
+def test_peringatan_merchandiser_harian_dan_senin(env, sumber_peringatan):
+    """K-M9: setiap hari model laris akan habis; Senin ringkasan lambat/mati + dokumen yang lolos pengaman."""
+    db = env["db"]
+    run(pro.jalankan_peringatan(db, HARI))                                   # Minggu: tanpa ringkasan Senin
+    m = [n for n in db.notifications.docs if n["subtype"] == "asisten_ai_merchandiser"]
+    assert len(m) == 1 and m[0]["title"] == "Model laris akan habis"
+    assert "DA-1512 Model DA-1512 (1.5 mgg, 200 pcs/mgg)" in m[0]["body"] and "DA-1401" in m[0]["body"]
+    assert "kurang dari 3 minggu" in m[0]["body"] and "88.8%" in m[0]["body"] and "DA-4301" not in m[0]["body"]
+    assert sorted(m[0]["meta"]["target_roles"]) == ["owner", "ppic", "superadmin"]
+    assert m[0]["meta"]["link_module"] == "mgmt-merchandiser"
+    run(pro.jalankan_peringatan(db, date(2026, 11, 9)))                      # Senin
+    sen = next(n for n in db.notifications.docs if n["title"] == "Ringkasan Merchandiser mingguan")
+    assert "1 model lambat dan 1 model mati, stok 1.300 pcs senilai Rp 49 jt (HPP)" in sen["body"]
+    assert sen["body"].index("DA-4301") < sen["body"].index("DA-9")          # nilai stok terbesar dulu
+    assert "PO produksi PO-INT-0099 oleh Staf PPIC" in sen["body"] and "Pesanan khusus toko offline" in sen["body"]
+    assert sumber_peringatan["jejak_sejak"].isoformat() == "2026-11-01T17:00:00+00:00"   # Senin lalu 00:00 WIB
 
 
 def test_format_rupiah_singkat():

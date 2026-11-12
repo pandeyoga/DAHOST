@@ -394,17 +394,218 @@ async def cek_rencana(db, *, hari_ini: date, model_id: str, qty: float, variant_
     stok = sum(r["stok_perkiraan"] for r in rows)
     wip = sum(r["wip"] for r in rows)
     n = a["periode"]["minggu"]
-    sekarang = metrik(terjual, sum(r["terjual_sebelumnya"] for r in rows), stok, wip, n, amb)
-    sesudah = metrik(terjual, sum(r["terjual_sebelumnya"] for r in rows), stok, wip + max(0.0, _f(qty)), n, amb)
-    perlu_alasan = sekarang["kelas"] in ("lambat", "mati") or sesudah["minggu_persediaan"] > amb["awas"]
-    alasan = []
-    if sekarang["kelas"] in ("lambat", "mati"):
-        alasan.append(f"model ini {sekarang['kelas_label'].lower()} (persediaan {sekarang['minggu_persediaan']} minggu)")
-    if sesudah["minggu_persediaan"] > amb["awas"]:
-        alasan.append(f"sesudah tambahan {qty:.0f} pcs persediaan menjadi {sesudah['minggu_persediaan']} minggu "
-                      f"(batas {amb['awas']:.0f} minggu)")
-    return {"model_id": model_id, "variant_id": variant_id, "qty": _f(qty), "sekarang": sekarang, "sesudah": sesudah,
-            "keputusan": "perlu_alasan" if perlu_alasan else "aman", "alasan": alasan,
-            "periode": a["periode"], "cakupan": {k: a["cakupan"][k] for k in ("persen_pcs_tertaut",
+    k = keputusan(terjual, sum(r["terjual_sebelumnya"] for r in rows), stok, wip, qty, n, amb)
+    return {"model_id": model_id, "variant_id": variant_id, "qty": _f(qty), **k,
+            "periode": a["periode"], "cakupan": {x: a["cakupan"][x] for x in ("persen_pcs_tertaut",
                                                                                "penjualan_belum_scan_keluar_pcs")},
             "sumber": SUMBER}
+
+
+def keputusan(terjual: float, terjual_lalu: float, stok: float, wip: float, qty: float, n: int, amb: dict) -> dict:
+    """Fungsi murni: rencana tambahan `qty` pcs → {sekarang, sesudah, keputusan aman|perlu_alasan, alasan[]}.
+
+    Model BARU (belum pernah terjual, tanpa stok & WIP) tidak ditahan — peluncuran produk baru bukan "barang tidak
+    laku". Perlu alasan bila model sekarang lambat/mati, atau persediaan SESUDAH tambahan melewati batas perlu awas."""
+    sekarang = metrik(terjual, terjual_lalu, stok, wip, n, amb)
+    sesudah = metrik(terjual, terjual_lalu, stok, wip + max(0.0, _f(qty)), n, amb)
+    if sekarang["kelas"] == "kosong" and terjual_lalu <= 0:
+        return {"sekarang": sekarang, "sesudah": sesudah, "keputusan": "aman", "baru": True,
+                "alasan": ["model baru: belum ada penjualan maupun stok, jadi belum bisa dinilai"]}
+    alasan = []
+    if sekarang["kelas"] in ("lambat", "mati"):
+        alasan.append(f"model ini {sekarang['kelas_label'].lower()} (persediaan "
+                      f"{_mgg(sekarang['minggu_persediaan'])}, laju {sekarang['laju_mingguan']:g} pcs/minggu)")
+    if sesudah["minggu_persediaan"] > amb["awas"]:
+        alasan.append(f"sesudah tambahan {_f(qty):.0f} pcs persediaan menjadi {_mgg(sesudah['minggu_persediaan'])} "
+                      f"(batas {amb['awas']:.0f} minggu)")
+    return {"sekarang": sekarang, "sesudah": sesudah, "keputusan": "perlu_alasan" if alasan else "aman",
+            "baru": False, "alasan": alasan}
+
+
+def _mgg(v: float) -> str:
+    return "tak terbatas (tidak terjual)" if v >= BESAR else f"{v:g} minggu"
+
+
+# ── Pengaman PO produksi & pembelian bahan (M2, keputusan owner K-M2) ────────
+STATUS_ALASAN = 428                     # sama dengan pola "alasan wajib" kelebihan qty (core.over_qty)
+MIN_ALASAN = 10
+KUNCI_ALASAN = "alasan_merchandiser"    # isian body yang membawa alasan
+LANGKAH = {"po_produksi": "PO produksi", "pr_bahan": "permintaan pembelian bahan",
+           "po_bahan": "PO pembelian bahan", "pr_aksesoris": "permintaan pembelian aksesoris"}
+KELAS_TAHAN = ("lambat", "mati")
+
+
+async def model_dari_item(db, items: Iterable[dict]) -> Dict[str, float]:
+    """{model_id: qty} dari baris PO produksi (model_id langsung, atau varian/SKU master → modelnya)."""
+    out: Dict[str, float] = defaultdict(float)
+    cari = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        q = _f(it.get("qty") if it.get("qty") is not None else it.get("qty_ordered"))
+        if q <= 0:
+            continue
+        if it.get("model_id"):
+            out[it["model_id"]] += q
+        else:
+            cari.append((it, q))
+    for it, q in cari:
+        vid = it.get("rahaza_variant_id") or it.get("variant_id")
+        filt = {"id": vid} if vid else ({"sku": it["sku"]} if it.get("sku") else None)
+        if not filt:
+            continue
+        v = await db.rahaza_model_variants.find_one(filt, {"_id": 0, "model_id": 1})
+        if v and v.get("model_id"):
+            out[v["model_id"]] += q
+    return dict(out)
+
+
+async def periksa_produksi(db, per_model: Dict[str, float], *, hari_ini: date,
+                           analisa_siap: Optional[dict] = None) -> List[dict]:
+    """Model dalam rencana produksi yang PERLU ALASAN (lambat/mati, atau persediaan sesudahnya > batas)."""
+    per_model = {m: q for m, q in (per_model or {}).items() if m and q > 0}
+    if not per_model:
+        return []
+    a = analisa_siap or await analisa(db, hari_ini=hari_ini)
+    amb, n = a["ambang"], a["periode"]["minggu"]
+    rows = {r["model_id"]: r for r in a["baris"]}
+    nm = await nama_model(db, per_model)
+    out = []
+    for mid, q in sorted(per_model.items()):
+        r = rows.get(mid) or {}
+        k = keputusan(r.get("terjual", 0.0), r.get("terjual_sebelumnya", 0.0), r.get("stok_perkiraan", 0.0),
+                      r.get("wip", 0.0), q, n, amb)
+        if k["keputusan"] == "perlu_alasan":
+            info = nm.get(mid) or {}
+            out.append({"model_id": mid, "kode": info.get("kode") or r.get("kode", ""), "nama": info.get("nama")
+                        or r.get("nama", ""), "qty": q, "kelas": k["sekarang"]["kelas"],
+                        "minggu_sekarang": k["sekarang"]["minggu_persediaan"],
+                        "minggu_sesudah": k["sesudah"]["minggu_persediaan"], "alasan": k["alasan"]})
+    return out
+
+
+async def periksa_bahan(db, material_ids: Iterable[str], *, hari_ini: date,
+                        analisa_siap: Optional[dict] = None) -> List[dict]:
+    """Bahan yang hanya dipakai (menurut BOM) model lambat/mati — membelinya berarti menambah barang tidak laku.
+    Bahan yang tidak ada di BOM mana pun (bahan umum) atau dipakai minimal satu model yang masih laku tidak ditahan."""
+    ids = sorted({m for m in material_ids or [] if m})
+    if not ids:
+        return []
+    pemakai: Dict[str, set] = defaultdict(set)
+    async for b in db.rahaza_boms.find({"materials.material_id": {"$in": ids}, "is_active": {"$ne": False}},
+                                       {"_id": 0, "model_id": 1, "materials.material_id": 1}):
+        for m in b.get("materials") or []:
+            if isinstance(m, dict) and m.get("material_id") in ids and b.get("model_id"):
+                pemakai[m["material_id"]].add(b["model_id"])
+    if not pemakai:
+        return []
+    a = analisa_siap or await analisa(db, hari_ini=hari_ini)
+    kelas = {r["model_id"]: r["kelas"] for r in a["baris"]}
+    rows = {r["model_id"]: r for r in a["baris"]}
+    nama = {}
+    async for m in db[MATERIALS].find({"id": {"$in": list(pemakai)}}, {"_id": 0, "id": 1, "code": 1, "name": 1}):
+        nama[m["id"]] = f"{m.get('code') or ''} {m.get('name') or ''}".strip()
+    out = []
+    for mid, models in sorted(pemakai.items()):
+        ks = {mm: kelas.get(mm, "kosong") for mm in models}
+        bernilai = [mm for mm, k in ks.items() if k != "kosong"]
+        if not bernilai or any(ks[mm] not in KELAS_TAHAN for mm in bernilai):
+            continue
+        contoh = sorted(bernilai, key=lambda mm: -(rows.get(mm) or {}).get("stok_perkiraan", 0))[:5]
+        out.append({"material_id": mid, "nama": nama.get(mid, mid), "model": [
+            {"model_id": mm, "kode": (rows.get(mm) or {}).get("kode", ""), "kelas": ks[mm],
+             "minggu_persediaan": (rows.get(mm) or {}).get("minggu_persediaan")} for mm in contoh],
+            "alasan": ["semua model yang memakai bahan ini (menurut BOM) lambat atau mati"]})
+    return out
+
+
+def pesan(temuan: List[dict], langkah: str) -> str:
+    bagian = []
+    for t in temuan[:5]:
+        if "material_id" in t:
+            mod = ", ".join(f"{m['kode']} ({LABEL_KELAS.get(m['kelas'], m['kelas']).lower()})" for m in t["model"])
+            bagian.append(f"{t['nama']}: hanya dipakai {mod}")
+        else:
+            bagian.append(f"{t['kode']} {t['nama']} +{t['qty']:.0f} pcs: " + "; ".join(t["alasan"]))
+    lebih = f" dan {len(temuan) - 5} lainnya" if len(temuan) > 5 else ""
+    return (f"Pengaman Merchandiser: {LANGKAH.get(langkah, langkah)} ini menambah persediaan yang sulit "
+            "terjual — " + " · ".join(bagian) + lebih +
+            f". Isi alasan (minimal {MIN_ALASAN} huruf) untuk tetap melanjutkan; alasan tercatat di dokumen.")
+
+
+def wajib_alasan(temuan: List[dict], alasan: Any, langkah: str) -> str:
+    """Alasan yang dirapikan; HTTP 428 bila ada temuan tanpa alasan yang cukup (pola sama dengan core.over_qty)."""
+    from fastapi import HTTPException
+    teks = str(alasan or "").strip()[:1000]
+    if temuan and len(teks) < MIN_ALASAN:
+        raise HTTPException(STATUS_ALASAN, pesan(temuan, langkah))
+    return teks
+
+
+def jejak(langkah: str, temuan: List[dict], alasan: str, user: dict) -> dict:
+    """Satu entri `merchandiser_events`: siapa, kapan, alasan, model/bahan yang ditahan."""
+    return {"langkah": langkah, "alasan": alasan, "temuan": temuan[:20],
+            "oleh": {"id": (user or {}).get("id"), "nama": (user or {}).get("name") or (user or {}).get("email")},
+            "pada": datetime.now(timezone.utc).isoformat()}
+
+
+async def catat(db, koleksi: str, doc_id: str, langkah: str, temuan: List[dict], alasan: str, user: dict) -> None:
+    """Tambahkan jejak ke dokumen yang sudah tersimpan (`$push merchandiser_events`)."""
+    if not temuan or not doc_id:
+        return
+    await db[koleksi].update_one({"id": doc_id},
+                                 {"$push": {"merchandiser_events": jejak(langkah, temuan, alasan, user)}})
+
+
+def bahan_baru(lama: Iterable[dict], baru: Iterable[dict], kunci: str = "material_id") -> List[str]:
+    """Id bahan yang muncul di daftar baris BARU tetapi tidak ada di daftar lama (ubah draf = tambah bahan)."""
+    ada = {(x or {}).get(kunci) for x in lama or [] if isinstance(x, dict)}
+    return sorted({(x or {}).get(kunci) for x in baru or [] if isinstance(x, dict)} - ada - {None, ""})
+
+
+async def periksa(db, *, hari_ini: date, per_model: Optional[dict] = None,
+                  material_ids: Optional[Iterable[str]] = None) -> List[dict]:
+    """Temuan pengaman untuk rencana produksi (`per_model` {model_id: qty}) dan/atau pembelian bahan."""
+    temuan: List[dict] = []
+    a = None
+    if per_model:
+        a = await analisa(db, hari_ini=hari_ini)
+        temuan += await periksa_produksi(db, per_model, hari_ini=hari_ini, analisa_siap=a)
+    if material_ids:
+        temuan += await periksa_bahan(db, material_ids, hari_ini=hari_ini, analisa_siap=a)
+    return temuan
+
+
+async def jaga(db, *, langkah: str, alasan: Any, user: dict, hari_ini: date, per_model: Optional[dict] = None,
+               material_ids: Optional[Iterable[str]] = None) -> tuple:
+    """Satu pintu untuk route: (temuan, alasan_rapi). Melempar 428 bila perlu alasan dan alasan belum cukup."""
+    temuan = await periksa(db, hari_ini=hari_ini, per_model=per_model, material_ids=material_ids)
+    return temuan, wajib_alasan(temuan, alasan, langkah)
+
+
+# ── Jejak pengaman (M3, laporan Senin & layar) ───────────────────────────────
+DOK_PENGAMAN = (  # koleksi, kolom nomor, label, menu layar
+    ("production_pos", "po_number", "PO produksi", "prod-pos-internal"),
+    ("dewi_procurement_requests", "request_number", "Permintaan pengadaan", "proc-requests"),
+    ("rahaza_purchase_orders", "po_number", "PO pembelian", "proc-purchase-orders"),
+    ("acc_purchase_requests", "pr_number", "PR aksesoris", "proc-accessory-pr"),
+)
+
+
+async def jejak_pengaman(db, *, sejak: datetime, batas: int = 100) -> List[dict]:
+    """Dokumen yang LOLOS pengaman dengan alasan sejak `sejak` (terbaru dulu): siapa, kapan, alasan, model/bahan."""
+    batas_iso = sejak.astimezone(timezone.utc).isoformat() if sejak.tzinfo else sejak.isoformat()
+    out: List[dict] = []
+    for kol, nomor, label, menu in DOK_PENGAMAN:
+        async for d in db[kol].find({"merchandiser_events": {"$elemMatch": {"pada": {"$gte": batas_iso}}}},
+                                    {"_id": 0, "id": 1, nomor: 1, "merchandiser_events": 1}):
+            for ev in d.get("merchandiser_events") or []:
+                if str(ev.get("pada") or "") < batas_iso:
+                    continue
+                isi = [t.get("kode") or t.get("nama") or "" for t in ev.get("temuan") or []]
+                out.append({"jenis": label, "menu": menu, "dokumen_id": d.get("id"), "nomor": d.get(nomor) or "",
+                            "langkah": ev.get("langkah"), "alasan": ev.get("alasan") or "",
+                            "oleh": (ev.get("oleh") or {}).get("nama") or "", "pada": ev.get("pada"),
+                            "barang": [x for x in isi if x][:10]})
+    out.sort(key=lambda r: str(r["pada"]), reverse=True)
+    return out[:batas]
