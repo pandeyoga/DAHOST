@@ -330,9 +330,12 @@ const ALASAN_LEWAT = {
 };
 const LABEL_KONDISI = {
   omzet: 'Omzet tertinggal target', stok: 'Stok di bawah titik pesan ulang', po: 'PO produksi lewat tenggat',
-  piutang: 'Piutang jatuh tempo',
+  piutang: 'Piutang jatuh tempo', laris_habis: 'Model laris akan habis',
+  merchandiser_senin: 'Ringkasan Merchandiser mingguan',
 };
-const LABEL_PEMERIKSA = { omzet: 'omzet', stok: 'stok', po_piutang: 'PO produksi dan piutang' };
+const LABEL_PEMERIKSA = {
+  omzet: 'omzet', stok: 'stok', po_piutang: 'PO produksi dan piutang', merchandiser: 'merchandiser',
+};
 
 const sesiDari = (h) => {
   const o = obj(h);

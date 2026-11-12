@@ -52,6 +52,7 @@ import { useActiveEmployees, EmployeeSelect } from './hr/hrPickers';
 import PageLayout from './layout/PageLayout';
 import HubTabs from './hubs/HubTabs';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import { denganAlasanMerchandiser } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -979,9 +980,10 @@ function PurchaseRequestTab({ token, items, title, subtitle, ringkasan }) {
     if (!validLines.length) { setFormErr('Minimal 1 item'); return; }
     setSaving(true); setFormErr('');
     try {
-      await api('POST', '/api/acc/purchase-requests', token,
-                { ...form, items: validLines,
-                  ...docNumberPayload(numPolicy, 'pr_number', prNumber) });
+      // 12 Nov 2026 (K-M2): aksesoris yang hanya dipakai model lambat/tidak laku → dialog alasan lalu kirim ulang.
+      await denganAlasanMerchandiser((extra) => api('POST', '/api/acc/purchase-requests', token,
+                { ...form, items: validLines, ...extra,
+                  ...docNumberPayload(numPolicy, 'pr_number', prNumber) }));
       setShow(false); setLines([{acc_id:'',qty_requested:1,unit:'pcs',estimated_price:0,notes:''}]);
       setForm({ priority:'Normal', purpose:'', supplier:'', supplier_id:'', notes:'', items:[] });
       load();

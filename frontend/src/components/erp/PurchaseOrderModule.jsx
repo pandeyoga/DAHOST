@@ -35,6 +35,7 @@ import * as XLSX from 'xlsx';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import { denganAlasanMerchandiser, galatDariRespons } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
 
 const STATUS_META = {
   draft:               { label: 'Draf',                tone: 'muted' },
@@ -293,27 +294,29 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
         throw new Error('Tidak ada item valid (pilih material atau tulis keterangan, dan qty > 0).');
       }
 
-      const r = await fetch('/api/rahaza/purchase-orders', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          ...poForm,
-          ...docNumberPayload(numPolicy, 'po_number', poNumber),
-          items: validItems.map(it => ({
-            material_id: it.material_id || undefined,
-            description: it.description || undefined,
-            uom: it.uom || undefined,
-            qty_input: Number(it.qty_input) || 0,
-            unit_cost_input: Number(it.unit_cost_input) || 0,
-            notes: it.notes || '',
-          })),
-        }),
-      });
+      // 12 Nov 2026 (K-M2): bahan yang hanya dipakai model lambat/tidak laku → dialog alasan lalu kirim ulang.
+      await denganAlasanMerchandiser(async (extra) => {
+        const r = await fetch('/api/rahaza/purchase-orders', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            ...poForm,
+            ...extra,
+            ...docNumberPayload(numPolicy, 'po_number', poNumber),
+            items: validItems.map(it => ({
+              material_id: it.material_id || undefined,
+              description: it.description || undefined,
+              uom: it.uom || undefined,
+              qty_input: Number(it.qty_input) || 0,
+              unit_cost_input: Number(it.unit_cost_input) || 0,
+              notes: it.notes || '',
+            })),
+          }),
+        });
 
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(typeof err.detail === 'string' ? err.detail : `Gagal membuat PO (HTTP ${r.status})`);
-      }
+        if (!r.ok) throw await galatDariRespons(r, `Gagal membuat PO (HTTP ${r.status})`);
+        return r;
+      });
 
       toast.success('Purchase order berhasil dibuat');
       setCreateModal(false);

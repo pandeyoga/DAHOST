@@ -101,7 +101,10 @@ export async function apiPost(path, body) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `POST ${path} failed (${res.status})`);
+    // 12 Nov 2026: `status` ikut dibawa — 428 = alasan wajib (lib/alasanMerchandiser, lib/overQty).
+    const e = new Error(err.detail || `POST ${path} failed (${res.status})`);
+    e.status = res.status;
+    throw e;
   }
   return res.json();
 }
@@ -113,7 +116,9 @@ export async function apiPut(path, body) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `PUT ${path} failed (${res.status})`);
+    const e = new Error(err.detail || `PUT ${path} failed (${res.status})`);
+    e.status = res.status;
+    throw e;
   }
   return res.json();
 }

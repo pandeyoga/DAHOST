@@ -20,6 +20,7 @@ from core.helpers import new_id, now, parse_date
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
 from core.enrichment import enrich_with_product_photos
 from utils.variant_ssot import build_variant_sku
+from utils.waktu import today_wib
 
 
 def riwayat_status(status: str, user: dict | None = None) -> dict:
@@ -324,7 +325,18 @@ async def create_po(request: Request):
     # 2026-11-07 (Tahap 8): satu aturan dengan tombol "Buat PO" — peran bawaan atau izin Tambah modul PO
     assert_po_action(user, 'create', body.get('business_type') or 'internal')
     assert_maklon_buyer(body)
+    # 12 Nov 2026 (K-M2): pengaman Merchandiser — PO internal untuk model lambat/mati, atau yang membuat
+    # persediaannya melewati batas, wajib beralasan (HTTP 428 + `alasan_merchandiser`, pola sama dengan over-qty).
+    # Jalur impor/saldo awal (`create_po_internal` langsung) tidak lewat sini.
+    from core import merchandiser as mc
+    m_temuan, m_alasan = [], ''
+    if (body.get('business_type') or 'internal') == 'internal':
+        m_temuan, m_alasan = await mc.jaga(
+            db, langkah='po_produksi', alasan=body.get('alasan_merchandiser'), user=user, hari_ini=today_wib(),
+            per_model=await mc.model_dari_item(db, body.get('items') or []))
     result = await create_po_internal(db, body, user)
+    if m_temuan:
+        await mc.catat(db, 'production_pos', result.get('id'), 'po_produksi', m_temuan, m_alasan, user)
     return JSONResponse(result, status_code=201)
 
 
@@ -833,6 +845,7 @@ async def update_po(po_id: str, request: Request):
     # Separate items / accessories payloads (optional)
     items_payload = body.pop('items', None)
     acc_payload = body.pop('po_accessories', None)
+    alasan_merchandiser = body.pop('alasan_merchandiser', None)
 
     # ─── Header update ────────────────────────────────────────────────
     if body.get('deadline'): body['deadline'] = parse_date(body['deadline'])
@@ -881,6 +894,28 @@ async def update_po(po_id: str, request: Request):
             _lock = await sr.rate_lock(db, po_id)
             if _lock:
                 raise HTTPException(409, _lock['message'])
+
+    # 12 Nov 2026 (K-M2): pengaman Merchandiser — hanya TAMBAHAN qty per model pada PO internal yang diperiksa
+    # (sebelum apa pun ditulis, supaya penolakan 428 tidak meninggalkan perubahan setengah jalan).
+    from core import merchandiser as mc
+    m_temuan, m_alasan = [], ''
+    if items_payload is not None and (body.get('business_type') or existing.get('business_type', 'internal')) == 'internal':
+        _lama = await db.po_items.find({'po_id': po_id}, {'_id': 0, 'id': 1, 'model_id': 1, 'rahaza_variant_id': 1,
+                                                           'qty': 1}).to_list(2000)
+        _lama_id = {i['id']: i for i in _lama}
+        _baru = []
+        for r in items_payload:
+            if not isinstance(r, dict):
+                continue
+            base = dict(_lama_id.get(r.get('id')) or {})
+            if r.get('model_id') or r.get('rahaza_variant_id'):
+                base.pop('model_id', None); base.pop('rahaza_variant_id', None)
+            _baru.append({**base, **{k: v for k, v in r.items() if v not in (None, '')}})
+        _sebelum = await mc.model_dari_item(db, _lama)
+        _tambah = {m: q - _sebelum.get(m, 0.0) for m, q in (await mc.model_dari_item(db, _baru)).items()
+                   if q - _sebelum.get(m, 0.0) > 0}
+        m_temuan, m_alasan = await mc.jaga(db, langkah='po_produksi', alasan=alasan_merchandiser, user=user,
+                                           hari_ini=today_wib(), per_model=_tambah)
 
     await db.production_pos.update_one({'id': po_id}, {'$set': {**body, 'updated_at': now()}})
 
@@ -1040,6 +1075,8 @@ async def update_po(po_id: str, request: Request):
     if _is_maklon_po and existing.get('status', 'Draft') != 'Draft':
         from routes.production_maklon_bridge import try_sync_maklon_finance
         await try_sync_maklon_finance(db, po_id, user)
+    if m_temuan:
+        await mc.catat(db, 'production_pos', po_id, 'po_produksi', m_temuan, m_alasan, user)
     await log_activity(user['id'], user['name'], 'Update', 'Production PO', f"Updated PO: {existing.get('po_number')}")
     return serialize_doc(await db.production_pos.find_one({'id': po_id}, {'_id': 0}))
 

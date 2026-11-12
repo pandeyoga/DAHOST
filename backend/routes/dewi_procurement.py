@@ -570,7 +570,15 @@ async def build_pr_doc(db, user: dict, body: dict, *, origin: str = "",
 async def create_request(request: Request):
     user = await require_auth(request)
     db = get_db()
-    doc = await build_pr_doc(db, user, await request.json())
+    body = await request.json()
+    doc = await build_pr_doc(db, user, body)
+    # 12 Nov 2026 (K-M2): pengaman Merchandiser — bahan yang (menurut BOM) hanya dipakai model lambat/mati wajib
+    # beralasan (HTTP 428 + `alasan_merchandiser`). Draf otomatis dari sistem (build_pr_doc langsung) tidak lewat sini.
+    from core import merchandiser as mc
+    temuan, alasan = await mc.jaga(db, langkah="pr_bahan", alasan=body.get("alasan_merchandiser"), user=user,
+                                   hari_ini=today_wib(), material_ids=[i.get("material_id") for i in doc["items"]])
+    if temuan:
+        doc["merchandiser_events"] = [mc.jejak("pr_bahan", temuan, alasan, user)]
     await db.dewi_procurement_requests.insert_one(doc)
     return _ser(doc)
 
@@ -613,12 +621,18 @@ async def update_request(req_id: str, request: Request):
     if "department" in body:   # 2026-11-07 (OR1): ejaan unit Struktur Organisasi
         from core.departments import canonical_department
         update["department"] = await canonical_department(db, body["department"])
+    m_temuan, m_alasan = [], ""
     if "items" in body:
         items = await _norm_pr_items(db, body["items"], reject_fg=not req.get("origin"))
         if not items:
             raise HTTPException(400, "Minimal 1 item harus diisi.")
         update["items"] = items
         update["total_estimated"] = round(sum(float(i["total_price"]) for i in items), 2)
+        # 12 Nov 2026 (K-M2): hanya bahan yang BARU ditambahkan ke draf yang diperiksa pengaman Merchandiser.
+        from core import merchandiser as mc
+        m_temuan, m_alasan = await mc.jaga(db, langkah="pr_bahan", alasan=body.get("alasan_merchandiser"),
+                                           user=user, hari_ini=today_wib(),
+                                           material_ids=mc.bahan_baru(req.get("items"), items))
     if "needed_by" in body:
         update["needed_by"] = body["needed_by"] or None
     if "suggested_supplier_id" in body:
@@ -628,6 +642,8 @@ async def update_request(req_id: str, request: Request):
     if update:
         update["updated_at"] = _now()
         await db.dewi_procurement_requests.update_one({"id": req_id}, {"$set": update})
+    if m_temuan:
+        await mc.catat(db, "dewi_procurement_requests", req_id, "pr_bahan", m_temuan, m_alasan, user)
     return {"ok": True}
 
 

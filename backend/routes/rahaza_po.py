@@ -512,6 +512,11 @@ async def create_po(request: Request):
         raise HTTPException(400, "Minimal 1 item (material master atau item bebas).")
 
     total_value = round(sum(float(i["qty_ordered"]) * float(i["unit_cost"]) for i in items), 2)
+    # 12 Nov 2026 (K-M2): pengaman Merchandiser — bahan yang (menurut BOM) hanya dipakai model lambat/mati wajib
+    # beralasan (HTTP 428 + `alasan_merchandiser`). PO dari PR (`/requests/{id}/create-po`) sudah diperiksa di PR.
+    from core import merchandiser as mc
+    m_temuan, m_alasan = await mc.jaga(db, langkah="po_bahan", alasan=body.get("alasan_merchandiser"), user=user,
+                                       hari_ini=today_wib(), material_ids=[i.get("material_id") for i in items])
 
     doc = {
         "id": _uid(),
@@ -530,6 +535,8 @@ async def create_po(request: Request):
         "created_at": _now(),
         "updated_at": _now(),
     }
+    if m_temuan:
+        doc["merchandiser_events"] = [mc.jejak("po_bahan", m_temuan, m_alasan, user)]
     await db.rahaza_purchase_orders.insert_one(doc)
     await log_activity(user["id"], user.get("name", ""), "create", "rahaza.po", doc["po_number"])
     await _enrich_po(db, doc)
@@ -562,6 +569,7 @@ async def update_po(po_id: str, request: Request):
         upd["expected_delivery_date"] = body["expected_delivery_date"]
     if "notes" in body:
         upd["notes"] = body["notes"]
+    m_temuan, m_alasan = [], ""
     if "items" in body:
         items = await _norm_po_items(db, body["items"])
         if not items:
@@ -569,8 +577,15 @@ async def update_po(po_id: str, request: Request):
         upd["items"] = items
         upd["total_value"] = round(
             sum(float(i["qty_ordered"]) * float(i["unit_cost"]) for i in items), 2)
-    
+        # 12 Nov 2026 (K-M2): hanya bahan yang BARU ditambahkan ke draf yang diperiksa pengaman Merchandiser.
+        from core import merchandiser as mc
+        m_temuan, m_alasan = await mc.jaga(db, langkah="po_bahan", alasan=body.get("alasan_merchandiser"),
+                                           user=user, hari_ini=today_wib(),
+                                           material_ids=mc.bahan_baru(po.get("items"), items))
+
     await db.rahaza_purchase_orders.update_one({"id": po_id}, {"$set": upd})
+    if m_temuan:
+        await mc.catat(db, "rahaza_purchase_orders", po_id, "po_bahan", m_temuan, m_alasan, user)
     await log_activity(user["id"], user.get("name", ""), "update", "rahaza.po", po["po_number"])
     out = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0})
     await _enrich_po(db, out)

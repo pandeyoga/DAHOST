@@ -105,7 +105,18 @@ async def create_purchase_request(request: Request):
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
+    # 12 Nov 2026 (K-M2): pengaman Merchandiser — aksesoris yang (menurut BOM) hanya dipakai model lambat/mati
+    # wajib beralasan (HTTP 428 + `alasan_merchandiser`). Draf otomatis (kekurangan permintaan aksesoris) dibuat
+    # lewat `new_purchase_request` langsung dan tidak lewat sini.
+    from core import merchandiser as mc
+    from utils.waktu import today_wib
+    temuan, alasan = await mc.jaga(db, langkah="pr_aksesoris", alasan=body.get("alasan_merchandiser"), user=user,
+                                   hari_ini=today_wib(),
+                                   material_ids=[i.get("acc_id") for i in body.get("items") or [] if isinstance(i, dict)])
     doc = await new_purchase_request(db, user, body)
+    if temuan:
+        await mc.catat(db, "acc_purchase_requests", doc["id"], "pr_aksesoris", temuan, alasan, user)
+        doc["merchandiser_events"] = [mc.jejak("pr_aksesoris", temuan, alasan, user)]
     return JSONResponse(serialize_doc(doc), status_code=201)
 
 
@@ -245,12 +256,23 @@ async def update_purchase_request(pr_id: str, request: Request):
               "approval_steps", "approval_chain", "current_approver_stage", "procurement_pr_id",
               "procurement_pr_number", "status_before_forward",
               # 2026-11-07 (Tahap 6 PG5): supplier hanya lewat tautan master (di bawah)
-              "supplier", "supplier_id", "supplier_code")
+              "supplier", "supplier_id", "supplier_code",
+              # 12 Nov 2026 (K-M2): jejak pengaman Merchandiser hanya ditulis server
+              "alasan_merchandiser", "merchandiser_events")
+    m_temuan, m_alasan = [], ""
+    if isinstance(body.get("items"), list):
+        from core import merchandiser as mc
+        from utils.waktu import today_wib
+        m_temuan, m_alasan = await mc.jaga(db, langkah="pr_aksesoris", alasan=body.get("alasan_merchandiser"),
+                                           user=user, hari_ini=today_wib(),
+                                           material_ids=mc.bahan_baru(doc.get("items"), body["items"], "acc_id"))
     upd.update({k: v for k, v in body.items() if k not in locked})
     from routes.procurement_suppliers import supplier_link_patch
     upd.update(await supplier_link_patch(db, body, doc))
 
     await db.acc_purchase_requests.update_one({"id": pr_id}, {"$set": upd})
+    if m_temuan:
+        await mc.catat(db, "acc_purchase_requests", pr_id, "pr_aksesoris", m_temuan, m_alasan, user)
     result = await db.acc_purchase_requests.find_one({"id": pr_id}, {"_id": 0})
     return serialize_doc(result)
 
