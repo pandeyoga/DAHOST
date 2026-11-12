@@ -180,6 +180,40 @@ class PetaLayar:
             st.extend(self.graph.get(x, ()))
         return seen
 
+    def cuplikan(self, be_path: str, metode: str, batas: int = 900) -> str:
+        """Potongan kode layar di sekitar pemanggilan alamat ini dengan metode tulis yang sama (bentuk isian yang
+        dikirim layar). Kosong bila tidak ketemu."""
+        mt = metode.lower()
+        tanda = re.compile(rf"(\.{mt}\(|api{mt.capitalize()}\(|method:\s*['\"]{metode}['\"])", re.I)
+        for f in sorted(self.paths):
+            if not any(cocok(be_path, x) for x in self.paths[f]):
+                continue
+            baris = self._teks(f).splitlines()
+            consts = {n: lit[1:-1] for n, lit in CONST_RX.findall(self._teks(f))}
+            for i, ln in enumerate(baris):
+                strs = [a or b or c for a, b, c in STR_RX.findall(ln)]
+                ok = False
+                for t in strs:
+                    if "/" not in t:
+                        continue
+                    p = self._norm(self._expand(t, consts))
+                    if p and cocok(be_path, p):
+                        ok = True
+                        break
+                if not ok or not any(tanda.search(x) for x in baris[i:i + 2]):
+                    continue
+                awal = max(0, i - 8)
+                potong = "\n".join(x.strip() for x in baris[awal:i + 6] if x.strip())
+                return potong[:batas]
+        return ""
+
+    def _teks(self, f):
+        if not hasattr(self, "_cache_teks"):
+            self._cache_teks = {}
+        if f not in self._cache_teks:
+            self._cache_teks[f] = _baca(f)
+        return self._cache_teks[f]
+
     def pemakai(self, be_path: str) -> dict:
         """{berkas: [...], menu: [(id, label)], portal: [nama]} — layar aktif yang memanggil alamat ini."""
         fe = [f for f, ps in self.paths.items() if any(cocok(be_path, x) for x in ps)]

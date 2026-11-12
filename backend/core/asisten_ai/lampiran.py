@@ -501,7 +501,7 @@ def blok_api(docs: list[dict], *, kode: bool = True) -> list[dict]:
     for i, d in enumerate(docs, 1):
         nama = _TAG_RX.sub("", d["nama"])
         baris.append(f"{i}. {nama} ({JENIS_LABEL.get(d['jenis'], d['jenis'])}, {ukuran_kb(d['ukuran'])} KB) — "
-                     f"{_cara(d, kode)}.")
+                     f"{_cara(d, kode)}. lampiran_id: {d.get('id')}")
         if d.get("ringkasan_model"):
             baris.append(d["ringkasan_model"])
     baris.append("</lampiran>")

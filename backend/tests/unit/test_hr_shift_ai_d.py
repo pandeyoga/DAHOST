@@ -108,8 +108,10 @@ class TestRuang:
                 "susun_draf_shift", "putuskan_cuti", "ringkasan_absensi", "cari_data", "tampilkan_tabel"} <= sdm
         assert not {"ringkasan_penjualan", "ubah_harga_jual", "laba_rugi", "absen_saya"} & sdm
         saya = {t["name"] for t in ab.tools_untuk_api(tindakan=True, kecuali=ab.alat_luar_ruang("saya"), server=False)}
+        # 12 Nov 2026 (owner "semuanya bisa dilakukan"): alat katalog aksi & bacaan ikut, disaring ke Portal Saya.
         assert saya == {"absen_saya", "cuti_saya", "slip_gaji_saya", "jadwal_shift_saya", "tanggal_dan_periode",
-                        "tampilkan_grafik", "tampilkan_tabel"}
+                        "tampilkan_grafik", "tampilkan_tabel", *ab.ALAT_KATALOG}
+        assert set(ab.ALAT_KATALOG) <= sdm
         umum = {t["name"] for t in ab.tools_untuk_api(tindakan=True, server=False)}
         assert saya | sdm <= umum and ab.alat_luar_ruang("umum") == frozenset()
 

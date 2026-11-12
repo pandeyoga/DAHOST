@@ -86,11 +86,14 @@ DOMAINS = ("penjualan", "iklan", "live", "setoran", "keuangan", "stok", "produks
 #   saya — Portal Saya › Tanya Asisten: hanya alat ber-domain `saya` (data MILIK pengguna sendiri) + tanggal &
 #          grafik/tabel. Tanpa data fleksibel lintas karyawan dan tanpa tindakan.
 RUANG = ("umum", "sdm", "saya")
+ALAT_KATALOG = ("cari_aksi", "jalankan_aksi", "cari_bacaan", "baca_layar")
 ALAT_BERSAMA_RUANG = {
     "sdm": frozenset({"tanggal_dan_periode", "daftar_data", "cari_data", "tampilkan_grafik", "tampilkan_tabel",
                       "simpan_ingatan", "lupakan_ingatan", "buat_laporan", "daftar_persetujuan_menunggu",
-                      "buat_pengingat"}),
-    "saya": frozenset({"tanggal_dan_periode", "tampilkan_grafik", "tampilkan_tabel"}),
+                      "buat_pengingat", *ALAT_KATALOG}),
+    # 12 Nov 2026 (owner "semuanya bisa dilakukan"): katalog aksi & bacaan juga di AI SDM / Tanya Asisten, disaring
+    # ke portal ruangnya (aturan.PORTAL_RUANG: SDM → portal SDM, saya → Portal Saya; data milik sendiri dijaga pintunya).
+    "saya": frozenset({"tanggal_dan_periode", "tampilkan_grafik", "tampilkan_tabel", *ALAT_KATALOG}),
 }
 DOMAIN_RUANG = {"sdm": frozenset({"sdm"}), "saya": frozenset({"saya"})}
 
@@ -549,8 +552,10 @@ class AlatContext:
                  emit: Optional[Callable[[str, dict], None]] = None,
                  klien_api: Optional[Callable[[], Any]] = None, alat_id: Optional[str] = None,
                  sesi_id: Optional[str] = None, db=None, baca_saja: bool = False,
-                 tindakan_id: Optional[str] = None, pesan_id: Optional[str] = None):
+                 tindakan_id: Optional[str] = None, pesan_id: Optional[str] = None, ruang: str = "umum"):
         self.user = dict(user or {})
+        # 12 Nov 2026: ruang percakapan (umum | sdm | saya) — katalog aksi & bacaan disaring per ruang.
+        self.ruang = ruang if ruang in RUANG else "umum"
         self.sesi_id = sesi_id
         # Tahap D: id pesan asisten yang sedang dijawab (sumber ingatan {sesi_id, pesan_id}).
         self.pesan_id = pesan_id
@@ -595,7 +600,7 @@ class AlatContext:
         c = AlatContext(user=self.user, cv=self.cv, today=self.today, token=self._token, app=self._app,
                         emit=self._emit_fn, klien_api=self._klien_api, alat_id=alat_id,
                         sesi_id=self.sesi_id, db=self.db, baca_saja=self.baca_saja,
-                        tindakan_id=self.tindakan_id, pesan_id=self.pesan_id)
+                        tindakan_id=self.tindakan_id, pesan_id=self.pesan_id, ruang=self.ruang)
         c.pemanggil = pemanggil if pemanggil in PEMANGGIL else self.pemanggil
         c._bersama = self._bersama
         return c

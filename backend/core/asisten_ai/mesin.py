@@ -737,7 +737,8 @@ class Jalan:
         self._idx_giliran = len(riwayat)
         self.ctx = ab.AlatContext(user=self.user, cv=self.cv, today=self.today, token=self.token, app=self.app,
                                   emit=self._emit_alat, klien_api=self.klien_api,
-                                  sesi_id=self.sesi_id, db=self.db, baca_saja=True, pesan_id=self.pesan_id)
+                                  sesi_id=self.sesi_id, db=self.db, baca_saja=True, pesan_id=self.pesan_id,
+                                  ruang=self.ruang)
         lanjut_max = 0
         jeda = 0
         try:
@@ -1241,7 +1242,7 @@ class Jalan:
             return ab._gagal(tid, nama, "Terjadi kesalahan saat menyiapkan tindakan ini.")
         doc = await tdk.buat(self.db, user=self.user, sesi_id=self.sesi_id, pesan_id=self.pesan_id, tool_use_id=tid,
                              alat=a, args=args, rencana=rencana, cv=self.cv, periode=self.periode,
-                             tindakan_id=kartu_id)
+                             tindakan_id=kartu_id, ruang=self.ruang)
         self.kartu_dibuat += 1
         return ab.HasilAlat(tool_use_id=tid, nama=nama, isi="", tindakan_id=doc["id"], kartu=tdk.event_kartu(doc))
 
