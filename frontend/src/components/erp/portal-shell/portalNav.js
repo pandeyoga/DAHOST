@@ -121,13 +121,22 @@ export const PORTAL_NAV = {
           // Asisten AI (layar) — Tahap A, 8 Nov 2026: chat analis data, menggantikan AI Business Intelligence
           { id: 'asisten-ai',            label: 'Asisten AI',          icon: Sparkles },
           { id: 'management-dashboard',  label: 'Dashboard Eksekutif', icon: LayoutDashboard },
-          { id: 'mgmt-overview',         label: 'Ringkasan Bisnis',    icon: TrendingUp },
           { id: 'reports-hub',           label: 'Pusat Laporan',       icon: FileSpreadsheet },
           // 2026-11-04 (owner): dipindah dari portal Keuangan — ringkasan lintas modul untuk pimpinan
           { id: 'fin-executive-report',  label: 'Laporan Eksekutif',   icon: Award },
           { id: 'phase7-reports',        label: 'Laporan Maklon',      icon: BarChart3 },
           { id: 'mgmt-reports',          label: 'Laporan Umum',        icon: FileSpreadsheet },
           { id: 'rnd-dashboard',         label: 'Dashboard RnD',       icon: FlaskConical },
+        ],
+      },
+      {
+        // 12 Nov 2026 (skill AI bisnis, K-M8): analisa untuk keputusan produksi/stok. Skill berikutnya (HPP & margin,
+        // akurasi stok, perencana bahan) masuk ke bagian ini. "Ringkasan Bisnis" dipindah ke sini (NAV-MAX ≤ 8).
+        label: 'ANALISA BISNIS',
+        items: [
+          { id: 'mgmt-overview',         label: 'Ringkasan Bisnis',    icon: TrendingUp },
+          // Analisa Merchandiser (keputusan owner K-M1..K-M10): laju jual, stok, WIP, minggu persediaan per model.
+          { id: 'mgmt-merchandiser',     label: 'Analisa Merchandiser', icon: PackageSearch },
         ],
       },
       {

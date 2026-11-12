@@ -889,6 +889,10 @@ app.include_router(cmt_kejar_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.pantau_produksi import router as pantau_produksi_router
 app.include_router(pantau_produksi_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
+# Skill Merchandiser (12 Nov 2026, K-M1..K-M10): laju jual, stok perkiraan, WIP, minggu persediaan — read-only
+from routes.merchandiser import router as merchandiser_router
+app.include_router(merchandiser_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+
 # CMT INTAKE — Potongan Masuk (batch) + Cek Seri dobel (Maklon CMT Operasional — Fase 3, read-only)
 from routes.cmt_intake import router as cmt_intake_router
 app.include_router(cmt_intake_router, dependencies=_DENY_EXTERNAL_AND_MKT)

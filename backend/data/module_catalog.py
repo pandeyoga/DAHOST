@@ -66,6 +66,9 @@ MODULES: list[dict] = [
        {"view": ["management.view"], "manage": ["management.manage"], "approve": ["hr.approve"]}),
     _m("management", "mgmt_okr", "OKR Tracker", ["mgmt-okr"], ["/api/management/okr"], _CRUD,
        {"manage": ["management.manage"]}),
+    # Skill Merchandiser (12 Nov 2026, K-M8): Analisa Merchandiser di Portal Manajemen (baca & unduh saja).
+    _m("management", "mgmt_merchandiser", "Analisa Merchandiser", ["mgmt-merchandiser"], ["/api/merchandiser"], _VE,
+       {"view": ["management.view", "dashboard.view"], "export": ["report.export"]}),
     _m("management", "mgmt_marketing_cycle", "Target & Anggaran", ["mgmt-marketing-cycle"],
        ["/api/marketing/cycle"], ("view", "edit", "export")),
     _m("management", "mgmt_digest", "Digest Mingguan & Audit Manajemen", ["mgmt-tools"],
