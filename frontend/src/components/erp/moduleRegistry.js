@@ -245,6 +245,8 @@ const IngatanAIModule            = lazyRetry(() => import('./asisten/IngatanAIMo
 // Monitoring Staf ERP (10 Nov 2026) — Portal Manajemen
 const MonitoringStafModule = lazyRetry(() => import('./pantau-staf/MonitoringStafModule'));
 const AturanKewajibanModule = lazyRetry(() => import('./pantau-staf/AturanKewajibanModule'));
+// Analisa Merchandiser (12 Nov 2026, keputusan owner K-M1..K-M10) — Portal Manajemen
+const MerchandiserModule = lazyRetry(() => import('./merchandiser/MerchandiserModule'));
 // ── akhir Asisten AI (layar) ──
 
 // Phase 21 — Decision Support & Quality Metrics
@@ -990,6 +992,7 @@ export const MODULE_REGISTRY = {
   'asisten-ai-ingatan':    IngatanAIModule,              // Asisten AI (layar2) — Tahap D
   'pantau-staf':           MonitoringStafModule,         // Monitoring Staf ERP (10 Nov 2026)
   'aturan-kewajiban':      AturanKewajibanModule,        // Monitoring Staf ERP (10 Nov 2026)
+  'mgmt-merchandiser':     MerchandiserModule,           // Analisa Merchandiser (12 Nov 2026)
   // ── akhir Asisten AI (layar) ──
 
   // Phase 21 — Decision Support & Quality Metrics
