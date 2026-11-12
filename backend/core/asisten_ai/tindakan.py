@@ -404,7 +404,8 @@ def blok_kartu(doc: dict) -> dict:
 
 
 async def buat(db, *, user: dict, sesi_id: str, pesan_id: Optional[str], tool_use_id: str, alat: ab.Alat,
-               args: dict, rencana: dict, cv: str, periode: str, tindakan_id: Optional[str] = None) -> dict:
+               args: dict, rencana: dict, cv: str, periode: str, tindakan_id: Optional[str] = None,
+               ruang: str = "umum") -> dict:
     """Simpan kartu baru berstatus `menunggu`."""
     now = _sekarang()
     doc = {
@@ -415,7 +416,8 @@ async def buat(db, *, user: dict, sesi_id: str, pesan_id: Optional[str], tool_us
         "menu": alat.menu or (rencana.get("tautan") or {}).get("menu"),
         "golongan": rencana.get("golongan"), "nominal": rencana.get("nominal"),
         "args": _json_aman(args), "args_awal": _json_aman(args), "rencana": rencana, "keadaan": "menunggu",
-        "cv": cv, "periode": periode, "tanggal": tanggal_wib(now), "dibuat": _iso(now), "diperbarui": _iso(now),
+        "cv": cv, "periode": periode, "ruang": ruang, "tanggal": tanggal_wib(now), "dibuat": _iso(now),
+        "diperbarui": _iso(now),
         "kedaluwarsa_pada": _iso(now + MASA_BERLAKU), KUNCI: None, f"{KUNCI}_at": None,
     }
     await db.ai_actions.insert_one(dict(doc))
@@ -630,7 +632,8 @@ def buat_ctx(*, user: dict, doc: dict, token: Optional[str], app=None, klien_api
     from utils.waktu import today_wib
     return ab.AlatContext(user=user, cv=doc.get("cv") or "DA", today=today or today_wib(), token=token, app=app,
                           emit=emit, klien_api=klien_api, alat_id=doc.get("tool_use_id"),
-                          sesi_id=doc.get("sesi_id"), db=None, baca_saja=not tulis, tindakan_id=doc["id"])
+                          sesi_id=doc.get("sesi_id"), db=None, baca_saja=not tulis, tindakan_id=doc["id"],
+                          ruang=doc.get("ruang") or "umum")
 
 
 # ── Keputusan ────────────────────────────────────────────────────────────────

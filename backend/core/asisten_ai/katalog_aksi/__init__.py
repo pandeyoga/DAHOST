@@ -46,6 +46,11 @@ def muat() -> dict:
     with open(BERKAS, encoding="utf-8") as f:
         data = json.load(f)
     data["_per_id"] = {a["id"]: a for a in data.get("aksi") or []}
+    pola = []
+    for b in data.get("bacaan") or []:
+        rx = "^" + re.sub(r"\\{(\w+)(?::[^}]*)?\\}", "([^/]+)", re.escape(b["jalur"].rstrip("/"))) + "$"
+        pola.append((len(b.get("parameter_jalur") or []), re.compile(rx), b))
+    data["_pola_bacaan"] = sorted(pola, key=lambda x: x[0])
     return data
 
 
@@ -57,6 +62,26 @@ def ambil(aksi_id: str) -> Optional[dict]:
     if not isinstance(aksi_id, str):
         return None
     return muat()["_per_id"].get(aksi_id.strip())
+
+
+def semua_bacaan() -> list:
+    return list(muat().get("bacaan") or [])
+
+
+def bacaan_untuk(alamat: str) -> Optional[tuple]:
+    """(baris bacaan, {parameter: nilai}) untuk alamat GET konkret, atau None bila bukan bacaan layar.
+    Pola paling spesifik (parameter paling sedikit) menang."""
+    path = str(alamat or "").split("?")[0].rstrip("/")
+    for _n, rx, b in muat()["_pola_bacaan"]:
+        m = rx.match(path)
+        if m:
+            return b, dict(zip(b.get("parameter_jalur") or [], m.groups()))
+    return None
+
+
+def cari_bacaan(kata: str, *, portal: Optional[str] = None, ruang: Optional[str] = None, batas: int = 8) -> list:
+    """Bacaan layar paling cocok untuk kata kunci (skor sama dengan `cari`)."""
+    return _cari(semua_bacaan(), kata, portal=portal, ruang=ruang, batas=batas)
 
 
 def larangan(a: dict) -> Optional[dict]:
@@ -76,8 +101,14 @@ def _teks_cari(a: dict) -> tuple:
 
 
 def cari(kata: str, *, golongan: Optional[list] = None, portal: Optional[str] = None,
-         batas: int = 8) -> list:
-    """Aksi paling cocok untuk kata kunci (urut skor, lalu id). Kosong bila tidak ada yang cocok."""
+         batas: int = 8, ruang: Optional[str] = None) -> list:
+    """Aksi paling cocok untuk kata kunci (urut skor, lalu id). Kosong bila tidak ada yang cocok.
+    `ruang` (umum | sdm | saya): hanya aksi dari portal ruang itu (aturan.PORTAL_RUANG)."""
+    daftar = [a for a in semua() if not golongan or a.get("golongan") in golongan]
+    return _cari(daftar, kata, portal=portal, ruang=ruang, batas=batas)
+
+
+def _cari(daftar: list, kata: str, *, portal: Optional[str], ruang: Optional[str], batas: int) -> list:
     toks = _token(kata)
     if not toks:
         return []
@@ -86,8 +117,8 @@ def cari(kata: str, *, golongan: Optional[list] = None, portal: Optional[str] = 
         perluas.append({t, *SINONIM.get(t, ())})
     pt = str(portal or "").strip().lower()
     hasil = []
-    for a in semua():
-        if golongan and a.get("golongan") not in golongan:
+    for a in daftar:
+        if not aturan.di_ruang(a.get("portal") or [], ruang):
             continue
         if pt and not any(pt in p.lower() for p in a.get("portal") or []):
             continue
@@ -128,16 +159,41 @@ def ringkas_untuk_model(a: dict, *, boleh: Optional[bool] = None, alasan_tidak: 
         out["isian"] = isian.get("skema")
     elif isian.get("bentuk") == "bebas":
         out["isian_kunci"] = isian.get("kunci") or []
-        out["isian_catatan"] = ("Isian bebas: kunci di atas dibaca pintu ini; isi sesuai data yang dibaca lebih dulu "
-                                "dengan alat baca. Jangan menebak.")
+        if isian.get("bersarang"):
+            out["isian_bersarang"] = isian["bersarang"]     # mis. lines → [account_code, debit, credit, …]
+        if isian.get("contoh_layar"):
+            out["contoh_layar"] = isian["contoh_layar"]     # potongan kode layar yang mengirim isian ini
+        out["isian_catatan"] = ("Isian bebas: kunci di atas dibaca pintu ini (isian_bersarang = kunci tiap butir "
+                                "daftar; contoh_layar = cara layar mengirimnya). Isi dari data yang dibaca dulu "
+                                "dengan baca_layar. Jangan menebak.")
     elif isian.get("bentuk") == "berkas":
         out["berkas"] = {"kolom_berkas": isian.get("kolom_berkas"), "isian_lain": isian.get("skema")}
         out["isian_catatan"] = "Butuh berkas: lampirkan di chat lalu isi `lampiran_id`."
     out["nilai_lama_dibaca"] = bool(a.get("baca") or a.get("baca_daftar"))
     out["bisa_dibalikkan"] = bool(a.get("balik"))
+    if a.get("cari_id"):
+        out["cari_id"] = a["cari_id"]        # {parameter/isian: [alamat GET untuk baca_layar]}
+    if a.get("atas_nama_vendor"):
+        out["atas_nama_vendor"] = ("Bisa diisi atas nama vendor CMT (isi `atas_nama_vendor` = id vendor), sama "
+                                   "dengan layar Input atas nama CMT.")
     lar = larangan(a)
     if lar:
         out["dilarang"] = lar["alasan"]
     elif boleh is False:
         out["tidak_diizinkan"] = alasan_tidak
+    return out
+
+
+def ringkas_bacaan(b: dict) -> dict:
+    """Baris bacaan untuk model (alat `baca_layar`)."""
+    out = {"alamat": b["jalur"], "label": b.get("label"), "layar": b.get("layar") or None,
+           "portal": b.get("portal") or []}
+    if b.get("keterangan"):
+        out["keterangan"] = b["keterangan"][:200]
+    if b.get("parameter_jalur"):
+        out["parameter_jalur"] = b["parameter_jalur"]
+    if b.get("query"):
+        out["query"] = [{k: v for k, v in q.items() if k in ("nama", "tipe", "wajib", "bawaan")} for q in b["query"]]
+    if b.get("atas_nama_vendor"):
+        out["atas_nama_vendor"] = True
     return out

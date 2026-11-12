@@ -89,6 +89,8 @@ KATA_BENDA = {
     "opname3": "opname", "units": "satuan", "locations": "lokasi", "structure": "struktur gudang", "labels": "label",
     "cmt-receipts": "penerimaan dari CMT", "short-shipments": "kekurangan kirim", "nota-aksesoris": "nota aksesoris",
     "kirim-cmt": "kirim ke CMT", "partners": "vendor", "my-jobs": "pekerjaan", "progress": "progres",
+    "journal-import": "impor jurnal", "opening-balance": "saldo awal", "production-progress": "progres produksi",
+    "production-job-items": "baris pekerjaan produksi", "production-jobs": "pekerjaan produksi",
     "clients": "klien", "quotes": "penawaran", "assets": "aset", "categories": "kategori",
     "disposal-requests": "permintaan pelepasan aset", "maintenance": "perawatan", "objectives": "objektif OKR",
     "key-results": "key result", "reminders": "pengingat", "notifications": "notifikasi", "todos": "daftar tugas",
@@ -287,6 +289,136 @@ def kunci_dari_sumber(src: str) -> list:
     return sorted(k for k in kunci if not k.startswith("_"))[:60]
 
 
+# ── bacaan layar & petunjuk id (12 Nov 2026) ─────────────────────────────────
+OVERRIDE_RX = re.compile(r"resolve_override|apply_scope|get_override|effective_vendor_id")
+
+
+def _query_manual(src: str, sudah: set) -> list:
+    """Parameter query yang dibaca fungsi sendiri: `request.query_params.get("x")` / `query_params["x"]`."""
+    nama = set(re.findall(r"query_params\.get\(\s*['\"](\w+)['\"]", src))
+    nama |= set(re.findall(r"query_params\[\s*['\"](\w+)['\"]\s*\]", src))
+    return [{"nama": n, "tipe": "str", "wajib": False, "manual": True} for n in sorted(nama - sudah)]
+
+
+def _query_rute(r) -> list:
+    out = []
+    try:
+        src = inspect.getsource(r.endpoint)
+    except (OSError, TypeError):
+        src = ""
+    for q in r.dependant.query_params:
+        fi = getattr(q, "field_info", None)
+        ann = getattr(q, "type_", None) or getattr(fi, "annotation", None)
+        item = {"nama": q.name, "tipe": getattr(ann, "__name__", str(ann)).replace("typing.", "")[:40],
+                "wajib": bool(getattr(q, "required", False))}
+        dflt = getattr(fi, "default", None)
+        if isinstance(dflt, (str, int, float, bool)) and not isinstance(dflt, type):
+            item["bawaan"] = dflt
+        out.append(item)
+    out += _query_manual(src, {q["nama"] for q in out})
+    return sorted(out, key=lambda q: q["nama"])
+
+
+def susun_bacaan(baca_rute: dict, peta, aturan) -> list:
+    """GET yang dipanggil layar aktif dan aman dibaca Asisten (lihat aturan.larangan_baca)."""
+    out = []
+    for jalur, r in sorted(baca_rute.items()):
+        fn = r.endpoint
+        modul = (getattr(fn, "__module__", "") or "").replace("routes.", "", 1)
+        if aturan.di_luar_katalog(modul) or aturan.larangan_baca(jalur):
+            continue
+        pakai = peta.pemakai(jalur)
+        if not pakai["berkas"]:
+            continue
+        try:
+            src = inspect.getsource(fn)
+        except (OSError, TypeError):
+            src = ""
+        s = [x for x in _segs(jalur) if x != "api"]
+        benda = next((_humanis(x) for x in reversed(s) if not x.startswith("{")), "data")
+        label = (f"Lihat {benda}" if s and s[-1].startswith("{") else
+                 f"Daftar {benda}" if not any(x.startswith("{") for x in s) else f"Lihat {benda} per data")
+        menu = pilih_menu(pakai["menu"], label, jalur)
+        doc = (inspect.getdoc(fn) or "").strip()
+        item = {"id": id_aksi("GET", jalur), "jalur": jalur, "modul": modul, "fungsi": fn.__name__, "label": label,
+                "keterangan": paragraf_pertama(doc)[:200],
+                "parameter_jalur": re.findall(r"\{(\w+)(?::[^}]*)?\}", jalur), "query": _query_rute(r),
+                "menu": menu[0][0] if menu else None, "layar": menu[0][1] if menu else "", "portal": pakai["portal"]}
+        if OVERRIDE_RX.search(src):
+            item["atas_nama_vendor"] = True
+        out.append(item)
+    lihat: dict = {}
+    for b in out:
+        n = lihat.get(b["id"], 0)
+        lihat[b["id"]] = n + 1
+        if n:
+            b["id"] = f"{b['id']}_{n + 1}"
+    return out
+
+
+def kunci_bersarang(src_modul: str, kunci: list) -> dict:
+    """Kunci di dalam isian daftar (mis. `lines` → account_code, debit, credit) yang dibaca modul route lewat
+    `for x in lines: x.get("…")` — termasuk di fungsi bantu (mis. `_validate_lines`)."""
+    out = {}
+    for k in kunci:
+        pola = (rf"for\s+(?:\w+\s*,\s*)?(\w+)\s+in\s+(?:enumerate\()?(?:\(?\s*)?(?:\w+\.get\(\s*['\"]{re.escape(k)}['\"]"
+                rf"[^)]*\)|\b{re.escape(k)}\b)")
+        nama = set(re.findall(pola, src_modul))
+        isi = set()
+        for v in nama:
+            if len(v) < 2 or v in ("k", "i", "_"):
+                continue
+            isi |= set(re.findall(rf"\b{re.escape(v)}\.get\(\s*['\"]([\w.-]+)['\"]", src_modul))
+            isi |= set(re.findall(rf"\b{re.escape(v)}\[\s*['\"]([\w.-]+)['\"]\s*\]", src_modul))
+        isi = sorted(x for x in isi if not x.startswith("_"))[:30]
+        if isi:
+            out[k] = isi
+    return out
+
+
+def paragraf_pertama(doc: str) -> str:
+    """Paragraf pertama docstring dalam satu baris."""
+    if not doc:
+        return ""
+    return " ".join(re.split(r"\n\s*\n", doc)[0].split())
+
+
+def _akar(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def pasang_cari_id(aksi: list, bacaan: list, get_paths: set) -> None:
+    """Petunjuk sumber id per aksi: parameter alamat → daftar koleksinya; isian `x_id` → daftar GET bernama x."""
+    daftar = [b for b in bacaan if not b["parameter_jalur"]]
+    ada = {b["jalur"] for b in bacaan}
+    for a in aksi:
+        petunjuk: dict = {}
+        s = _segs(a["jalur"])
+        for i, x in enumerate(s):
+            if x.startswith("{"):
+                induk = "/" + "/".join(s[:i])
+                if induk in ada:
+                    petunjuk[re.sub(r"[{}]|:.*", "", x)] = [induk]
+        isi = a.get("isian") or {}
+        if isi.get("bentuk") == "bertipe":
+            kunci = list(((isi.get("skema") or {}).get("properties") or {}).keys())
+        else:
+            kunci = list(isi.get("kunci") or [])
+        for k in kunci:
+            if not k.endswith("_id") or k in petunjuk:
+                continue
+            akar = _akar(k[:-3])
+            if len(akar) < 3:
+                continue
+            cocok = [b["jalur"] for b in daftar
+                     if any(_akar(seg).rstrip("s").endswith(akar) or _akar(seg).endswith(akar + "es")
+                            for seg in _segs(b["jalur"])[-1:])]
+            if cocok:
+                petunjuk[k] = sorted(cocok, key=len)[:3]
+        if petunjuk:
+            a["cari_id"] = petunjuk
+
+
 # ── utama ────────────────────────────────────────────────────────────────────
 def susun() -> dict:
     logging.disable(logging.CRITICAL)
@@ -301,13 +433,14 @@ def susun() -> dict:
     comps = spec.get("components", {}).get("schemas", {})
     peta = PetaLayar(ROOT)
     get_paths = set()
-    tulis = {}
+    tulis, baca_rute = {}, {}
     for r in app.routes:
         if not isinstance(r, APIRoute):
             continue
         ms = set(r.methods or [])
         if "GET" in ms:
             get_paths.add(r.path)
+            baca_rute.setdefault(r.path, r)
         for m in sorted(ms & set(WRITE)):
             tulis[(m, r.path)] = r
 
@@ -351,6 +484,16 @@ def susun() -> dict:
             k = kunci_dari_sumber(src)
             if k or isian.get("bentuk") == "bebas" or "request.json()" in src or "Body(" in src:
                 isian = {"bentuk": "bebas", "kunci": k}
+                try:
+                    src_modul = inspect.getsource(inspect.getmodule(fn))
+                except (OSError, TypeError):
+                    src_modul = ""
+                bersarang = kunci_bersarang(src_modul, k)
+                if bersarang:
+                    isian["bersarang"] = bersarang
+                contoh = peta.cuplikan(jalur, metode)
+                if contoh:
+                    isian["contoh_layar"] = contoh
         query = []
         for q in r.dependant.query_params:
             if q.name in QUERY_ABAIKAN:
@@ -363,6 +506,7 @@ def susun() -> dict:
             if isinstance(dflt, (str, int, float, bool)) and not isinstance(dflt, type):
                 item["bawaan"] = dflt
             query.append(item)
+        query += [q for q in _query_manual(src, {q["nama"] for q in query}) if q["nama"] not in QUERY_ABAIKAN]
         query.sort(key=lambda q: q["nama"])
         jenis = jenis_aksi(metode, jalur, berkas)
         gol = aturan.golongan_untuk(modul, jalur)
@@ -403,6 +547,7 @@ def susun() -> dict:
             elif jenis == "ubah" and baca and isian.get("bentuk") in ("bertipe", "bebas"):
                 balik = {"jenis": "kembalikan"}
         label = label_aksi(metode, jalur, jenis)
+        atas_nama = bool(OVERRIDE_RX.search(src))
         menu = pilih_menu(pakai["menu"], label, jalur)
         portal = pakai["portal"]
         # menu & nama layar dari menu terbaik yang berlabel (bila menu terbaik tidak berlabel: tanpa nama layar)
@@ -414,7 +559,10 @@ def susun() -> dict:
             **({"baca_daftar": baca_daftar} if baca_daftar else {}),
             "menu": menu[0][0] if menu else None, "layar": layar, "portal": portal,
             **({"larangan": larang} if larang else {}),
+            **({"atas_nama_vendor": True} if atas_nama else {}),
         })
+    bacaan = susun_bacaan(baca_rute, peta, aturan)
+    pasang_cari_id(aksi, bacaan, get_paths)
     # id unik
     lihat: dict = {}
     for a in aksi:
@@ -424,22 +572,24 @@ def susun() -> dict:
             a["id"] = f"{a['id']}_{n + 1}"
     aksi.sort(key=lambda a: a["id"])
     kecuali.sort(key=lambda k: (k["jalur"], k["metode"]))
-    return {"versi": 1, "jumlah": len(aksi), "aksi": aksi, "dikecualikan": kecuali}
+    return {"versi": 2, "jumlah": len(aksi), "jumlah_bacaan": len(bacaan), "aksi": aksi, "bacaan": bacaan,
+            "dikecualikan": kecuali}
 
 
 def tulis_json(data: dict) -> str:
     """Satu aksi per baris (diff per aksi mudah dibaca), kunci terurut."""
     def baris(x):
         return json.dumps(x, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    kepala = {k: v for k, v in data.items() if k not in ("aksi", "dikecualikan")}
+    daftar = ("aksi", "bacaan", "dikecualikan")
+    kepala = {k: v for k, v in data.items() if k not in daftar}
     out = ["{"]
     for k, v in sorted(kepala.items()):
         out.append(f' "{k}": {baris(v)},')
-    for nama in ("aksi", "dikecualikan"):
+    for j, nama in enumerate(daftar):
         isi = data.get(nama) or []
         out.append(f' "{nama}": [')
         out.extend(("  " + baris(x) + ("," if i < len(isi) - 1 else "")) for i, x in enumerate(isi))
-        out.append(" ]," if nama == "aksi" else " ]")
+        out.append(" ]," if j < len(daftar) - 1 else " ]")
     out.append("}")
     return "\n".join(out) + "\n"
 

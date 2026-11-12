@@ -31,6 +31,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from core.asisten_ai import katalog_aksi as kat
+from core.asisten_ai.alat.baca_layar import HEADER_VENDOR, _pangkas, periksa_vendor
 from core.asisten_ai.alat_base import AlatError, alat, periksa_skema, tindakan
 from core.asisten_ai.katalog_aksi import aturan
 
@@ -135,12 +136,46 @@ def _identitas(doc: dict, cadangan: str = "") -> str:
     return cadangan
 
 
+def _angka(v) -> Optional[float]:
+    if isinstance(v, str):
+        try:
+            v = float(v.replace(",", "."))
+        except ValueError:
+            return None
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0:
+        return float(v)
+    return None
+
+
+def _nominal_baris(rows: Any) -> Optional[float]:
+    """Nominal dari daftar baris: jurnal (jumlah debit), atau rincian (amount/total, atau qty x harga)."""
+    if not isinstance(rows, list) or not rows or not all(isinstance(r, dict) for r in rows):
+        return None
+    debit = sum(_angka(r.get("debit")) or 0 for r in rows)
+    if debit:
+        return debit
+    total = 0.0
+    for r in rows:
+        v = next((_angka(r.get(k)) for k in ("amount", "total", "subtotal", "nominal", "nilai") if _angka(r.get(k))),
+                 None)
+        if v is None:
+            q = _angka(r.get("qty")) or _angka(r.get("quantity"))
+            h = _angka(r.get("unit_price")) or _angka(r.get("price")) or _angka(r.get("harga"))
+            v = q * h if q and h else None
+        total += v or 0
+    return total or None
+
+
 def _nominal(isian: dict, doc: dict) -> Optional[float]:
     for sumber in (isian or {}, doc or {}):
         for k in _KUNCI_NOMINAL:
-            v = sumber.get(k)
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0:
-                return float(v)
+            v = _angka(sumber.get(k))
+            if v:
+                return v
+        for k in ("lines", "items", "entries", "details", "rincian"):
+            v = _nominal_baris(sumber.get(k))
+            if v:
+                return v
     return None
 
 
@@ -176,6 +211,9 @@ async def _aksi_sah(ctx, aksi_id: str) -> dict:
     if lar:
         tempat = f" Lakukan langsung di layar {a['layar']}." if a.get("layar") else ""
         raise AlatError(403, f"{lar['alasan']}{tempat}")
+    if not aturan.di_ruang(a.get("portal") or [], getattr(ctx, "ruang", "umum")):
+        raise AlatError(403, "Aksi ini bukan bagian dari ruang Asisten ini. Siapkan dari chat Asisten di Portal "
+                             "Manajemen.")
     gol = a.get("golongan") or "A"
     boleh = await _golongan_boleh(ctx.user)
     if not boleh.get(gol):
@@ -215,8 +253,8 @@ def _periksa_baris(a: dict, row: dict, no: int) -> None:
     for k, v in row["query"].items():
         if k in aturan.QUERY_HAPUS_PERMANEN and v in _BENAR:
             raise AlatError(403, aturan.PESAN_HAPUS_PERMANEN)
-        if k not in qnama:
-            raise AlatError(400, f"{pre}parameter `{k}` tidak dikenal untuk aksi ini.")
+        # parameter yang tidak tercatat tetap diteruskan (pintu yang membaca `request.query_params` sendiri);
+        # yang menghapus permanen sudah ditolak di atas.
         if isinstance(v, (dict, list)):
             raise AlatError(400, f"{pre}parameter `{k}` harus satu nilai.")
     for q in qnama.values():
@@ -248,21 +286,22 @@ def _cari_di_daftar(r: Any, nilai: str) -> Optional[dict]:
     return None
 
 
-async def _baca_lama(ctx, a: dict, row: dict) -> Optional[dict]:
+async def _baca_lama(ctx, a: dict, row: dict, headers: Optional[dict] = None) -> Optional[dict]:
     if not a.get("baca"):
         bd = a.get("baca_daftar")
         if not bd:
             return None
         nilai = str(row["jalur"].get(bd["kunci"]) or "")
         try:
-            r = await ctx.api("GET", _isi_jalur(bd["jalur"], row["jalur"]), params={"search": nilai, "q": nilai})
+            r = await ctx.api("GET", _isi_jalur(bd["jalur"], row["jalur"]), params={"search": nilai, "q": nilai},
+                              headers=headers)
         except AlatError as e:
             if e.status in (401, 403):
                 raise
             return None
         return _cari_di_daftar(r, nilai)
     try:
-        return _doc_dari(await ctx.api("GET", _isi_jalur(a["baca"], row["jalur"])))
+        return _doc_dari(await ctx.api("GET", _isi_jalur(a["baca"], row["jalur"]), headers=headers))
     except AlatError as e:
         if e.status == 404:
             raise AlatError(404, f"Data untuk aksi ini tidak ditemukan ({_isi_jalur(a['baca'], row['jalur'])}). "
@@ -319,12 +358,37 @@ async def _susun(ctx, args: dict) -> dict:
         lamp = await _lampiran(ctx, a, args)
     else:
         lamp = None
+    vendor = await _vendor(ctx, a, args)
+    headers = {HEADER_VENDOR: vendor["id"]} if vendor else None
     lama_semua, badan_semua = [], []
     for r in rows:
-        lama = await _baca_lama(ctx, a, r)
+        lama = await _baca_lama(ctx, a, r, headers)
         lama_semua.append(lama)
         badan_semua.append(_badan(a, r, lama))
-    return {"a": a, "rows": rows, "lama": lama_semua, "badan": badan_semua, "lampiran": lamp}
+    return {"a": a, "rows": rows, "lama": lama_semua, "badan": badan_semua, "lampiran": lamp, "vendor": vendor,
+            "headers": headers}
+
+
+async def _vendor(ctx, a: dict, args: dict) -> Optional[dict]:
+    """Mode atas nama vendor CMT (sama dengan layar Input atas nama CMT): {id, nama} atau None."""
+    vid = str(args.get("atas_nama_vendor") or "").strip()
+    if not vid:
+        return None
+    if not a.get("atas_nama_vendor"):
+        raise AlatError(400, "Aksi ini tidak punya mode atas nama vendor CMT.")
+    periksa_vendor(ctx, vid)
+    nama = vid
+    try:
+        r = await ctx.api("GET", "/api/vendor-portal/partners")
+    except AlatError:
+        r = None
+    if r is not None:
+        rows = r if isinstance(r, list) else ((r.get("items") or r.get("data") or []) if isinstance(r, dict) else [])
+        cocok = next((x for x in rows if isinstance(x, dict) and str(x.get("id")) == vid), None)
+        if cocok is None:
+            raise AlatError(404, "Vendor CMT tidak ditemukan di master vendor. Periksa id vendornya.")
+        nama = str(cocok.get("name") or cocok.get("nama") or cocok.get("code") or vid)
+    return {"id": vid, "nama": nama}
 
 
 def _perubahan_satu(a: dict, row: dict, lama: Optional[dict], badan: Optional[dict]) -> list:
@@ -395,7 +459,8 @@ def _konfirmasi(tingkat: str, nominal: Optional[float], lama: list, rows: list) 
           "batas": {"type": "integer", "minimum": 1, "maximum": 15}}})
 async def cari_aksi(ctx, args: dict) -> dict:
     boleh = await _golongan_boleh(ctx.user)
-    hasil = kat.cari(args["kata"], portal=args.get("portal"), batas=args.get("batas") or 8)
+    hasil = kat.cari(args["kata"], portal=args.get("portal"), batas=args.get("batas") or 8,
+                     ruang=getattr(ctx, "ruang", "umum"))
     rows = []
     for a in hasil:
         g = a.get("golongan") or "A"
@@ -429,6 +494,9 @@ _SKEMA_BARIS = {"type": "object", "additionalProperties": False, "properties": {
               **_SKEMA_BARIS["properties"],
               "baris": {"type": "array", "minItems": 1, "maxItems": MAKS_BARIS, "items": _SKEMA_BARIS},
               "lampiran_id": {"type": "string", "maxLength": 64},
+              "atas_nama_vendor": {"type": "string", "maxLength": 80,
+                                   "description": "Id vendor CMT: isi data atas nama vendor (layar Input atas nama "
+                                                  "CMT); hanya untuk aksi yang mendukungnya."},
               "maksud": {"type": "string", "maxLength": 300,
                          "description": "Satu kalimat maksud pengguna, ditampilkan di kartu."}}})
 class JalankanAksi:
@@ -462,6 +530,9 @@ class JalankanAksi:
             catatan.append(f"CV: {'DA' if ctx.cv == 'DA' else 'Sukma'}.")
         if args.get("maksud"):
             catatan.insert(0, str(args["maksud"]).strip()[:300])
+        if s["vendor"]:
+            catatan.append(f"Diisi atas nama vendor CMT {s['vendor']['nama']}: tercatat sebagai input staf atas nama "
+                           "vendor, sama dengan layar Input atas nama CMT.")
         if s["lampiran"]:
             catatan.append(f"Berkas: {s['lampiran'].get('nama')} ({round((s['lampiran'].get('ukuran') or 0) / 1024)} KB).")
         peringatan = []
@@ -515,20 +586,29 @@ class JalankanAksi:
                     data = {k: (json.dumps(v) if isinstance(v, (dict, list)) else str(v))
                             for k, v in (r["isian"] or {}).items()}
                     out = await ctx.api(a["metode"], jalur, params=r["query"] or None, data=data or None,
+                                        headers=s["headers"],
                                         files={kolom: (s["lampiran"].get("nama") or "berkas", got[0],
                                                        s["lampiran"].get("mime") or got[1])})
                 else:
                     # tanpa isian: POST/PUT tetap mengirim {} seperti layar (banyak pintu membaca badan JSON)
                     kirim = badan if badan is not None else ({} if a["metode"] != "DELETE" else None)
-                    out = await ctx.api(a["metode"], jalur, params=r["query"] or None, json=kirim)
+                    out = await ctx.api(a["metode"], jalur, params=r["query"] or None, json=kirim,
+                                        headers=s["headers"])
             except AlatError as e:
                 if len(rows) == 1:
                     raise
                 gagal.append(f"baris {i + 1}: {e.pesan}")
                 continue
-            ringkas_out = out if not isinstance(out, dict) else {
-                k: out.get(k) for k in ("id", "number", "nomor", "code", "kode", "status", "message", "detail")
-                if out.get(k) is not None}
+            if len(rows) == 1:
+                # satu baris: jawaban pintu diteruskan (pratinjau impor, galat per baris, nomor dokumen …), dipangkas
+                catat: list = []
+                ringkas_out = _pangkas(out, catat, maks=60, batas=2500) if out is not None else None
+                if catat and isinstance(ringkas_out, dict):
+                    ringkas_out = {**ringkas_out, "_catatan": catat[0]}
+            else:
+                ringkas_out = out if not isinstance(out, dict) else {
+                    k: out.get(k) for k in ("id", "number", "nomor", "code", "kode", "status", "message", "detail")
+                    if out.get(k) is not None}
             hasil.append(ctx.mask(ringkas_out) if ringkas_out else "berhasil")
             b = a.get("balik") or {}
             if b.get("jenis") == "hapus_buatan":

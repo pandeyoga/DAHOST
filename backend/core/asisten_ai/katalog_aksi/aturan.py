@@ -123,6 +123,36 @@ PESAN_HAPUS_PERMANEN = ("Asisten hanya boleh menonaktifkan atau menghapus biasa.
 
 TINGKAT = ("rendah", "menengah", "tinggi")
 
+# ── Bacaan layar (12 Nov 2026, "semuanya bisa dilakukan") ────────────────────
+# Asisten boleh membaca GET yang dipakai layar aktif (izin peran pengguna sendiri, data pribadi disamarkan), supaya
+# bisa menemukan id/kode data yang dituju aksi. Tidak termasuk: rahasia/kunci, cadangan, pengaturan sistem & Asisten,
+# serta unduhan berkas (PDF/Excel/gambar/label) dan aliran data.
+LARANGAN_BACA = (
+    r"^/api/admin/backup", r"^/api/(rahaza|marketing)/integration-settings", r"^/api/dewi/system/config",
+    r"^/api/ai/", r"^/api/asisten-ai/", r"^/api/auth/", r"(^|/)(token|tokens|secret|secrets|api-keys?|password|passwords)(/|$)",
+)
+_LARANGAN_BACA_RX = tuple(re.compile(p) for p in LARANGAN_BACA)
+_BERKAS_BACA_RX = re.compile(r"(^|/|-|_)(export|exports|download|downloads|unduh|pdf|xlsx|excel|csv|print|cetak|"
+                             r"label|labels|barcode|qr|photo|photos|image|images|avatar|thumbnail|file|files|stream|"
+                             r"sse|upload|uploads)(/|$|-|_|\.)", re.I)
+# Ruang Asisten (alat_base.RUANG) → portal yang aksinya/bacaannya ditawarkan; umum = semua.
+PORTAL_RUANG = {"sdm": ("SDM",), "saya": ("Portal Saya",)}
+
+
+def larangan_baca(jalur: str) -> Optional[str]:
+    """Alasan alamat GET ini tidak boleh dibaca Asisten, atau None."""
+    if any(rx.search(jalur) for rx in _LARANGAN_BACA_RX):
+        return "Data rahasia/pengaturan sistem tidak dibaca lewat Asisten."
+    if _BERKAS_BACA_RX.search(jalur) or ":path}" in jalur:
+        return "Unduhan berkas (PDF/Excel/gambar/label) dibuka langsung di layar."
+    return None
+
+
+def di_ruang(portal: list, ruang: Optional[str]) -> bool:
+    """Aksi/bacaan dengan daftar portal ini ditawarkan di ruang Asisten tersebut?"""
+    boleh = PORTAL_RUANG.get(str(ruang or "umum"))
+    return True if boleh is None else any(p in boleh for p in (portal or []))
+
 
 def golongan_untuk(modul: str, jalur: str) -> str:
     """Golongan A/B/C/D satu aksi (modul = nama modul route tanpa awalan `routes.`)."""
