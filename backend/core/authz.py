@@ -1,6 +1,7 @@
 """core.authz — gerbang peran level router (T-01, FASE 2.2).
 
-`deny_roles(...)`  : dependency; peran yang disebut → 403 (tanpa query DB, baca peran dari JWT).
+`deny_roles(...)`  : dependency; peran yang disebut → 403 (peran dari JWT). Peran portal marketing lolos untuk
+                    modul yang portalnya diberikan owner (12 Nov 2026, `_portal_diberikan_owner`).
 `require_roles(...)`: dependency; hanya peran yang disebut (+ superadmin/admin) yang lolos.
 
 Dipasang di `server.py` lewat `dependencies=[...]` pada `include_router` supaya satu perubahan
@@ -20,7 +21,7 @@ EXTERNAL_ROLES = ("vendor", "cmt_vendor", "buyer", "klien_maklon")
 MARKETING_PORTAL_ROLES = ("pic_toko", "marketing_kol", "cs_staff")
 
 
-def _role_of(request: Request) -> str:
+def _payload_of(request: Request) -> dict:
     payload = verify_token(request)
     if not payload:
         # FASE 4 (T-22): unduhan window.open/<a href>/<img> tidak bisa mengirim header —
@@ -29,7 +30,41 @@ def _role_of(request: Request) -> str:
         payload = verify_download_token(qp.get("token") or qp.get("auth") or "")
     if not payload:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return (payload.get("role") or "").lower()
+    return payload
+
+
+def _role_of(request: Request) -> str:
+    return (_payload_of(request).get("role") or "").lower()
+
+
+async def _portal_diberikan_owner(payload: dict, role: str, path: str) -> bool:
+    """Peran portal marketing boleh memakai modul internal yang portalnya DIBERIKAN owner (12 Nov 2026).
+
+    Keputusan owner 10 Nov: portal yang dicentang di Manajemen Role = final. Larangan tetap untuk
+    pic_toko/marketing_kol/cs_staff tetap berlaku, KECUALI untuk modul (katalog `data/module_catalog`) yang
+    portal pemiliknya — atau portal pintasannya — diberikan owner secara eksplisit: dicentang di peran,
+    ditambahkan per orang, atau lewat izin Lihat per modul. Bawaan kode (`PORTAL_ACCESS`) tidak dihitung,
+    dan path di luar katalog tetap ditolak. Penjaga berikutnya (gerbang modul, izin aksi) tetap berjalan.
+    """
+    from data.module_catalog import match_module, view_portals
+    mod = match_module(path)
+    if not mod:
+        return False
+    uid = payload.get("id")
+    if not uid:
+        return False
+    live = await _auth._load_live_user(uid)
+    if live is None or live.get("blocked"):
+        return False
+    role = str(live.get("role") or role).lower()
+    if role not in MARKETING_PORTAL_ROLES:
+        return False  # peran sudah diganti: penjaga lain (require_auth dsb.) yang memutuskan
+    role_portals, extra_portals = await _auth._load_portal_config(role, uid)
+    role_perms, extra_perms = await _auth._load_rbac(role, uid)
+    from routes.shared import ALL_ROLE_PORTALS
+    granted = (set(role_portals) | set(extra_portals) | view_portals(set(role_perms) | set(extra_perms))) \
+        - set(ALL_ROLE_PORTALS)
+    return bool({mod["portal"], *mod["also_portals"]} & granted)
 
 
 # 2026-11-04 — portal EKSTERNAL ber-token sendiri (Kreator `aud=creator-portal`, Livehost
@@ -68,8 +103,11 @@ def deny_roles(*roles: str):
         aud = next((a for rx, a in PORTAL_SHARED_ROUTES.items() if rx.match(path)), None)
         if aud and _portal_token_ok(request, aud):
             return
-        role = _role_of(request)
+        payload = _payload_of(request)
+        role = (payload.get("role") or "").lower()
         if role in denied:
+            if role in MARKETING_PORTAL_ROLES and await _portal_diberikan_owner(payload, role, path):
+                return
             raise HTTPException(
                 403, f"Akses ditolak: peran '{role}' tidak berhak memakai modul ini "
                      f"(khusus staf internal). Gunakan portal Anda sendiri.")
