@@ -205,3 +205,90 @@ describe('KartuTindakan', () => {
     expect(tid('tindakan-judul')).toHaveTextContent('<img src=x');
   });
 });
+
+describe('KartuTindakan risiko tinggi & persetujuan kedua (12 Nov 2026)', () => {
+  const RENCANA_UANG = {
+    ...RENCANA,
+    ubah: [],
+    golongan: 'C',
+    golongan_label: 'Uang / buku besar',
+    konfirmasi: { teks: '1250000', petunjuk: 'Ketik ulang nominal 1.250.000 untuk menyetujui.' },
+    persetujuan_kedua: { perlu: true, alasan: 'Nominal Rp 12.000.000 di atas batas Rp 5.000.000 per transaksi.' },
+  };
+  const blokTinggi = (extra = {}) => blok({ risiko: 'tinggi', rencana: RENCANA_UANG, ...extra });
+
+  test('lencana Risiko tinggi, golongan, dan peringatan persetujuan kedua', () => {
+    render(<KartuTindakan blok={blokTinggi()} onPutuskan={jest.fn()} />);
+    expect(tid('tindakan-risiko')).toHaveTextContent('Risiko tinggi');
+    expect(tid('tindakan-kepala')).toHaveTextContent('Uang / buku besar');
+    expect(tid('tindakan-kepala')).toHaveTextContent('perlu alasan');
+    expect(tid('tindakan-kedua')).toHaveTextContent('Perlu persetujuan kedua owner: Nominal Rp 12.000.000 di atas batas');
+    expect(tid('asisten-tindakan')).toHaveAttribute('data-risiko', 'tinggi');
+  });
+
+  test('Setujui → popup: tombol aktif hanya bila alasan ≥ 10 huruf DAN ketik ulang cocok; alasan + konfirmasi dikirim', async () => {
+    const onPutuskan = jest.fn(async () => ({ ok: true }));
+    render(<KartuTindakan blok={blokTinggi()} onPutuskan={onPutuskan} />);
+    fireEvent.click(tid('tindakan-setujui'));
+    await screen.findByTestId('tindakan-tinggi');
+    expect(tid('tindakan-tinggi')).toHaveTextContent('Ketik ulang nominal 1.250.000 untuk menyetujui.');
+    expect(tid('tindakan-tinggi')).toHaveTextContent('menunggu persetujuan kedua owner');
+    const simpan = tid('tindakan-tinggi-simpan');
+    expect(simpan).toBeDisabled();
+    fireEvent.change(tid('tindakan-tinggi-alasan'), { target: { value: 'Sudah dicek dengan bukti transfer' } });
+    expect(simpan).toBeDisabled(); // ketik ulang belum diisi
+    fireEvent.change(tid('tindakan-tinggi-konfirmasi'), { target: { value: '1.250.00' } });
+    expect(simpan).toBeDisabled();
+    expect(tid('tindakan-tinggi')).toHaveTextContent('Belum sama.');
+    fireEvent.change(tid('tindakan-tinggi-konfirmasi'), { target: { value: 'Rp 1.250.000' } });
+    expect(simpan).not.toBeDisabled();
+    fireEvent.change(tid('tindakan-tinggi-alasan'), { target: { value: 'pendek' } });
+    expect(simpan).toBeDisabled(); // alasan < 10 huruf
+    fireEvent.change(tid('tindakan-tinggi-alasan'), { target: { value: 'Sudah dicek dengan bukti transfer' } });
+    expect(onPutuskan).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(simpan); });
+    await waitFor(() => expect(onPutuskan).toHaveBeenCalledWith('tnd-1', {
+      keputusan: 'setujui', ubahan: undefined, alasan: 'Sudah dicek dengan bukti transfer', konfirmasi: '1250000',
+    }));
+    expect(onPutuskan).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByTestId('tindakan-tinggi')).toBeNull());
+  });
+
+  test('popup risiko tinggi ditutup (Batal) → tidak ada permintaan, tombol kartu bisa dipakai lagi', async () => {
+    const onPutuskan = jest.fn(async () => ({ ok: true }));
+    render(<KartuTindakan blok={blokTinggi()} onPutuskan={onPutuskan} />);
+    fireEvent.click(tid('tindakan-setujui'));
+    await screen.findByTestId('tindakan-tinggi');
+    fireEvent.click(tid('tindakan-tinggi-batal'));
+    await waitFor(() => expect(screen.queryByTestId('tindakan-tinggi')).toBeNull());
+    expect(onPutuskan).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(tid('tindakan-batal')); });
+    expect(onPutuskan).toHaveBeenCalledWith('tnd-1', { keputusan: 'batal' });
+  });
+
+  test('risiko tinggi tanpa `konfirmasi` (kartu lama): cukup alasan', async () => {
+    const onPutuskan = jest.fn(async () => ({ ok: true }));
+    const { konfirmasi, ...tanpa } = RENCANA_UANG; // eslint-disable-line no-unused-vars
+    render(<KartuTindakan blok={blok({ risiko: 'tinggi', rencana: tanpa })} onPutuskan={onPutuskan} />);
+    fireEvent.click(tid('tindakan-setujui'));
+    await screen.findByTestId('tindakan-tinggi');
+    expect(screen.queryByTestId('tindakan-tinggi-konfirmasi')).toBeNull();
+    fireEvent.change(tid('tindakan-tinggi-alasan'), { target: { value: 'Sudah dibahas di rapat' } });
+    await act(async () => { fireEvent.click(tid('tindakan-tinggi-simpan')); });
+    await waitFor(() => expect(onPutuskan).toHaveBeenCalledWith('tnd-1', { keputusan: 'setujui', ubahan: undefined, alasan: 'Sudah dibahas di rapat' }));
+  });
+
+  test('keadaan menunggu_kedua: badge kuning + pesan, tanpa tombol dan tanpa peringatan berulang', () => {
+    render(<KartuTindakan blok={blokTinggi({ keadaan: 'menunggu_kedua', pesan: 'Menunggu persetujuan owner sebelum dijalankan.' })} onPutuskan={jest.fn()} />);
+    expect(tid('tindakan-status')).toHaveTextContent('Menunggu persetujuan kedua');
+    expect(tid('tindakan-hasil')).toHaveTextContent('Menunggu persetujuan owner sebelum dijalankan.');
+    expect(screen.queryByTestId('tindakan-setujui')).toBeNull();
+    expect(screen.queryByTestId('tindakan-kedua')).toBeNull();
+    expect(tid('asisten-tindakan')).toHaveAttribute('data-keadaan', 'menunggu_kedua');
+  });
+
+  test('keadaan menunggu_kedua tanpa pesan server → kalimat bawaan', () => {
+    render(<KartuTindakan blok={blokTinggi({ keadaan: 'menunggu_kedua' })} onPutuskan={jest.fn()} />);
+    expect(tid('tindakan-hasil')).toHaveTextContent('menunggu persetujuan kedua owner; data belum diubah');
+  });
+});

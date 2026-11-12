@@ -1,8 +1,9 @@
 import { JENIS_ISI, dariRiwayat, pesanAsistenBaru, terapkanPeristiwa } from '../peristiwaSse';
 import {
-  KEADAAN_TINDAKAN, bacaDaftarTindakan, bacaNilaiUbah, bolehSemuaPengguna, formatNilaiUbah, kartuMenunggu,
-  keadaanEfektif, keadaanTindakan, kedaluwarsakanMenunggu, labelKunci, queryDaftar, ratakanNilai, susunUbahan,
-  tautanAman, terapkanStatusTindakan, terapkanUbahanKeRencana, ubahKartu,
+  KEADAAN_TINDAKAN, STATUS_PENYARING, alasanKedua, bacaDaftarTindakan, bacaNilaiUbah, bolehSemuaPengguna,
+  cocokKonfirmasi, formatNilaiUbah, kartuMenunggu, keadaanEfektif, keadaanTindakan, kedaluwarsakanMenunggu,
+  konfirmasiRencana, labelGolongan, labelKunci, nilaiKonfirmasi, queryDaftar, ratakanNilai, risikoTindakan,
+  susunUbahan, tautanAman, terapkanStatusTindakan, terapkanUbahanKeRencana, ubahKartu,
 } from '../tindakanAsisten';
 
 const RENCANA = {
@@ -43,6 +44,15 @@ describe('terapkanPeristiwa: tindakan & tindakan_status (Kontrak E)', () => {
     // tanpa id diabaikan; risiko tak dikenal → rendah
     expect(terapkanPeristiwa(p, 'tindakan', { nama: 'x' })).toBe(p);
     expect(terapkanPeristiwa(pesanAsistenBaru('t'), 'tindakan', { id: 'z', risiko: 'aneh' }).blok[0].risiko).toBe('rendah');
+    // 12 Nov 2026: risiko "tinggi" dipertahankan
+    expect(terapkanPeristiwa(pesanAsistenBaru('t'), 'tindakan', { id: 'z', risiko: 'tinggi' }).blok[0].risiko).toBe('tinggi');
+  });
+
+  test('`tindakan_status` menunggu_kedua (persetujuan kedua) membawa pesan ke kartu', () => {
+    let p = terapkanPeristiwa(pesanAsistenBaru('tmp'), 'tindakan', { ...EV_TINDAKAN, risiko: 'tinggi' });
+    p = terapkanPeristiwa(p, 'tindakan_status', { id: 'tnd-1', keadaan: 'menunggu_kedua', pesan: 'Menunggu owner.' });
+    expect(p.blok[0]).toMatchObject({ keadaan: 'menunggu_kedua', pesan: 'Menunggu owner.', risiko: 'tinggi' });
+    expect(kartuMenunggu([{ peran: 'asisten', blok: p.blok }])).toEqual([]); // bukan lagi keputusan pembuat kartu
   });
 
   test('`tindakan_status` mengubah keadaan + ringkas/pesan kartu miliknya; id lain = pesan yang sama', () => {
@@ -107,6 +117,7 @@ describe('utas: status untuk kartu di jawaban sebelumnya', () => {
 describe('keadaan → label & warna StatusBadge', () => {
   test.each([
     ['menunggu', 'Menunggu', 'warning'],
+    ['menunggu_kedua', 'Menunggu persetujuan kedua', 'warning'],
     ['disetujui', 'Disetujui', 'primary'],
     ['dijalankan', 'Dijalankan', 'success'],
     ['dibatalkan', 'Dibatalkan', 'muted'],
@@ -119,7 +130,9 @@ describe('keadaan → label & warna StatusBadge', () => {
 
   test('keadaan tak dikenal aman; semua keadaan Kontrak E terpetakan', () => {
     expect(keadaanTindakan('aneh').label).toBe('Tidak dikenal');
-    expect(Object.keys(KEADAAN_TINDAKAN).sort()).toEqual(['dibalikkan', 'dibatalkan', 'dijalankan', 'disetujui', 'gagal', 'kedaluwarsa', 'menunggu']);
+    expect(Object.keys(KEADAAN_TINDAKAN).sort()).toEqual(['dibalikkan', 'dibatalkan', 'dijalankan', 'disetujui', 'gagal', 'kedaluwarsa', 'menunggu', 'menunggu_kedua']);
+    expect(STATUS_PENYARING).toContain('menunggu_kedua');
+    expect(keadaanEfektif({ keadaan: 'menunggu_kedua', kedaluwarsa_pada: '2000-01-01T00:00:00Z' })).toBe('menunggu_kedua');
   });
 
   test('menunggu yang lewat batas waktu tampil kedaluwarsa', () => {
@@ -226,7 +239,7 @@ describe('halaman Tindakan AI', () => {
     expect(bacaDaftarTindakan(rows)).toEqual({ baris: rows, total: 2, halaman: 1, perHalaman: 25, jumlah: null });
     const d = bacaDaftarTindakan({ items: rows, total: 60, halaman: 3, per_halaman: 20, per_keadaan: { menunggu: 1, dijalankan: '5' } }, 3);
     expect(d).toMatchObject({ baris: rows, total: 60, halaman: 3, perHalaman: 20 });
-    expect(d.jumlah).toEqual({ menunggu: 1, dijalankan: 5, dibatalkan: 0, gagal: 0, kedaluwarsa: 0, dibalikkan: 0 });
+    expect(d.jumlah).toEqual({ menunggu: 1, menunggu_kedua: 0, dijalankan: 5, dibatalkan: 0, gagal: 0, kedaluwarsa: 0, dibalikkan: 0 });
     expect(bacaDaftarTindakan({ tindakan: rows }).baris).toBe(rows);
     expect(bacaDaftarTindakan(null).baris).toEqual([]);
   });
@@ -262,5 +275,42 @@ describe('halaman Tindakan AI', () => {
     expect(ratakanNilai([{ label: 'Target', nilai: { bulan: '2026-11', omzet: 5 } }]).baris).toEqual([{ label: 'Target', nilai: 'Bulan: 2026-11 · Omzet: 5' }]);
     expect(ratakanNilai(null).baris).toEqual([]);
     expect(ratakanNilai({ a: 1, b: 2, c: 3 }, 2).lebih).toBe(1);
+  });
+});
+
+describe('risiko tinggi, golongan, persetujuan kedua (12 Nov 2026)', () => {
+  test('risiko & golongan', () => {
+    expect(risikoTindakan('tinggi')).toBe('tinggi');
+    expect(risikoTindakan('menengah')).toBe('menengah');
+    expect(risikoTindakan(undefined)).toBe('rendah');
+    expect(labelGolongan('C')).toBe('Uang / buku besar');
+    expect(labelGolongan('b')).toBe('Gerak stok');
+    expect(labelGolongan(null, '—')).toBe('—');
+  });
+
+  test('konfirmasi & persetujuan kedua dari rencana (kartu lama aman)', () => {
+    expect(konfirmasiRencana({ konfirmasi: { teks: '1250000', petunjuk: 'Ketik ulang nominal 1.250.000 untuk menyetujui.' } }))
+      .toEqual({ teks: '1250000', petunjuk: 'Ketik ulang nominal 1.250.000 untuk menyetujui.' });
+    expect(konfirmasiRencana({ konfirmasi: { teks: 'PO-12' } }).petunjuk).toMatch(/PO-12/);
+    expect(konfirmasiRencana({})).toBeNull();
+    expect(konfirmasiRencana({ konfirmasi: { teks: '  ' } })).toBeNull();
+    expect(alasanKedua({ persetujuan_kedua: { perlu: true, alasan: 'Nominal Rp 12.000.000 di atas batas.' } })).toBe('Nominal Rp 12.000.000 di atas batas.');
+    expect(alasanKedua({ persetujuan_kedua: { perlu: false, alasan: 'x' } })).toBe('');
+    expect(alasanKedua(undefined)).toBe('');
+  });
+
+  test('ketik ulang: angka abaikan spasi/titik/koma/Rp; teks abaikan spasi berlebih & huruf besar', () => {
+    expect(cocokKonfirmasi('1.250.000', '1250000')).toBe(true);
+    expect(cocokKonfirmasi('Rp 1.250.000', '1250000')).toBe(true);
+    expect(cocokKonfirmasi('rp1,250,000', '1250000')).toBe(true);
+    expect(cocokKonfirmasi('125.000', '1250000')).toBe(false);
+    expect(cocokKonfirmasi('1.250.000,00', '1250000')).toBe(true); // koma desimal, sama dengan server
+    expect(nilaiKonfirmasi('1.250.000,00', '1250000')).toBe('1250000');
+    expect(cocokKonfirmasi('', '1250000')).toBe(false);
+    expect(cocokKonfirmasi('po-12 ', 'PO-12')).toBe(true);
+    expect(cocokKonfirmasi('PO-13', 'PO-12')).toBe(false);
+    expect(cocokKonfirmasi('apa saja', '')).toBe(false);
+    expect(nilaiKonfirmasi('Rp 1.250.000', '1250000')).toBe('1250000');
+    expect(nilaiKonfirmasi('  PO-12  ', 'PO-12')).toBe('PO-12');
   });
 });

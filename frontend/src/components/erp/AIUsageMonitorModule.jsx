@@ -18,7 +18,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { BarisDetail } from '@/components/ui/detail-popup';
-import { formatDateTimeID } from '@/lib/format';
+import { formatDateTimeID, formatRupiah } from '@/lib/format';
 import { toast } from 'sonner';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
@@ -62,8 +62,8 @@ const CACHE_FIELDS = ['cache_read_tokens', 'cache_write_tokens', 'web_search_req
 const adaCache = (d) => !!d && CACHE_FIELDS.some((k) => d[k] !== undefined && d[k] !== null);
 
 // 2026-11-08 (Asisten AI Tahap B, Kontrak E): saklar "Tindakan AI aktif" + batas tindakan per pengguna per hari,
-// disimpan lewat PUT /api/ai/usage/settings yang sama. Server lama tanpa kunci ini → bawaan (aktif, 30).
-const BATAS_TINDAKAN_BAWAAN = 30;
+// disimpan lewat PUT /api/ai/usage/settings yang sama. Server tanpa kunci ini → bawaan (aktif, 100; dulu 30).
+const BATAS_TINDAKAN_BAWAAN = 100;
 const BATAS_TINDAKAN_MAKS = 1000;
 function bacaBatasTindakan(v) {
   const s = String(v ?? '').trim();
@@ -71,6 +71,16 @@ function bacaBatasTindakan(v) {
   const n = Number(s);
   return n <= BATAS_TINDAKAN_MAKS ? n : null;
 }
+
+// 2026-11-12: batas nominal kartu uang Asisten AI (Rupiah bulat ≥ 0). 0 = belum diisi → SEMUA kartu uang perlu
+// persetujuan kedua owner. Hanya owner/superadmin yang mengubah; admin menyimpan nilai tersimpan apa adanya.
+function bacaNominal(v) {
+  const s = String(v ?? '').trim();
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) ? n : null;
+}
+const teksBatasNominal = (v) => (Number(v) > 0 ? formatRupiah(Number(v)) : 'belum diisi');
 
 /** Rincian cache & pencarian web sebagai keterangan kartu Token (dulu 3 kartu tambahan). */
 function subCache(d) {
@@ -159,6 +169,9 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
           disabled_features: Array.isArray(d.disabled_features) ? [...d.disabled_features] : [],
           asisten_tindakan_aktif: d.asisten_tindakan_aktif !== false,
           asisten_batas_tindakan_harian: d.asisten_batas_tindakan_harian ?? BATAS_TINDAKAN_BAWAAN,
+          // 12 Nov 2026: batas nominal kartu uang (0 = setiap kartu uang perlu persetujuan kedua owner)
+          asisten_batas_nominal_transaksi: d.asisten_batas_nominal_transaksi ?? 0,
+          asisten_batas_nominal_harian: d.asisten_batas_nominal_harian ?? 0,
           // Asisten AI per pengguna (10 Nov 2026): bawaan akun yang belum diatur + batas pertanyaan bawaan (0 = tanpa batas)
           asisten_pengguna_bawaan_aktif: d.asisten_pengguna_bawaan_aktif === true,
           asisten_batas_pertanyaan_harian: d.asisten_batas_pertanyaan_harian ?? 0,
@@ -190,6 +203,12 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
       toast.error(`Batas pertanyaan per hari harus angka bulat 0–${BATAS_TINDAKAN_MAKS} (0 = tanpa batas).`);
       return false;
     }
+    const nominalTransaksi = bacaNominal(form.asisten_batas_nominal_transaksi);
+    const nominalHarian = bacaNominal(form.asisten_batas_nominal_harian);
+    if (nominalTransaksi === null || nominalHarian === null) {
+      toast.error('Batas nominal harus angka Rupiah bulat, 0 atau lebih.');
+      return false;
+    }
     // Asisten AI (layar2) — Tahap D: jam JJ:MM wajib sah sebelum PUT
     const proaktif = susunPengaturanProaktif(form);
     setGalatProaktif(proaktif.galat);
@@ -213,6 +232,8 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
           asisten_batas_tindakan_harian: batasTindakan,
           asisten_pengguna_bawaan_aktif: !!form.asisten_pengguna_bawaan_aktif,
           asisten_batas_pertanyaan_harian: batasPertanyaan,
+          asisten_batas_nominal_transaksi: nominalTransaksi,
+          asisten_batas_nominal_harian: nominalHarian,
           ...proaktif.nilai, // Asisten AI (layar2) — Tahap D
         }),
       });
@@ -589,6 +610,13 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                 <BarisDetail label="Tindakan Asisten AI">
                   {settings?.asisten_tindakan_aktif !== false ? 'Aktif' : 'Dimatikan'} · paling banyak {fmtNum(settings?.asisten_batas_tindakan_harian ?? BATAS_TINDAKAN_BAWAAN)} per pengguna per hari
                 </BarisDetail>
+                <BarisDetail label="Batas nominal kartu uang">
+                  <span data-testid="ai-set-ringkas-nominal">
+                    {Number(settings?.asisten_batas_nominal_transaksi) > 0 || Number(settings?.asisten_batas_nominal_harian) > 0
+                      ? `Per transaksi ${teksBatasNominal(settings?.asisten_batas_nominal_transaksi)} · per hari per orang ${teksBatasNominal(settings?.asisten_batas_nominal_harian)}. Di atas batas perlu persetujuan kedua owner.`
+                      : 'Belum diisi — setiap kartu uang perlu persetujuan kedua owner.'}
+                  </span>
+                </BarisDetail>
                 <BarisDetail label="Asisten AI untuk akun yang belum diatur">
                   {settings?.asisten_pengguna_bawaan_aktif === true ? 'Aktif' : 'Mati'}
                   {' · '}pertanyaan {Number(settings?.asisten_batas_pertanyaan_harian) > 0 ? `paling banyak ${fmtNum(settings.asisten_batas_pertanyaan_harian)} per pengguna per hari` : 'tanpa batas'}
@@ -643,6 +671,24 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
               <MoneyInput id="ai-set-batas-tindakan" decimals={0} value={form.asisten_batas_tindakan_harian}
                 onChange={(e) => setField('asisten_batas_tindakan_harian', e.target.value)} data-testid="ai-set-batas-tindakan" />
             </Isian>
+            {/* 12 Nov 2026: kartu uang di atas batas ini menunggu persetujuan kedua owner/superadmin */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" data-testid="ai-set-batas-nominal">
+              <Isian label="Batas nominal per transaksi" htmlFor="ai-set-nominal-transaksi"
+                petunjuk="0 = setiap kartu uang perlu persetujuan kedua owner.">
+                <MoneyInput id="ai-set-nominal-transaksi" prefix="Rp" decimals={0} value={form.asisten_batas_nominal_transaksi}
+                  disabled={!bolehAturPengguna} onChange={(e) => setField('asisten_batas_nominal_transaksi', e.target.value)}
+                  data-testid="ai-set-nominal-transaksi" />
+              </Isian>
+              <Isian label="Batas nominal per hari per orang" htmlFor="ai-set-nominal-harian"
+                petunjuk="0 = setiap kartu uang perlu persetujuan kedua owner.">
+                <MoneyInput id="ai-set-nominal-harian" prefix="Rp" decimals={0} value={form.asisten_batas_nominal_harian}
+                  disabled={!bolehAturPengguna} onChange={(e) => setField('asisten_batas_nominal_harian', e.target.value)}
+                  data-testid="ai-set-nominal-harian" />
+              </Isian>
+            </div>
+            {!bolehAturPengguna && (
+              <p className="text-xs text-muted-foreground">Hanya owner atau superadmin yang bisa mengubah batas nominal.</p>
+            )}
           </div>
 
           {/* Asisten AI per pengguna (10 Nov 2026): bawaan akun yang belum diatur — hanya owner/superadmin yang mengubah */}

@@ -1385,7 +1385,7 @@ class _Reservasi:
 async def siapkan_putusan(*, db, user: dict, tindakan_id: str, keputusan: str, ubahan=None, alasan: str = "",
                           cv: Optional[str] = None, today, token: Optional[str] = None, app=None, klien=None,
                           klien_api=None, batas_detik: float = BATAS_DETIK,
-                          batas_tindakan: Optional[int] = None) -> Jalan:
+                          batas_tindakan: Optional[int] = None, konfirmasi=None) -> Jalan:
     """Pemeriksaan + klaim keputusan kartu SEBELUM aliran dimulai. Galat → `tdk.GalatTindakan` (HTTP 4xx).
 
     Hanya pemilik sesi yang boleh memutuskan (orang lain, superadmin pun, mendapat 404). Return `Jalan` mode
@@ -1413,7 +1413,7 @@ async def siapkan_putusan(*, db, user: dict, tindakan_id: str, keputusan: str, u
             return tdk.buat_ctx(user=user, doc=d, token=token, app=app, klien_api=klien_api, tulis=False,
                                 today=today)
         p = await tdk.periksa_dan_kunci(db, user, doc, keputusan=keputusan, ubahan=ubahan, alasan=alasan,
-                                        buat_ctx_baca=_ctx_baca, batas=batas)
+                                        buat_ctx_baca=_ctx_baca, batas=batas, konfirmasi=konfirmasi)
         j = Jalan(db=db, user=user, sesi=sesi, teks="", cv=cv or doc.get("cv") or "DA",
                   periode=doc.get("periode") or today.strftime("%Y-%m"), today=today, token=token, app=app,
                   klien=klien, klien_api=klien_api, api_key=g.api_key if g.ok else "",

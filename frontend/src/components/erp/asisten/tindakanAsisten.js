@@ -17,6 +17,8 @@ import { parseServerTime } from '@/lib/waktu';
 /** Keadaan tindakan (Kontrak E) → label layar + nada StatusBadge (hanya token warna). */
 export const KEADAAN_TINDAKAN = {
   menunggu: { label: 'Menunggu', tone: 'warning' },
+  // 12 Nov 2026: kartu uang di atas batas nominal — sudah disetujui pembuat, menunggu owner/superadmin
+  menunggu_kedua: { label: 'Menunggu persetujuan kedua', tone: 'warning' },
   disetujui: { label: 'Disetujui', tone: 'primary' }, // sementara: sedang dijalankan
   dijalankan: { label: 'Dijalankan', tone: 'success' },
   dibatalkan: { label: 'Dibatalkan', tone: 'muted' },
@@ -27,6 +29,7 @@ export const KEADAAN_TINDAKAN = {
 
 /** Kalimat bawaan di kartu bila server tidak mengirim `ringkas`/`pesan`. */
 export const PESAN_BAWAAN = {
+  menunggu_kedua: 'Anda sudah menyetujui. Perubahan menunggu persetujuan kedua owner; data belum diubah.',
   disetujui: 'Disetujui, sedang dijalankan…',
   dijalankan: 'Perubahan sudah dijalankan.',
   dibatalkan: 'Dibatalkan. Tidak ada data yang diubah.',
@@ -48,6 +51,61 @@ export function keadaanEfektif(blok, now = new Date()) {
   if (k !== 'menunggu' || !blok?.kedaluwarsa_pada) return k;
   const batas = parseServerTime(blok.kedaluwarsa_pada);
   return batas && batas.getTime() <= now.getTime() ? 'kedaluwarsa' : k;
+}
+
+// ─── Risiko, golongan, konfirmasi ketik ulang (12 Nov 2026) ─────────────────
+/** Tingkat risiko kartu; nilai tak dikenal = rendah. */
+export const RISIKO = ['rendah', 'menengah', 'tinggi'];
+export const risikoTindakan = (r) => (RISIKO.includes(r) ? r : 'rendah');
+export const LABEL_RISIKO = { rendah: 'Rendah', menengah: 'Menengah', tinggi: 'Tinggi' };
+
+/** Golongan aksi: A data biasa, B gerak stok, C uang/buku besar, D pengaturan/keamanan. */
+export const LABEL_GOLONGAN = {
+  A: 'Data biasa', B: 'Gerak stok', C: 'Uang / buku besar', D: 'Pengaturan / keamanan',
+};
+export const labelGolongan = (g, cadangan = '') => LABEL_GOLONGAN[String(g || '').toUpperCase()] || cadangan;
+
+/** `rencana.konfirmasi` yang sah → `{teks, petunjuk}` atau null (kartu lama / risiko di bawah tinggi). */
+export function konfirmasiRencana(rencana) {
+  const k = rencana?.konfirmasi;
+  const teks = k && typeof k === 'object' ? String(k.teks ?? '').trim() : '';
+  if (!teks) return null;
+  return { teks, petunjuk: String(k.petunjuk || `Ketik ulang "${teks}" untuk menyetujui.`) };
+}
+
+/** `rencana.persetujuan_kedua` yang perlu → kalimat alasannya (atau '' bila tidak perlu). */
+export function alasanKedua(rencana) {
+  const p = rencana?.persetujuan_kedua;
+  if (!p || typeof p !== 'object' || !p.perlu) return '';
+  return String(p.alasan || 'Nominal di atas batas yang diatur owner.');
+}
+
+const normalAngka = (s) => String(s ?? '').toLowerCase().replace(/rp/g, '').replace(/[\s.,]/g, '');
+const normalTeks = (s) => String(s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+const teksAngka = (teks) => /^-?\d+$/.test(normalAngka(teks));
+
+/**
+ * Teks ketik ulang cocok dengan `konfirmasi.teks`? Angka: spasi, titik, koma, dan "Rp" diabaikan
+ * ("Rp 1.250.000" = "1250000"); "1.250.000,00" juga diterima (koma = desimal, sama dengan server).
+ * Teks lain: spasi berlebih dan huruf besar/kecil diabaikan. Server tetap memeriksa.
+ */
+export function cocokKonfirmasi(ketik, teks) {
+  if (!String(teks ?? '').trim() || !String(ketik ?? '').trim()) return false;
+  if (teksAngka(teks)) {
+    const harus = normalAngka(teks);
+    const sebelumKoma = String(ketik).split(',')[0].replace(/\D/g, '');
+    return normalAngka(ketik) === harus || sebelumKoma === harus;
+  }
+  return normalTeks(ketik) === normalTeks(teks);
+}
+
+/**
+ * Nilai `konfirmasi` yang dikirim: konfirmasi angka yang cocok → angka polos ("1250000"); selain itu teks yang
+ * diketik (dirapikan).
+ */
+export function nilaiKonfirmasi(ketik, teks) {
+  if (teksAngka(teks)) return cocokKonfirmasi(ketik, teks) ? normalAngka(teks) : normalAngka(ketik);
+  return String(ketik ?? '').trim().replace(/\s+/g, ' ');
 }
 
 /** Tautan "Buka layar …" hanya ke id modul yang sah (huruf kecil, angka, tanda minus). */
@@ -157,7 +215,7 @@ export function blokTindakan(d) {
     id: d.id,
     nama: d.nama,
     label: d.label,
-    risiko: d.risiko === 'menengah' ? 'menengah' : 'rendah',
+    risiko: risikoTindakan(d.risiko),
     keadaan: d.keadaan || 'menunggu',
     rencana: d.rencana && typeof d.rencana === 'object' ? d.rencana : {},
     kedaluwarsa_pada: d.kedaluwarsa_pada,
@@ -225,7 +283,7 @@ export function kedaluwarsakanMenunggu(daftarPesan, pesan = 'Tidak diputuskan ka
 }
 
 // ─── Halaman Tindakan AI ─────────────────────────────────────────────────────
-export const STATUS_PENYARING = ['menunggu', 'dijalankan', 'dibatalkan', 'gagal', 'kedaluwarsa', 'dibalikkan'];
+export const STATUS_PENYARING = ['menunggu', 'menunggu_kedua', 'dijalankan', 'dibatalkan', 'gagal', 'kedaluwarsa', 'dibalikkan'];
 export const PER_HALAMAN = 25;
 
 /** Owner dan superadmin boleh melihat tindakan semua pengguna (`semua=1`). */

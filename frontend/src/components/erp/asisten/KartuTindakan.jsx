@@ -7,30 +7,37 @@
  *   ├ "Ubah": isian sebaris untuk `rencana.ubah` (rupiah berformat, angka, teks, tanggal, pilihan)
  *   ├ Setujui (utama) · Ubah · Batal — dikunci selama permintaan berjalan (tidak ada klik ganda)
  *   │   risiko "menengah": Setujui → dialog alasan (≥ 10 huruf) → konfirmasi kedua
+ *   │   risiko "tinggi" (12 Nov 2026): Setujui → popup alasan (≥ 10 huruf) + ketik ulang `rencana.konfirmasi.teks`
+ *   │   kartu uang di atas batas nominal: peringatan "Perlu persetujuan kedua owner" → keadaan `menunggu_kedua`
  *   └ setelah diputuskan: ringkas/pesan hasil, isian yang diubah, tautan "Buka layar …" (onNavigate)
  *
  * Teks dari server selalu dirender sebagai teks biasa (React meng-escape); tidak ada HTML mentah.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, ArrowUpRight, Ban, Check, CheckCircle2, ClipboardCheck, Clock, Info, Loader2, Pencil, Power,
-  Undo2, X, XCircle,
+  ArrowRight, ArrowUpRight, Ban, Check, CheckCircle2, ClipboardCheck, Clock, Hourglass, Info, Loader2, Pencil,
+  Power, ShieldAlert, Undo2, X, XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import DatePicker from '@/components/ui/date-picker';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import { formatDateTimeID } from '@/lib/format';
 import { parseServerTime } from '@/lib/waktu';
 import { cn } from '@/lib/utils';
 import { Notice, StatusBadge } from '../moduleAtoms';
 import {
-  PESAN_BAWAAN, daftarUbah, formatNilaiUbah, jenisUbah, keadaanEfektif, keadaanTindakan, nilaiAwalUbah,
-  susunUbahan, tautanAman,
+  PESAN_BAWAAN, alasanKedua, cocokKonfirmasi, daftarUbah, formatNilaiUbah, jenisUbah, keadaanEfektif,
+  keadaanTindakan, konfirmasiRencana, labelGolongan, nilaiAwalUbah, nilaiKonfirmasi, risikoTindakan, susunUbahan,
+  tautanAman,
 } from './tindakanAsisten';
+
+const ALASAN_MIN = 10;
 
 const BARIS_AWAL = 8;
 const KEPALA = 'h-9 whitespace-nowrap px-3';
@@ -79,6 +86,51 @@ export function TabelPerubahan({ perubahan, testId = 'tindakan-perubahan' }) {
         </Button>
       )}
     </div>
+  );
+}
+
+/** Peringatan "Perlu persetujuan kedua owner: …" (`rencana.persetujuan_kedua`) — kartu chat & rincian Tindakan AI. */
+export function PeringatanKedua({ rencana, testId = 'tindakan-kedua' }) {
+  const alasan = alasanKedua(rencana);
+  if (!alasan) return null;
+  return (
+    <Notice tone="warning" icon={ShieldAlert} className="px-3 py-2 text-xs" testId={testId}>
+      Perlu persetujuan kedua owner: {alasan}
+    </Notice>
+  );
+}
+
+/**
+ * Popup persetujuan risiko tinggi: alasan (≥ 10 huruf) + ketik ulang `konfirmasi.teks`. Tombol Setujui aktif hanya
+ * bila keduanya terpenuhi; nilai yang dikirim lewat `onSetujui({alasan, konfirmasi})`.
+ */
+function PopupRisikoTinggi({ open, judul, konfirmasi, perluKedua, onBatal, onSetujui }) {
+  const [alasan, setAlasan] = useState('');
+  const [ketik, setKetik] = useState('');
+  useEffect(() => { if (open) { setAlasan(''); setKetik(''); } }, [open]);
+  const alasanOk = alasan.trim().length >= ALASAN_MIN;
+  const cocok = !konfirmasi || cocokKonfirmasi(ketik, konfirmasi.teks);
+  const salahKetik = !!konfirmasi && ketik.trim() !== '' && !cocok;
+  return (
+    <FormPopup open={open} onClose={onBatal} ukuran="pendek" testId="tindakan-tinggi"
+      judul="Setujui perubahan berisiko tinggi"
+      keterangan={`${judul}. ${perluKedua
+        ? 'Setelah Anda setujui, perubahan menunggu persetujuan kedua owner sebelum dijalankan.'
+        : 'Data langsung diubah setelah Anda menekan Setujui.'} Alasan Anda tercatat di jejak Tindakan AI.`}
+      labelSimpan={perluKedua ? 'Setujui' : 'Setujui & jalankan'} bisaSimpan={alasanOk && cocok}
+      onSimpan={() => onSetujui({ alasan: alasan.trim(), konfirmasi: konfirmasi ? nilaiKonfirmasi(ketik, konfirmasi.teks) : undefined })}>
+      <Isian label={`Alasan (minimal ${ALASAN_MIN} huruf)`} htmlFor="tindakan-tinggi-alasan" wajib>
+        <Textarea id="tindakan-tinggi-alasan" rows={3} value={alasan} onChange={(e) => setAlasan(e.target.value)}
+          placeholder="Mis. sudah dicek dengan bukti transfer" data-testid="tindakan-tinggi-alasan" />
+      </Isian>
+      {konfirmasi && (
+        <Isian label="Ketik ulang untuk menyetujui" htmlFor="tindakan-tinggi-konfirmasi" wajib
+          petunjuk={konfirmasi.petunjuk} galat={salahKetik ? `Belum sama. ${konfirmasi.petunjuk}` : undefined}>
+          <Input id="tindakan-tinggi-konfirmasi" value={ketik} onChange={(e) => setKetik(e.target.value)} autoComplete="off"
+            aria-invalid={salahKetik || undefined} data-testid="tindakan-tinggi-konfirmasi" />
+        </Isian>
+      )}
+    </FormPopup>
   );
 }
 
@@ -145,9 +197,11 @@ function IsianUbah({ field, id, value, onChange, galat, disabled }) {
 
 const IKON_AKHIR = {
   disetujui: Loader2, dijalankan: CheckCircle2, gagal: XCircle, dibatalkan: Ban, kedaluwarsa: Clock, dibalikkan: Undo2,
+  menunggu_kedua: Hourglass,
 };
 const WARNA_AKHIR = {
   disetujui: 'text-primary', dijalankan: 'text-[hsl(var(--success))]', gagal: 'text-destructive',
+  menunggu_kedua: 'text-[hsl(var(--warning-text))]',
 };
 
 function pesanAkhir(blok, keadaan) {
@@ -162,7 +216,7 @@ function pesanAkhir(blok, keadaan) {
 /**
  * @param {object} props
  * @param {object} props.blok              blok `tindakan` (Kontrak E)
- * @param {(id, {keputusan, ubahan?, alasan?}) => Promise<{ok:boolean}>} props.onPutuskan
+ * @param {(id, {keputusan, ubahan?, alasan?, konfirmasi?}) => Promise<{ok:boolean}>} props.onPutuskan
  * @param {(menu) => void} [props.onNavigate]
  * @param {boolean} [props.nonaktif]       jawaban lain sedang mengalir → tombol ditahan
  * @param {boolean} [props.tindakanAktif]  false = admin mematikan Tindakan AI (Setujui ditahan, Batal tetap)
@@ -174,15 +228,22 @@ function KartuTindakan({ blok, onPutuskan, onNavigate, nonaktif = false, tindaka
   const keadaan = keadaanEfektif(blok, now);
   const menunggu = keadaan === 'menunggu';
   const info = keadaanTindakan(keadaan);
-  const menengah = blok?.risiko === 'menengah';
+  const risiko = risikoTindakan(blok?.risiko);
+  const menengah = risiko === 'menengah';
+  const tinggi = risiko === 'tinggi';
   const judul = String(rencana.judul || blok?.label || 'Usulan perubahan');
   const tautan = tautanAman(rencana.tautan);
+  const golongan = String(rencana.golongan_label || labelGolongan(rencana.golongan));
+  const konfirmasi = useMemo(() => konfirmasiRencana(rencana), [rencana]);
+  const perluKedua = !!alasanKedua(rencana);
 
   const [sibuk, setSibuk] = useState(null); // 'setujui' | 'batal' | null
   const kunci = useRef(false);
   const [ubahBuka, setUbahBuka] = useState(false);
   const [isian, setIsian] = useState({});
   const [galat, setGalat] = useState({});
+  // risiko tinggi: popup alasan + ketik ulang terbuka; `ubahan` yang sudah dibaca disimpan sampai Setujui
+  const [popupTinggi, setPopupTinggi] = useState(null); // null | { ubahan }
 
   // kartu menunggu yang lama terbuka berganti jadi kedaluwarsa tanpa reload
   useEffect(() => {
@@ -195,7 +256,12 @@ function KartuTindakan({ blok, onPutuskan, onNavigate, nonaktif = false, tindaka
     return () => clearTimeout(t);
   }, [menunggu, blok?.kedaluwarsa_pada]);
 
-  useEffect(() => { if (!menunggu) setUbahBuka(false); }, [menunggu]);
+  useEffect(() => {
+    if (menunggu) return;
+    setUbahBuka(false);
+    // kedaluwarsa/diputuskan di tempat lain saat popup risiko tinggi terbuka → tutup (tombol kartu sudah hilang)
+    setPopupTinggi(null);
+  }, [menunggu]);
 
   const bukaUbah = () => {
     if (ubahBuka) { setUbahBuka(false); setIsian({}); setGalat({}); return; }
@@ -226,6 +292,11 @@ function KartuTindakan({ blok, onPutuskan, onNavigate, nonaktif = false, tindaka
       if (!r.ok) return;
       ubahan = r.ubahan;
     }
+    if (tinggi) {
+      kunci.current = true; // tahan klik lain selama popup terbuka
+      setPopupTinggi({ ubahan });
+      return;
+    }
     let alasan;
     if (menengah) {
       kunci.current = true; // tahan klik lain selama dua dialog terbuka
@@ -251,6 +322,14 @@ function KartuTindakan({ blok, onPutuskan, onNavigate, nonaktif = false, tindaka
     await kirim('setujui', { ubahan, alasan });
   };
 
+  const tutupPopupTinggi = () => { kunci.current = false; setPopupTinggi(null); };
+  // Popup ditutup dulu: jawaban lanjutan (SSE) bisa lama; galat server (mis. teks tidak cocok) dikabarkan modul.
+  const setujuiTinggi = async ({ alasan, konfirmasi: teks }) => {
+    const ubahan = popupTinggi?.ubahan;
+    tutupPopupTinggi();
+    await kirim('setujui', { ubahan, alasan, ...(teks ? { konfirmasi: teks } : {}) });
+  };
+
   const tahan = !!sibuk || nonaktif;
   const IkonAkhir = IKON_AKHIR[keadaan];
   const diubah = Array.isArray(rencana.diubah) ? rencana.diubah : [];
@@ -259,25 +338,29 @@ function KartuTindakan({ blok, onPutuskan, onNavigate, nonaktif = false, tindaka
   return (
     <section
       className={cn('min-w-0 space-y-3 rounded-[var(--radius-md)] border px-3 py-3 sm:px-4',
-        menunggu ? 'border-[hsl(var(--warning)/0.45)]' : 'border-[var(--glass-border)]')}
+        menunggu || keadaan === 'menunggu_kedua' ? 'border-[hsl(var(--warning)/0.45)]' : 'border-[var(--glass-border)]')}
       aria-label={`Usulan perubahan: ${judul}`}
-      data-testid="asisten-tindakan" data-id={blok?.id} data-keadaan={keadaan} data-risiko={menengah ? 'menengah' : 'rendah'}
+      data-testid="asisten-tindakan" data-id={blok?.id} data-keadaan={keadaan} data-risiko={risiko}
       aria-busy={!!sibuk}
     >
       <div className="flex items-start gap-2">
         <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted-foreground">
-            Usulan perubahan{blok?.label ? ` · ${blok.label}` : ''}{menengah ? ' · perlu alasan' : ''}
+          <p className="text-xs text-muted-foreground" data-testid="tindakan-kepala">
+            Usulan perubahan{blok?.label ? ` · ${blok.label}` : ''}{golongan ? ` · ${golongan}` : ''}{menengah || tinggi ? ' · perlu alasan' : ''}
           </p>
           <p className="text-sm font-semibold leading-snug text-foreground" data-testid="tindakan-judul">{judul}</p>
         </div>
-        <StatusBadge status={keadaan} label={info.label} tone={info.tone} className="shrink-0" testId="tindakan-status" />
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+          {tinggi && <StatusBadge status="risiko-tinggi" label="Risiko tinggi" tone="danger" testId="tindakan-risiko" />}
+          <StatusBadge status={keadaan} label={info.label} tone={info.tone} testId="tindakan-status" />
+        </div>
       </div>
 
       {rencana.ringkas && <p className="text-sm text-foreground/85" data-testid="tindakan-ringkas">{String(rencana.ringkas)}</p>}
       <TabelPerubahan perubahan={rencana.perubahan} />
       <CatatanRencana rencana={rencana} />
+      {menunggu && <PeringatanKedua rencana={rencana} />}
 
       {menunggu && ubahBuka && fields.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2" data-testid="tindakan-ubah">
@@ -342,6 +425,11 @@ function KartuTindakan({ blok, onPutuskan, onNavigate, nonaktif = false, tindaka
         <Button variant="link" size="sm" className="h-auto px-0" onClick={() => onNavigate(tautan.menu)} data-testid="tindakan-tautan">
           {tautan.label} <ArrowUpRight className="h-3.5 w-3.5" />
         </Button>
+      )}
+
+      {tinggi && (
+        <PopupRisikoTinggi open={!!popupTinggi} judul={judul} konfirmasi={konfirmasi} perluKedua={perluKedua}
+          onBatal={tutupPopupTinggi} onSetujui={setujuiTinggi} />
       )}
     </section>
   );

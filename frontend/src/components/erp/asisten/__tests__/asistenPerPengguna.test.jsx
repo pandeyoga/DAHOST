@@ -2,7 +2,9 @@
 // batas pertanyaan tercapai.
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import AsistenPerPengguna, { asalStatus, bacaBatas, teksPakai } from '../AsistenPerPengguna';
+import AsistenPerPengguna, {
+  asalStatus, aturGolongan, bacaBatas, punyaGolongan, susunGolongan, teksGolongan, teksPakai,
+} from '../AsistenPerPengguna';
 import { KODE_GALAT_AKUN, PLACEHOLDER_BELUM_SIAP, StatusBelumSiap } from '../StatusAsisten';
 
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() } }));
@@ -116,4 +118,95 @@ test('tabel per pengguna: tampil, saring, dan simpan mengirim isian yang benar',
   expect(put.url).toMatch(/\/api\/ai\/usage\/asisten-pengguna\/u-staf$/);
   expect(JSON.parse(put.opt.body)).toEqual({ aktif: true, batas_pertanyaan_harian: 10, batas_tindakan_harian: null });
   await tunggu(() => toast.success.mock.calls.length > 0);
+});
+
+// ── 12 Nov 2026: saklar golongan aksi per pengguna (Stok / Uang / Pengaturan) ──
+describe('golongan aksi', () => {
+  test('susunGolongan: saklar yang tidak diubah mengirim nilai tersimpan apa adanya', () => {
+    expect(susunGolongan({ B: false, C: true, D: false }, { B: null, C: null, D: null })).toEqual({ B: null, C: true, D: null });
+    expect(susunGolongan({ B: false, C: false, D: false }, { B: true, C: false })).toEqual({ B: false, C: false, D: null });
+    expect(susunGolongan({ B: true }, undefined)).toEqual({ B: true, C: null, D: null });
+  });
+  test('teksGolongan & punyaGolongan (server lama tanpa golongan)', () => {
+    expect(teksGolongan({ golongan: { A: true, B: true, C: false, D: false } })).toBe('Data · Stok');
+    expect(teksGolongan({ golongan: { A: true, B: true, C: true, D: true } })).toBe('Data · Stok · Uang · Pengaturan');
+    expect(teksGolongan({})).toBe('');
+    expect(punyaGolongan({ atur: { golongan: { B: null } } })).toBe(true);
+    expect(punyaGolongan({ atur: {} })).toBe(false);
+    // saklar form hanya dari nilai tersimpan; tanpa `atur.golongan` tidak ada yang dikirim
+    expect(aturGolongan({ golongan: { A: true }, atur: {} })).toBeNull();
+    expect(aturGolongan({ atur: { golongan: { B: true } } })).toEqual({ B: true });
+  });
+});
+
+const SEMUA = { A: true, B: true, C: true, D: true };
+const DATA_GOL = {
+  ...DATA,
+  items: [
+    { ...DATA.items[0], golongan: SEMUA, atur: { ...DATA.items[0].atur, golongan: { B: null, C: null, D: null } } },
+    { ...DATA.items[1], golongan: { A: true, B: false, C: false, D: false },
+      atur: { ...DATA.items[1].atur, golongan: { B: null, C: null, D: null } } },
+  ],
+};
+
+function pasangFetch(jawabPut) {
+  const panggil = [];
+  global.fetch = jest.fn(async (url, opt = {}) => {
+    panggil.push({ url, opt });
+    if (opt.method === 'PUT') return jawabPut();
+    return { ok: true, json: async () => ({ success: true, data: DATA_GOL }) };
+  });
+  return panggil;
+}
+
+test('kolom golongan + saklar Uang dinyalakan → PUT membawa golongan {B: null, C: true, D: null}', async () => {
+  toast.success.mockClear();
+  const panggil = pasangFetch(() => ({ ok: true, json: async () => ({ success: true, data: {} }) }));
+  act(() => root.render(<AsistenPerPengguna token="tok" />));
+  await tunggu(() => q('ai-asisten-pengguna-ubah-u-staf'));
+  expect(q('ai-asisten-pengguna-golongan-u-owner').textContent).toBe('Data · Stok · Uang · Pengaturan');
+  expect(q('ai-asisten-pengguna-golongan-u-staf').textContent).toBe('Data');
+  klik(q('ai-asisten-pengguna-ubah-u-staf'));
+  await tunggu(() => q('ai-ap-golongan-C'));
+  expect(q('ai-ap-golongan').textContent).toMatch(/Stok.*Uang.*Pengaturan/);
+  expect(q('ai-ap-golongan-C').getAttribute('aria-checked')).toBe('false');
+  klik(q('ai-ap-golongan-C'));
+  await tunggu(() => q('ai-ap-golongan-C').getAttribute('aria-checked') === 'true');
+  klik([...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Simpan'));
+  await tunggu(() => panggil.some((p) => p.opt.method === 'PUT'));
+  const put = panggil.find((p) => p.opt.method === 'PUT');
+  expect(JSON.parse(put.opt.body)).toEqual({
+    aktif: null, batas_pertanyaan_harian: null, batas_tindakan_harian: null, golongan: { B: null, C: true, D: null },
+  });
+  await tunggu(() => toast.success.mock.calls.length > 0);
+});
+
+test('Pengaturan untuk peran bukan admin ditolak server (400) → pesan server tampil apa adanya', async () => {
+  toast.error.mockClear();
+  const pesan = 'Golongan pengaturan hanya bisa dinyalakan untuk peran admin.';
+  pasangFetch(() => ({ ok: false, json: async () => ({ detail: pesan }) }));
+  act(() => root.render(<AsistenPerPengguna token="tok" />));
+  await tunggu(() => q('ai-asisten-pengguna-ubah-u-staf'));
+  klik(q('ai-asisten-pengguna-ubah-u-staf'));
+  await tunggu(() => q('ai-ap-golongan-D'));
+  klik(q('ai-ap-golongan-D'));
+  klik([...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Simpan'));
+  await tunggu(() => toast.error.mock.calls.length > 0);
+  expect(toast.error).toHaveBeenCalledWith(pesan);
+});
+
+test('owner/superadmin: saklar golongan menyala dan terkunci; PUT tanpa golongan', async () => {
+  const panggil = pasangFetch(() => ({ ok: true, json: async () => ({ success: true, data: {} }) }));
+  act(() => root.render(<AsistenPerPengguna token="tok" />));
+  await tunggu(() => q('ai-asisten-pengguna-ubah-u-owner'));
+  klik(q('ai-asisten-pengguna-ubah-u-owner'));
+  await tunggu(() => q('ai-ap-golongan-B'));
+  ['B', 'C', 'D'].forEach((k) => {
+    expect(q(`ai-ap-golongan-${k}`).getAttribute('aria-checked')).toBe('true');
+    expect(q(`ai-ap-golongan-${k}`).disabled).toBe(true);
+  });
+  expect(q('ai-ap-golongan').textContent).toContain('Owner dan superadmin selalu boleh semua golongan.');
+  klik([...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Simpan'));
+  await tunggu(() => panggil.some((p) => p.opt.method === 'PUT'));
+  expect(JSON.parse(panggil.find((p) => p.opt.method === 'PUT').opt.body)).toEqual({ batas_pertanyaan_harian: null, batas_tindakan_harian: null });
 });

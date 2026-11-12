@@ -341,7 +341,8 @@ def test_daftar_per_pengguna_isi_dan_pemakaian(env):
     assert out["boleh_ubah"] is True and out["bawaan"] == {"aktif": False, "batas_pertanyaan": 0, "batas_tindakan": 30}
     staf = next(x for x in out["items"] if x["id"] == STAF["id"])
     assert (staf["aktif"], staf["sumber"], staf["batas_pertanyaan"]) == (True, "akun", 10)
-    assert staf["atur"] == {"aktif": True, "batas_pertanyaan_harian": 10, "batas_tindakan_harian": None}
+    assert staf["atur"] == {"aktif": True, "batas_pertanyaan_harian": 10, "batas_tindakan_harian": None,
+                            "golongan": {"B": None, "C": None, "D": None}}
     assert (staf["pertanyaan_hari_ini"], staf["tindakan_hari_ini"], staf["biaya_hari_ini_usd"]) == (1, 1, 0.75)
     mgr = next(x for x in out["items"] if x["id"] == MGR["id"])
     assert (mgr["aktif"], mgr["sumber"]) == (False, "bawaan")

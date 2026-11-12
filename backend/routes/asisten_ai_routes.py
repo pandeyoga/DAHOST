@@ -337,6 +337,10 @@ async def putuskan_tindakan(tindakan_id: str, request: Request):
     alasan = body.get("alasan")
     if alasan is not None and not isinstance(alasan, str):
         raise HTTPException(400, "Alasan harus berupa teks.")
+    # 12 Nov 2026 (K4): risiko tinggi — teks ketik ulang (nominal / nomor dokumen) sesuai petunjuk kartu.
+    konfirmasi = body.get("konfirmasi")
+    if konfirmasi is not None and not isinstance(konfirmasi, (str, int)):
+        raise HTTPException(400, "Teks konfirmasi harus berupa teks.")
     # Asisten AI per pengguna (10 Nov 2026): akun dimatikan tidak bisa MENYETUJUI kartu; membatalkan tetap boleh.
     aturan = await akp.aturan(get_db(), user)
     if keputusan == "setujui" and not aturan["aktif"]:
@@ -345,12 +349,29 @@ async def putuskan_tindakan(tindakan_id: str, request: Request):
         jalan = await mesin.siapkan_putusan(db=get_db(), user=user, tindakan_id=tindakan_id, keputusan=keputusan,
                                             ubahan=ubahan, alasan=alasan or "", cv=cv, today=today_wib(),
                                             token=_token(request), app=request.app,
-                                            batas_tindakan=aturan["batas_tindakan"])
+                                            batas_tindakan=aturan["batas_tindakan"], konfirmasi=konfirmasi)
     except tdk.GalatTindakan as e:
         raise _galat_http(e) from None
     mesin.mulai(jalan)
     return StreamingResponse(mesin.aliran_sse(jalan, request), media_type="text/event-stream",
                              headers=_SSE_HEADERS)
+
+
+@router.post("/tindakan/{tindakan_id}/putuskan-kedua")
+async def putuskan_kedua_tindakan(tindakan_id: str, request: Request):
+    """Persetujuan kedua kartu uang (12 Nov 2026, K4): owner/superadmin, bukan pembuat kartu.
+    Body {keputusan: setujui|batal, alasan}. Setujui → dijalankan sebagai PEMBUAT kartu; respons JSON biasa."""
+    user = await require_auth(request)
+    body = await _body(request)
+    keputusan = str(body.get("keputusan") or "").strip().lower()
+    alasan = body.get("alasan")
+    if alasan is not None and not isinstance(alasan, str):
+        raise HTTPException(400, "Alasan harus berupa teks.")
+    try:
+        return await tdk.putuskan_kedua(get_db(), user, tindakan_id, keputusan=keputusan, alasan=alasan or "",
+                                        app=request.app)
+    except tdk.GalatTindakan as e:
+        raise _galat_http(e) from None
 
 
 @router.get("/tindakan")

@@ -125,7 +125,8 @@ PEMANGGIL = ("langsung", "kode")
 EVENT_ALAT = ("status", "grafik", "tabel", "sumber", "laporan", "ingatan")
 
 # Tahap B — alat tindakan (Kontrak D).
-RISIKO = ("rendah", "menengah")          # menengah = alasan wajib + konfirmasi dua langkah (Tahap C)
+RISIKO = ("rendah", "menengah", "tinggi")   # menengah = alasan wajib + konfirmasi dua langkah (Tahap C);
+#                                           tinggi (12 Nov 2026, K4) = alasan + ketik ulang nominal/nomor dokumen
 METODE_BACA = ("GET", "HEAD", "OPTIONS")
 _MENU_RX = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 AWALAN_TINDAKAN = ("[Tindakan] Alat ini hanya MENYIAPKAN kartu konfirmasi berisi rencana perubahan; data baru "
@@ -621,7 +622,8 @@ class AlatContext:
         return self._bersama["klien"]
 
     async def api(self, method: str, path: str, params: Optional[dict] = None, json: Any = None, *,
-                  headers: Optional[dict] = None, timeout: Optional[float] = None) -> Any:
+                  headers: Optional[dict] = None, timeout: Optional[float] = None, files: Any = None,
+                  data: Optional[dict] = None) -> Any:
         """Panggil endpoint aplikasi SENDIRI dalam proses dengan token pengguna + header X-CV.
 
         Return JSON hasil parse. Respons non-2xx → `AlatError(status, pesan ramah)`.
@@ -651,6 +653,13 @@ class AlatContext:
                     "timeout": timeout or BATAS_DETIK_API}
         if json is not None:
             kw["json"] = json
+        # 12 Nov 2026 (K9): impor berkas dari lampiran chat → multipart, sama dengan formulir unggah layar.
+        if files is not None:
+            if not tulis:
+                raise AlatError(400, "Berkas hanya dikirim lewat tindakan yang disetujui pengguna.")
+            kw["files"] = files
+        if data is not None:
+            kw["data"] = data
         try:
             resp = await self._klien().request(method, path, **kw)
         except AlatError:
