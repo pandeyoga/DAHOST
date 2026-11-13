@@ -324,7 +324,13 @@ async def parse_extra_sheets(db, wb, errors: list, pending_costs: dict | None = 
         models = {m["code"]: m for m in await db.rahaza_models.find({"active": {"$ne": False}}, {"_id": 0, "id": 1, "code": 1, "name": 1}).to_list(5000)}
         colors = {c["code"].upper(): c for c in await db.rahaza_colors.find({}, {"_id": 0}).to_list(2000)}
         sizes = {s["code"].upper(): s for s in await db.rahaza_sizes.find({}, {"_id": 0}).to_list(200)}
-        existing = {v["sku"] for v in await db.rahaza_model_variants.find({}, {"_id": 0, "sku": 1}).to_list(50000)}
+        all_variants = await db.rahaza_model_variants.find({}, {"_id": 0, "sku": 1, "model_id": 1, "size_id": 1, "color_code": 1,
+                                                                 "active": 1}).to_list(50000)
+        existing = {v["sku"] for v in all_variants}
+        # 13 Nov 2026: varian dikenali lewat model+ukuran+warna (id), bukan hanya teks SKU — produk yang kodenya pernah
+        # diganti tanpa ikut mengganti SKU dulu mendapat varian KEMBAR (SKU baru) untuk warna/ukuran yang sama.
+        combo = {(v.get("model_id"), v.get("size_id"), (v.get("color_code") or "").upper()): v["sku"]
+                 for v in all_variants if v.get("active") is not False}
         from utils.variant_ssot import build_variant_sku
         from core import gap_sisa
         i_status = gap_sisa.VARIAN_BARU_COLS.index("status_produk")
@@ -357,6 +363,10 @@ async def parse_extra_sheets(db, wb, errors: list, pending_costs: dict | None = 
             sku = build_variant_sku(mcode, ccode, scode)
             if sku in existing:
                 continue  # sudah ada → idempoten (status SKU lama diubah lewat HARGA_JUAL_SKU)
+            ada = combo.get((models[mcode]["id"], sizes[scode]["id"], ccode))
+            if ada:
+                out["warnings"].append(f"VARIAN_BARU baris {i}: {mcode} warna {ccode} ukuran {scode} sudah ada dengan SKU {ada} — dilewati")
+                continue
             existing.add(sku)
             out["new_variants"].append({"row": i, "sku": sku, "model": models[mcode], "color": colors[ccode], "size": sizes[scode], "harga": harga,
                                         "product_status": status})

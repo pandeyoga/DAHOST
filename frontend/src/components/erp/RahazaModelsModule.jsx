@@ -409,7 +409,10 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         const extra = (p.fg || p.catalog_items)
           ? ` · ikut disegarkan: ${p.fg || 0} barang jadi, ${p.catalog_items || 0} item katalog`
           : '';
-        toast.success(`Model diperbarui${extra}`);
+        // 13 Nov 2026: ganti kode ikut mengganti SKU varian, barang jadi, dan potongan (tanpa produk kembar)
+        const k = d.kode_diganti;
+        const kode = k ? ` · kode ${k.kode_lama} → ${k.kode_baru}: SKU ${k.varian} varian, ${k.barang_jadi} barang jadi, ${k.potongan} potongan ikut berganti` : '';
+        toast.success(`Model diperbarui${extra}${kode}`);
       } else {
         toast.success(`Model dibuat · kode ${d.code || ''}`);
       }
@@ -632,6 +635,12 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
               ) : (
                 <GlassInput value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
                   placeholder="Contoh: VST-0001" data-testid="model-form-code" />
+              )}
+              {editing && (
+                <p className="text-xs text-muted-foreground" data-testid="model-form-code-hint">
+                  Mengganti kode ikut mengganti SKU varian, barang jadi, potongan, dan style R&amp;D produk ini.
+                  Ditolak bila SKU-nya sudah dipakai stok, PO, cutting, katalog, atau pesanan.
+                </p>
               )}
             </div>
 
