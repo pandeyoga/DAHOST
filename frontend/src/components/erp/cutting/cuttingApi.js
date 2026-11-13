@@ -31,6 +31,8 @@ export async function cuttingApi(method, path, token, body) {
 // Standar UI/UX v2: status memakai StatusBadge (token warna, kontras cukup) — dulu kelas slate/abu buatan sendiri.
 export const STATUS_META = {
   draft: { label: 'Draf', tone: 'muted' },
+  // 14 Nov 2026: status TAMPILAN dari server (`display_status`) — draf yang kainnya belum cukup di gudang.
+  waiting_fabric: { label: 'Menunggu kain', tone: 'warning' },
   in_progress: { label: 'Berjalan', tone: 'warning' },
   completed: { label: 'Selesai', tone: 'success' },
   cancelled: { label: 'Dibatalkan', tone: 'danger' },

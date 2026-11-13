@@ -363,6 +363,8 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
         ? await cuttingApi('PUT', `/orders/${order.id}`, token, body)
         : await cuttingApi('POST', '/orders', token, body);
       toast.success(editing ? `Cutting ${saved.number} diubah.` : `Cutting ${saved.number} dibuat (draf).`);
+      // 14 Nov 2026: kain belum cukup → order tetap tersimpan, statusnya "Menunggu kain" + alasannya
+      if (saved?.fabric_waiting) toast.info(`Menunggu kain: ${saved.fabric_note}`, { duration: 9000 });
       onSaved?.(saved);
     } catch (e) {
       toast.error(e.message, { duration: 9000 });
@@ -466,9 +468,9 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
           </Isian>
         </div>
         {m && Number(m.stock_qty || 0) <= 0 && (
-          <Notice tone="warning" icon={AlertCircle}>
-            Kain ini belum punya stok di gudang mana pun. Order bisa disimpan sebagai draf, tetapi tidak bisa dimulai
-            sebelum penerimaan barang dicatat di Portal Gudang.
+          <Notice tone="warning" icon={AlertCircle} testId={`cutting-no-stock-${n}`}>
+            Kain ini belum ada stoknya. Order tetap bisa disimpan — tampil <b>Menunggu kain</b> dan otomatis siap
+            dimulai begitu kainnya masuk gudang (penerimaan, impor roll, atau opname).
           </Notice>
         )}
         {(i.used_rolls || []).length > 0 && (
@@ -477,11 +479,11 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
             {i.used_rolls.map((r) => `${r.roll_no} −${fmtQty(r.consumed_qty)} ${r.uom || ''}`.trim()).join(', ')}
           </p>
         )}
-        {m && rm.roll_required && rm.items.length === 0 && !i.locked && (
-          <Notice tone="danger" icon={AlertCircle} testId={`cutting-no-rolls-warning-${n}`}>
-            Kain ini <b>belum punya gulungan</b> di sistem, jadi order tidak bisa disimpan — tidak akan bisa dibuktikan
-            gulungan mana yang dipotong. Terbitkan gulungannya dulu di <b>Gudang › Roll Kain › tab “Penerimaan tanpa roll”</b>,
-            atau isi Rincian Roll saat Penerimaan Barang.
+        {m && Number(m.stock_qty || 0) > 0 && rm.roll_required && rm.items.length === 0 && !i.locked && (
+          <Notice tone="warning" icon={AlertCircle} testId={`cutting-no-rolls-warning-${n}`}>
+            Stok kain ini ada, tetapi <b>gulungannya belum diterbitkan</b>. Order tetap bisa disimpan sebagai
+            <b> Menunggu kain</b>; gulungan wajib ditunjuk saat lapor progres. Terbitkan di
+            <b> Gudang › Roll Kain › tab “Penerimaan tanpa roll”</b>, atau isi Rincian Roll saat Penerimaan Barang.
           </Notice>
         )}
         {m && rm.roll_required && rm.items.length > 0 && (

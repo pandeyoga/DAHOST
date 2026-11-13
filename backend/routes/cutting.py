@@ -62,8 +62,9 @@ Koleksi baru (tidak bentrok dengan koleksi manapun yang sudah ada — sudah dive
 from __future__ import annotations
 
 import logging
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -93,6 +94,10 @@ STATUS_DRAFT = "draft"
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_COMPLETED = "completed"
 STATUS_CANCELLED = "cancelled"
+# 14 Nov 2026: status TAMPILAN (bukan status di DB) — draf yang kainnya belum cukup. Lihat `_attach_fabric_state`.
+DISPLAY_WAITING = "waiting_fabric"
+# Hasil potong > 120% rencana ditandai di daftar (kasus 13 Nov: 93 pcs dari rencana 50).
+OVER_PLAN_RATIO = 1.2
 
 # Satuan kain yang wajar jadi INPUT cutting (roll).
 # 2026-11-06 (pola P8): "roll" = ejaan resmi master satuan; "rol"/"gulung" tetap diterima (data lama)
@@ -252,6 +257,8 @@ async def _enrich(db, o: dict) -> dict:
         x["output_remaining"] = round(max(p - _f(x.get("produced_qty")), 0), 4)
         x["progress_pct"] = round(_f(x.get("produced_qty")) / p * 100, 1) if p > 0 else 0.0
         x["label"] = cutting_lines.output_label(x)
+        # 14 Nov 2026 (kasus 13 Nov: 93 dari rencana 50): hasil jauh di atas rencana ditandai — sering salah ketik
+        x["over_plan"] = p > 0 and _f(x.get("produced_qty")) > p * OVER_PLAN_RATIO
     o["inputs"], o["outputs"] = ins, outs
     o["multi"] = len(ins) > 1 or len(outs) > 1
     planned_in = _f(o.get("planned_input_qty"))
@@ -263,7 +270,62 @@ async def _enrich(db, o: dict) -> dict:
     o["progress_pct"] = round((produced / planned_out * 100), 1) if planned_out > 0 else 0.0
     o["yield_per_input"] = round(produced / consumed, 3) if consumed > 0 else 0.0
     o["roll_usage"] = cutting_lines.roll_usage(o)
+    o["over_plan"] = any(x["over_plan"] for x in outs)
+    o.setdefault("display_status", o.get("status"))
+    if o.get("status") == STATUS_DRAFT:
+        await _attach_fabric_state(db, [o])
     return o
+
+
+async def _attach_fabric_state(db, rows: list[dict]) -> None:
+    """Order draf: kainnya sudah cukup atau masih "Menunggu kain" (14 Nov 2026, permintaan owner).
+
+    Owner: "jika cutting request namun kain belum ada maka bisa request pending jadi tetap bisa dilakukan namun
+    pending". Status di DB tetap `draft`; keadaan kain DIHITUNG dari stok saat dibaca (satu sumber kebenaran — angka
+    stok tidak disalin ke order), sehingga begitu kain masuk (penerimaan, impor roll, opname) order otomatis tampil
+    "Siap dimulai" tanpa ada yang perlu memperbarui order. Per kain: rencana vs stok semua gudang; kain yang dilacak
+    per gulungan tetapi belum punya gulungan bersisa juga belum siap (progres tidak bisa dicatat tanpa gulungan).
+    Mengisi `display_status` (`waiting_fabric` | `draft`), `fabric_waiting`, `fabric_shortage[]`, `fabric_note`.
+    """
+    drafts = [o for o in rows if o.get("status") == STATUS_DRAFT]
+    if not drafts:
+        return
+    lines = {id(o): cutting_lines.inputs_of(o) for o in drafts}
+    mids = sorted({i.get("input_material_id") for ls in lines.values() for i in ls if i.get("input_material_id")})
+    onhand = await stock_service.onhand_map(mids, db=db) if mids else {}
+    mats = {m["id"]: m for m in await db.rahaza_materials.find(
+        {"id": {"$in": mids}}, {"_id": 0, "id": 1, "code": 1, "name": 1, "unit": 1, "type": 1,
+                                "is_cut_panel": 1}).to_list(len(mids) + 1)} if mids else {}
+    rolls: dict = {}
+    if mids:
+        async for r in db.wh_fabric_rolls.find(
+                {"material_id": {"$in": mids}, "status": {"$in": fabric_roll_engine.OPEN_STATUSES}},
+                {"_id": 0, "material_id": 1, "uom": 1, "remaining_kg": 1, "remaining_m": 1}):
+            if fabric_roll_engine.remaining_of(r) > 0:
+                rolls[r["material_id"]] = rolls.get(r["material_id"], 0) + 1
+    for o in drafts:
+        short = []
+        for i in lines[id(o)]:
+            mid = i.get("input_material_id") or ""
+            mat = mats.get(mid) or {}
+            unit = i.get("input_unit") or mat.get("unit") or ""
+            need = round(max(_f(i.get("planned_input_qty")) - _f(i.get("consumed_input_qty")), 0.0), 4)
+            have = round(_f(onhand.get(mid)), 4)
+            code = i.get("input_material_code") or mat.get("code") or ""
+            row = {"input_material_id": mid, "code": code, "name": i.get("input_material_name") or mat.get("name", ""),
+                   "unit": unit, "need": need, "have": have, "short": round(max(need - have, 0.0), 4)}
+            if have + 0.0001 < need:
+                row["reason"] = (f"{code} perlu {need:g} {unit}, stok {have:g} {unit} — kurang {row['short']:g} {unit}"
+                                 if have > 0 else f"{code} belum ada stoknya (perlu {need:g} {unit})")
+                short.append(row)
+            elif fabric_roll_engine.is_roll_material(mat) and not rolls.get(mid):
+                row["reason"] = (f"{code}: stok {have:g} {unit} ada, tetapi gulungannya belum diterbitkan "
+                                 "(Gudang › Roll Kain › Penerimaan tanpa roll)")
+                short.append(row)
+        o["fabric_waiting"] = bool(short)
+        o["fabric_shortage"] = short
+        o["fabric_note"] = "; ".join(x["reason"] for x in short)
+        o["display_status"] = DISPLAY_WAITING if short else STATUS_DRAFT
 
 
 async def _save_lines(db, oid: str, inputs: list, outputs: list, extra: Optional[dict] = None,
@@ -558,22 +620,6 @@ _NO_ROLL_WAY_OUT = (
 )
 
 
-async def _assert_rolls_available(db, mat: dict, label: str) -> list[dict]:
-    """FASE H-6: kain yang dilacak per gulungan harus PUNYA gulungan bersisa.
-
-    Diperiksa saat order dibuat (gagal cepat) supaya operator tidak menyiapkan order
-    yang pasti mentok saat lapor progres.
-    """
-    if not fabric_roll_engine.is_roll_material(mat):
-        return []
-    rolls = await fabric_roll_engine.open_rolls(db, mat["id"])
-    if not rolls:
-        raise HTTPException(400, (
-            f"Kain {label} belum punya satu pun gulungan bersisa di sistem, jadi tidak akan "
-            f"bisa dibuktikan gulungan mana yang dipotong. {_NO_ROLL_WAY_OUT}"))
-    return rolls
-
-
 async def _rolls_with_credit(db, rolls: list[dict], credit: Optional[dict], material_id: str) -> list[dict]:
     """Gulungan bersisa + pemakaian yang AKAN dikembalikan (koreksi progres, 14 Nov 2026), dihitung di memori.
 
@@ -839,32 +885,115 @@ def _to_order_unit(mat: dict, qty: float, uom: str, order_uom: str) -> tuple[flo
 # ═════════════════════════════════════════════════════════════════════════════
 # CRUD ORDER
 # ═════════════════════════════════════════════════════════════════════════════
+def _order_query(*, status: Optional[str] = None, q: Optional[str] = None, model_id: Optional[str] = None,
+                 color: Optional[str] = None, material_id: Optional[str] = None, created_by: Optional[str] = None,
+                 date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict:
+    """Penyaring daftar Order Cutting → query Mongo (14 Nov 2026, owner: "tambahkan seperti filter dll agar
+    mempermudah"). Status tampilan `waiting_fabric` / `draft` sama-sama draf di DB — dipisah sesudah dibaca."""
+    from utils.waktu import wib_day_bounds_utc
+    conds: list = []
+    if status in (DISPLAY_WAITING, STATUS_DRAFT):
+        conds.append({"status": STATUS_DRAFT})
+    elif status:
+        conds.append({"status": status})
+    if q and q.strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        conds.append({"$or": [
+            {"number": rx}, {"style_name": rx}, {"style_sku": rx}, {"input_material_name": rx},
+            {"output_material_code": rx},
+            # 2026-11-10: order banyak baris — cari juga di baris kain & hasil
+            {"inputs.input_material_name": rx}, {"inputs.input_material_code": rx},
+            {"outputs.style_name": rx}, {"outputs.output_material_code": rx}, {"outputs.variant_sku": rx}]})
+    if model_id:
+        conds.append({"$or": [{"model_id": model_id}, {"outputs.model_id": model_id}]})
+    if color and color.strip():
+        rx = {"$regex": f"^{re.escape(color.strip())}$", "$options": "i"}
+        conds.append({"$or": [{"output_color": rx}, {"outputs": {"$elemMatch": {"output_color": rx}}}]})
+    if material_id:
+        conds.append({"$or": [{"input_material_id": material_id}, {"inputs.input_material_id": material_id}]})
+    if created_by:
+        conds.append({"created_by": created_by})
+    rng: dict = {}
+    try:
+        if date_from:
+            rng["$gte"] = wib_day_bounds_utc(date.fromisoformat(date_from))[0]
+        if date_to:
+            rng["$lt"] = wib_day_bounds_utc(date.fromisoformat(date_to))[1]
+    except ValueError:
+        raise HTTPException(400, "Tanggal penyaring tidak terbaca — pilih ulang periodenya.")
+    if rng:
+        conds.append({"created_at": rng})
+    return {"$and": conds} if conds else {}
+
+
+def _over_plan(o: dict) -> bool:
+    return any(_f(x.get("planned_output_qty")) > 0
+               and _f(x.get("produced_qty")) > _f(x.get("planned_output_qty")) * OVER_PLAN_RATIO
+               for x in cutting_lines.outputs_of(o))
+
+
 @router.get("/orders")
-async def list_orders(request: Request, status: Optional[str] = None,
-                      q: Optional[str] = None, limit: int = 200, skip: int = 0):
+async def list_orders(request: Request, status: Optional[str] = None, q: Optional[str] = None,
+                      model_id: Optional[str] = None, color: Optional[str] = None,
+                      material_id: Optional[str] = None, created_by: Optional[str] = None,
+                      date_from: Optional[str] = None, date_to: Optional[str] = None,
+                      over: bool = False, limit: int = 200, skip: int = 0):
+    """Daftar order. Penyaring (14 Nov 2026): status (termasuk `waiting_fabric` = draf yang kainnya belum cukup),
+    model, warna, kain, peminta (pembuat order), rentang tanggal dibuat (WIB), pencarian nomor/model/kain, dan
+    `over` = hanya order yang hasil potongnya > 120% rencana."""
     await require_auth(request)
     db = get_db()
-    query: dict = {}
-    if status:
-        query["status"] = status
-    if q:
-        query["$or"] = [
-            {"number": {"$regex": q, "$options": "i"}},
-            {"style_name": {"$regex": q, "$options": "i"}},
-            {"style_sku": {"$regex": q, "$options": "i"}},
-            {"input_material_name": {"$regex": q, "$options": "i"}},
-            {"output_material_code": {"$regex": q, "$options": "i"}},
-            # 2026-11-10: order banyak baris — cari juga di baris kain & hasil
-            {"inputs.input_material_name": {"$regex": q, "$options": "i"}},
-            {"inputs.input_material_code": {"$regex": q, "$options": "i"}},
-            {"outputs.style_name": {"$regex": q, "$options": "i"}},
-            {"outputs.output_material_code": {"$regex": q, "$options": "i"}},
-            {"outputs.variant_sku": {"$regex": q, "$options": "i"}},
-        ]
+    query = _order_query(status=status, q=q, model_id=model_id, color=color, material_id=material_id,
+                         created_by=created_by, date_from=date_from, date_to=date_to)
     rows = await db[ORDERS].find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(500)
     for r in rows:
         await _enrich(db, r)
+    if status == DISPLAY_WAITING:
+        rows = [r for r in rows if r.get("fabric_waiting")]
+    elif status == STATUS_DRAFT:
+        rows = [r for r in rows if not r.get("fabric_waiting")]
+    if over:
+        rows = [r for r in rows if r.get("over_plan")]
     return serialize_doc(rows)
+
+
+@router.get("/orders/facets")
+async def order_facets(request: Request):
+    """Pilihan penyaring daftar Order Cutting (model, warna, kain, peminta) + jumlah per status tampilan — diambil dari
+    order yang ada, jadi pilihan yang muncul selalu menghasilkan baris (14 Nov 2026)."""
+    await require_auth(request)
+    db = get_db()
+    rows = await db[ORDERS].find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    await _attach_fabric_state(db, rows)
+    models: dict = {}
+    colors: dict = {}
+    fabrics: dict = {}
+    people: dict = {}
+    counts: dict = {"all": len(rows), "over_plan": 0}
+    for o in rows:
+        st = o.get("display_status") or o.get("status") or ""
+        counts[st] = counts.get(st, 0) + 1
+        counts["over_plan"] += 1 if _over_plan(o) else 0
+        for x in cutting_lines.outputs_of(o):
+            if x.get("model_id"):
+                models.setdefault(x["model_id"], " · ".join(
+                    v for v in (x.get("model_code") or x.get("style_sku"), x.get("model_name") or x.get("style_name"))
+                    if v) or x["model_id"])
+            c = (x.get("output_color") or "").strip()
+            if c:
+                colors.setdefault(c.lower(), c)
+        for i in cutting_lines.inputs_of(o):
+            if i.get("input_material_id"):
+                fabrics.setdefault(i["input_material_id"], " · ".join(
+                    v for v in (i.get("input_material_code"), i.get("input_material_name")) if v) or "Kain")
+        if o.get("created_by"):
+            people.setdefault(o["created_by"], o.get("created_by_name") or "Tanpa nama")
+
+    def opts(d: dict) -> list:
+        return [{"value": k, "label": v} for k, v in sorted(d.items(), key=lambda kv: str(kv[1]).lower())]
+    return serialize_doc({"models": opts(models), "colors": [{"value": v, "label": v} for v in
+                                                              sorted(colors.values(), key=str.lower)],
+                          "fabrics": opts(fabrics), "requesters": opts(people), "counts": counts})
 
 
 def summarize_cutting_units(rows: list, totals: Optional[dict] = None) -> dict:
@@ -1174,9 +1303,11 @@ async def _build_inputs(db, raw: list, loc_id: str, loc_name: str) -> list[dict]
         avail_total = _f(await stock_service.get_onhand(mat["id"], db=db))
         stock_here = next((x["qty"] for x in await _stock_locations(db, mat["id"])
                            if x["location_id"] == loc_id), 0.0)
-        # FASE H-6: kain yang dilacak per gulungan harus punya gulungan bersisa SEBELUM
-        # order dibuat — gagal cepat lebih baik daripada order yang mentok saat progres.
-        open_rolls = await _assert_rolls_available(db, mat, f"{mat.get('code')} — {mat.get('name')}")
+        # 14 Nov 2026 (owner: "jika cutting request namun kain belum ada maka bisa request pending"): kain tanpa
+        # stok / tanpa gulungan TIDAK lagi menolak order — order tersimpan dan tampil "Menunggu kain"
+        # (`_attach_fabric_state`, dihitung dari stok saat dibaca). Gulungan tetap WAJIB saat lapor progres (H-6).
+        tracked = fabric_roll_engine.is_roll_material(mat)
+        open_rolls = await fabric_roll_engine.open_rolls(db, mat["id"]) if tracked else []
         rolls_in = r.get("roll_ids") or []
         roll_docs = await _pick_rolls(db, mat, open_rolls, rolls_in, loc_id, loc_name, pre)
         if roll_docs:
@@ -1199,7 +1330,7 @@ async def _build_inputs(db, raw: list, loc_id: str, loc_name: str) -> list[dict]
             # tidak memilih gulungan di awal masih boleh (dipilih saat lapor progres), tetapi order
             # menyimpan pengingat bahwa gulungan WAJIB ditunjuk nanti (`roll_required`).
             "roll_ids": roll_docs,
-            "roll_required": bool(open_rolls),
+            "roll_required": tracked,
             "stock_at_create": round(stock_here, 4),
             "stock_total_at_create": round(avail_total, 4),
         })
