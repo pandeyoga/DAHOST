@@ -257,6 +257,9 @@ async def _require_admin(request: Request):
     # RBAC master product/BOM (keputusan user): SEMUA staff internal boleh CRUD.
     # Hanya role eksternal (vendor/klien) yang ditolak.
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get("role") or "").lower()
     if role in ("cmt_vendor", "vendor", "klien_maklon"):
         raise HTTPException(403, "Akses master hanya untuk staff internal.")

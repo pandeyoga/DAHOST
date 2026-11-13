@@ -2,6 +2,7 @@
 Rahaza Auto-Attendance - Config
 Status & Configuration endpoints
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import uuid
 import os
 from datetime import datetime, timezone
@@ -211,7 +212,7 @@ async def update_auto_config(request: Request):
     """Update konfigurasi absen otomatis (menerima nama lama maupun kanonik)."""
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` ("Kelola absensi, shift & izin").
-    if not check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage"):
+    if not (check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR/Admin.")
     db = get_db()
     body = await request.json()

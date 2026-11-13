@@ -7,6 +7,7 @@ Features:
 - Skill matrix management
 - Gap identification with priority scoring
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -24,7 +25,9 @@ SKILL_GAP_PERM = "hr.manage"
 
 
 def _require_skill_gap(user: dict, roles: list, message: str) -> None:
-    if not check_role(user, roles, SKILL_GAP_PERM):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, roles, SKILL_GAP_PERM) or lolos_centang(user)):
         raise HTTPException(403, message)
 
 # ============================================================================

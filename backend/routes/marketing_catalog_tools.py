@@ -46,6 +46,9 @@ FILL_MAX = 2000
 
 async def _require_cleanup(request: Request) -> dict:
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = str(user.get('role') or '').lower()
     if role in CLEANUP_ROLES or has_perm(user, 'katalog.rapikan'):
         return user

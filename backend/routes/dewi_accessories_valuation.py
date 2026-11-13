@@ -12,6 +12,7 @@ tempat; layar stok hanya menampilkan qty, dan jurnal hanya muncul dari opname. M
 menjadi "satu pintu" untuk melihat nilai persediaan aksesoris dan menemukan item yang
 BELUM DINILAI (HPP = 0) — penyebab utama jurnal persediaan gagal terbentuk.
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timezone
@@ -168,7 +169,7 @@ async def export_valuation(request: Request,
 async def set_cost(request: Request):
     """Koreksi HPP manual. Body: `{acc_id, unit_cost, notes?}`."""
     user = await require_auth(request)
-    if not check_role(user, SET_COST_ROLES, "inv.stock.manage"):
+    if not (check_role(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_COST)
     db = get_db()
     body = await request.json()
@@ -227,7 +228,7 @@ async def get_unvalued_digest(request: Request,
 async def send_unvalued_digest_now(request: Request):
     """Kirim ringkasan "belum dinilai" SEKARANG (tanpa menunggu jadwal 07:30)."""
     user = await require_auth(request)
-    if not check_role(user, DIGEST_SEND_ROLES, "inv.stock.manage"):
+    if not (check_role(user, DIGEST_SEND_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_DIGEST)
     db = get_db()
     out = await accessory_valuation.send_unvalued_digest(db, force=True, actor=user)
@@ -276,7 +277,7 @@ async def update_report_schedule(request: Request):
     supaya tidak ada dua sumber kebenaran untuk konfigurasi email.
     """
     user = await require_auth(request)
-    if not check_role(user, SET_COST_ROLES, "inv.stock.manage"):
+    if not (check_role(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_SCHEDULE)
     db = get_db()
     body = await request.json()
@@ -313,7 +314,7 @@ async def send_report_now(request: Request,
                           month: str = Query(None, description="YYYY-MM; kosong = bulan lalu")):
     """Kirim rapor valuasi periode `month` SEKARANG (lampiran Excel + PDF) ke keuangan."""
     user = await require_auth(request)
-    if not check_role(user, SET_COST_ROLES, "inv.stock.manage"):
+    if not (check_role(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_SCHEDULE)
     db = get_db()
     if month:

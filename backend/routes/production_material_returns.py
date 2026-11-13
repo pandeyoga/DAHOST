@@ -14,6 +14,7 @@ Alur:
 
 Colleciton: production_material_returns
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -506,7 +507,7 @@ async def submit_return(request: Request, return_id: str):
 async def approve_return(request: Request, return_id: str, body: ActionModel):
     """Supervisor produksi menyetujui return."""
     user = await require_auth(request)
-    if not check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS):
+    if not (check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Hanya supervisor/manager yang dapat menyetujui.")
     db = get_db()
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)})
@@ -539,7 +540,7 @@ async def approve_return(request: Request, return_id: str, body: ActionModel):
 @router.post("/{return_id}/reject")
 async def reject_return(request: Request, return_id: str, body: ActionModel):
     user = await require_auth(request)
-    if not check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS):
+    if not (check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Hanya supervisor/manager yang dapat menolak.")
     db = get_db()
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)})

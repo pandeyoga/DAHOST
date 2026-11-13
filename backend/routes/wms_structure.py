@@ -23,6 +23,7 @@ Routes (all under /api/wms):
   Map:        GET /wms/map/{building_id}  — full visual map data
 """
 
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import re
 import uuid
 from datetime import datetime, timezone
@@ -918,7 +919,7 @@ async def build_canonical_storage(request: Request):
     Aman diulang; tidak menghapus/menimpa penempatan fisik yang sudah ada.
     """
     user = await require_auth(request)
-    if not check_role(user, ["admin"]):
+    if not (check_role(user, ["admin"]) or lolos_centang(user)):
         raise HTTPException(403, "Hanya admin/superadmin yang boleh membangun struktur gudang.")
     db = get_db()
 

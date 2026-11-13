@@ -26,6 +26,7 @@ Endpoint (prefix ``/api/variant-onboarding``):
   POST   /colors/merge        — terapkan perapian (admin)
   POST   /masters/ensure      — semai master opsi/ukuran/kategori + index (admin)
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,7 +40,9 @@ router = APIRouter(prefix='/api/variant-onboarding', tags=['variant-onboarding']
 
 
 def _admin(user: dict, perm: str):
-    if not check_role(user, ['admin'], perm):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, ['admin'], perm) or lolos_centang(user)):
         raise HTTPException(status_code=403,
                             detail='Hanya System Admin yang boleh melakukan ini.')
 

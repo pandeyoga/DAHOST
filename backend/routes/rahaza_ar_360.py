@@ -87,6 +87,9 @@ def _bucket_key(days_overdue: int) -> str:
 
 async def _require_finance(request: Request) -> dict:
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get('role') or '').lower()
     if role in FINANCE_ROLES + ('manager',):  # T-08
         return user

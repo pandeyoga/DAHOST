@@ -21,6 +21,7 @@ Lapisan HTTP tipis di atas `core/scan_out.py` (semua aturan & angka ada di sana)
   GET  /api/wh/scan-out/langkah2             status penguncian Langkah 2
 """
 from __future__ import annotations
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 
 from typing import Optional
 
@@ -41,7 +42,9 @@ def _err(e: so.ScanOutError):
 
 async def _require(request: Request, roles: list, perm: str, what: str) -> dict:
     user = await require_auth(request)
-    if not check_role(user, roles, perm):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, roles, perm) or lolos_centang(user)):
         raise HTTPException(403, f"Akses ditolak: {what}.")
     return user
 

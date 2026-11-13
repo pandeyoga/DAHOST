@@ -13,6 +13,7 @@ Endpoints:
   DELETE /per-diem-rates/{id}     — delete (soft)
   GET  /per-diem-rates/preview    — preview all destination types
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -51,7 +52,9 @@ PER_DIEM_PERM = 'fin.expense.manage'
 
 
 def _admin_only(user: dict):
-    if not check_role(user, PER_DIEM_ROLES, PER_DIEM_PERM):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, PER_DIEM_ROLES, PER_DIEM_PERM) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya admin/HR yang dapat mengubah konfigurasi Per Diem')
 
 

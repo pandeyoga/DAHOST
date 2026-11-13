@@ -107,21 +107,25 @@ MODULES: list[dict] = [
        extras=[("prod.process.input", "input", "Catat output per proses"),
                ("operator.view", "view", "Buka Layar Operator"),
                ("operator.input", "input", "Input output line (operator)")], lookup=True),
-    _m("production", "prod_vendor_cmt", "Vendor CMT & Input atas nama CMT", ["vendor-admin", "cmt-override-portal"],
-       ["/api/vendor-portal/accounts", "/api/vendor-portal/partners", "/api/cmt-override"], _CRUD,
+    _m("production", "prod_vendor_cmt", "Vendor CMT", ["vendor-admin"],
+       ["/api/vendor-portal/accounts", "/api/vendor-portal/partners"], _CRUD,
        {"view": ["cmt.view"], "manage": ["production.manage"]}),
+    # 14 Nov 2026 (tahap 2): "Input atas nama CMT" berdampak langsung ke tagihan CMT; dulu dikunci kode peran
+    # (core/cmt_override.OVERRIDE_ROLES) — kini kotak centang sendiri.
+    _m("production", "prod_cmt_override", "Input atas nama Vendor CMT", ["cmt-override-portal"], ["/api/cmt-override"],
+       _CRUD),
     _m("production", "prod_po", "PO Internal & Tutup PO", ["prod-pos-internal", "po-closure"],
-       ["/api/production-pos", "/api/po-items", "/api/po-accessories", "/api/po-items-produced",
+       ["/api/production-pos-denda", "/api/production-pos", "/api/po-items", "/api/po-accessories", "/api/po-items-produced",
         "/api/rahaza/orders", "/api/rahaza/orders-statuses"], _ALL,
        {"view": ["orders.view"], "manage": ["orders.manage"], "approve": ["production.approve"]}),
     _m("production", "prod_vendor_shipment", "Kirim ke CMT", ["prod-shipments-vendor"],
-       ["/api/vendor-shipments", "/api/vendor-material-inspections", "/api/material-requests",
+       ["/api/kirim-cmt", "/api/vendor-shipments", "/api/vendor-material-inspections", "/api/material-requests",
         "/api/material-defect-reports"], _ALL,
        {"view": ["shipment.view"], "create": ["vendor_shipment.create", "shipment.create"],
         "edit": ["vendor_shipment.update", "shipment.update"],
         "delete": ["vendor_shipment.delete", "shipment.delete"], "approve": ["shipment.dispatch"]}),
     _m("production", "prod_cmt_receive", "Terima & QC", ["da-cmt-receive"],
-       ["/api/prod/cmt-receipts", "/api/prod/cmt-reject-queue", "/api/prod/short-shipments",
+       ["/api/rahaza/aql", "/api/prod/cmt-receipts", "/api/prod/cmt-reject-queue", "/api/prod/short-shipments",
         "/api/dewi/cmt-intake", "/api/dewi/cmt/lifecycle"], _ALL,
        {"view": ["cmt.view"], "manage": ["cmt.intake.manage"], "approve": ["cmt.approve"]}),
     _m("production", "prod_cmt_permak", "Perbaikan", ["cmt-permak"], ["/api/dewi/cmt-permak"], _ALL,
@@ -143,7 +147,7 @@ MODULES: list[dict] = [
        _VE, {"view": ["prod.dashboard.view", "prod.wip.view", "prod.line.view"]}),
     # Tahap 9 (pantau): Pantau Produksi (`pantau-produksi`, /api/pantau) menggantikan Production Jobs & Tracking
     _m("production", "prod_jobs", "Pantau Produksi", ["prod-work-orders", "prod-monitoring", "pantau-produksi"],
-       ["/api/production-jobs", "/api/production-job-items", "/api/production-progress", "/api/production-tracking",
+       ["/api/distribusi-kerja", "/api/production-jobs", "/api/production-job-items", "/api/production-progress", "/api/production-tracking",
         "/api/work-orders", "/api/recalculate-jobs", "/api/production-returns", "/api/pantau"], _ALL,
        {"view": ["wo.view", "orders.view"], "manage": ["wo.manage"], "approve": ["production.approve"]}),
     # Tahap 9 (pantau): Laporan Selisih (`laporan-selisih`, /api/pantau/selisih) menggantikan dua laporan variance
@@ -214,7 +218,7 @@ MODULES: list[dict] = [
         "/api/warehouse/smart-reorder", "/api/wms/alerts", "/api/wms/rack-alerts", "/api/wms/ai"], _VE,
        {"view": ["warehouse.view", "inv.stock.view"]}),
     _m("warehouse", "wh_master", "Master Item & Riwayat Harga", ["wh-master", "wh-cost-history"],
-       ["/api/rahaza/materials", "/api/rahaza/material-categories", "/api/rahaza/material-costs",
+       ["/api/rahaza/fg-pick", "/api/rahaza/materials", "/api/rahaza/material-categories", "/api/rahaza/material-costs",
         "/api/wms/materials", "/api/rahaza/stock-thresholds"], _CRUD,
        {"view": ["inv.material.view"], "manage": ["inv.material.manage"]}, lookup=True),
     _m("warehouse", "wh_stock", "Stok, Opname & Akurasi", ["wms-stock-hub"],
@@ -361,7 +365,7 @@ MODULES: list[dict] = [
        ["/api/rahaza/employees", "/api/rahaza/expiring-contracts", "/api/rahaza/resignation", "/api/rahaza/hr"], _ALL,
        {"view": ["hr.employee.view"], "manage": ["hr.employee.manage"], "approve": ["hr.approve"]}, lookup=True),
     _m("hr", "hr_attendance", "Absensi, Istirahat & Izin", ["hr-attendance-hub", "hr-attendance-sessions"],
-       ["/api/rahaza/attendance", "/api/rahaza/devices"], _ALL,
+       ["/api/hr/absensi", "/api/rahaza/attendance", "/api/rahaza/devices"], _ALL,
        {"view": ["hr.employee.view"], "manage": ["hr.attendance.manage"], "approve": ["hr.approve"]}),
     _m("hr", "hr_leave", "Cuti & Lembur", ["hr-leave-hub"],
        ["/api/rahaza/leaves", "/api/rahaza/leave-types", "/api/rahaza/leave-balances", "/api/rahaza/overtime"], _ALL,
@@ -425,7 +429,7 @@ MODULES: list[dict] = [
     _m("toko", "mkt_orders", "Order Terpadu & Monitoring Kirim", ["marketing-orders", "marketing-fulfillment"],
        ["/api/marketing/orders"], _ALL, _TOKO),
     _m("toko", "mkt_catalog", "Manajemen Katalog", ["marketing-catalog"],
-       ["/api/marketing/catalogs", "/api/marketing/catalog-items"], _ALL, _TOKO),
+       ["/api/marketing/catalog-tools", "/api/marketing/catalogs", "/api/marketing/catalog-items"], _ALL, _TOKO),
     _m("toko", "mkt_targets", "Target & Anggaran", ["marketing-targets"],
        ["/api/marketing/targets", "/api/marketing/budget"], _ALL, _TOKO),
     _m("toko", "mkt_content", "Kalender Konten, Diskon, Iklan & Peluncuran",
@@ -535,6 +539,17 @@ ENDPOINT_RULES: list[tuple[str, str, str, str]] = [
     # Batal jurnal = keputusan pembukuan; perbaikan massal kopling BOM = operasi perbaikan data.
     ("POST", r"/api/rahaza/journals/[^/]+/void", "fin_journal", "approve"),
     ("POST", r"/api/rahaza/boms/relink-materials", "prod_master_product", "approve"),
+    # 14 Nov 2026 (tahap 2): Kirim CMT — nota aksesoris yang berlaku dipakai kotak masuk permintaan aksesoris;
+    # potong nota = mengurangi tagihan CMT; batal nota = keputusan; posting ulang jurnal = pembukuan.
+    ("GET", r"/api/kirim-cmt/nota-aksesoris-berlaku", "acc_requests", "view"),
+    ("POST", r"/api/kirim-cmt/nota-aksesoris/[^/]+/potong", "prod_cmt_billing", "approve"),
+    ("POST", r"/api/kirim-cmt/nota-aksesoris/[^/]+/batal", "prod_vendor_shipment", "approve"),
+    ("POST", r"/api/kirim-cmt/shipments/[^/]+/repost-journal", "fin_journal", "approve"),
+    # Rencana aksesoris PO dipakai layar PO Internal; uang muka perjalanan dibayar = uang keluar (K25).
+    ("GET", r"/api/kirim-cmt/po/[^/]+/accessory-plan", "prod_po", "view"),
+    ("PUT", r"/api/kirim-cmt/po/[^/]+/accessory-plan", "prod_po", "edit"),
+    ("POST", r"/api/kirim-cmt/accessory-plan/preview", "prod_po", "view"),
+    ("POST", r"/api/hr/expenses/travel/[^/]+/advance-paid", "fin_pencairan", "approve"),
 ]
 
 # Portal lain yang menampilkan menu modul ini (pintasan lintas-portal di portalNav.js).
@@ -556,6 +571,7 @@ ALSO_PORTALS = {
     # 2026-11-09 (audit HR Tahap D): Asisten AI juga dibuka di Portal SDM (ruang `sdm`, tab AI SDM).
     "mgmt_asisten_ai": ["hr"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
+    "prod_cmt_override": ["maklon"],
     "wh_master": ["production", "rnd"],
     # 2026-11-02: tagihan CMT (posting/bayar) juga ditulis dari Portal Maklon (layar Tagihan CMT maklon) —
     #   `prod_cmt_billing` + "maklon" supaya aksi tulisnya tidak ditolak gerbang.

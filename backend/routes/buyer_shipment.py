@@ -22,6 +22,7 @@ Phase B (CMT → DA → Buyer, 2026-07-16):
         (dari `source_receipt_ids`) minus qty yg sudah dispatch dari receipt yang sama.
   * COGS posting hanya jalan untuk `receiver_type='buyer'` (dispatch riil).
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
@@ -1341,7 +1342,7 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES):
+    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya Admin/Superadmin yang dapat melakukan force edit')
     db = get_db()
     body = await request.json()
@@ -1527,7 +1528,7 @@ async def set_buyer_shipment_item_received(item_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES):
+    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya Admin/Superadmin yang dapat mengisi qty diterima')
     db = get_db()
     body = await request.json()
@@ -1678,7 +1679,7 @@ async def resolve_buyer_short(short_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES + ['finance', 'admin_finance']):
+    if not (check_role(user, PROD_ADMIN_ROLES + ['finance', 'admin_finance']) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya Admin/Finance yang boleh memutuskan selisih buyer')
     db = get_db()
     body = await request.json()

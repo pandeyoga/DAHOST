@@ -15,6 +15,7 @@ lokasi bukan-zona-penyimpanan ke zona kanonik sesuai kategori material (FASE 12,
 penyakit `unmapped_location`), dan menggabungkan baris kembar.
 Selalu ada jurnal `wh_stock_schema_reconcile_log` untuk rollback presisi.
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException, Query
 import logging
 
@@ -38,7 +39,9 @@ _FORBIDDEN = (
 
 
 def _guard(user: dict):
-    if not check_role(user, RECONCILE_ROLES, PERM_KEY):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, RECONCILE_ROLES, PERM_KEY) or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN)
 
 

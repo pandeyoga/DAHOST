@@ -12,6 +12,7 @@ Collection:
     - adjustments: [{date, by, delta, reason}]
 """
 # ruff: noqa: E741
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -44,7 +45,9 @@ LEAVE_BALANCE_PERMS = ("hr.attendance.manage", "hr.manage")
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    if not check_role(user, LEAVE_BALANCE_ROLES, LEAVE_BALANCE_PERMS):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, LEAVE_BALANCE_ROLES, LEAVE_BALANCE_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR/Manager yang dapat mengelola saldo cuti.")
     return user
 

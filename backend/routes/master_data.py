@@ -13,6 +13,7 @@ They are intentionally KEPT (not removed) for backward-compat / historical data
 access and for the one-off migration script `migrations/migrate_products_to_rahaza.py`.
 Do NOT build new features on these endpoints — use rahaza_models / buyer-catalog.
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from database import get_db
@@ -98,7 +99,7 @@ async def get_garment(gid: str, request: Request):
 @router.post("/garments")
 async def create_garment(request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -126,7 +127,7 @@ async def create_garment(request: Request):
 @router.put("/garments/{gid}")
 async def update_garment(gid: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -190,7 +191,7 @@ async def get_buyer(bid: str, request: Request):
 @router.post("/buyers")
 async def create_buyer(request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -223,7 +224,7 @@ async def create_buyer(request: Request):
 @router.put("/buyers/{bid}")
 async def update_buyer(bid: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -285,7 +286,7 @@ async def get_product(pid: str, request: Request):
 @router.post("/products")
 async def create_product(request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -297,7 +298,7 @@ async def create_product(request: Request):
 @router.put("/products/{pid}")
 async def update_product(pid: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -324,7 +325,7 @@ async def delete_product(pid: str, request: Request):
 @router.post("/products/{pid}/photo")
 async def upload_product_photo(pid: str, request: Request, file: UploadFile = File(...)):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     product = await db.products.find_one({'id': pid})
@@ -417,7 +418,7 @@ async def get_variant(vid: str, request: Request):
 @router.post("/product-variants")
 async def create_variant(request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -437,7 +438,7 @@ async def create_variant(request: Request):
 @router.put("/product-variants/{vid}")
 async def update_variant(vid: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()

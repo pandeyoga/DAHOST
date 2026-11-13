@@ -7,6 +7,7 @@ Endpoints:
   Attendance summary (payroll calculation input)
   HR Dashboard (Sprint 1.2 — replaces placeholder, real KPIs)
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, check_role
@@ -91,7 +92,7 @@ async def get_office_location(request: Request):
 async def set_office_location(request: Request):
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` ("Kelola absensi, shift & izin").
-    if not check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage"):
+    if not (check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya admin/HR.")
     db = get_db()
     body = await request.json()
@@ -153,7 +154,7 @@ async def set_office_location(request: Request):
 @router.post("/attendance/clock-in")
 async def clock_in(request: Request):
     user = await require_auth(request)
-    if not check_role(user, OPERATOR_ATTENDANCE_ROLES):
+    if not (check_role(user, OPERATOR_ATTENDANCE_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Clock-in manual (operator) hanya untuk HR/Supervisor. "
                                  "Absen mandiri gunakan verifikasi selfie/biometrik.")
     db = get_db()
@@ -218,7 +219,7 @@ async def clock_in(request: Request):
 @router.post("/attendance/clock-out")
 async def clock_out(request: Request):
     user = await require_auth(request)
-    if not check_role(user, OPERATOR_ATTENDANCE_ROLES):
+    if not (check_role(user, OPERATOR_ATTENDANCE_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Clock-out manual (operator) hanya untuk HR/Supervisor. "
                                  "Absen mandiri gunakan verifikasi selfie/biometrik.")
     db = get_db()
@@ -372,7 +373,7 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
 @router.post("/attendance/bulk")
 async def bulk_attendance(request: Request):
     user = await require_auth(request)
-    if not check_role(user, HR_ATTENDANCE_WRITE_ROLES, "hr.manage"):
+    if not (check_role(user, HR_ATTENDANCE_WRITE_ROLES, "hr.manage") or lolos_centang(user)):
         raise HTTPException(403, MSG_HR_ATTENDANCE_ONLY)
     db = get_db()
     body = await request.json()
@@ -552,7 +553,7 @@ async def _build_att_doc(db, body, user, prefetched_existing: dict = None):
 @router.post("/attendance")
 async def upsert_attendance(request: Request):
     user = await require_auth(request)
-    if not check_role(user, HR_ATTENDANCE_WRITE_ROLES, "hr.manage"):
+    if not (check_role(user, HR_ATTENDANCE_WRITE_ROLES, "hr.manage") or lolos_centang(user)):
         raise HTTPException(403, MSG_HR_ATTENDANCE_ONLY)
     db = get_db()
     body = await request.json()
@@ -586,7 +587,7 @@ RECOMPUTE_MAX_DAYS = 62
 async def recompute_timing(request: Request):
     """Body: {from, to, employee_ids?} → {checked, changed, locked, skipped_no_clock, samples}."""
     user = await require_auth(request)
-    if not check_role(user, HR_ATTENDANCE_WRITE_ROLES, ("hr.manage", "hr.attendance.manage")):
+    if not (check_role(user, HR_ATTENDANCE_WRITE_ROLES, ("hr.manage", "hr.attendance.manage")) or lolos_centang(user)):
         raise HTTPException(403, MSG_HR_ATTENDANCE_ONLY)
     db = get_db()
     body = await request.json()

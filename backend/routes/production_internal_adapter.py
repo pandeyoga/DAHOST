@@ -17,6 +17,7 @@ Keputusan terkunci yang diimplementasikan di sini:
 Job internal dibuat langsung dari PO (tanpa vendor_shipment/inspeksi — jalur itu
 khusus maklon/CMT). Kapasitas produksi internal digate oleh MI status 'issued'.
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import logging
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -384,7 +385,7 @@ async def create_mi_draft_from_job(db, job: dict, user: dict, default_loc=None):
 async def draft_mi_from_job_endpoint(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, MI_DRAFT_ROLES):
+    if not (check_role(user, MI_DRAFT_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -540,7 +541,7 @@ async def hpp_for_job(job_id: str, request: Request):
 async def snapshot_hpp_job(job_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, HPP_ROLES):
+    if not (check_role(user, HPP_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     data = await upsert_hpp_snapshot_job(db, job_id, user)
@@ -571,7 +572,7 @@ async def on_job_completed_internal(db, job: dict, user: dict) -> dict:
 async def create_po_from_order(order_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, FROM_ORDER_ROLES):
+    if not (check_role(user, FROM_ORDER_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = {}

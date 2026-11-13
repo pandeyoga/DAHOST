@@ -22,6 +22,7 @@ Koleksi `rahaza_attendance_corrections` — bentuk yang dibaca paket payroll unt
    payroll_adjustment: {status: 'pending'|'applied', run_id, applied_at} (hanya penyesuaian_payroll)}
 """
 from __future__ import annotations
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
@@ -48,7 +49,9 @@ def _now() -> datetime:
 
 
 def _require_hr(user: dict) -> None:
-    if not check_role(user, HR_CORRECTION_ROLES, "hr.manage"):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, HR_CORRECTION_ROLES, "hr.manage") or lolos_centang(user)):
         raise HTTPException(403, MSG_HR_ONLY)
 
 

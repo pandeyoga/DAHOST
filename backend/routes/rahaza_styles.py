@@ -3,6 +3,7 @@ Style Master 2.0 — PT Rahaza ERP
 Manages product styles: design images, tech-pack documents, color/size variants.
 Routes prefix: /api/rahaza
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -25,8 +26,10 @@ def serialize_doc(d):
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     # 2026-11-08: kode peran lama ATAU izin `rnd.manage` (modul Style, Pola & Tech Pack — memuat master style).
-    if not check_role(user, ("superadmin", "admin", "manager", "gudang"), "rnd.manage"):
+    if not (check_role(user, ("superadmin", "admin", "manager", "gudang"), "rnd.manage") or lolos_centang(user)):
         raise HTTPException(403, "Tidak ada akses.")
     return user
 

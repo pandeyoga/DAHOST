@@ -18,6 +18,7 @@ Conventions:
     modulnya (lihat `_GERBANG_HAPUS`).
 """
 # ruff: noqa: E741
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity, check_role
@@ -191,6 +192,8 @@ async def _require_admin(request: Request):
     # RBAC master product (keputusan user): SEMUA staff internal boleh CRUD master.
     # Hanya role eksternal (vendor/klien) yang ditolak.
     user = await require_auth(request)
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get("role") or "").lower()
     if role in ("cmt_vendor", "vendor", "klien_maklon"):
         raise HTTPException(403, "Akses master hanya untuk staff internal.")
@@ -215,8 +218,10 @@ _GERBANG_HAPUS = {
 
 
 def _wajib_pengelola(user: dict, kunci: str) -> None:
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     roles, perms, pesan = _GERBANG_HAPUS[kunci]
-    if not check_role(user, list(roles), perms):
+    if not (check_role(user, list(roles), perms) or lolos_centang(user)):
         raise HTTPException(403, pesan)
 
 

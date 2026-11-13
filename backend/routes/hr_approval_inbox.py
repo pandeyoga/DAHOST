@@ -83,6 +83,9 @@ def _stage_label(doc: dict) -> str:
 
 def _require_approver_role(user: dict):
     # 2026-08-06 — gerbang izin terpusat (routes.shared.can_act, fallback aman).
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     from routes.shared import can_act as _can_act
     if not _can_act(user, 'hr.approve', 'hr.manage',
                     legacy_roles=('hr', 'manager', 'hr_manager')):
