@@ -3,9 +3,18 @@
  * Standar UI/UX v2 (8 Nov 2026): PageLayout, kartu siklus & periode = StatTile berketerangan (target/anggaran/biaya 0
  * → "—" + alasan, dulu "0,0%" merah), skor kesehatan tanpa data = "—" (dulu "0 / 100" merah), 7 kartu toko berulang
  * (omzet/pesanan selalu "-") → tabel toko dengan omzet periode dari data tren yang sama + unduh, warna token.
+ *
+ * 14 Nov 2026 (owner: "grafik hanya sales saja padahal bisa ada ads, anggaran realisasi dll."):
+ *   • grafik baru: iklan (biaya, omzet iklan, ROAS), anggaran vs realisasi per kategori, pencapaian target per toko,
+ *     live selling, KOL/kreator — masing-masing dari endpoint layar sumbernya (lihat `marketing/DashboardGrafik.jsx`);
+ *   • periode = bulan Marketing 26–25 / minggu Senin (PeriodSelector), saringan TOKO di baris penyaring berlaku untuk
+ *     seluruh layar (dulu hanya untuk grafik tren);
+ *   • tren omzet, kolom omzet/omzet live tabel toko, dan kartu periode kini dari SATU jawaban `/dashboard/overview`
+ *     (dulu layar memanggil `/accounts/{id}/sales` per toko lalu menjumlah sendiri, dan "omzet live" diambil dari
+ *     rekap jenis live — catatan kerja, bukan omzet live resmi — sehingga grafik ≠ kartu "Termasuk live").
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Store, RefreshCw, Plus, Eye } from 'lucide-react';
+import { Store, RefreshCw, Plus, Eye, TrendingUp } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,14 +24,17 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import { formatTanggalID } from '@/components/ui/date-picker';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile } from './moduleAtoms';
-import { PeriodSelector } from './PeriodSelector';
-import { RevenueChart } from './RevenueChart';
+import { PeriodSelector, rentangPreset } from './PeriodSelector';
 import { HealthScoreGauge } from './HealthScoreGauge';
 import { AccountDetailPage } from './marketing/AccountDetailPage';
 import { MarketingCycleStrip } from './marketing/MarketingCycleStrip';
+import {
+  BagianAnggaran, BagianGrafik, BagianIklan, BagianKreator, BagianLive, BagianTarget, KotakGrafik, useAmbilJson,
+} from './marketing/DashboardGrafik';
+import { CATATAN_KELOMPOK, klasifikasiPeriode, pesanGagal, rapikanHarian, spec } from './marketing/dashboardGrafikData';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
-import { todayWIB, monthStartWIB, bulanMarketingWIB, bulanMarketingDari } from '@/lib/waktu';
+import { todayWIB } from '@/lib/waktu';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL;
 const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok Shop', tiktokshop: 'TikTok Shop', tokopedia: 'Tokopedia', lazada: 'Lazada' };
@@ -33,29 +45,22 @@ const fmt = formatRupiah;
 export default function MarketingDashboard({ token, onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState(null);
+  const [overviewGalat, setOverviewGalat] = useState(null);
   const [accounts, setAccounts] = useState([]);
-  const [perAccountTrend, setPerAccountTrend] = useState({}); // { accountId: [{date,total,live}] }
-  // FASE D (2026-08-16) — bawaan periode = BULAN BERJALAN, bukan kosong/30 hari.
-  // Target, anggaran, dan ROI marketing semuanya BULANAN. Dengan bawaan lama
-  // (30 hari terakhir dari backend) rentangnya selalu menyerempet dua bulan,
-  // sehingga omzet di layar tidak pernah bisa disandingkan dengan targetnya —
-  // dan itulah yang terbaca sebagai "angka dashboard tidak nyambung".
-  const [period, setPeriod] = useState(() => ({
-    date_from: monthStartWIB(),
-    date_to: todayWIB(),
-  }));
-  const [chartAccountFilter, setChartAccountFilter] = useState('all');
+  // Bawaan = BULAN MARKETING berjalan (26–25, owner 11 Nov 2026) s/d hari ini — target, anggaran, dan siklus
+  // marketing semuanya per bulan Marketing; dengan bawaan tanggal 1 kalender, kartu periode tidak pernah bisa
+  // disandingkan dengan angka siklus bulan yang sama.
+  const [period, setPeriod] = useState(() => rentangPreset('bulan'));
+  const [tokoId, setTokoId] = useState('');                 // '' = semua toko
+  const [muatUlang, setMuatUlang] = useState(0);
   const [detailAccount, setDetailAccount] = useState(null); // null = dashboard, object = detail view
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
     [token]
   );
-  // Bulan yang dipakai untuk angka RESMI (target/anggaran/ROI) — diambil dari
-  // tanggal akhir rentang supaya layar dan SSOT siklus bicara tentang bulan sama.
-  const cyclePeriod = useMemo(
-    () => (period.date_to ? bulanMarketingDari(period.date_to) : bulanMarketingWIB()),   // bulan Marketing 26–25
-    [period.date_to]
-  );
+  // Jenis periode (bulan Marketing / minggu Senin / rentang) + bulan Marketing untuk angka RESMI
+  // (target/anggaran/KOL) = bulan tempat tanggal akhir rentang berada.
+  const info = useMemo(() => klasifikasiPeriode(period, todayWIB()), [period]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -63,88 +68,75 @@ export default function MarketingDashboard({ token, onNavigate }) {
       const params = new URLSearchParams();
       if (period.date_from) params.append('date_from', period.date_from);
       if (period.date_to) params.append('date_to', period.date_to);
+      if (tokoId) params.append('account_id', tokoId);
 
       const [overviewRes, accountsRes] = await Promise.all([
         fetch(`${API_BASE}/api/marketing/dashboard/overview?${params.toString()}`, { headers }),
         fetch(`${API_BASE}/api/marketing/accounts?status=active`, { headers }),
       ]);
-
-      let overviewData = null;
       if (overviewRes.ok) {
-        overviewData = await overviewRes.json();
-        setOverview(overviewData);
+        setOverview(await overviewRes.json());
+        setOverviewGalat(null);
+      } else {
+        const body = await overviewRes.json().catch(() => ({}));
+        setOverview(null);
+        setOverviewGalat({ status: overviewRes.status, detail: body?.detail });
       }
-      const accs = accountsRes.ok ? await accountsRes.json() : [];
-      setAccounts(accs);
-
-      // Tren omzet per toko (semua toko aktif — dulu dipotong 10 toko pertama tanpa keterangan)
-      const accTrendMap = {};
-      for (const acc of accs) {
-        const r = await fetch(
-          `${API_BASE}/api/marketing/accounts/${acc.id}/sales?${params.toString()}`,
-          { headers }
-        );
-        if (r.ok) {
-          const list = await r.json();
-          const map = {};
-          list.forEach(item => {
-            if (!map[item.date]) map[item.date] = { date: item.date, total: 0, live: 0 };
-            const rev = item.metrics?.revenue || 0;
-            if (item.revenue_type === 'live') map[item.date].live += rev;
-            else map[item.date].total += rev;
-          });
-          accTrendMap[acc.id] = Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
-        }
-      }
-      setPerAccountTrend(accTrendMap);
+      setAccounts(accountsRes.ok ? await accountsRes.json() : []);
     } catch (e) {
       toast.error('Gagal memuat dashboard');
     } finally {
       setLoading(false);
     }
-  }, [period, headers]);
+  }, [period, tokoId, headers]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Computed trend data berdasarkan filter akun
-  const trendData = useMemo(() => {
-    if (chartAccountFilter === 'all') {
-      // Agregat semua akun
-      const merged = {};
-      Object.values(perAccountTrend).forEach(rows => {
-        rows.forEach(row => {
-          if (!merged[row.date]) merged[row.date] = { date: row.date, total: 0, live: 0 };
-          merged[row.date].total += row.total;
-          merged[row.date].live += row.live;
-        });
-      });
-      return Object.values(merged).sort((a, b) => a.date.localeCompare(b.date));
-    }
-    return perAccountTrend[chartAccountFilter] || [];
-  }, [perAccountTrend, chartAccountFilter]);
+  // Angka siklus RESMI satu bulan — satu permintaan untuk kartu siklus, grafik anggaran, dan grafik target.
+  const siklus = useAmbilJson(
+    `${API_BASE}/api/marketing/cycle/overview?period=${info.bulan}${tokoId ? `&account_id=${encodeURIComponent(tokoId)}` : ''}`,
+    token, muatUlang);
+  const siklusGalat = siklus.galat
+    ? pesanGagal(siklus.galat.status, 'modul "Target & Anggaran" (Portal Manajemen)', siklus.galat.detail) : '';
+
+  const muatSemua = () => { fetchData(); setMuatUlang((n) => n + 1); };
+
+  // Toko yang ditampilkan mengikuti saringan toko
+  const tokoTampil = useMemo(
+    () => (tokoId ? accounts.filter((a) => a.id === tokoId) : accounts),
+    [accounts, tokoId]
+  );
 
   // Average health score across active accounts — exclude null (N/A)
   const avgHealthScore = useMemo(() => {
-    if (!accounts || accounts.length === 0) return null;
-    const scored = accounts.filter(a => a.health_score !== null && a.health_score !== undefined);
+    if (!tokoTampil || tokoTampil.length === 0) return null;
+    const scored = tokoTampil.filter(a => a.health_score !== null && a.health_score !== undefined);
     if (scored.length === 0) return null;
     const total = scored.reduce((sum, a) => sum + a.health_score, 0);
     return Math.round(total / scored.length);
-  }, [accounts]);
+  }, [tokoTampil]);
   const adaSkor = (a) => a.health_score !== null && a.health_score !== undefined;
   const sebaran = {
-    baik: accounts.filter(a => adaSkor(a) && a.health_score >= 80).length,
-    cukup: accounts.filter(a => adaSkor(a) && a.health_score >= 60 && a.health_score < 80).length,
-    buruk: accounts.filter(a => adaSkor(a) && a.health_score < 60).length,
-    kosong: accounts.filter(a => !adaSkor(a)).length,
+    baik: tokoTampil.filter(a => adaSkor(a) && a.health_score >= 80).length,
+    cukup: tokoTampil.filter(a => adaSkor(a) && a.health_score >= 60 && a.health_score < 80).length,
+    buruk: tokoTampil.filter(a => adaSkor(a) && a.health_score < 60).length,
+    kosong: tokoTampil.filter(a => !adaSkor(a)).length,
   };
-  // Omzet per toko pada rentang terpilih = jumlah input harian (data yang sama dengan grafik tren)
-  const omzetToko = (id) => (perAccountTrend[id] || []).reduce((s, r) => s + (r.total || 0), 0);
-  const omzetLive = (id) => (perAccountTrend[id] || []).reduce((s, r) => s + (r.live || 0), 0);
+  // Omzet per toko = `per_account` jawaban yang sama dengan kartu & grafik tren (satu sumber)
+  const perToko = useMemo(
+    () => Object.fromEntries((overview?.per_account || []).map((r) => [r.account_id, r])),
+    [overview]
+  );
+  const omzetToko = (id) => perToko[id]?.revenue || 0;
+  const omzetLive = (id) => perToko[id]?.revenue_live || 0;
   const sm = overview?.summary || {};
   const rentang = `${formatTanggalID(period.date_from)} – ${formatTanggalID(period.date_to)}`;
+  const tren = rapikanHarian(overview?.daily, ['revenue', 'revenue_live']);
+  const specTren = spec('garis', tren.baris, [{ kunci: 'revenue', nama: 'Omzet total' }, { kunci: 'revenue_live', nama: 'Omzet live' }],
+    { catatan: CATATAN_KELOMPOK[tren.satuan] });
+  const ovState = { data: overview, galat: overviewGalat, loading };
 
   const kolomToko = [
     { kunci: 'toko', label: 'Toko', hp: 'judul', isi: (a) => (
@@ -172,20 +164,28 @@ export default function MarketingDashboard({ token, onNavigate }) {
 
   return (
     <PageLayout testId="marketing-dashboard" title="Dashboard marketing"
-      subtitle="Target, omzet, anggaran, dan kesehatan tiap toko — angka resmi bulanan dari siklus marketing."
+      subtitle="Omzet, iklan, anggaran, target, live, dan kreator per toko dalam satu periode."
       actions={<>
         <Button onClick={() => onNavigate?.('marketing-task-hub')} variant="outline" data-testid="quick-tasks">Buka tugas</Button>
         <Button onClick={() => onNavigate?.('marketing-sales')} data-testid="quick-input-sales"><Plus />Input sales</Button>
       </>}
-      filters={<PeriodSelector value={period} onChange={setPeriod} />}
+      filters={<>
+        <PeriodSelector value={period} onChange={setPeriod} />
+        <SmartNativeSelect className="w-48" value={tokoId} onChange={(e) => setTokoId(e.target.value)} aria-label="Toko"
+          data-testid="dashboard-toko-filter">
+          <option value="">Semua toko</option>
+          {accounts.map(a => <option key={a.id} value={a.id}>{a.account_name}</option>)}
+        </SmartNativeSelect>
+      </>}
       tools={(
-        <Button onClick={fetchData} variant="outline" size="icon" disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        <Button onClick={muatSemua} variant="outline" size="icon" disabled={loading} title="Muat ulang" aria-label="Muat ulang"
           data-testid="refresh-dashboard-btn">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       )}>
       {/* Angka RESMI satu bulan — dijumlah backend (SSOT siklus marketing) */}
-      <MarketingCycleStrip token={token} period={cyclePeriod} />
+      <MarketingCycleStrip token={token} period={info.bulan} data={siklus.loading ? null : siklus.data}
+        error={siklusGalat} />
 
       <section className="space-y-2">
         <p className="text-base font-semibold">Periode terpilih · {rentang}</p>
@@ -207,26 +207,20 @@ export default function MarketingDashboard({ token, onNavigate }) {
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <GlassCard className="space-y-3 p-4 lg:col-span-2" data-testid="revenue-trend-card">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-base font-semibold">Tren omzet</p>
-              <p className="text-sm text-muted-foreground">Omzet total dan live per hari, dari input harian tiap toko.</p>
-            </div>
-            <SmartNativeSelect className="w-48" value={chartAccountFilter} onChange={(e) => setChartAccountFilter(e.target.value)}
-              data-testid="chart-account-filter">
-              <option value="all">Semua toko</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.account_name}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <RevenueChart data={trendData} height={260} />
-        </GlassCard>
+        <BagianGrafik className="lg:col-span-2" testId="revenue-trend-card" judul="Tren omzet"
+          keterangan="Omzet total dan omzet live per hari — angka yang sama dengan kartu Omzet di atas.">
+          <KotakGrafik testId="revenue-chart" spesifikasi={specTren} loading={loading && !overview}
+            galat={overviewGalat ? pesanGagal(overviewGalat.status, 'modul "Dashboard & Laporan Marketing"', overviewGalat.detail) : ''}
+            kosong={<EmptyState icon={TrendingUp} title="Belum ada omzet pada periode ini"
+              description="Omzet terbaca dari impor pesanan atau Input sales harian."
+              action={<Button variant="outline" onClick={() => onNavigate?.('marketing-sales')}>Buka input sales</Button>} />} />
+        </BagianGrafik>
 
         <GlassCard className="space-y-3 p-4" data-testid="health-score-card">
           <div>
             <p className="text-base font-semibold">Rata-rata skor kesehatan</p>
             <p className="text-sm text-muted-foreground">
-              {avgHealthScore == null ? 'Belum ada toko yang punya skor — skor dihitung dari data 30 hari terakhir.' : `Rata-rata ${accounts.length - sebaran.kosong} toko yang sudah punya skor.`}
+              {avgHealthScore == null ? 'Belum ada toko yang punya skor — skor dihitung dari data 30 hari terakhir.' : `Rata-rata ${tokoTampil.length - sebaran.kosong} toko yang sudah punya skor.`}
             </p>
           </div>
           <HealthScoreGauge score={avgHealthScore} size={120} label="" />
@@ -239,6 +233,18 @@ export default function MarketingDashboard({ token, onNavigate }) {
         </GlassCard>
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <BagianIklan token={token} periode={period} tokoId={tokoId} muatUlang={muatUlang} onNavigate={onNavigate} />
+        <BagianLive overview={ovState} onNavigate={onNavigate} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <BagianAnggaran token={token} info={info} tokoId={tokoId} siklus={siklus} muatUlang={muatUlang} onNavigate={onNavigate} />
+        <BagianTarget info={info} siklus={siklus} onNavigate={onNavigate} />
+      </div>
+
+      <BagianKreator token={token} info={info} tokoId={tokoId} muatUlang={muatUlang} onNavigate={onNavigate} />
+
       <section className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -246,7 +252,7 @@ export default function MarketingDashboard({ token, onNavigate }) {
             <p className="text-sm text-muted-foreground">Klik baris untuk dashboard satu toko.</p>
           </div>
           <div className="flex items-center gap-2">
-            <TombolUnduh namaBerkas={`dashboard-toko-${period.date_from}-${period.date_to}`} namaLembar="Toko" baris={accounts} testId="dashboard-toko-unduh"
+            <TombolUnduh namaBerkas={`dashboard-toko-${period.date_from}-${period.date_to}`} namaLembar="Toko" baris={tokoTampil} testId="dashboard-toko-unduh"
               kolom={[
                 { label: 'Toko', nilai: (a) => a.account_name }, { label: 'Kode', nilai: (a) => a.account_code },
                 { label: 'Platform', nilai: (a) => labelPlatform(a.platform) },
@@ -256,7 +262,7 @@ export default function MarketingDashboard({ token, onNavigate }) {
             <Button variant="outline" onClick={() => onNavigate?.('marketing-accounts')} data-testid="manage-accounts-btn">Kelola akun</Button>
           </div>
         </div>
-        <TabelData kolom={kolomToko} baris={accounts} onKlikBaris={setDetailAccount} testId="dashboard-accounts-table"
+        <TabelData kolom={kolomToko} baris={tokoTampil} onKlikBaris={setDetailAccount} testId="dashboard-accounts-table"
           kosong={<EmptyState icon={Store} title="Belum ada toko aktif"
             action={<Button onClick={() => onNavigate?.('marketing-accounts')} data-testid="add-first-account"><Plus />Tambah akun pertama</Button>} />} />
       </section>

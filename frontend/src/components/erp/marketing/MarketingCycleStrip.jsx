@@ -30,13 +30,20 @@ const monthLabel = (period) => {
   return `${names[Number(m) - 1] || m} ${y}`;
 };
 
-export function MarketingCycleStrip({ token, period }) {
-  const [data, setData] = useState(null);
-  const [err, setErr] = useState('');
+/**
+ * `data`/`error` (Dashboard Marketing, 14 Nov 2026): bila induk sudah mengambil `/cycle/overview` (dipakai juga oleh
+ * grafik anggaran & target), kartu ini memakai jawaban yang SAMA — satu permintaan, satu angka.
+ */
+export function MarketingCycleStrip({ token, period, data: dataInduk, error: errorInduk }) {
+  const terkendali = dataInduk !== undefined || errorInduk !== undefined;
+  const [dataSendiri, setData] = useState(null);
+  const [errSendiri, setErr] = useState('');
+  const data = terkendali ? dataInduk : dataSendiri;
+  const err = terkendali ? (errorInduk || '') : errSendiri;
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   useEffect(() => {
-    if (!period) return;
+    if (!period || terkendali) return;
     let alive = true;
     setErr('');
     fetch(`${API_BASE}/api/marketing/cycle/overview?period=${period}`, { headers })
@@ -47,7 +54,7 @@ export function MarketingCycleStrip({ token, period }) {
       .then((d) => { if (alive) setData(d); })
       .catch((e) => { if (alive) setErr(e.message); });
     return () => { alive = false; };
-  }, [period, headers]);
+  }, [period, headers, terkendali]);
 
   if (err) {
     return (

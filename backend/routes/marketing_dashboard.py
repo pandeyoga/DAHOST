@@ -30,11 +30,18 @@ router = APIRouter(prefix='/api/marketing', tags=['Marketing-Dashboard'])
 async def get_dashboard_overview(
     request: Request,
     date_from: Optional[str] = Query(None),
-    date_to: Optional[str] = Query(None)
+    date_to: Optional[str] = Query(None),
+    account_id: Optional[str] = None,
 ):
     """
     Consolidated dashboard for all accounts.
     Shows: Total revenue (all accounts), Total orders, Account count, etc.
+
+    Dashboard Marketing (14 Nov 2026, owner: "grafik hanya sales saja") — `account_id` menyaring
+    satu toko, dan jawaban membawa `daily` (omzet, omzet live, pesanan per tanggal) serta
+    `per_account`. Keduanya dihitung dari baris yang SAMA dengan `summary`, jadi grafik tren,
+    kartu, dan tabel toko di layar tidak bisa berbeda angka (dulu layar menjumlah sendiri
+    `/accounts/{id}/sales` per toko + rekap jenis "live" yang bukan omzet live resmi).
     """
     user = await require_auth(request)
     db = get_db()
@@ -43,6 +50,9 @@ async def get_dashboard_overview(
     # F6 (sesi #9): hanya toko yang boleh dilihat pemakai ini yang ikut dijumlah —
     # dulu staf pemegang satu toko melihat "total omzet" sembilan toko.
     all_accounts = await _scope.visible_accounts(db, user, limit=500)
+    if account_id:
+        await _scope.assert_account_visible(db, user, account_id)
+        all_accounts = [a for a in all_accounts if a.get("id") == account_id]
     active_accounts_list = [a for a in all_accounts if a.get("status") == "active"]
     active_ids = [a["id"] for a in active_accounts_list]
     
@@ -63,8 +73,29 @@ async def get_dashboard_overview(
     # total). Dulu = rekap jenis "live" hasil sinkron shift host + sesi kreator, sehingga satu
     # siaran terhitung dua kali (Rp578.854 untuk siaran Rp289.427) dan tidak turun saat sesi
     # kreator dihapus.
-    total_revenue_live = (await _ukuran.ringkas_live(db, active_accounts_list, date_from,
-                                                     date_to))["omzet"]
+    live = await _ukuran.ringkas_live(db, active_accounts_list, date_from, date_to)
+    total_revenue_live = live["omzet"]
+
+    # Rincian harian & per toko — baris yang sama dengan total di atas (satu sumber).
+    harian: dict = {}
+    for r in oms["baris"]:
+        h = harian.setdefault(r["date"], {"date": r["date"], "revenue": 0.0, "revenue_live": 0.0,
+                                          "orders": 0})
+        h["revenue"] += float(r.get("omzet") or 0)
+        h["orders"] += int(r.get("pesanan") or 0)
+    for d, v in (live.get("per_tanggal") or {}).items():
+        harian.setdefault(d, {"date": d, "revenue": 0.0, "revenue_live": 0.0, "orders": 0})
+        harian[d]["revenue_live"] += float(v or 0)
+    daily = [{**h, "revenue": round(h["revenue"]), "revenue_live": round(h["revenue_live"])}
+             for _d, h in sorted(harian.items())]
+    per_account = [{
+        "account_id": a["id"], "account_name": a.get("account_name"),
+        "account_code": a.get("account_code"), "platform": a.get("platform"),
+        "revenue": round(oms["per_toko"].get(a["id"], {}).get("omzet", 0)),
+        "orders": oms["per_toko"].get(a["id"], {}).get("pesanan", 0),
+        "revenue_live": round((live.get("per_toko") or {}).get(a["id"], 0)),
+        "days_with_data": oms["per_toko"].get(a["id"], {}).get("hari_ada_data", 0),
+    } for a in active_accounts_list]
 
     # Top performing account (by revenue) — only from active accounts
     account_revenue = {aid: t["omzet"] for aid, t in oms["per_toko"].items() if t["hari_ada_data"]}
@@ -93,7 +124,12 @@ async def get_dashboard_overview(
             "account_name": top_account.get("account_name") if top_account else None,
             "platform": top_account.get("platform") if top_account else None,
             "revenue": round(account_revenue.get(top_account_id, 0)) if top_account_id else 0
-        } if top_account else None
+        } if top_account else None,
+        "daily": daily,
+        "per_account": per_account,
+        "live": {"sessions": live.get("sesi", 0), "orders": live.get("pesanan", 0),
+                 "recorded_revenue": live.get("omzet_tercatat_sesi", 0),
+                 "definition": _ukuran.DEFINISI_LIVE},
     })
 
 

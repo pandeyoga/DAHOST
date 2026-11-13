@@ -1288,8 +1288,10 @@ async def ringkas_live(db, accounts: Sequence[dict], dari: str, sampai: str) -> 
             per_hari[key] = _num(r.get("omzet"))
     omzet = sum(per_hari.values())
     per_toko: Dict[str, float] = {}
-    for (aid, _d), v in per_hari.items():
+    per_tanggal: Dict[str, float] = {}
+    for (aid, d), v in per_hari.items():
         per_toko[aid] = per_toko.get(aid, 0.0) + v
+        per_tanggal[d] = per_tanggal.get(d, 0.0) + v
     orders = await baca_pesanan(db, ids, dari, sampai)
     pesanan = sum(1 for o in orders if kanal_pesanan(o) == "live")
     sesi = 0
@@ -1305,6 +1307,9 @@ async def ringkas_live(db, accounts: Sequence[dict], dari: str, sampai: str) -> 
     return {"omzet": _rp(omzet), "pesanan": pesanan, "sesi": sesi,
             "omzet_tercatat_sesi": _rp(tercatat), "selisih_tercatat": _rp(tercatat - omzet),
             "per_toko": {k: _rp(v) for k, v in per_toko.items()},
+            # Dashboard Marketing (14 Nov 2026) — grafik harian memakai angka yang SAMA dengan kartu
+            # "Termasuk live"; tanpa ini layar menjumlah rekap jenis "live" (catatan kerja, Q-2).
+            "per_tanggal": {k: _rp(v) for k, v in sorted(per_tanggal.items())},
             "definisi": DEFINISI_LIVE}
 
 

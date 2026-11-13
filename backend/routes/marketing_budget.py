@@ -527,7 +527,7 @@ async def set_kol_cost(creator_id: str, data: KolCostConfig, request: Request):
 
 # ── SUMMARY (budget vs spend + ROI) ──────────────────────────────────────────────
 @router.get('/summary')
-async def budget_summary(request: Request, account_id: str = Query(...), period: str = Query(...)):
+async def budget_summary(request: Request, account_id: Optional[str] = None, period: str = Query(...)):
     """Rencana vs realisasi per kategori + ROI.
 
     F5.2 — realisasi kategori `diskon`, `ads`, `komisi`, `kol`, `livehost` sekarang
@@ -536,17 +536,52 @@ async def budget_summary(request: Request, account_id: str = Query(...), period:
     `diskon` selalu Rp 0 walau bulan itu memuat puluhan juta diskon penjual —
     anggaran yang selalu "aman" membuat keputusan diskon diambil tanpa biayanya.
     Angka otomatis TIDAK ditulis sebagai entri belanja (anti dobel-hitung).
+
+    Dashboard Marketing (14 Nov 2026) — tanpa `account_id` = SEMUA toko aktif yang boleh dilihat
+    pemakai, dijumlah di server dari ringkasan per toko yang sama persis (grafik anggaran
+    mingguan "semua toko" = jumlah layar Anggaran tiap toko).
     """
-    await require_auth(request)
+    user = await require_auth(request)
     _valid_period(period)
     db = get_db()
+    _days = (await get_period_settings(db))['period_days']
+    if account_id:
+        return await _ringkasan_anggaran_toko(db, account_id, period, _days)
 
+    accs = await _scope.visible_accounts(db, user, base={'status': 'active'},
+                                         projection={'_id': 0, 'id': 1}, limit=300)
+    per = [await _ringkasan_anggaran_toko(db, a['id'], period, _days) for a in accs if a.get('id')]
+    cats = _cycle.sum_budget_categories([p['categories'] for p in per], plan_key='budget')
+    categories = [{'category': c['category'], 'budget': c['plan'], 'spend': c['spend'],
+                   'remaining': c['remaining'], 'manual': c['manual'], 'auto': c['auto'],
+                   'mode': c['mode'], 'used_pct': c['used_pct'], 'status': c['status']} for c in cats]
+    total_budget = round(sum(_num(p['total_budget']) for p in per), 2)
+    total_spend = round(sum(_num(p['total_spend']) for p in per), 2)
+    sales = round(sum(_num(p['sales']) for p in per), 2)
+    _lo, _hi = _cycle.period_range(period, _days)
+    return {
+        'account_id': None, 'period': period, 'accounts': len(per),
+        'categories': categories,
+        'total_budget': total_budget, 'total_spend': total_spend,
+        'total_remaining': round(total_budget - total_spend, 2),
+        'total_used_pct': round((total_spend / total_budget * 100) if total_budget > 0 else 0, 2),
+        'sales': sales,
+        'roi_pct': round(((sales - total_spend) / total_spend * 100) if total_spend > 0 else 0, 2),
+        'spend_of_sales_pct': round((total_spend / sales * 100) if sales > 0 else 0, 2),
+        'manual_entries': sum(int(p.get('manual_entries') or 0) for p in per),
+        'budget_exists': sum(1 for p in per if p.get('budget_exists')),
+        'label': 'Angka omzet SEBELUM potongan platform.',
+        'date_from': _lo, 'date_to': _hi,
+    }
+
+
+async def _ringkasan_anggaran_toko(db, account_id: str, period: str, _days: int) -> dict:
+    """Ringkasan anggaran SATU toko × satu periode (isi `GET /summary?account_id=`)."""
     budget_doc = await db.marketing_budgets.find_one({'account_id': account_id, 'period': period}, {'_id': 0})
     budget = {**_empty_cat(), **((budget_doc or {}).get('budget_by_category') or {})}
 
     # M-05 — omzet & semua biaya otomatis membaca RENTANG periode yang sama (7 hari /
     # bulanan); dulu omzet 1 hari dibandingkan biaya sebulan.
-    _days = (await get_period_settings(db))['period_days']
     daily = await _cycle.actual_from_daily(db, account_id, period, _days)
     manual, manual_docs = await _cycle.manual_spend(db, account_id, period)
     auto, spend_sources = await _cycle.auto_spend(db, account_id, period, daily, _days)
@@ -586,6 +621,7 @@ async def budget_summary(request: Request, account_id: str = Query(...), period:
         'sales': sales, 'roi_pct': roi_pct, 'spend_of_sales_pct': spend_of_sales_pct,
         'spend_sources': spend_sources,
         'manual_entries': manual_docs,
+        'budget_exists': bool(budget_doc),
         'locked': bool(lock.get('locked')), 'lock': lock,
         # kompatibilitas layar lama (dulu hanya dua rincian ini yang ada)
         'kol_detail': next((s.get('detail') for s in spend_sources
