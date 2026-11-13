@@ -45,7 +45,7 @@ async def get_serial_lookup(
     exclude_item_id: Optional[str] = Query(None),
     scope: str = Query("all", description="all|maklon|internal"),
 ):
-    """Cek 1 seri untuk PERINGATAN saat BUAT ORDER (tidak block). READ-ONLY."""
+    """Cek 1 seri untuk tanda langsung di form BUAT ORDER. READ-ONLY. Penolakan saat simpan: core.po_tolak_dobel."""
     user = await require_auth(request)
     _require_admin(user)
     db = get_db()

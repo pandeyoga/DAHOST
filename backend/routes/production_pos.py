@@ -334,7 +334,17 @@ async def create_po(request: Request):
         m_temuan, m_alasan = await mc.jaga(
             db, langkah='po_produksi', alasan=body.get('alasan_merchandiser'), user=user, hari_ini=today_wib(),
             per_model=await mc.model_dari_item(db, body.get('items') or []))
-    result = await create_po_internal(db, body, user)
+    # 14 Nov 2026 (owner): PO dobel DITOLAK. Ada dua kasus: klik ganda / isi sama persis, dan kode potongan yang
+    # sudah dipakai PO lain. "Periksa lalu tulis" dijalankan di bawah satu kunci supaya dua kiriman yang berselang
+    # sepersekian detik tidak sama-sama lolos.
+    from core import po_tolak_dobel as ptd
+    sidik = ptd.sidik_isi(body, user)
+    async with ptd.kunci_buat_po():
+        await ptd.tolak_kembar_baru(db, sidik)
+        await ptd.periksa_kode(db, [i for i in (body.get('items') or []) if isinstance(i, dict)])
+        result = await create_po_internal(db, body, user)
+        if result.get('id'):
+            await db.production_pos.update_one({'id': result['id']}, {'$set': {'sidik_isi': sidik}})
     if m_temuan:
         await mc.catat(db, 'production_pos', result.get('id'), 'po_produksi', m_temuan, m_alasan, user)
     return JSONResponse(result, status_code=201)
@@ -895,6 +905,15 @@ async def update_po(po_id: str, request: Request):
             if _lock:
                 raise HTTPException(409, _lock['message'])
 
+    # 14 Nov 2026 (owner): kode potongan dobel DITOLAK saat ubah PO juga, tetapi hanya untuk kode yang BARU masuk
+    # PO ini (core.po_tolak_dobel). Diperiksa sebelum apa pun ditulis.
+    if items_payload is not None:
+        from core import po_tolak_dobel as ptd
+        _lama_items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(2000)
+        _lama_by_id = {i['id']: i for i in _lama_items}
+        _efektif = [{**(_lama_by_id.get(r.get('id')) or {}), **r} for r in items_payload if isinstance(r, dict)]
+        await ptd.periksa_kode(db, _efektif, kecuali_po_id=po_id, kode_lama=ptd.kode_di(_lama_items))
+
     # 12 Nov 2026 (K-M2): pengaman Merchandiser — hanya TAMBAHAN qty per model pada PO internal yang diperiksa
     # (sebelum apa pun ditulis, supaya penolakan 428 tidak meninggalkan perubahan setengah jalan).
     from core import merchandiser as mc
@@ -1194,9 +1213,16 @@ async def update_po_item(item_id: str, request: Request):
     body.pop('_id', None); body.pop('id', None)
     # 2026-11-06 (Tahap 2): baris PO yang sudah ditutup ikut terkunci
     _cur = await db.po_items.find_one({'id': item_id}, {'_id': 0, 'po_id': 1, 'cmt_price_snapshot': 1,
-                                                        'sku': 1, 'product_name': 1, 'size': 1})
+                                                        'sku': 1, 'product_name': 1, 'size': 1, 'color': 1,
+                                                        'serial_number': 1, 'rahaza_variant_id': 1,
+                                                        'maklon_variant_id': 1})
     from core.po_lock import assert_po_open
     await assert_po_open(db, (_cur or {}).get('po_id'), 'perubahan baris PO')
+    # 14 Nov 2026 (owner): kode potongan baru di baris ini tidak boleh sudah dipakai PO lain (core.po_tolak_dobel)
+    if 'serial_number' in body and _cur:
+        from core import po_tolak_dobel as ptd
+        await ptd.periksa_kode(db, [{**_cur, **body}], kecuali_po_id=_cur.get('po_id'),
+                               kode_lama=ptd.kode_di([_cur]))
     # K12 (7 Nov 2026): jalur ini juga bisa mengubah upah jahit — aturan sama dengan form PO & Biaya Jahit
     if 'cmt_price_snapshot' in body:
         try:

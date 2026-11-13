@@ -28,6 +28,19 @@ def _norm(s: Any) -> str:
     return " ".join(str(s or "").strip().upper().split())
 
 
+def kode_dalam(s: Any) -> List[str]:
+    """Kode potongan di satu isian seri. Satu baris PO bisa memuat beberapa kode dipisah koma/titik koma/garis
+    miring, misalnya baris PO saldo awal cutoff (1 PO per CMT) yang menggabungkan beberapa batch potong
+    "DA-1725, DA-1869" (14 Nov 2026)."""
+    import re
+    hasil: List[str] = []
+    for bagian in re.split(r"[,;/]", str(s or "")):
+        k = _norm(bagian)
+        if k and k not in hasil:
+            hasil.append(k)
+    return hasil
+
+
 # ─── Scope PO ────────────────────────────────────────────────────────────────
 SCOPES = ("maklon", "internal", "all")
 
@@ -122,9 +135,11 @@ async def serial_lookup(
 ) -> Dict[str, Any]:
     """Cek apakah 1 serial sudah dipakai di po_items lain (global secara default).
 
-    Dipakai form BUAT ORDER untuk peringatan (TIDAK block). READ-ONLY.
+    Dipakai form BUAT ORDER untuk tanda langsung di layar, DAN oleh `core.po_tolak_dobel` yang MENOLAK
+    kode potongan dobel saat PO disimpan (owner 14 Nov 2026). READ-ONLY.
     """
     norm = _norm(serial)
+    kode_cari = kode_dalam(serial)
     result = {"serial": serial, "normalized": norm, "exists": False, "usages": []}
     if not norm:
         return result
@@ -143,7 +158,8 @@ async def serial_lookup(
 
     usages = []
     for it in items:
-        if _norm(it.get("serial_number")) != norm:
+        raw = it.get("serial_number")
+        if _norm(raw) != norm and not (set(kode_cari) & set(kode_dalam(raw))):
             continue
         if exclude_item_id and it.get("id") == exclude_item_id:
             continue
