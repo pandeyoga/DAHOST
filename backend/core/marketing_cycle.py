@@ -1131,6 +1131,36 @@ def _data_notes(s: dict) -> List[str]:
     return notes
 
 
+def sum_budget_categories(per_account: Sequence[Sequence[dict]], *, plan_key: str = 'plan') -> List[dict]:
+    """Rencana vs realisasi per KATEGORI, dijumlah lintas toko (urutan `CATEGORIES`).
+
+    Dashboard Marketing (14 Nov 2026) — grafik "Anggaran vs realisasi" membaca jumlah ini dari
+    server supaya angkanya = jumlah tabel anggaran per toko di Target & Anggaran (tidak dijumlah
+    ulang di browser). ``plan_key`` = ``'plan'`` (siklus) atau ``'budget'`` (ringkasan anggaran).
+    Rumus `used_pct`/`status` sama dengan `cycle_summary`.
+    """
+    acc = {c: {'plan': 0.0, 'spend': 0.0, 'manual': 0.0, 'auto': 0.0} for c in CATEGORIES}
+    for cats in per_account or []:
+        for c in cats or []:
+            k = c.get('category')
+            if k not in acc:
+                continue
+            acc[k]['plan'] += _num(c.get(plan_key))
+            acc[k]['spend'] += _num(c.get('spend'))
+            acc[k]['manual'] += _num(c.get('manual'))
+            acc[k]['auto'] += _num(c.get('auto'))
+    out = []
+    for k in CATEGORIES:
+        p, s = _r(acc[k]['plan']), _r(acc[k]['spend'])
+        out.append({'category': k, 'plan': p, 'spend': s,
+                    'manual': _r(acc[k]['manual']), 'auto': _r(acc[k]['auto']),
+                    'remaining': _r(p - s),
+                    'used_pct': _r(s / p * 100) if p > 0 else (0.0 if s == 0 else 100.0),
+                    'status': 'over' if s > p else 'under',
+                    'mode': 'auto' if k in AUTO_CATEGORIES else 'manual'})
+    return out
+
+
 async def cycle_overview(db, period: str, *, account_ids: Optional[Sequence[str]] = None,
                          today: Optional[datetime] = None,
                          settings: Optional[dict] = None) -> Dict[str, Any]:
@@ -1206,6 +1236,8 @@ async def cycle_overview(db, period: str, *, account_ids: Optional[Sequence[str]
         'flags_red': sum(1 for r in rows for f in (r.get('flags') or []) if f.get('severity') == 'red'),
         'flags_yellow': sum(1 for r in rows for f in (r.get('flags') or []) if f.get('severity') == 'yellow'),
     }
+    totals['budget_categories'] = sum_budget_categories(
+        [(r.get('budget') or {}).get('categories') or [] for r in rows])
     attention = sorted(
         [{'account_id': r['account']['id'], 'account_name': r['account']['account_name'],
           'account_code': r['account']['account_code'],

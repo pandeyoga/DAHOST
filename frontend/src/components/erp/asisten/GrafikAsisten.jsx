@@ -222,7 +222,11 @@ function useSempit() {
   return sempit;
 }
 
-export default function GrafikAsisten({ spec, testId = 'asisten-grafik' }) {
+/**
+ * `tombolAngka` (Dashboard Marketing, 14 Nov 2026): false bila layar sudah menampilkan tabel angkanya sendiri
+ * tepat di bawah grafik — supaya tidak ada dua tabel untuk data yang sama.
+ */
+export default function GrafikAsisten({ spec, testId = 'asisten-grafik', tombolAngka = true }) {
   const v = useMemo(() => validasiSpec(spec), [spec]);
   const [angka, setAngka] = useState(false);
   const sempit = useSempit();
@@ -249,14 +253,18 @@ export default function GrafikAsisten({ spec, testId = 'asisten-grafik' }) {
       <PagarGrafik>
         {v.jenis === 'pai' ? <GrafikPai v={v} fmt={fmt} sempit={sempit} /> : <GrafikKartesius v={v} fmt={fmt} sempit={sempit} />}
       </PagarGrafik>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {v.catatan ? <p className="text-xs text-muted-foreground">{v.catatan}</p> : <span />}
-        <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setAngka((a) => !a)}
-          aria-expanded={angka} data-testid={`${testId}-angka`}>
-          {angka ? 'Sembunyikan angka' : 'Tampilkan angka'}
-        </Button>
-      </div>
-      {angka && (
+      {(v.catatan || tombolAngka) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {v.catatan ? <p className="text-xs text-muted-foreground">{v.catatan}</p> : <span />}
+          {tombolAngka && (
+            <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setAngka((a) => !a)}
+              aria-expanded={angka} data-testid={`${testId}-angka`}>
+              {angka ? 'Sembunyikan angka' : 'Tampilkan angka'}
+            </Button>
+          )}
+        </div>
+      )}
+      {tombolAngka && angka && (
         <TabelAsisten
           kolom={[v.jenis === 'pai' ? 'Kategori' : 'Label', ...v.seri.map((s) => s.nama)]}
           baris={v.x.map((label, i) => [label, ...v.seri.map((s) => (s.nilai[i] === null ? '—' : fmt.penuh(s.nilai[i])))])}

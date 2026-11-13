@@ -288,7 +288,8 @@ def test_m08_detail_toko_kpi_bulan_berjalan():
 
 
 def test_m26_rentang_30_hari_termasuk_hari_ini():
-    assert "daysAgoWIB(days - 1)" in _fe("components/erp/PeriodSelector.jsx")
+    # 14 Nov 2026: argumen kedua `now` (uji tanggal tetap) — rumusnya tetap N hari termasuk hari ini.
+    assert "daysAgoWIB(days - 1" in _fe("components/erp/PeriodSelector.jsx")
 
 
 def test_pola_omzet_kreator_memakai_definisi_baku(db):

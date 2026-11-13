@@ -147,6 +147,16 @@ export function addDaysISO(iso, n) {
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
 
+/**
+ * Senin dari minggu tempat tanggal 'YYYY-MM-DD' berada (minggu Senin–Minggu). Sama dengan anggaran mingguan
+ * Marketing (`routes/marketing_budget.awal_periode_berjalan`, owner 11 Nov 2026: "mingguannya dari hari Senin").
+ */
+export function seninDari(iso) {
+  const { y, m, d } = splitISO(iso);
+  const hari = new Date(Date.UTC(y, m - 1, d)).getUTCDay();   // Minggu = 0
+  return addDaysISO(iso, -((hari + 6) % 7));
+}
+
 /** Geser bulan 'YYYY-MM' sebanyak `n` bulan (boleh negatif). */
 export function addMonthsYM(ym, n) {
   const [y, m] = String(ym).slice(0, 7).split('-').map(Number);

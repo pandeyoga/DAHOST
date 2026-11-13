@@ -145,6 +145,25 @@ async def seed_ads_if_empty():
             logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
         logger.info(f"[seed] Inserted {len(ads_records)} ads campaign records")
 
+async def _baris_iklan_rentang(db, user: dict, account_id: Optional[str], d0: str, d1: str) -> list:
+    """Baris iklan yang menyentuh ``[d0, d1]`` + ``_porsi`` — SATU pembaca untuk ringkasan & tren.
+
+    Dashboard Marketing (14 Nov 2026): tren harian dulu membaca toko lewat jalur lain dari
+    ringkasan, jadi jumlah batang grafik bisa berbeda dengan kartu "Biaya iklan". Sekarang
+    keduanya memakai saringan lingkup toko, rentang, dan pembuang data contoh yang sama.
+    """
+    from core import ukuran_penjualan as _ukuran
+    _m = await _scope.scope_filter(db, user, {"account_id": account_id} if account_id else None)
+    rows = []
+    q = {"$and": [dict(_m or {}), _ukuran.filter_iklan_rentang(d0, d1), dict(_ukuran.TANPA_CONTOH)]}
+    async for d in db.marketing_ads_data.find(q, {"_id": 0}):
+        porsi = _ukuran.porsi_iklan(d, d0, d1)
+        if porsi > 0:
+            d["_porsi"] = porsi
+            rows.append(d)
+    return rows
+
+
 # ── Endpoints ──
 
 @router.get("/summary")
@@ -177,14 +196,7 @@ async def ads_summary(request: Request,
         except _ukuran.PeriodeSalah as e:
             raise HTTPException(400, str(e)) from None
         # Q-3 — laporan berperiode dibagi rata per hari; hanya hari di rentang ini dihitung
-        rows = []
-        q = {"$and": [dict(_m or {}), _ukuran.filter_iklan_rentang(d0, d1),
-                      dict(_ukuran.TANPA_CONTOH)]}
-        async for d in db.marketing_ads_data.find(q, {"_id": 0}):
-            porsi = _ukuran.porsi_iklan(d, d0, d1)
-            if porsi > 0:
-                d["_porsi"] = porsi
-                rows.append(d)
+        rows = await _baris_iklan_rentang(db, user, account_id, d0, d1)
     else:
         rows = await db.marketing_ads_data.find(
             {"$and": [dict(_m or {}), dict(_ukuran.TANPA_CONTOH)]}, {"_id": 0}).to_list(20000)
@@ -267,7 +279,10 @@ async def list_campaigns(
 @router.get("/performance-trend")
 async def performance_trend(
     request: Request,
-    days: int = Query(30, ge=7, le=90)
+    days: int = Query(30, ge=7, le=90),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    account_id: Optional[str] = None,
 ):
     """Tren harian iklan.
 
@@ -275,15 +290,24 @@ async def performance_trend(
     dikelompokkan `$dateToString`: baris yang tanggalnya TEKS (laporan CPC Shopee)
     dibuang diam-diam. Sekarang tanggal dinormalkan saat dibaca
     (`core.ukuran_penjualan.tanggal_iklan`) dan data contoh tidak ikut.
+
+    Dashboard Marketing (14 Nov 2026): boleh `date_from`/`date_to` (periode layar: bulan
+    Marketing 26–25 atau minggu Senin) dan `account_id`. Barisnya dibaca oleh pembaca yang sama
+    dengan `/summary`, jadi Σ batang harian = kartu "Biaya iklan" untuk periode & toko yang sama.
     """
     user = await require_auth(request)
     db = get_db()
     from core import ukuran_penjualan as _ukuran
     from utils.waktu import today_wib
-    today = today_wib()
-    d0, d1 = (today - timedelta(days=days - 1)).isoformat(), today.isoformat()   # M-26: N hari
-    accounts = await _ukuran.toko_terlihat(db, user)
-    rows = await _ukuran.baca_iklan(db, [a["id"] for a in accounts], d0, d1)
+    if date_from or date_to:
+        try:
+            d0, d1 = _ukuran.periode(date_from, date_to)
+        except _ukuran.PeriodeSalah as e:
+            raise HTTPException(400, str(e)) from None
+    else:
+        today = today_wib()
+        d0, d1 = (today - timedelta(days=int(days) - 1)).isoformat(), today.isoformat()   # M-26: N hari
+    rows = await _baris_iklan_rentang(db, user, account_id, d0, d1)
     by_day: dict = {}
     for r in rows:
         # Q-3 — laporan berperiode dibagi rata per hari (dulu seluruh biaya di hari pertama)
@@ -307,8 +331,10 @@ async def performance_trend(
             "conversions": doc["conversions"],
             "roas": round(roas, 2)
         })
-    
-    return success_response(data={"trend": trend}, metadata={"days": days})
+
+    return success_response(data={"trend": trend},
+                            metadata={"days": days if not (date_from or date_to) else None,
+                                      "date_from": d0, "date_to": d1, "account_id": account_id})
 
 
 @router.post("/ai-recommendations")
