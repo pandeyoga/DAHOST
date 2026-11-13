@@ -171,6 +171,26 @@ export function VariantOptionSelect({ value, onChange, label = 'Opsi varian', hi
  * "Restock ke Gudang" tidak pernah menemukan barangnya ⇒ stok tak pernah
  * bertambah. Memilih dari master membuat restock selalu tepat sasaran.
  */
+/**
+ * Pemilih VARIAN master (`rahaza_model_variants`, warna × ukuran). Nilai = **id** varian.
+ * `modelId` diisi → hanya varian model itu (mis. baris pesanan yang baru tertaut model). 14 Nov 2026 — dipakai form
+ * "Buat refund" (Portal Toko) untuk baris pesanan yang belum tertaut varian; pilihannya disimpan ke Jembatan SKU.
+ */
+export function VariantSelect({ value, onChange, modelId, label = 'Varian master', hint,
+                                testId = 'variant-select', disabled }) {
+  const { rows, loading } = useMaster(modelId
+    ? `/rahaza/variants?model_id=${encodeURIComponent(modelId)}` : '/rahaza/variants');
+  return (
+    <MasterSelect label={label} hint={hint} value={value} onChange={onChange}
+                  rows={rows.filter((r) => r.active !== false)} loading={loading}
+                  placeholder="— pilih varian (warna & ukuran) —"
+                  optionValue={(r) => r.id}
+                  optionLabel={(r) => [r.sku, modelId ? null : r.model_name, r.color_name, r.size_code]
+                    .filter(Boolean).join(' · ')}
+                  testId={testId} disabled={disabled} />
+  );
+}
+
 export function FGMaterialSelect({ value, onChange, label = 'Barang jadi (master)',
                                    hint, testId = 'fg-material-select', disabled }) {
   const { rows, loading } = useMaster('/rahaza/materials?type=fg');

@@ -142,3 +142,33 @@ def pilih_lewat_nama(by_name_all: Dict[str, List[dict]], name: Any, variation: A
                       "manual di Pemetaan SKU.")
     return None, (f"Nama '{name}' ada di katalog, tetapi tidak ada item dengan variasi "
                   f"'{variation or '-'}' — tautkan manual di Pemetaan SKU.")
+
+
+# ── 14 Nov 2026 — tingkat tautan satu baris pesanan (form refund & Usulan AI Jembatan SKU) ──
+TINGKAT_VARIAN = "varian"
+TINGKAT_MODEL = "model"
+TINGKAT_BELUM = "belum"
+
+
+def tingkat_tautan(line: dict, material: Optional[dict] = None) -> str:
+    """Seberapa jauh baris pesanan sudah menunjuk barang master → ``varian`` · ``model`` · ``belum``.
+
+    * ``varian`` — baris menunjuk barang jadi (``fg_material_id``) yang punya varian (di baris atau di master
+      barangnya), atau barang jadi berdiri sendiri (bukan turunan model): barangnya pasti.
+    * ``model``  — baris baru menunjuk MODEL (``model_id`` di baris atau di master barangnya) tanpa varian:
+      warna/ukurannya belum pasti, jadi staf wajib memilih variannya.
+    * ``belum``  — tidak menunjuk apa pun.
+
+    ``material`` = dokumen ``rahaza_materials`` barang jadi baris itu (boleh kosong bila tidak ada).
+    """
+    ln = line or {}
+    mat = material or {}
+    fg = ln.get("fg_material_id") or ln.get("material_id")
+    if fg and (ln.get("variant_id") or mat.get("variant_id")):
+        return TINGKAT_VARIAN
+    model = ln.get("model_id") or mat.get("model_id")
+    if fg and not model:
+        return TINGKAT_VARIAN
+    if model:
+        return TINGKAT_MODEL
+    return TINGKAT_BELUM

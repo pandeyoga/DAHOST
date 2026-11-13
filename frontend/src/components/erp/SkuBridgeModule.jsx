@@ -23,6 +23,9 @@
  * kartu kemajuan dengan angka 30 px, tab bar di dalam kartu); bagian dipilih lewat pil; 4 StatTile berketerangan
  * (disembunyikan bila belum ada pesanan); semua tabel TabelData + unduhan Excel/CSV; buat master = FormPopup,
  * pilih barang manual = popup daftar pilihan; Dipakai juga di Portal Toko (props sama: `onNavigate`).
+ *
+ * 14 Nov 2026 — bagian "Usulan AI" (`SkuUsulanPanel.jsx`): usulan varian master + keyakinan + alasan untuk baris yang
+ * belum tertaut / baru tertaut model; staf menyetujui satu klik per kombinasi SKU + variasi.
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -46,6 +49,7 @@ import { ColorSelect, SizeSelect, ModelSelect } from './masters/MasterSelects';
 import { ProductOnboardingTab, VariantOptionsTab } from './VariantOnboardingPanel';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import SkuUsulanPanel from './SkuUsulanPanel';
 
 const fmt = (v) => Number(v || 0).toLocaleString('id-ID');
 const rp = (v) => `Rp ${fmt(Math.round(Number(v || 0)))}`;
@@ -55,7 +59,11 @@ const ACTION_META = {
   create_variant: { label: 'Buat varian', tone: 'primary', icon: Plus, hint: 'Model sudah ada, warna/ukuran ini belum' },
   create_master: { label: 'Buat master', tone: 'warning', icon: Sparkles, hint: 'Belum ada master yang mirip — buat model + varian baru' },
 };
-const METHOD_LABEL = { manual: 'Manual', auto: 'Otomatis', create_master: 'Buat master', product_onboarding: 'Produk baru (per produk)' };
+const METHOD_LABEL = {
+  manual: 'Manual', auto: 'Otomatis', create_master: 'Buat master', product_onboarding: 'Produk baru (per produk)',
+  kode_model: 'Kode model (otomatis)', usulan_pasti: 'Usulan pasti (disetujui)', usulan_ai: 'Usulan AI (disetujui)',
+  retur: 'Dari form refund',
+};
 
 /** Baris alat satu bagian: kiri penyaring/teks, kanan alat (turun ke baris sendiri di HP). */
 function BarisAlat({ kiri, kanan }) {
@@ -373,7 +381,7 @@ function MappedPanel({ reloadKey, onChanged, onUbah }) {
         <p className="hidden truncate text-xs text-muted-foreground md:block">{r.product_name_sample}</p>
       </div>) },
     { kunci: 'fg', label: 'Kode FG', hp: false, isi: (r) => <span className="tabular-nums">{r.fg_code || '—'}</span> },
-    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{fmt(r.orders_using)}</span> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.orders_using == null ? '—' : fmt(r.orders_using)}</span> },
     { kunci: 'cara', label: 'Cara', hp: false, isi: (r) => <StatusBadge tone="default" label={METHOD_LABEL[r.method || 'manual'] || r.method} /> },
     { kunci: 'aksi', label: 'Aksi', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="flex justify-end gap-1">
@@ -515,6 +523,7 @@ export default function SkuBridgeModule({ onNavigate }) {
   const BAGIAN = [
     { key: 'onboarding', label: 'Produk belum dikenal' },
     { key: 'unmapped', label: 'Belum tertaut', count: total || undefined },
+    { key: 'usulan', label: 'Usulan AI' },
     { key: 'mapped', label: 'Sudah dipetakan' },
     { key: 'bulk', label: 'Selesaikan massal' },
     { key: 'options', label: 'Opsi varian' },
@@ -619,6 +628,9 @@ export default function SkuBridgeModule({ onNavigate }) {
             platform_sku_id: r.platform_sku_id, account_id: r.account_id, product_name: r.product_name_sample,
             variation: r.variation_sample, mapped_to: r.target_name || r.fg_code || 'barang gudang',
           })} />
+      )}
+      {tab === 'usulan' && (
+        <SkuUsulanPanel reloadKey={reloadKey} onChanged={refreshAll} onPilihManual={setManualRow} />
       )}
       {tab === 'bulk' && <BulkPanel onDone={refreshAll} />}
       {tab === 'onboarding' && <ProductOnboardingTab onDone={refreshAll} />}

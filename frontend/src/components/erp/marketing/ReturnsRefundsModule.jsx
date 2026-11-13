@@ -6,6 +6,9 @@
  * detail & berkas unduhan), detail popup, form = FormPopup panjang, tanggal = DatePicker. Tampilan "Kartu" lama
  * diganti tabel (di HP otomatis kartu ringkas). Handler simpan/setujui/tolak/selesaikan/gudang tidak berubah.
  * Perbaikan ikut: penyaring "Semua …" dulu mengirim nilai spasi ke server.
+ *
+ * 14 Nov 2026 — form "Buat refund" WAJIB memilih pesanan yang sudah diimpor (sama dengan Gudang › Retur Fisik ›
+ * Catat retur): lihat `FormRefundPesanan.jsx`. Detail menampilkan resi, baris pesanan, dan barang master.
  */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -15,24 +18,20 @@ import {
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { MoneyInput } from '@/components/ui/money-input';
-import { Textarea } from '@/components/ui/textarea';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import DatePicker from '@/components/ui/date-picker';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { useToast } from '@/hooks/use-toast';
 import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
 import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
-import { todayWIB, toWIBDate } from '@/lib/waktu';
+import { toWIBDate } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { getPlatformConfig } from './AccountBadge';
-import { CatalogItemSelect } from './pickers/MarketingPickers';
+import FormRefundPesanan, { REFUND_TYPE } from './FormRefundPesanan';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -49,12 +48,15 @@ const STATUS_CONFIG = {
   completed: { label: 'Selesai', tone: 'success' },
   rejected: { label: 'Ditolak', tone: 'danger' },
 };
-const REFUND_TYPE = { full_refund: 'Refund penuh', partial_refund: 'Refund sebagian', exchange: 'Tukar barang', no_refund: 'Tanpa refund' };
 const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
 // Label alasan dari server bergaya Judul ("Warna Berbeda dari Gambar") → huruf besar hanya di awal.
 const kalimat = (t) => String(t || '').split(' ').map((w, i) => (i === 0 || /^[A-Z0-9]{2,4}$/.test(w) ? w : w.toLowerCase())).join(' ');
 const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || ((getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label
   : (p ? String(p).replace(/^./, (x) => x.toUpperCase()) : '—')));
+// Status Retur Fisik gudang (nilai tersimpan berbahasa Inggris) → kata staf.
+const STATUS_GUDANG = { Pending: 'menunggu paket', Received: 'diterima', Inspected: 'diinspeksi', Resolved: 'selesai',
+  Cancelled: 'dibatalkan', Reversed: 'keputusan dibalik' };
+const statusGudang = (s) => STATUS_GUDANG[s] || s || 'menunggu paket';
 const StatusRetur = ({ status }) => (status
   ? <StatusBadge status={status} label={STATUS_CONFIG[status]?.label || status} tone={STATUS_CONFIG[status]?.tone} />
   : <span className="text-muted-foreground">—</span>);
@@ -72,27 +74,10 @@ function PilihAkun({ accounts = [], activeAccount, onChange, testId = 'pilih-aku
   );
 }
 
-const EMPTY_FORM = {
-  catalog_item_id: '', sku: '',
-  account_id: '', account_name: '',
-  date: '', order_id: '', platform: 'shopee', product: '', price: 0,
-  // W4 (sesi #29) — KONDISI & JUMLAH barang yang DILAPORKAN kembali.
-  // 2026-11-02 (K1) — keduanya hanya PETUNJUK untuk gudang: stok baru bergerak saat
-  // gudang menerima paket (qty aktual), memeriksa, lalu memutuskan.
-  item_condition: 'Baik', qty: 1,
-  reason: 'ukuran_salah', reason_detail: '', courier: 'jnt', refund_type: 'full_refund', notes: '',
-  // 2026-11-02 (No.14a) — nominal refund AKTUAL dari platform (dulu parsial dipatok 70%).
-  refund_amount: '',
-};
-
-// 2026-11-02 (No.14a) — tukar barang / tanpa refund tidak punya nominal refund.
-const NO_MONEY_REFUND = ['exchange', 'no_refund'];
-const suggestedFullRefund = (f) => (Number(f.price) || 0) * Math.max(1, Number(f.qty) || 1);
-
 export default function ReturnsRefundsModule({ token, onNavigate }) {
   const { toast } = useToast();
   const authH = useMemo(() => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
-  const { accounts: masterAccounts, byId: accountById } = useMarketingAccounts(token);
+  const { accounts: masterAccounts } = useMarketingAccounts(token);
   const { activeAccount, setActiveAccount } = useActiveMarketingAccount();
   const [summary, setSummary] = useState(null);
   const [returns, setReturns] = useState([]);
@@ -109,13 +94,8 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
 
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  // true = staf sudah mengetik nominal refund sendiri (usulan harga × qty berhenti mengikuti).
-  const [refundTouched, setRefundTouched] = useState(false);
-  const [formLoading, setFormLoading] = useState(false);
 
   const [showDetail, setShowDetail] = useState(null);
-  const [galatForm, setGalatForm] = useState('');
   const [actionLoading, setActionLoading] = useState('');
 
   const fetchReasons = useCallback(async () => {
@@ -168,110 +148,45 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
 
 
   const openForm = (ret = null) => {
-    if (ret) {
-      setEditTarget(ret);
-      setForm({
-        account_id: ret.account_id || '',
-        account_name: ret.account_name || '',
-        date: ret.date,
-        order_id: ret.order_id,
-        platform: ret.platform,
-        product: ret.product,
-        price: ret.price,
-        item_condition: ret.item_condition || 'Baik',
-        qty: ret.qty || 1,
-        reason: ret.reason,
-        reason_detail: ret.reason_detail,
-        courier: ret.courier,
-        refund_type: ret.refund_type,
-        refund_amount: ret.refund_amount ?? '',
-        notes: ret.notes || ''
-      });
-      // nominal yang sudah tersimpan (termasuk data lama) ditampilkan apa adanya
-      setRefundTouched(true);
-    } else {
-      setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: todayWIB() });
-      setRefundTouched(false);
-    }
-    setGalatForm('');
+    setEditTarget(ret);
     setShowForm(true);
-  };
-
-  // Nilai yang tampil di kolom nominal: refund penuh mengikuti harga × qty sampai
-  // staf mengetik sendiri; tukar/tanpa refund selalu 0.
-  const refundNoMoney = NO_MONEY_REFUND.includes(form.refund_type);
-  const refundShown = refundNoMoney
-    ? 0
-    : (form.refund_type === 'full_refund' && !refundTouched ? suggestedFullRefund(form) : form.refund_amount);
-
-  // When account_id changes, auto-fill account_name & platform from master
-  const handleAccountChange = (accountId) => {
-    const acc = accountById[accountId];
-    setForm(f => ({
-      ...f,
-      account_id: accountId,
-      account_name: acc?.account_name || acc?.name || '',
-      platform: acc?.platform || f.platform,
-    }));
   };
 
   const closeForm = () => {
     setShowForm(false);
     setEditTarget(null);
-    setForm(EMPTY_FORM);
-    setRefundTouched(false);
   };
 
-  const handleSave = async () => {
-    setGalatForm('');
-    if (!form.account_id) {
-      setGalatForm('Pilih akun / toko marketplace.');
-      return;
-    }
-    // 2026-11-02 — No.4(c): nomor pesanan TIDAK wajib (retur bebas).
-    if (!(form.catalog_item_id || form.product) || !form.reason_detail) {
-      setGalatForm('Produk dan rincian alasan wajib diisi.');
-      return;
-    }
-    // 2026-11-02 (No.14a) — nominal refund aktual: wajib ≥ 0 untuk refund penuh/sebagian.
-    let refundAmount = null;
-    if (!refundNoMoney) {
-      const raw = refundShown;
-      if (raw === '' || raw === null || raw === undefined || Number.isNaN(Number(raw))) {
-        setGalatForm('Isi nominal refund aktual (Rp) sesuai keputusan platform.');
-        return;
-      }
-      if (Number(raw) < 0) {
-        setGalatForm('Nominal refund tidak boleh negatif.');
-        return;
-      }
-      refundAmount = Number(raw);
-    }
-    const payload = { ...form, refund_amount: refundAmount };
-    try {
-      setFormLoading(true);
-      if (editTarget) {
-        await axios.put(`${API}/api/marketing/returns/${editTarget.id}`, payload, { headers: authH });
-        toast({ title: 'Berhasil', description: 'Retur disimpan.' });
-      } else {
-        const res = await axios.post(`${API}/api/marketing/returns`, payload, { headers: authH });
-        // W4 — beri tahu APA YANG TERJADI PADA STOK, bukan cuma "tersimpan".
-        // 2026-11-02 (K1) — stok TIDAK lagi bertambah saat retur dibuat.
-        const wh = res?.data?.warehouse || {};
-        const desc = wh.wh_return_code
-          ? `Retur tersimpan. Retur fisik ${wh.wh_return_code} dibuat di Gudang (menunggu paket) · `
+  // 14 Nov 2026 — simpan lewat FormRefundPesanan (pesanan dipilih dari data impor; varian baru → Jembatan SKU).
+  const handleSaved = (res, isEdit) => {
+    if (isEdit) {
+      toast({ title: 'Berhasil', description: 'Refund disimpan.' });
+    } else {
+      // W4 — beri tahu APA YANG TERJADI PADA STOK, bukan cuma "tersimpan".
+      // 2026-11-02 (K1) — stok TIDAK lagi bertambah saat retur dibuat.
+      const wh = res?.warehouse || {};
+      const desc = [
+        wh.wh_return_code
+          ? `Refund tersimpan. Retur fisik ${wh.wh_return_code} dibuat di Gudang untuk pesanan & barang yang sama (menunggu paket) · `
             + 'stok & omzet setelah retur berubah setelah Gudang menerima dan memutuskan.'
-          : 'Retur tersimpan (pekerjaan gudang belum terbuat — cek menu Gudang › Retur Fisik)';
-        toast({ title: 'Berhasil', description: desc });
-      }
-      closeForm();
-      fetchReturns(currentPage);
-      fetchSummary();
+          : 'Refund tersimpan (pekerjaan gudang belum terbuat — cek menu Gudang › Retur Fisik).',
+        res?.sku_bridge ? `Varian disimpan ke Jembatan SKU: ${res.sku_bridge.orders_updated || 0} pesanan ikut tertaut.` : '',
+      ].filter(Boolean).join(' ');
+      toast({ title: 'Berhasil', description: desc });
+    }
+    closeForm();
+    fetchReturns(currentPage);
+    fetchSummary();
+  };
+
+  // Form menemukan barang yang sudah direfund → buka refund yang ada (bukan mencatat dua kali).
+  const openExisting = async (id) => {
+    closeForm();
+    try {
+      const res = await axios.get(`${API}/api/marketing/returns/${id}`, { headers: authH });
+      if (res?.data?.data) setShowDetail(res.data.data);
     } catch (e) {
-      setGalatForm(e.response?.data?.detail || e.message);
-    } finally {
-      setFormLoading(false);
+      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     }
   };
 
@@ -522,100 +437,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             action={!adaSaring && <Button onClick={() => openForm()}><Plus />Buat refund</Button>} />} />
       )}
 
-      {/* Form retur (popup) */}
-      <FormPopup open={showForm} onClose={closeForm} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
-        judul={editTarget ? 'Ubah retur' : 'Tambah retur'} galat={galatForm} testId="return-form"
-        keterangan="Setelah disimpan, retur fisik di Gudang dibuat otomatis (menunggu paket); stok belum bergerak.">
-        <Isian label="Akun / toko marketplace" wajib htmlFor="return-account"
-          petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : undefined}>
-          <SmartNativeSelect id="return-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
-            data-testid="return-account-select">
-            <option value="">{masterAccounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
-            {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
-          </SmartNativeSelect>
-        </Isian>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Isian label="Tanggal">
-            <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="return-date" />
-          </Isian>
-          {/* 2026-11-02 — No.4(c): retur bebas, nomor pesanan opsional. */}
-          <Isian label="Nomor pesanan" petunjuk="Opsional — kosongkan bila tidak diketahui." htmlFor="return-order">
-            <Input id="return-order" value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })}
-              data-testid="return-order-input" />
-          </Isian>
-          <Isian label="Harga satuan">
-            <MoneyInput value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
-          </Isian>
-          <Isian label="Jenis refund" htmlFor="return-refund-type">
-            <SmartNativeSelect id="return-refund-type" value={form.refund_type} searchable={false}
-              onChange={(e) => setForm({ ...form, refund_type: e.target.value })} data-testid="return-refund-type-select">
-              {Object.entries(REFUND_TYPE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-        </div>
-        {/* 2026-11-02 (No.14a) — NOMINAL REFUND AKTUAL (dulu refund sebagian dipatok 70% harga). */}
-        {!refundNoMoney && (
-          <Isian label="Nominal refund aktual (Rp)" wajib
-            petunjuk={form.refund_type === 'full_refund'
-              ? `Usulan awal = harga × qty (${rp(suggestedFullRefund(form))}). Ubah bila platform mengembalikan nominal lain.`
-              : 'Isi nominal yang benar-benar dikembalikan platform ke pembeli.'}>
-            <MoneyInput value={refundShown}
-              onChange={e => { setRefundTouched(true); setForm({ ...form, refund_amount: e.target.value }); }}
-              placeholder={form.refund_type === 'partial_refund' ? 'isi sesuai keputusan platform' : ''}
-              data-testid="return-refund-amount-input" />
-            {refundTouched && form.refund_type === 'full_refund' && (
-              <Button type="button" variant="link" size="sm" className="h-auto px-0"
-                onClick={() => { setRefundTouched(false); setForm({ ...form, refund_amount: '' }); }}>
-                Pakai harga × qty
-              </Button>
-            )}
-          </Isian>
-        )}
-        {/* F15 — produk DIPILIH dari katalog toko (dulu teks bebas → laporan per produk tidak bisa dijawab). */}
-        <Isian label="Produk" wajib>
-          <CatalogItemSelect
-            token={token} accountId={form.account_id} label=""
-            value={form.catalog_item_id || ''}
-            onChange={(item) => setForm({
-              ...form,
-              catalog_item_id: item?.id || '',
-              product: item?.name || '',
-              sku: item?.sku || '',
-            })}
-            testId="return-item-select" />
-        </Isian>
-        {/* 2026-11-02 (K1) — kondisi & qty hanya petunjuk untuk gudang; gudang mengisi qty aktual lalu memutuskan. */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Isian label="Kondisi barang" wajib htmlFor="return-condition">
-            <SmartNativeSelect id="return-condition" value={form.item_condition || 'Baik'} searchable={false}
-              onChange={(e) => setForm({ ...form, item_condition: e.target.value })} data-testid="return-condition-select">
-              <option value="Baik">Baik (laporan pembeli)</option>
-              <option value="Rusak">Rusak (laporan pembeli)</option>
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Qty diajukan kembali" wajib htmlFor="return-qty">
-            <Input id="return-qty" type="number" min={1} value={form.qty || 1}
-              onChange={e => setForm({ ...form, qty: Math.max(1, parseInt(e.target.value || '1', 10)) })}
-              data-testid="return-qty-input" />
-          </Isian>
-        </div>
-        <Notice tone="info" icon={Warehouse}>
-          Gudang menerima paket &amp; mengisi qty aktual, memeriksa kondisinya, lalu memutuskan (terima → stok jual,
-          rusak → karantina, tolak → dikembalikan ke pembeli, dibuang). Omzet setelah retur baru berkurang setelah keputusan itu.
-        </Notice>
-        <Isian label="Alasan" htmlFor="return-reason">
-          <SmartNativeSelect id="return-reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
-            {reasons.map(r => <option key={r.value} value={r.value}>{kalimat(r.label)}</option>)}
-          </SmartNativeSelect>
-        </Isian>
-        <Isian label="Rincian alasan" wajib htmlFor="return-reason-detail">
-          <Textarea id="return-reason-detail" value={form.reason_detail} rows={2} placeholder="Rincian alasan retur"
-            onChange={e => setForm({ ...form, reason_detail: e.target.value })} />
-        </Isian>
-        <Isian label="Catatan" htmlFor="return-notes">
-          <Textarea id="return-notes" value={form.notes} rows={2} onChange={e => setForm({ ...form, notes: e.target.value })} />
-        </Isian>
-      </FormPopup>
+      {/* Form refund (popup) — 14 Nov 2026: pesanan wajib dipilih dari data impor */}
+      {showForm && (
+        <FormRefundPesanan editTarget={editTarget} authH={authH} reasons={reasons} onClose={closeForm}
+          onSaved={handleSaved} onOpenExisting={openExisting} onNavigate={onNavigate} />
+      )}
 
       {/* Detail retur (popup) */}
       {showDetail && (
@@ -629,6 +455,9 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           </>}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Produk">{showDetail.product || '—'}{showDetail.qty ? ` · ${showDetail.qty} pcs` : ''}</BarisDetail>
+            {showDetail.order_line_label && <BarisDetail label="Barang di pesanan">{showDetail.order_line_label}</BarisDetail>}
+            {showDetail.sku && <BarisDetail label="SKU master">{showDetail.sku}</BarisDetail>}
+            {showDetail.order_tracking_number && <BarisDetail label="No. resi">{showDetail.order_tracking_number}</BarisDetail>}
             <BarisDetail label="Harga satuan">{rp(showDetail.price)}</BarisDetail>
             <BarisDetail label="Alasan">{kalimat(showDetail.reason_label || showDetail.reason) || '—'}</BarisDetail>
             <BarisDetail label="Rincian alasan">{showDetail.reason_detail || '—'}</BarisDetail>
@@ -637,7 +466,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             {showDetail.appeal_result && <BarisDetail label="Hasil banding">{showDetail.appeal_result}</BarisDetail>}
             {showDetail.notes && <BarisDetail label="Catatan">{showDetail.notes}</BarisDetail>}
             {showDetail.wh_return_code && (
-              <BarisDetail label="Retur fisik (gudang)">{showDetail.wh_return_code} · {showDetail.wh_return_status || 'Menunggu'}</BarisDetail>
+              <BarisDetail label="Retur fisik (gudang)">{showDetail.wh_return_code} · {statusGudang(showDetail.wh_return_status)}</BarisDetail>
             )}
             {/* 2026-11-09 — "Refund only": barang tidak kembali, jadi tidak ada Retur Fisik. */}
             {!showDetail.wh_return_id && showDetail.goods_returned === false && (
@@ -660,7 +489,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                     <StatusBadge status="stok" tone="muted"
                       label={showDetail.wh_return_status === 'Resolved'
                         ? `diputuskan: ${showDetail.wh_action_taken || '-'}`
-                        : `menunggu keputusan gudang (${showDetail.wh_return_status || 'Menunggu'})`} />
+                        : `menunggu keputusan gudang (${statusGudang(showDetail.wh_return_status)})`} />
                   )}
                   {showDetail.wh_link_status && showDetail.wh_link_status !== 'linked' && (
                     <span className="mt-1 block text-xs text-[hsl(var(--warning-text))]">{showDetail.wh_link_reason}</span>

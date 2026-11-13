@@ -598,3 +598,18 @@ Keputusan owner 10 Nov 2026 (Portal Manajemen › Monitoring Staf & Aturan Kewaj
   `routes/pantau_staf.py`. Skor: `core/pantau_staf/ringkasan.skor_dari` (pita `routes/dewi_kpi_shared._grade`).
 * `production_pos.status_history[] = {status, at, by_id, by_name}` (sejak 10 Nov 2026) — ditulis setiap perubahan
   status PO (`routes/production_pos.riwayat_status`); dipakai titik "Tutup PO" untuk "menunggu sejak kapan".
+
+## §USULAN AI JEMBATAN SKU — `marketing_sku_usulan` (14 Nov 2026)
+
+Layar Jembatan SKU › Usulan AI. Mesin: `core/sku_usulan.py`.
+
+* `marketing_sku_usulan` (log): satu dokumen per kunci jembatan (`kunci` = `platform_sku_id` atau kunci nama+variasi
+  `nv:<toko>:<nama>|<variasi>`) — `{id, kunci, account_id, model_id, product_name, variation, ai_suggestion
+  (bentuk `services.ai.suggestions.new_suggestion`: values {variant_id, variant_sku, label} | {}, reason, confidence,
+  feature "asisten-ai-jembatan-sku", status pending|accepted|modified, suggested_by/at, decided_by/at, final_values),
+  created_at, updated_at}`. Penulis tunggal `core/sku_usulan.py` (`minta_ai`, `setujui`). Hanya USULAN — tautan
+  yang disetujui ditulis `core/sku_bridge.apply_mapping` (`marketing_sku_bridge.method` = `usulan_pasti` |
+  `usulan_ai` | `retur`).
+* `marketing_returns` (sejak 14 Nov 2026, form "Buat refund"): `order_doc_id` (id `marketing_orders`), `order_line`
+  (nomor baris 1..n), `variant_id`, `fg_material_id`, `order_tracking_number` — retur Marketing baru WAJIB menunjuk
+  satu baris pesanan; retur lama tanpa kolom ini tetap terbaca.

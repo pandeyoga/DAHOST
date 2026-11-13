@@ -1733,17 +1733,19 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
             link = "unlinked"
             if psid and psid in by_psku:
                 master, link = by_psku[psid], "sku_map"
+            if master is None:
+                # G4 — kunci nama+variasi yang sudah dipetakan staf (baris tanpa SKU platform).
+                # 2026-11-14 — dicek SEBELUM SKU penjual: pemetaan staf (Jembatan SKU, form refund, Usulan AI) lebih
+                # pasti daripada item katalog ber-SKU = kode model (itu hanya menunjuk model, bukan varian).
+                bkey = _skuk.kunci_baris(it, (account or {}).get("id") or session.get("account_id"))
+                if bkey and _skuk.kunci_nama(bkey) and bkey in by_psku:
+                    master, link = by_psku[bkey], "sku_map"
             if master is None and it.get("seller_sku"):
                 master = by_sku.get(scope.norm(it["seller_sku"]))
                 link = "sku_exact" if master else link
             if master is None and psid:
                 master = by_sku.get(scope.norm(psid))
                 link = "sku_exact" if master else link
-            if master is None:
-                # G4 — kunci nama+variasi yang sudah dipetakan staf (baris tanpa SKU)
-                bkey = _skuk.kunci_baris(it, (account or {}).get("id") or session.get("account_id"))
-                if bkey and _skuk.kunci_nama(bkey) and bkey in by_psku:
-                    master, link = by_psku[bkey], "sku_map"
             if master is None and it.get("product_name_raw"):
                 # G3 — nama HANYA bila nama + variasi menunjuk tepat satu item katalog
                 master, _why = _skuk.pilih_lewat_nama(by_all, it["product_name_raw"],

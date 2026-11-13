@@ -223,11 +223,15 @@ async def seed_returns_if_empty():
 
 # ── Models ───────────────────────────────────────────────────────────────────
 class ReturnIn(BaseModel):
+    # 2026-11-14 — toko, platform, nomor pesanan, barang, dan harga TURUNAN dari pesanan yang dipilih
+    # (`order_doc_id` + `order_line`); kolom lama di bawah tetap diterima tetapi tidak dipakai untuk retur baru.
+    order_doc_id: Optional[str] = None      # id `marketing_orders` hasil GET /order-lookup — WAJIB
+    order_line: Optional[int] = Field(default=None, ge=1)   # nomor baris barang di pesanan (1..n)
+    variant_id: Optional[str] = None        # varian pilihan staf bila baris belum tertaut varian (→ Jembatan SKU)
     account_id: Optional[str] = None  # UUID dari marketing_platform_accounts
     account_name: Optional[str] = None
     date: str
-    # 2026-11-02 — No.4(c): retur bebas, nomor pesanan TIDAK wajib (sering sulit
-    # didapat dari paket fisik). Retur tanpa nomor tetap dihitung di rekap toko.
+    # 2026-11-02 — No.4(c) "nomor pesanan opsional" DICABUT 14 Nov (wajib pesanan, sama dengan Catat retur gudang).
     order_id: Optional[str] = ""
     # W4 (sesi #29) — KONDISI BARANG & JUMLAH yang kembali. Dua kolom inilah yang
     # membuat retur bisa langsung mengubah stok tanpa menebak:
@@ -241,10 +245,10 @@ class ReturnIn(BaseModel):
     platform: Optional[str] = None
     catalog_item_id: Optional[str] = None   # F15 — produk DIPILIH dari katalog
     product: Optional[str] = ""             # turunan dari item katalog
-    price: float = Field(ge=0)
+    price: Optional[float] = Field(default=None, ge=0)   # 14 Nov: bawaan = harga satuan baris pesanan
     reason: str
     reason_detail: str
-    courier: str
+    courier: Optional[str] = ""
     refund_type: Optional[str] = "full_refund"
     # 2026-11-02 (No.14a) — nominal refund AKTUAL dari platform (Rp, ≥ 0).
     refund_amount: Optional[float] = Field(default=None, ge=0)
@@ -410,6 +414,44 @@ async def get_credit_note_alias(cn_id: str, request: Request):
     return {"success": True, "data": serialize(cn)}
 
 
+@router.get("/order-lookup")
+async def cari_pesanan_refund(request: Request, q: str = Query(default="")):
+    """2026-11-14 — pemilih pesanan form "Buat refund": cari `marketing_orders` (no. pesanan / resi, min. 3 huruf)
+    milik toko yang boleh dilihat pemakai. Sumber & bentuk sama dengan "Catat retur" gudang
+    (`returns_bridge.order_lookup`), ditambah refund Marketing aktif per baris (`refund_by`) supaya satu barang
+    tidak direfund dua kali."""
+    user = await require_auth(request)
+    db = get_db()
+    scope = await _scope.scope_filter(db, user, None)
+    rows = await _rb.order_lookup(db, q, scope=scope or None)
+    usul = None     # (kode_pool, varian per model, info model) — dimuat sekali bila ada baris belum tertaut varian
+    for o in rows:
+        refunds = await _rb.marketing_refunds_for_order(db, o.get("order_id") or "")
+        o["active_refunds"] = [_rb.summarize_refund(r) for r in refunds]
+        n = len(o.get("items") or [])
+        for it in o.get("items") or []:
+            it["refund_by"] = [_rb.summarize_refund(r) for r in refunds
+                               if _rb.refund_same_line(r, line_no=it["line"], n_lines=n,
+                                                       line={"catalog_item_id": it.get("catalog_item_id")})]
+            it["usulan"] = None
+            if it.get("link_level") != "varian":
+                # Usulan varian PASTI (SKU penjual = kode model + warna/ukuran bersinonim) sebagai pilihan awal;
+                # staf tetap memeriksa & memilih — sama dengan Usulan AI di Jembatan SKU (core/sku_usulan).
+                from core import sku_usulan as _su
+                if usul is None:
+                    usul = await _su.muat_master(db)
+                kp, per_model, info = usul
+                k = _su.klasifikasi({"kunci": it.get("bridge_key") or "", "product_name": it.get("product_name"),
+                                     "variation": it.get("variation"), "seller_sku": it.get("seller_sku"),
+                                     "model_id": it.get("model_id")}, kp, per_model, info, {})
+                if k.get("jenis") == _su.JENIS_PASTI:
+                    it["usulan"] = k.get("usulan")
+                if not it.get("model_id") and k.get("model_id"):
+                    it["model_id"], it["model_code"], it["model_name"] = (k["model_id"], k.get("model_code"),
+                                                                          k.get("model_name"))
+    return {"success": True, "data": serialize(rows), "q": (q or "").strip()}
+
+
 @router.get("/{return_id}")
 async def get_return(return_id: str, request: Request):
     await require_auth(request)
@@ -429,28 +471,52 @@ async def create_return(body: ReturnIn, request: Request):
     # `platform` opsional tanpa mengganti sumbernya membuat SETIAP retur baru
     # tersimpan `platform: null`, dan laporan retur per platform (yang dipakai
     # menilai kurir & marketplace) kehilangan baris tanpa error.
-    from core import marketing_account_scope as _scope
-    account = await _scope.require_account(db, body.account_id)
-    # F15 — produk berasal dari item katalog toko (bukan teks bebas).
+    # ── 2026-11-14 — WAJIB PESANAN + TAUTKAN (sama dengan "Catat retur" gudang, keputusan owner 10 Nov) ──
+    # Dulu nomor pesanan diketik bebas ("Opsional") dan toko/produk/harga diisi tangan ⇒ retur fisik gudang tidak
+    # tertaut ke pesanan & barang yang sama. Sekarang pesanan dipilih dari `marketing_orders` (GET /order-lookup);
+    # toko, platform, barang, qty maksimum, dan harga diturunkan dari baris pesanannya. Baris yang belum tertaut
+    # varian disertai varian pilihan staf yang disimpan ke Jembatan SKU (jalur resmi `sku_bridge.apply_mapping`).
+    if not (body.order_doc_id or "").strip():
+        raise HTTPException(400, "Pilih pesanan yang direfund — cari lewat no. pesanan atau no. resi. Pesanan yang "
+                                 "belum ada di sistem harus diimpor dulu (Impor Data › Pesanan).")
+    _order = await db.marketing_orders.find_one({"id": body.order_doc_id.strip()}, {"_id": 0, "account_id": 1})
+    if not _order:
+        raise HTTPException(404, "Pesanan yang dipilih tidak ada lagi di data pesanan Marketing — cari ulang.")
+    await _scope.assert_account_visible(db, user, _order.get("account_id"))     # sebelum menulis apa pun
+    account = await _scope.require_account(db, _order.get("account_id"))
+    try:
+        prep = await _rb.prepare_marketing_refund(db, body.model_dump(), user=user)
+    except _rb.RefundDuplicateError as e:
+        raise HTTPException(409, {"message": str(e), "code": "REFUND_SUDAH_ADA", "existing": e.existing})
+    except _rb.ReturnBridgeError as e:
+        raise HTTPException(400, str(e))
+    order, line, ident = prep["order"], prep["line"], prep["identity"]
     _item = None
-    if getattr(body, "catalog_item_id", None):
-        _item = await _resolve_catalog_item(db, body.catalog_item_id, account["id"])
-    elif not (getattr(body, "product", "") or "").strip():
-        raise HTTPException(400, "Produk wajib: pilih item dari katalog toko.")
+    if ident.get("catalog_item_id"):
+        _item = await db.marketing_catalog_items.find_one({"id": ident["catalog_item_id"]}, {"_id": 0})
+    line_label = " · ".join(x for x in (_rb._line_name(line), line.get("variation_raw") or "") if x)
 
     # 2026-11-02 (No.14a) — nominal aktual, bukan 70% dipatok (lihat compute_refund).
     refund_amount, refund_source = compute_refund(
-        body.refund_type, body.price, body.qty, body.refund_amount)
+        body.refund_type, prep["price"], prep["qty"], body.refund_amount)
 
     ret = {
         "id": str(uuid.uuid4()),
         "date": body.date,
-        "order_id": (body.order_id or "").strip(),
-        "catalog_item_id": _item.get("id") if _item else None,
-        "sku": _item.get("sku", "") if _item else "",
-        "product": (_item.get("name") if _item else body.product) or "",
-        "price": body.price,
-        "qty": int(body.qty or 1),
+        "order_id": str(order.get("order_id") or ""),
+        "order_doc_id": order.get("id"),
+        "order_line": prep["line_no"],
+        "order_line_label": line_label,
+        "order_tracking_number": str(order.get("tracking_number") or "").strip(),
+        "customer_name": order.get("customer_name") or order.get("buyer_username") or "",
+        "catalog_item_id": ident.get("catalog_item_id"),
+        "fg_material_id": ident.get("material_id"),
+        "variant_id": ident.get("variant_id"),
+        "sku": ident.get("material_code") or (_item or {}).get("sku", ""),
+        "product": (_item or {}).get("name") or ident.get("material_name") or line_label,
+        "price": prep["price"],
+        "qty": prep["qty"],
+        "link_source": "sku_bridge_retur" if prep.get("mapping") else "order_line",
         "item_condition": _rb.normalize_condition(body.item_condition),
         "reason": body.reason,
         "reason_label": REASON_LABELS.get(body.reason, body.reason),
@@ -499,6 +565,9 @@ async def create_return(body: ReturnIn, request: Request):
             "location": (fresh or {}).get("wh_restock_location_code", ""),
             "message": (bridge or {}).get("message", ""),
         },
+        # 2026-11-14 — varian pilihan staf disimpan ke Jembatan SKU: pesanan lain ber-SKU sama ikut tertaut.
+        "sku_bridge": ({"orders_updated": prep["mapping"].get("orders_updated", 0),
+                        "message": prep["mapping"].get("message", "")} if prep.get("mapping") else None),
     }
 
 @router.put("/{return_id}")
@@ -514,6 +583,18 @@ async def update_return(return_id: str, body: ReturnUpdate, request: Request):
     # F14 — `platform`/`account_name` selalu turunan master (lihat create_return).
     upd.pop("platform", None)
     upd.pop("account_name", None)
+    # 2026-11-14 — retur yang dibuat dari pesanan: pesanan, barang, toko, dan harga TURUNAN pesanan (tidak diubah
+    # lewat sini — salah pesanan/barang = hapus lalu buat ulang); qty tetap ≤ qty baris pesanannya.
+    if existing.get("order_doc_id"):
+        for k in ("order_id", "catalog_item_id", "account_id", "product", "price"):
+            upd.pop(k, None)
+        if "qty" in upd:
+            _o = await db.marketing_orders.find_one({"id": existing["order_doc_id"]}, {"_id": 0})
+            _lines = _rb.order_lines(_o) if _o else []
+            _n = int(existing.get("order_line") or 0)
+            _lq = _rb._line_qty(_lines[_n - 1]) if 1 <= _n <= len(_lines) else 0
+            if _lq and int(upd["qty"]) > _lq:
+                raise HTTPException(400, f"Qty retur {upd['qty']} melebihi qty barang ini di pesanan ({_lq} pcs).")
     if upd.get("account_id"):
         from core import marketing_account_scope as _scope
         _acc = await _scope.require_account(db, upd["account_id"])
