@@ -179,8 +179,13 @@ export default function RnDStylesTab({ token, user }) {
     setSaving(true);
     try {
       if (editing) {
-        await apiFetch(`/dewi/rnd/styles/${editing.id}`, { method: 'PUT', body: form });
-        toast.success('Style disimpan');
+        const res = await apiFetch(`/dewi/rnd/styles/${editing.id}`, { method: 'PUT', body: form });
+        // 13 Nov 2026: style yang sudah jadi produk → perubahan kode/nama ikut ke Master Produk (dan SKU-nya)
+        const mp = res?.master_produk;
+        const nSku = mp?.kode_diganti?.varian || 0;
+        toast.success(mp
+          ? `Style disimpan · Master Produk ikut diperbarui${nSku ? ` · SKU ${nSku} varian ikut berganti kode` : ''}`
+          : 'Style disimpan');
       } else {
         const created = await apiFetch('/dewi/rnd/styles', { method: 'POST', body: form });
         if (pendingPhotos.length && created?.id) {
@@ -472,10 +477,15 @@ export default function RnDStylesTab({ token, user }) {
       <FormPopup open={showForm} onClose={() => setShowForm(false)} ukuran="panjang" onSimpan={handleSave}
         menyimpan={saving} galat={formErr} testId="rnd-style-form"
         judul={editing ? 'Ubah style' : 'Tambah style'}
-        keterangan="Kategori, klien, dan jenis kain diambil dari master supaya cocok saat style naik ke produksi."
+        keterangan={editing?.promoted_to_model_id
+          ? 'Style ini sudah menjadi produk. Kode, nama, kategori, jenis kain, dan deskripsi yang diubah di sini ikut mengubah Master Produk.'
+          : 'Kategori, klien, dan jenis kain diambil dari master supaya cocok saat style naik ke produksi.'}
         labelSimpan={editing ? 'Simpan perubahan' : 'Simpan style'}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Isian label="Kode style" wajib htmlFor="style-code">
+          <Isian label="Kode style" wajib htmlFor="style-code"
+            petunjuk={editing?.promoted_to_model_id
+              ? 'Mengganti kode ikut mengganti SKU produk. Ditolak bila SKU sudah dipakai stok, PO, atau katalog.'
+              : undefined}>
             <Input id="style-code" value={form.style_code} onChange={(e) => setForm({ ...form, style_code: e.target.value.toUpperCase() })}
               placeholder="ST-001" data-testid="style-code-input" />
           </Isian>

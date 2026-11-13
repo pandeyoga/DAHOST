@@ -164,6 +164,10 @@ async def create_style(body: dict, user: dict = Depends(require_auth)):
     existing = await db.dewi_rnd_styles.find_one({'style_code': code})
     if existing:
         raise HTTPException(409, f'Style code {code} sudah ada')
+    # 13 Nov 2026: kode produk yang sudah ada di Master Produk tidak boleh dipakai style baru — sinkron master akan
+    # "mengambil" style itu untuk produk tersebut dan menimpa namanya.
+    if await db.rahaza_models.find_one(pm.live_model_filter({'code': code})):
+        raise HTTPException(409, f'Kode {code} sudah dipakai produk di Master Produk. Pakai kode lain.')
     # Tahap 6 (PR3): buyer & jenis kain dari master
     masters = await resolve_style_masters(
         db, {'client_id': body.get('client_id'), 'buyer': body.get('buyer', ''),
@@ -360,7 +364,14 @@ async def update_style(style_id: str, body: dict, user: dict = Depends(require_a
     body['updated_at'] = now_utc()
 
     if 'style_code' in body:
-        body['style_code'] = body['style_code'].strip().upper()
+        body['style_code'] = str(body.get('style_code') or '').strip().upper()
+        if not body['style_code']:
+            raise HTTPException(400, 'Kode style wajib diisi.')
+    if 'style_name' in body:
+        body['style_name'] = str(body.get('style_name') or '').strip()
+        if not body['style_name']:
+            raise HTTPException(400, 'Nama style wajib diisi.')
+    master = await _tulis_ke_master_produk(db, before, body, user)
 
     await db.dewi_rnd_styles.update_one({'id': style_id}, {'$set': body})
     updated = await db.dewi_rnd_styles.find_one({'id': style_id})
@@ -383,7 +394,70 @@ async def update_style(style_id: str, body: dict, user: dict = Depends(require_a
             db, updated, user, changed, revision_type=rtype,
             revision_name=f"Ubah {', '.join(c['label'] for c in changed[:3])}")
 
-    return serialize(updated)
+    out = serialize(updated)
+    if master and isinstance(out, dict):
+        out['master_produk'] = master
+    return out
+
+
+# Isi style yang MILIK Master Produk (disalin `core.master_sync` dari model): style field → (field model, pembanding).
+STYLE_KE_MASTER = (
+    ('style_code', 'code', lambda m: str(m.get('code') or '').upper()),
+    ('style_name', 'name', lambda m: m.get('name') or ''),
+    ('category', 'category', lambda m: m.get('category_name') or m.get('category') or ''),
+    ('fabric_type', 'fabric_type', lambda m: m.get('fabric_type') or ''),
+    ('description', 'description', lambda m: m.get('description') or ''),
+)
+
+
+async def _tulis_ke_master_produk(db, before: dict, body: dict, user: dict) -> dict | None:
+    """13 Nov 2026 (laporan R&D, owner "dibenarkan"): style yang SUDAH jadi produk dulu bisa diubah kode/namanya di
+    sini, lalu sinkron master menimpa nama kembali ("tidak berubah") dan — karena kodenya tidak cocok lagi — membuat
+    style KEDUA ("dobel"). Sekarang perubahan isi milik master ditulis ke Master Produk lewat jalur resminya
+    (`routes.rahaza_production.ubah_model`): SKU ikut berganti, atau ditolak 409 bila SKU sudah dipakai. Style yang
+    belum jadi produk: kode tidak boleh sama dengan style lain atau kode produk di Master Produk (supaya sinkron
+    master tidak "mengambil" style itu dan menimpa namanya). Mengubah `body` (nilai akhir = nilai master)."""
+    from core import ganti_kode_produk as gkp
+    sid_ = before['id']
+    kode = body.get('style_code')
+    if kode and kode != str(before.get('style_code') or '').upper():
+        lain = await gkp.pemegang_kode_style(db, kode, sid_)
+        if lain:
+            raise HTTPException(409, f"Kode style {kode} sudah dipakai style lain "
+                                     f"({lain.get('style_name') or lain.get('style_code')}). Pakai kode lain.")
+    mid = before.get('promoted_to_model_id')
+    model = await db.rahaza_models.find_one({'id': mid}, {'_id': 0}) if mid else None
+    if not model:
+        if kode and kode != str(before.get('style_code') or '').upper() and \
+                await db.rahaza_models.find_one(pm.live_model_filter({'code': kode})):
+            raise HTTPException(409, f"Kode {kode} sudah dipakai produk di Master Produk. Pakai kode lain untuk "
+                                     'style baru, atau ubah produk itu lewat style yang sudah tertaut dengannya.')
+        return None
+    tulis = {}
+    for sf, mf, nilai_master in STYLE_KE_MASTER:
+        if sf not in body:
+            continue
+        val = str(body.get(sf) or '').strip()
+        if val == str(before.get(sf) or '').strip() or val == nilai_master(model):
+            continue
+        if sf == 'category' and not val:
+            continue          # kategori master tidak bisa dikosongkan dari sini
+        tulis[mf] = val
+    if not tulis:
+        return None
+    utama = await gkp.style_utama(db, model)
+    if utama and utama['id'] != sid_:
+        raise HTTPException(409, (
+            f"Style ini tercatat ganda untuk produk {model.get('code')} — ubah lewat style "
+            f"{utama.get('style_code')} {utama.get('style_name') or ''}".rstrip() + '. Style ganda akan dirapikan.'))
+    from routes.rahaza_production import tolak_peran_eksternal, ubah_model
+    tolak_peran_eksternal(user)
+    hasil = await ubah_model(db, model['id'], tulis, user)
+    for sf, _mf, nilai_master in STYLE_KE_MASTER:
+        if sf in body:
+            body[sf] = nilai_master(hasil) if sf != 'style_code' else (hasil.get('code') or body[sf])
+    return {'model_id': model['id'], 'code': hasil.get('code'), 'name': hasil.get('name'),
+            'diubah': sorted(tulis), 'kode_diganti': hasil.get('kode_diganti')}
 
 
 async def style_usage(db, style: dict) -> dict:
@@ -659,6 +733,10 @@ async def promote_style_to_production(
         import logging
         logging.getLogger(__name__).exception('promote_rnd_variants_to_master gagal utk style %s', style_id)
         variants_result = {'created_count': 0, 'skipped_count': 0, 'error': True}
+    # 13 Nov 2026: `model_code` boleh beda dari kode style → kode style langsung mengikuti master. Dulu sinkron
+    # master (yang mencari style lewat kode) lalu membuat style KEDUA untuk produk ini.
+    from core import ganti_kode_produk as gkp
+    await gkp.selaraskan_style_tertaut(db, await db.rahaza_models.find_one({'id': model_id}, {'_id': 0}))
 
     return {
         'status': 'promoted',

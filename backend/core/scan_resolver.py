@@ -143,6 +143,10 @@ async def resolve_fg(db, code: str) -> Optional[dict]:
     m = _prefer_active(rows)
     if m:
         return _material_result(m, "sku")
+    # 13 Nov 2026: SKU lama produk yang kodenya diganti (`core.ganti_kode_produk`) → label lama tetap terbaca.
+    m = _prefer_active(await _find_by_code(db.rahaza_materials, "code_aliases", code, {"type": "fg"}))
+    if m:
+        return _material_result(m, "kode_lama")
     # Barcode khusus yang diisi di varian (mis. barcode pabrik/marketplace).
     var = _prefer_active(await _find_by_code(db.rahaza_model_variants, "barcode", code,
                                              proj={"_id": 0, "id": 1, "sku": 1, "active": 1}))

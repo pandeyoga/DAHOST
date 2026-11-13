@@ -226,6 +226,18 @@ def size_rows(variant: dict) -> list:
     return out
 
 
+async def master_sku_map(db, variants: list) -> dict:
+    """{id varian master: SKU master} untuk baris ukuran yang sudah tertaut (`sizes[].variant_id`, tulisan
+    `core.master_sync`). 13 Nov 2026: SKU baris itu MILIK Master Produk (SSOT) — audit & perbaikan SKU R&D
+    mengikuti master, tidak menulis SKU sendiri (dulu "perbaiki SKU" membuat SKU R&D ≠ SKU master, lalu sinkron
+    master membaliknya lagi). Ganti kode produk + SKU = Master Produk / ubah style yang sudah jadi produk."""
+    vids = {str(s.get('variant_id')) for v in variants for s in size_rows(v) if s.get('variant_id')}
+    if not vids:
+        return {}
+    rows = await db.rahaza_model_variants.find({'id': {'$in': list(vids)}}, {'_id': 0, 'id': 1, 'sku': 1}).to_list(len(vids))
+    return {r['id']: str(r.get('sku') or '').strip().upper() for r in rows if r.get('sku')}
+
+
 def _norm_sizes(rows, *, style_code: str, color_code: str) -> list:
     """Normalkan baris ukuran → [{size, sku, qty_plan}] dengan SKU kanonik bila kosong."""
     out, seen = [], set()
@@ -402,6 +414,7 @@ async def variants_sku_audit(
     db = get_db()
     q = {'style_id': style_id} if style_id else {}
     rows = await db.dewi_rnd_variants.find(q, {'_id': 0}).sort('created_at', -1).to_list(limit)
+    sku_master = await master_sku_map(db, rows)
 
     items, drift_total, unmatched_color = [], 0, 0
     for v in rows:
@@ -415,7 +428,7 @@ async def variants_sku_audit(
             if not size:
                 continue
             now_sku = str(s.get('sku') or '').strip().upper()
-            want = canonical_sku(style_code, ccode, size) if ccode else ''
+            want = sku_master.get(str(s.get('variant_id') or '')) or (canonical_sku(style_code, ccode, size) if ccode else '')
             ok = bool(want) and now_sku == want
             if now_sku and want and not ok:
                 drift += 1
@@ -465,13 +478,14 @@ async def fix_variant_sku(variant_id: str, user: dict = Depends(require_auth)):
 
     ccode = str(cdoc.get('code') or '')
     style_code = str(v.get('style_code') or '')
+    sku_master = await master_sku_map(db, [v])
     changed = []
     sizes = []
     for s in size_rows(v):
         row = dict(s)
         size = str(row.get('size') or '')
         if size:
-            want = canonical_sku(style_code, ccode, size)
+            want = sku_master.get(str(row.get('variant_id') or '')) or canonical_sku(style_code, ccode, size)
             if str(row.get('sku') or '').strip().upper() != want:
                 changed.append({'size': size, 'from': row.get('sku') or '', 'to': want})
             row['sku'] = want

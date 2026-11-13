@@ -72,13 +72,18 @@ async def seed_rahaza_production_data():
         logging.getLogger(__name__).info(f"  · Rahaza sizes seeded ({seeded_size} baru)")
 
 
+def tolak_peran_eksternal(user: dict) -> None:
+    """RBAC master product (keputusan user): SEMUA staff internal boleh CRUD master; peran eksternal ditolak."""
+    role = ((user or {}).get("role") or "").lower()
+    if role in ("cmt_vendor", "vendor", "klien_maklon"):
+        raise HTTPException(403, "Akses master hanya untuk staff internal.")
+
+
 async def _require_admin(request: Request):
     # RBAC master product (keputusan user): SEMUA staff internal yang bisa akses
     # portal boleh CRUD master. Hanya role eksternal (vendor/klien) yang ditolak.
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role in ("cmt_vendor", "vendor", "klien_maklon"):
-        raise HTTPException(403, "Akses master hanya untuk staff internal.")
+    tolak_peran_eksternal(user)
     return user
 
 
@@ -226,8 +231,19 @@ async def update_model(mid: str, request: Request):
     sehingga mengubah kategori di master membuat FG & katalog kategori LAMA selamanya.
     """
     user = await _require_admin(request)
-    db = get_db()
-    body = await request.json()
+    return await ubah_model(get_db(), mid, await request.json(), user)
+
+
+async def ubah_model(db, mid: str, body: dict, user: dict) -> dict:
+    """SATU jalur resmi ubah master produk — dipakai Master Produk (PUT /models/{id}) dan Style & Desain R&D
+    (`routes.dewi_rnd_styles.update_style`, style yang sudah jadi produk).
+
+    13 Nov 2026 (laporan R&D, owner "dibenarkan"): ganti KODE ikut mengganti SKU varian, kode barang jadi & potongan,
+    dan SKU di R&D lewat `core.ganti_kode_produk` — ditolak 409 bila SKU sudah dipakai (stok/PO/katalog/…) atau
+    kode barunya bentrok. Ganti NAMA ikut menyegarkan salinan nama di varian/barang jadi/potongan. Style R&D utama
+    langsung diselaraskan (kode & nama sama dengan master) — tidak menunggu sinkron master berikutnya."""
+    from core import ganti_kode_produk as gkp
+    body = dict(body or {})
     body.pop("_id", None)
     body.pop("id", None)
     body.pop("created_at", None)
@@ -250,16 +266,24 @@ async def update_model(mid: str, request: Request):
     for k in ("base_hpp", "retail_price", "weight_gram"):
         body.pop(k, None)
 
+    rencana_kode = None
     if "code" in body:
         new_code = (body["code"] or "").strip().upper()
         if not new_code:
             body.pop("code")
         else:
             body["code"] = new_code
-            if new_code != (current.get("code") or "").upper() and \
-                    await db.rahaza_models.find_one(
+            if new_code != (current.get("code") or "").upper():
+                if await db.rahaza_models.find_one(
                         pm.live_model_filter({"code": new_code, "id": {"$ne": mid}})):
-                raise HTTPException(409, f"Kode '{new_code}' sudah terpakai. Gunakan kode lain.")
+                    raise HTTPException(409, f"Kode '{new_code}' sudah terpakai. Gunakan kode lain.")
+                # SKU varian/barang jadi/potongan ikut berganti — dicek SEBELUM apa pun ditulis
+                rencana_kode = await gkp.rencana_ganti_kode(db, current, new_code)
+                gkp.tolak_bila_tidak_aman(rencana_kode)
+    if "name" in body:
+        body["name"] = str(body.get("name") or "").strip()
+        if not body["name"]:
+            raise HTTPException(400, "Nama produk wajib diisi.")
     # Phase 17A: sanitize bundle_size
     if "bundle_size" in body:
         try:
@@ -293,12 +317,21 @@ async def update_model(mid: str, request: Request):
     if res.matched_count == 0:
         raise HTTPException(404, "Not found")
 
+    kode_diganti = await gkp.terapkan_ganti_kode(db, rencana_kode) if rencana_kode else None
+    after = await db.rahaza_models.find_one({"id": mid}, {"_id": 0})
+    nama_disegarkan = (await gkp.segarkan_nama_turunan(db, after, current.get("name") or "")
+                       if after.get("name") != current.get("name") else None)
+    style = await gkp.selaraskan_style_tertaut(db, after)
     after = await db.rahaza_models.find_one({"id": mid}, {"_id": 0})
     prop = await pm.propagate_master_changes(db, after)
-    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.model", mid)
+    ket = f" kode {current.get('code')}→{after.get('code')}" if kode_diganti else ""
+    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.model", f"{mid}{ket}")
     out = serialize_doc(after)
     if isinstance(out, dict):
         out["propagated"] = {"fg": prop.get("fg", 0), "catalog_items": prop.get("items", 0)}
+        out["kode_diganti"] = kode_diganti
+        out["nama_disegarkan"] = nama_disegarkan
+        out["style_rnd"] = style
     return out
 
 
