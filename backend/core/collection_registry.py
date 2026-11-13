@@ -749,6 +749,11 @@ _KONFIGURASI += " kewajiban_aturan "
 _TRANSAKSI += " kewajiban_kejadian "
 _LOG += " pantau_aktivitas_harian "
 # ── akhir Monitoring Staf ──
+# 2026-11-14 — Usulan AI di Jembatan SKU: usulan varian dari Asisten AI per kombinasi SKU + variasi (menunggu persetujuan
+# staf). Turunan yang bisa diminta ulang ⇒ log (boleh dihapus saat cutoff; penautan yang disetujui ada di jembatan).
+REGISTRY.update({"marketing_sku_usulan": "marketing"})
+_LOG += " marketing_sku_usulan "
+# ── akhir Usulan AI Jembatan SKU ──
 
 
 def _kind_table() -> dict[str, str]:

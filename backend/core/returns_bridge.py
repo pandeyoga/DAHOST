@@ -330,6 +330,22 @@ async def resolve_identity(db, ret: dict) -> dict:
         "candidates": [],
     }
 
+    # 0) 2026-11-14 — baris pesanan yang DIPILIH di form "Buat refund" (order_doc_id + order_line)
+    if ret.get("order_doc_id") and ret.get("order_line"):
+        order = await db.marketing_orders.find_one({"id": ret["order_doc_id"]}, {"_id": 0})
+        lines = order_lines(order) if order else []
+        n = _int(ret.get("order_line"), 0)
+        ln = lines[n - 1] if 1 <= n <= len(lines) else None
+        mid = (ln or {}).get("fg_material_id") or (ln or {}).get("material_id")
+        snap = await _material_snapshot(db, mid) if mid else {}
+        if snap:
+            out.update(snap)
+            out["catalog_item_id"] = ln.get("catalog_item_id") or ret.get("catalog_item_id")
+            out["variant_id"] = ln.get("variant_id") or snap.get("variant_id")
+            out["link_status"] = LINK_OK
+            out["source"] = "order_line"
+            return out
+
     # 1) item katalog yang dipilih pemakai
     if ret.get("catalog_item_id"):
         snap = await _from_catalog_item(db, ret["catalog_item_id"])
@@ -611,17 +627,44 @@ def same_item(wh: dict, *, line_no: int | None, material_id: str | None, n_lines
     return not strict
 
 
-async def order_lookup(db, q: str, *, limit: int = 15) -> list:
+def line_unit_price(ln: dict) -> float:
+    """Harga satuan yang dibayar pembeli untuk satu baris (subtotal sesudah diskon ÷ qty; cadangan harga satuan)."""
+    q = _line_qty(ln) or 1
+    for k in ("sku_subtotal_after_discount", "subtotal"):
+        try:
+            v = float(ln.get(k) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        if v > 0:
+            return round(v / q, 2)
+    for k in ("sku_unit_price", "sku_unit_original_price", "price_final", "price"):
+        try:
+            v = float(ln.get(k) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        if v > 0:
+            return round(v, 2)
+    return 0.0
+
+
+async def order_lookup(db, q: str, *, limit: int = 15, scope: dict | None = None) -> list:
     """Cari pesanan Marketing (`marketing_orders`) lewat no. pesanan ATAU no. resi untuk form
-    "Catat retur". Tiap pesanan membawa baris barangnya (tertaut master atau belum) dan
-    retur gudang aktif yang sudah ada — baris yang sudah punya retur ditandai ``blocked_by``."""
+    "Catat retur" (Gudang) dan "Buat refund" (Marketing). Tiap pesanan membawa baris barangnya (tertaut master
+    atau belum) dan retur gudang aktif yang sudah ada — baris yang sudah punya retur ditandai ``blocked_by``.
+
+    2026-11-14 — ``scope`` = saringan toko pemakai (Marketing hanya melihat tokonya); tiap baris juga membawa
+    tingkat tautannya (``varian`` · ``model`` · ``belum``, :func:`core.sku_kunci.tingkat_tautan`), model, kunci
+    Jembatan SKU, dan harga satuan yang dibayar pembeli."""
+    from core import sku_kunci as _skk
     q = (q or "").strip()
     if len(q) < 3:
         return []
     rx = {"$regex": re.escape(q), "$options": "i"}
-    orders = await db.marketing_orders.find(
-        {"$or": [{"order_id": rx}, {"tracking_number": rx}]}, {"_id": 0}
-    ).sort("created_at", -1).limit(limit).to_list(limit)
+    filt = {"$or": [{"order_id": rx}, {"tracking_number": rx}]}
+    if scope:
+        filt = {"$and": [filt, scope]}
+    orders = await db.marketing_orders.find(filt, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    models: dict = {}
     out = []
     for o in orders:
         order_no = str(o.get("order_id") or "")
@@ -632,17 +675,31 @@ async def order_lookup(db, q: str, *, limit: int = 15) -> list:
         for i, ln in enumerate(lines, start=1):
             mid = ln.get("fg_material_id") or ln.get("material_id")
             snap = await _material_snapshot(db, mid) if mid else {}
+            mat = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0, "variant_id": 1, "model_id": 1})                 if mid else None
+            tingkat = _skk.tingkat_tautan(ln, mat)
+            model_id = ln.get("model_id") or (mat or {}).get("model_id")
+            if model_id and model_id not in models:
+                m = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0, "code": 1, "name": 1}) or {}
+                models[model_id] = m
             blk = [w for w in act if w.get("order_number") != order_no or same_item(
                 w, line_no=i, material_id=snap.get("material_id"), n_lines=len(lines))]
             items.append({
                 "line": i, "product_name": _line_name(ln), "variation": ln.get("variation_raw") or "",
-                "sku": _line_sku(ln), "quantity": _line_qty(ln), "value": _line_value(ln),
+                "sku": _line_sku(ln), "seller_sku": str(ln.get("seller_sku") or "").strip(),
+                "quantity": _line_qty(ln), "value": _line_value(ln), "unit_price": line_unit_price(ln),
                 "material_id": snap.get("material_id"), "material_code": snap.get("material_code", ""),
                 "material_name": snap.get("material_name", ""),
+                "catalog_item_id": ln.get("catalog_item_id"),
+                "variant_id": ln.get("variant_id") or snap.get("variant_id"),
+                "link_level": tingkat, "model_id": model_id,
+                "model_code": (models.get(model_id) or {}).get("code", "") if model_id else "",
+                "model_name": (models.get(model_id) or {}).get("name", "") if model_id else "",
+                "bridge_key": _skk.kunci_baris(ln, o.get("account_id")),
                 "blocked_by": [summarize_wh(w) for w in blk]})
         out.append({
             "id": o.get("id"), "order_id": order_no, "tracking_number": resi,
-            "platform": o.get("platform") or "", "account_name": o.get("account_name") or "",
+            "platform": o.get("platform") or o.get("purchase_channel") or "",
+            "account_id": o.get("account_id"), "account_name": o.get("account_name") or "",
             "customer_name": o.get("customer_name") or o.get("buyer_username") or "",
             "status": o.get("status") or "",
             "order_date": str(o.get("order_date") or o.get("created_at") or "")[:10],
@@ -758,9 +815,159 @@ async def prepare_manual_return(db, body: dict) -> dict:
             "qty": qty, "order_value": value}
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-11-14 — "BUAT REFUND" MARKETING = "CATAT RETUR" GUDANG: wajib pesanan + tautkan
+# ═════════════════════════════════════════════════════════════════════════════
+REFUND_INACTIVE = ("rejected", "cancelled")
+REFUND_STATUS_LABEL = {"pending": "menunggu", "approved": "disetujui", "completed": "selesai"}
+
+
+class RefundDuplicateError(ReturnBridgeError):
+    """Baris pesanan ini sudah punya refund Marketing aktif (route → 409)."""
+
+    def __init__(self, message: str, existing: list):
+        super().__init__(message)
+        self.existing = existing
+
+
+async def marketing_refunds_for_order(db, order_number: str) -> list:
+    """Refund Marketing AKTIF (bukan ditolak/dibatalkan) untuk satu no. pesanan."""
+    if not order_number:
+        return []
+    return await db[MKT].find(
+        {"order_id": order_number, "status": {"$nin": list(REFUND_INACTIVE)}},
+        {"_id": 0, "id": 1, "order_line": 1, "status": 1, "date": 1, "product": 1, "catalog_item_id": 1,
+         "qty": 1, "refund_type": 1, "refund_amount": 1}).sort("created_at", 1).to_list(50)
+
+
+def refund_same_line(ref: dict, *, line_no: int, n_lines: int, line: dict | None = None) -> bool:
+    """Refund ``ref`` menyangkut baris pesanan ini? Refund lama tanpa nomor baris hanya dianggap sama bila
+    pesanannya satu baris atau item katalognya terbukti sama (tanpa bukti ⇒ tidak menghalangi)."""
+    if n_lines <= 1:
+        return True
+    rl = _int(ref.get("order_line"), 0)
+    if rl:
+        return rl == line_no
+    cid = (line or {}).get("catalog_item_id")
+    return bool(cid and ref.get("catalog_item_id") == cid)
+
+
+def summarize_refund(ref: dict) -> dict:
+    return {"id": ref.get("id"), "status": ref.get("status") or "",
+            "status_label": REFUND_STATUS_LABEL.get(ref.get("status") or "", ref.get("status") or ""),
+            "date": str(ref.get("date") or "")[:10], "product": ref.get("product") or "",
+            "order_line": _int(ref.get("order_line"), 0) or None, "qty": ref.get("qty")}
+
+
+async def prepare_marketing_refund(db, body: dict, *, user=None, exclude_id: str | None = None) -> dict:
+    """Validasi form "Buat refund" Marketing (keputusan 14 Nov: sama dengan "Catat retur" gudang 10 Nov).
+
+    → ``{order, line_no, line, n_lines, identity, qty, price, mapping, link_level_before}``.
+
+    * pesanan WAJIB ada di `marketing_orders` (dipilih lewat :func:`order_lookup`); pesanan yang belum ada harus
+      diimpor dulu — tidak ada lagi nomor pesanan ketik bebas;
+    * barang = baris pesanan. Baris yang sudah tertaut varian dipakai apa adanya. Baris yang belum tertaut / baru
+      tertaut MODEL wajib disertai ``variant_id`` pilihan staf, yang DISIMPAN ke Jembatan SKU lewat
+      :func:`core.sku_bridge.apply_mapping` (jalur yang sama dengan layar Jembatan SKU) — pesanan lain dengan SKU +
+      variasi yang sama ikut tertaut;
+    * qty 1..qty baris; harga = harga satuan yang dibayar pembeli (cadangan ``price`` dari form bila pesanan tidak
+      membawa harga);
+    * baris yang sudah punya refund aktif ditolak (:class:`RefundDuplicateError` → 409) — SEBELUM ada tulisan apa pun.
+    """
+    from core import sku_bridge as _sb
+    from core import sku_kunci as _skk
+    body = body if isinstance(body, dict) else {}
+    order_doc_id = str(body.get("order_doc_id") or "").strip()
+    if not order_doc_id:
+        raise ReturnBridgeError("Pilih pesanan yang direfund — cari lewat no. pesanan atau no. resi. Pesanan yang "
+                                "belum ada di sistem harus diimpor dulu (Impor Data › Pesanan).")
+    order = await find_order_for_manual(db, order_doc_id=order_doc_id)
+    order_no = str(order.get("order_id") or "")
+    lines = order_lines(order)
+    n = len(lines)
+    raw_line = body.get("order_line")
+    if raw_line in (None, ""):
+        if n > 1:
+            raise ReturnBridgeError(f"Pesanan {order_no} berisi {n} barang — pilih barang yang kembali.")
+        line_no = 1
+    else:
+        line_no = _int(raw_line, 0)
+        if not 1 <= line_no <= n:
+            raise ReturnBridgeError("Barang yang dipilih tidak ada di pesanan ini — pilih ulang dari daftar barang "
+                                    "pesanan.")
+    line = lines[line_no - 1]
+
+    # ── qty: bawaan = qty baris pesanan; tidak boleh melebihinya ──
+    lq = _line_qty(line)
+    raw_q = body.get("qty")
+    qty = (lq or 1) if raw_q in (None, "") else _int(raw_q, -1)
+    if qty < 1:
+        raise ReturnBridgeError("Qty retur minimal 1 pcs.")
+    if lq and qty > lq:
+        raise ReturnBridgeError(f"Qty retur {qty} melebihi qty barang ini di pesanan ({lq} pcs).")
+
+    # ── refund ganda untuk baris yang sama ⇒ 409, sebelum menulis apa pun ──
+    clash = [r for r in await marketing_refunds_for_order(db, order_no)
+             if r.get("id") != exclude_id and refund_same_line(r, line_no=line_no, n_lines=n, line=line)]
+    if clash:
+        teks = ", ".join(f"{summarize_refund(r)['date'] or '-'} ({summarize_refund(r)['status_label']})"
+                         for r in clash)
+        raise RefundDuplicateError(
+            f"Barang ini di pesanan {order_no} sudah punya refund {teks}. Buka refund itu — satu barang tidak boleh "
+            "direfund dua kali.", [summarize_refund(r) for r in clash])
+
+    # ── barang: baris tertaut varian dipakai; selain itu varian pilihan staf → Jembatan SKU ──
+    mid = line.get("fg_material_id") or line.get("material_id")
+    mat = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0, "variant_id": 1, "model_id": 1}) if mid else None
+    level = _skk.tingkat_tautan(line, mat)
+    pick = str(body.get("variant_id") or "").strip()
+    mapping = None
+    if level != _skk.TINGKAT_VARIAN:
+        if not pick:
+            raise ReturnBridgeError(
+                "Barang di baris pesanan ini belum tertaut ke varian master"
+                + (" (baru tertaut model)" if level == _skk.TINGKAT_MODEL else "")
+                + " — pilih variannya (warna & ukuran) dulu.")
+        if not await db.rahaza_model_variants.find_one({"id": pick, "active": {"$ne": False}}, {"_id": 0, "id": 1}):
+            raise ReturnBridgeError("Varian master yang dipilih tidak ada atau sudah tidak aktif — pilih varian lain.")
+        key = _skk.kunci_baris(line, order.get("account_id"))
+        if not key:
+            raise ReturnBridgeError("Baris pesanan ini tidak punya SKU maupun nama produk, jadi tidak bisa ditautkan "
+                                    "ke master. Tautkan dulu lewat Jembatan SKU.")
+        mapping = await _sb.apply_mapping(
+            db, key, variant_id=pick, account_id=order.get("account_id"), user=user, method="retur",
+            product_name=_line_name(line), variation=line.get("variation_raw") or "")
+        if not mapping.get("ok"):
+            raise ReturnBridgeError(mapping.get("message") or "Varian gagal ditautkan lewat Jembatan SKU.")
+        order = await db.marketing_orders.find_one({"id": order["id"]}, {"_id": 0}) or order
+        line = order_lines(order)[line_no - 1]
+        mid = line.get("fg_material_id") or line.get("material_id")
+    elif pick and pick != (line.get("variant_id") or (mat or {}).get("variant_id")):
+        raise ReturnBridgeError("Baris pesanan ini sudah tertaut ke varian master lain. Bila tautannya salah, ubah "
+                                "di Jembatan SKU dulu.")
+    snap = await _material_snapshot(db, mid) if mid else {}
+    if not snap:
+        raise ReturnBridgeError("Barang jadi baris pesanan ini tidak ditemukan di master — periksa tautannya di "
+                                "Jembatan SKU.")
+    ident = {**snap, "link_status": LINK_OK, "source": "order_line", "reason": "",
+             "catalog_item_id": line.get("catalog_item_id"),
+             "variant_id": line.get("variant_id") or snap.get("variant_id")}
+    price = line_unit_price(line)
+    if not price:
+        try:
+            price = max(0.0, float(body.get("price") or 0))
+        except (TypeError, ValueError):
+            price = 0.0
+    return {"order": order, "line_no": line_no, "line": line, "n_lines": n, "identity": ident, "qty": qty,
+            "price": price, "mapping": mapping, "link_level_before": level}
+
+
 def _line_of_return(lines: list, ret: dict, ident: dict) -> int | None:
     """Baris pesanan yang dimaksud satu retur Marketing (tanpa menebak: penunjuk pasti dulu —
     item katalog, master barang, SKU — lalu nama produk yang cocok TEPAT satu baris)."""
+    n = _int(ret.get("order_line"), 0)
+    if 1 <= n <= len(lines):          # 2026-11-14 — retur menunjuk baris pesanan langsung
+        return n
     sku = str(ret.get("sku") or "").strip()
     hits = set()
     for i, ln in enumerate(lines, start=1):
@@ -914,6 +1121,18 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
     code = await _next_code(db)
     actor_name = _actor_name(actor)
     reason_txt = " — ".join([x for x in [ret.get("reason_label"), ret.get("reason_detail")] if x])
+    # 2026-11-14 — refund yang dibuat dari pesanan terpilih: retur fisik menunjuk pesanan & BARIS yang sama
+    # (kunci yang sama dengan "Catat retur" gudang dan RTS, jadi paket ini tidak tercatat dua kali).
+    order = None
+    if ret.get("order_doc_id"):
+        order = await db.marketing_orders.find_one({"id": ret["order_doc_id"]}, {"_id": 0})
+    line_no = _int(ret.get("order_line"), 0) or None
+    line_label = ""
+    if order and line_no:
+        _lines = order_lines(order)
+        if 1 <= line_no <= len(_lines):
+            _ln = _lines[line_no - 1]
+            line_label = " · ".join(x for x in (_line_name(_ln), _ln.get("variation_raw") or "") if x)
 
     doc = _wh_skeleton(code, actor_name, (
         f"Dibuat otomatis dari retur Marketing (pesanan {ret.get('order_id') or '-'}) — "
@@ -922,9 +1141,11 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
         "return_type": "customer_refund",
         # ── info pesanan (dipetakan dari retur Marketing) ─────────────────────
         "order_number": ret.get("order_id", ""),
-        "resi_number": "",
+        "resi_number": str((order or {}).get("tracking_number") or "").strip(),
         "channel": ret.get("platform", ""),
-        "customer_name": ret.get("customer_name") or ret.get("account_name") or "Pembeli Marketplace",
+        "customer_name": (ret.get("customer_name") or (order or {}).get("customer_name")
+                          or (order or {}).get("buyer_username") or ret.get("account_name")
+                          or "Pembeli Marketplace"),
         "customer_contact": "",
         "sku_code": ident.get("material_code") or (ret.get("sku") or ""),
         "product_name": ident.get("material_name") or ret.get("product") or "",
@@ -949,6 +1170,10 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
         "link_candidates": ident.get("candidates") or [],
         # ── asal (jembatan satu arah) ─────────────────────────────────────────
         "source": "marketing_return",
+        "source_order_doc_id": (order or {}).get("id"),
+        "source_order_line": line_no if order else None,
+        "order_line_label": line_label,
+        "account_id": ret.get("account_id"),
         "source_marketing_return_id": ret["id"],
         "source_marketing_order_id": ret.get("order_id"),
         "source_account_name": ret.get("account_name") or "",

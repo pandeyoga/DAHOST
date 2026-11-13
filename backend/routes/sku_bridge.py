@@ -13,6 +13,10 @@ Endpoint (prefix ``/api/sku-bridge``):
   POST   /auto-map               — pemetaan massal (pratinjau dulu; `apply=true` utk menulis)
   POST   /relink                 — terapkan ulang seluruh pemetaan ke pesanan
   DELETE /mappings/{psid}        — lepas pemetaan
+  GET    /usulan                 — 14 Nov 2026: usulan varian (pasti / AI / tidak bisa) per kombinasi SKU + variasi
+  POST   /usulan/setujui         — setujui satu usulan (satu klik → semua pesanan kombinasi itu tertaut)
+  POST   /usulan/setujui-pasti   — setujui semua usulan pasti sekaligus
+  POST   /usulan/ai              — minta Asisten AI mengusulkan varian (≤ 20 kombinasi per permintaan)
 """
 from typing import Optional
 
@@ -21,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from auth import log_activity, require_auth, serialize_doc
 from core import sku_bridge as bridge
+from core import sku_usulan as usulan
 from database import get_db
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES, WAREHOUSE_ROLES  # T-01 2.3
@@ -275,3 +280,78 @@ async def unmap(platform_sku_id: str, user: dict = Depends(require_auth)):
     await log_activity(user.get('id', ''), user.get('name', ''),
                        f'Jembatan SKU dilepas: {platform_sku_id}', 'sku-bridge', platform_sku_id)
     return res
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 14 Nov 2026 — USULAN AI: varian master untuk baris yang belum tertaut / baru tertaut model
+# ══════════════════════════════════════════════════════════════════════════════
+@router.get('/usulan')
+async def daftar_usulan(account_id: Optional[str] = None, q: Optional[str] = None, jenis: Optional[str] = None,
+                        limit: int = Query(default=300, ge=1, le=1000), user: dict = Depends(require_auth)):
+    """Kombinasi SKU + variasi yang belum tertaut varian, dengan usulan (pasti / AI) atau saran tindakan."""
+    db = get_db()
+    res = await usulan.daftar(db, account_id=account_id, q=q or '', jenis=jenis or '', limit=limit)
+    res['rows'] = [serialize_doc(r) for r in res['rows']]
+    res['ai'] = await usulan.status_ai(db, user)
+    return res
+
+
+class UsulanSetujuiIn(BaseModel):
+    kunci: str = Field(..., description='Kunci jembatan kombinasi (SKU platform atau kunci nama+variasi)')
+    variant_id: str
+    sumber: str = Field(default='pasti', description="pasti | ai | manual")
+    keyakinan: Optional[float] = None
+    product_name: str = ''
+    variation: str = ''
+    account_id: Optional[str] = None
+
+
+@router.post('/usulan/setujui')
+async def setujui_usulan(body: UsulanSetujuiIn, user: dict = Depends(require_auth)):
+    """Setujui satu usulan → tautkan lewat jalur resmi jembatan (semua pesanan kombinasi itu ikut)."""
+    db = get_db()
+    metode = {'pasti': usulan.METODE_PASTI, 'ai': usulan.METODE_AI}.get(body.sumber, 'manual')
+    try:
+        res = await usulan.setujui(db, kunci=body.kunci, variant_id=body.variant_id, user=user, metode=metode,
+                                   keyakinan=body.keyakinan, product_name=body.product_name,
+                                   variation=body.variation, account_id=body.account_id)
+    except usulan.GalatUsulan as e:
+        raise HTTPException(e.status, e.pesan) from None
+    await log_activity(user.get('id', ''), user.get('name', ''),
+                       f"Jembatan SKU (usulan {body.sumber}): {body.kunci} → {res['target'].get('name')} "
+                       f"({res['orders_updated']} pesanan tertaut)", 'sku-bridge', body.kunci)
+    res['bridge'] = serialize_doc(res.get('bridge') or {})
+    return res
+
+
+class UsulanPastiIn(BaseModel):
+    account_id: Optional[str] = None
+    kunci: list = Field(default_factory=list, description='Kosong = semua usulan pasti')
+
+
+@router.post('/usulan/setujui-pasti')
+async def setujui_usulan_pasti(body: UsulanPastiIn, user: dict = Depends(require_auth)):
+    """Setujui semua usulan pasti (atau yang dipilih) sekaligus."""
+    db = get_db()
+    res = await usulan.setujui_pasti(db, user=user, account_id=body.account_id, kunci=list(body.kunci or []))
+    await log_activity(user.get('id', ''), user.get('name', ''),
+                       f"Jembatan SKU: {res['disetujui']} usulan pasti disetujui ({res['orders_updated']} pembaruan "
+                       "pesanan)", 'sku-bridge', '')
+    return res
+
+
+class UsulanAiIn(BaseModel):
+    account_id: Optional[str] = None
+    kunci: list = Field(default_factory=list, description='Kosong = kombinasi yang belum pernah dijawab AI')
+    maks: int = Field(default=usulan.MAKS_AI, ge=1, le=usulan.MAKS_AI)
+
+
+@router.post('/usulan/ai')
+async def minta_usulan_ai(body: UsulanAiIn, user: dict = Depends(require_auth)):
+    """Minta Asisten AI mengusulkan varian (hanya usulan; penautan tetap lewat persetujuan staf)."""
+    db = get_db()
+    try:
+        return await usulan.minta_ai(db, user, account_id=body.account_id, kunci=list(body.kunci or []),
+                                     maks=body.maks)
+    except usulan.GalatUsulan as e:
+        raise HTTPException(e.status, e.pesan) from None
