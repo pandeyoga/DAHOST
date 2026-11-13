@@ -24,6 +24,10 @@
  * berisi pencarian barang jadi (PilihProdukJadi) + jumlah per barang. Server mencatat SETIAP barang lewat mesin scan
  * yang sama (POST /pick → core.scan_out.scan): lembar, stok, HPP, batal baris, Tutup Hari tidak berubah. Barisnya
  * bertanda "Tanpa scan" (bukan daftar merah); hak & aturan stok sama dengan scan (keputusan owner 10 Nov).
+ *
+ * 2026-11-14 (owner: "klik diluar popup maka saya harus mulai dari awal karena hilang"): klik di luar popup tidak
+ * menutupnya (FormPopup bersama); × / Esc / Batal dengan pilihan terisi minta konfirmasi; pilihan + jumlah + kata cari
+ * disimpan sebagai draf per lokasi & jenis (sessionStorage) sampai disimpan atau dibuang dengan sengaja.
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
@@ -60,6 +64,30 @@ const LS_STORE = 'whScanOut.store';
 const LS_UNSENT = 'whScanOut.unsent';
 const loadUnsent = () => { try { return JSON.parse(localStorage.getItem(LS_UNSENT) || '[]') || []; } catch (_) { return []; } };
 const saveUnsent = (list) => { try { localStorage.setItem(LS_UNSENT, JSON.stringify(list || [])); } catch (_) { /* noop */ } };
+// 2026-11-14 (owner: "klik diluar popup maka saya harus mulai dari awal karena hilang"): pilihan "Pilih tanpa scan"
+// yang belum disimpan = DRAF per lokasi + jenis (Keluar / Batal kirim) di sessionStorage. Draf bertahan saat popup
+// tertutup, pindah tab Laporan/Kontrol, atau layar dimuat ulang; hilang hanya setelah disimpan atau dibuang dengan
+// sengaja (× / Esc / Batal → konfirmasi). Id pilihan (client_scan_id) ikut tersimpan, jadi simpan ulang draf yang
+// sempat terkirim saat jaringan putus tetap tidak memotong stok dua kali.
+export const SS_DRAF_PILIH = 'whScanOut.pilihDraf';
+export const kunciDrafPilih = (lokasi, jenis) => `${SS_DRAF_PILIH}.${lokasi || '-'}.${jenis || 'scan'}`;
+const drafKosong = (kunci) => ({ kunci, pilihan: [], cari: '' });
+export const bacaDrafPilih = (kunci) => {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(kunci) || 'null');
+    if (!d || !Array.isArray(d.pilihan)) return drafKosong(kunci);
+    const pilihan = d.pilihan.filter((p) => p && p.item && p.item.id && p.csid)
+      .map((p) => ({ item: p.item, qty: String(p.qty ?? '1'), csid: p.csid }));
+    return { kunci, pilihan, cari: typeof d.cari === 'string' ? d.cari : '' };
+  } catch (_) { return drafKosong(kunci); }
+};
+export const tulisDrafPilih = (draf) => {
+  try {
+    if (!draf?.kunci) return;
+    if (!draf.pilihan.length && !draf.cari) sessionStorage.removeItem(draf.kunci);
+    else sessionStorage.setItem(draf.kunci, JSON.stringify({ pilihan: draf.pilihan, cari: draf.cari }));
+  } catch (_) { /* penyimpanan peramban penuh/terkunci: draf tetap ada selama layar terbuka */ }
+};
 const MULTS = [1, 2, 6, 12];
 const FLAG_LABEL = {
   stok_kurang: 'Stok sistem kurang',
@@ -206,10 +234,19 @@ function ScanTab({ token }) {
   // Id pilihan (= client_scan_id) dibuat SAAT barang dicentang: Simpan yang terkirim dua kali (jaringan putus)
   // tidak memotong stok dua kali — server mengenali id yang sama, persis seperti "Kirim ulang" scan.
   const [pilihBuka, setPilihBuka] = useState(false);
-  const [pilihan, setPilihan] = useState([]);              // [{ item, qty, csid }]
+  const kunciDraf = kunciDrafPilih(loc, mode);
+  const [draf, setDraf] = useState(() => bacaDrafPilih(kunciDraf));   // { kunci, pilihan: [{ item, qty, csid }], cari }
+  // Ganti lokasi / jenis → muat draf milik lokasi+jenis itu (draf lain tetap tersimpan di tempatnya).
+  useEffect(() => { setDraf((d) => (d.kunci === kunciDraf ? d : bacaDrafPilih(kunciDraf))); }, [kunciDraf]);
+  useEffect(() => { tulisDrafPilih(draf); }, [draf]);
+  const pilihan = draf.kunci === kunciDraf ? draf.pilihan : [];
+  const setPilihan = (ubah) => setDraf((d) => ({ ...d, pilihan: typeof ubah === 'function' ? ubah(d.pilihan) : ubah }));
+  const setCariPilih = (cari) => setDraf((d) => ({ ...d, cari }));
+  const buangDraf = () => setDraf((d) => ({ ...d, pilihan: [], cari: '' }));
   const [pilihGalat, setPilihGalat] = useState('');
   const [pilihSimpan, setPilihSimpan] = useState(false);
-  const bukaPilih = () => { setPilihan([]); setPilihGalat(''); setPilihBuka(true); };
+  // Membuka popup TIDAK mengosongkan pilihan: draf yang belum disimpan langsung tampil lagi.
+  const bukaPilih = () => { setPilihGalat(''); setPilihBuka(true); };
   const ubahPilih = (item, centang) => setPilihan((p) => (centang
     ? (p.some((x) => x.item.id === item.id) ? p : [...p, { item, qty: '1', csid: newScanId() }])
     : p.filter((x) => x.item.id !== item.id)));
@@ -246,7 +283,7 @@ function ScanTab({ token }) {
         ].join(' ') || undefined,
       });
       setPilihBuka(false);
-      setPilihan([]);
+      buangDraf();                                  // tersimpan di server → draf selesai
       await loadToday();
     } catch (_) {
       setPilihGalat('Jaringan putus — belum pasti tercatat. Tekan simpan lagi tanpa mengubah pilihan: barang yang sudah tercatat tidak dihitung dua kali.');
@@ -370,8 +407,14 @@ function ScanTab({ token }) {
           </div>
           <Button type="button" size="sm" variant="outline" className="sm:ml-auto" onClick={bukaPilih}
             disabled={!loc || data?.can_scan === false} data-testid="scan-out-pilih"
-            title={loc ? 'Cari dan pilih banyak barang sekaligus, tanpa scan' : 'Pilih lokasi asal dulu'}>
+            title={!loc ? 'Pilih lokasi asal dulu'
+              : pilihan.length ? 'Lanjutkan pilihan yang belum disimpan' : 'Cari dan pilih banyak barang sekaligus, tanpa scan'}>
             <ListChecks className="w-4 h-4" /> Pilih tanpa scan
+            {pilihan.length > 0 && (
+              <span className="font-normal text-muted-foreground" data-testid="scan-out-pilih-draf">
+                · draf {num(pilihan.length)} barang
+              </span>
+            )}
           </Button>
         </div>
         <div className={mode === 'batal_kirim' ? 'rounded-lg ring-2 ring-[hsl(var(--warning)/0.35)] p-1' : ''}>
@@ -573,8 +616,17 @@ function ScanTab({ token }) {
       )}
 
       {/* Pilih tanpa scan — form = popup (Revisi 3 #2). Setiap barang dicatat server lewat mesin scan yang sama. */}
-      <FormPopup open={pilihBuka} onClose={() => { setPilihBuka(false); setPilihan([]); }} ukuran="panjang"
+      {/* Klik di luar popup tidak menutupnya; × / Esc / Batal dengan pilihan terisi meminta konfirmasi dulu
+          (FormPopup `adaIsian`). Dibuang = sengaja → draf dihapus. */}
+      <FormPopup open={pilihBuka} onClose={() => { setPilihBuka(false); setPilihGalat(''); buangDraf(); }} ukuran="panjang"
         testId="scan-out-pilih-form"
+        adaIsian={pilihan.length > 0}
+        konfirmasiTutup={{
+          judul: 'Buang pilihan barang?',
+          isi: `${num(pilihan.length)} barang (${num(pilihPcs)} pcs) yang dipilih belum disimpan dan akan dihapus. `
+            + 'Pilih "Kembali ke formulir" untuk melanjutkan.',
+          labelBuang: 'Buang pilihan',
+        }}
         judul={mode === 'batal_kirim' ? 'Batal kirim tanpa scan' : 'Barang keluar tanpa scan'}
         keterangan={`Lokasi asal ${locObj ? `${locObj.code}${locObj.name ? ` · ${locObj.name}` : ''}` : '-'}`
           + `${store ? ` · toko ${(stores.find((x) => x.id === store) || {}).account_name || ''}` : ''}. `
@@ -585,7 +637,7 @@ function ScanTab({ token }) {
           ? `Catat batal kirim${pilihan.length ? ` · ${num(pilihPcs)} pcs` : ''}`
           : `Keluarkan${pilihan.length ? ` · ${num(pilihPcs)} pcs` : ''}`}>
         {pilihBuka && (
-          <PilihProdukJadi lokasiId={loc} terpilih={terpilihMap} onUbah={ubahPilih}
+          <PilihProdukJadi lokasiId={loc} terpilih={terpilihMap} onUbah={ubahPilih} cari={draf.cari} onCari={setCariPilih}
             alasanTolak={(it) => it.masalah || null} testId="scan-out-pilih-cari" />
         )}
         <div className="space-y-2">

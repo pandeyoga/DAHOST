@@ -7,28 +7,62 @@
  * Di HP (< 640 px) keduanya penuh layar. Tutup: × , Esc, atau Batal.
  * Kaki: pesan galat (kiri) · Batal (garis) · Simpan (hijau, K3). Enter di isian = Simpan.
  * Form penolakan/penghapusan: `warnaSimpan="destructive"` (tombol simpan merah, mis. "Tolak").
+ *
+ * 14 Nov 2026 (keluhan owner di Scan Keluar: "klik di luar popup maka saya harus mulai dari awal karena hilang"):
+ *   • Klik/ketuk di LUAR popup TIDAK menutup formulir — berlaku untuk semua FormPopup. Popup konfirmasi
+ *     (`confirmDialog`) tidak terpengaruh.
+ *   • `adaIsian` — true bila formulir punya isian yang belum disimpan. Menutup lewat ×, Esc, atau Batal lalu
+ *     meminta konfirmasi dulu ("Buang isian…?"); "Kembali ke formulir" membiarkan isian utuh.
+ *     `konfirmasiTutup = { judul, isi, labelBuang }` mengganti kalimat konfirmasinya.
  */
+import { useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/utils';
 
 const LEBAR = { pendek: 'sm:max-w-lg', panjang: 'sm:max-w-3xl' };
+const tahanKlikLuar = (e) => e.preventDefault();
 
 export default function FormPopup({
   open, onClose, judul, keterangan, ukuran = 'pendek', children, onSimpan, labelSimpan = 'Simpan',
   menyimpan = false, galat, bisaSimpan = true, aksiKiri, testId = 'form-popup', warnaSimpan = 'success',
   testIdSimpan, testIdBatal, // opsional: pertahankan penanda lama yang dipakai tes
+  adaIsian = false, konfirmasiTutup,
 }) {
+  const sedangTanya = useRef(false);
   const kirim = (e) => {
     e.preventDefault();
     e.stopPropagation(); // popup di portal: submit tidak merambat ke <form> induk di halaman
     if (!menyimpan && bisaSimpan && onSimpan) onSimpan();
   };
+  // Satu jalan keluar untuk ×, Esc, dan Batal: isian yang belum disimpan tidak dibuang tanpa persetujuan.
+  const mintaTutup = async () => {
+    if (menyimpan || sedangTanya.current) return;
+    if (adaIsian) {
+      sedangTanya.current = true;
+      try {
+        const buang = await confirmDialog({
+          title: konfirmasiTutup?.judul || 'Buang isian yang belum disimpan?',
+          body: konfirmasiTutup?.isi || 'Isian di formulir ini belum disimpan dan akan hilang bila ditutup.',
+          confirmLabel: konfirmasiTutup?.labelBuang || 'Buang isian',
+          cancelLabel: 'Kembali ke formulir',
+          danger: true,
+        });
+        if (!buang) return;
+      } finally {
+        sedangTanya.current = false;
+      }
+    }
+    onClose?.();
+  };
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o && !menyimpan) onClose?.(); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) mintaTutup(); }}>
       <DialogContent
         data-testid={testId}
+        onPointerDownOutside={tahanKlikLuar}
+        onInteractOutside={tahanKlikLuar}
         className={cn(
           'flex max-h-[90vh] flex-col gap-0 p-0',
           LEBAR[ukuran] || LEBAR.pendek,
@@ -48,7 +82,7 @@ export default function FormPopup({
               {galat || null}
             </div>
             {aksiKiri}
-            <Button type="button" variant="outline" onClick={onClose} disabled={menyimpan}
+            <Button type="button" variant="outline" onClick={mintaTutup} disabled={menyimpan}
               data-testid={testIdBatal || `${testId}-batal`}>Batal</Button>
             <Button type="submit" variant={warnaSimpan} disabled={menyimpan || !bisaSimpan}
               data-testid={testIdSimpan || `${testId}-simpan`}>

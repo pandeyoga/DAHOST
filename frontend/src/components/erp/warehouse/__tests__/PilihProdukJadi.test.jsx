@@ -62,3 +62,20 @@ test('galat server tampil sebagai pemberitahuan', async () => {
   expect(apiFetch.mock.calls[0][0]).toBe('/api/rahaza/fg-pick?limit=50&ada_stok=true');
   expect(q('pp-galat').textContent).toContain('Akses ditolak');
 });
+
+test('kata cari dipegang induk (draf): langsung dipakai saat dibuka ulang, ketikan dikirim ke onCari', async () => {
+  apiFetch.mockReturnValue(jawab({ items: ITEMS, total: 2, terpotong: false }));
+  const onCari = jest.fn();
+  act(() => {
+    root.render(<PilihProdukJadi lokasiId="L1" terpilih={{}} onUbah={() => {}} cari="kaos coral" onCari={onCari} testId="pp" />);
+  });
+  await tunggu();
+  // tanpa menunggu jeda ketik: permintaan pertama sudah memakai kata cari draf
+  expect(apiFetch.mock.calls[0][0]).toBe('/api/rahaza/fg-pick?limit=50&q=kaos+coral&location_id=L1');
+  expect(q('pp-cari').value).toBe('kaos coral');
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(q('pp-cari'), 'kaos navy');
+    q('pp-cari').dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(onCari).toHaveBeenCalledWith('kaos navy');
+});
