@@ -78,13 +78,13 @@ def periksa_ubahan(lama: dict, body: dict, *, users: dict, peran_ada: set) -> di
         p = body.get("pemegang") or {}
         jenis = p.get("jenis")
         if jenis not in JENIS_PEMEGANG:
-            raise AturanTidakSah("Jenis pemegang harus akun tertentu, peran, atau dari data dokumen.")
+            raise AturanTidakSah("Penanggung jawab harus akun tertentu, peran, atau dari data dokumen.")
         if jenis == "data" and (t.pemegang or {}).get("jenis") != "data":
-            raise AturanTidakSah("Langkah ini tidak menyimpan pemegang di dokumennya — pilih akun atau peran.")
+            raise AturanTidakSah("Langkah ini tidak menyimpan penanggung jawab di dokumennya — pilih akun atau peran.")
         akun_ids = _daftar_id(p.get("akun_ids"), "Pemegang")
         tak_dikenal = [i for i in akun_ids if i not in users]
         if tak_dikenal:
-            raise AturanTidakSah("Ada akun pemegang yang tidak ditemukan atau sudah nonaktif.")
+            raise AturanTidakSah("Ada akun penanggung jawab yang tidak ditemukan atau sudah nonaktif.")
         peran = _daftar_id(p.get("peran"), "Peran")
         if any(r not in peran_ada for r in peran):
             raise AturanTidakSah("Ada peran yang tidak ditemukan.")
@@ -163,9 +163,9 @@ def periksa_ubahan(lama: dict, body: dict, *, users: dict, peran_ada: set) -> di
     if akhir.get("aktif"):
         p = akhir.get("pemegang") or {}
         if p.get("jenis") == "akun" and not p.get("akun_ids"):
-            raise AturanTidakSah("Pilih minimal satu akun pemegang sebelum mengaktifkan aturan ini.")
+            raise AturanTidakSah("Pilih minimal satu akun penanggung jawab sebelum mengaktifkan aturan ini.")
         if p.get("jenis") == "peran" and not p.get("peran"):
-            raise AturanTidakSah("Pilih minimal satu peran pemegang sebelum mengaktifkan aturan ini.")
+            raise AturanTidakSah("Pilih minimal satu peran penanggung jawab sebelum mengaktifkan aturan ini.")
     if not upd:
         raise AturanTidakSah("Tidak ada perubahan.")
     return upd
@@ -199,5 +199,5 @@ def berlaku_untuk(aturan: dict, user: dict) -> str | None:
         return "sebagai cadangan"
     if p.get("jenis") == "data":
         t = KATALOG.get(aturan.get("titik"))
-        return f"bila menjadi {(t.pemegang or {}).get('label') or 'pemegang di dokumen'}"
+        return f"bila menjadi {(t.pemegang or {}).get('label') or 'penanggung jawab di dokumen'}"
     return None

@@ -96,8 +96,8 @@ export default function PerStafTab({ onNavigate }) {
   ];
 
   return (
-    <PageLayout testId="pantau-staf-per-staf" title="Per staf"
-      subtitle="Siapa memakai sistem, dan berapa kewajibannya yang selesai tepat waktu."
+    <PageLayout testId="pantau-staf-per-staf" title="Kepatuhan"
+      subtitle="Berapa kewajiban tiap staf yang selesai tepat waktu, dan berapa hari ia memakai sistem."
       filters={<>
         <PeriodPicker value={periode} onChange={setPeriode} presets={PRESET_PERIODE} testId="pantau-staf-periode" />
         <SearchBox value={cari} onChange={setCari} placeholder="Cari nama atau peran" testId="pantau-staf-cari" />
@@ -105,7 +105,7 @@ export default function PerStafTab({ onNavigate }) {
       </>}
       actions={<TombolPeriksa onSelesai={muat} />}
       tools={<>
-        <TombolUnduh namaBerkas={`monitoring-staf-${periode.from}-${periode.to}`} namaLembar="Per staf" baris={baris}
+        <TombolUnduh namaBerkas={`kepatuhan-staf-${periode.from}-${periode.to}`} namaLembar="Kepatuhan" baris={baris}
           testId="pantau-staf-unduh" kolom={[
             { label: 'Staf', nilai: (r) => r.nama }, { label: 'Peran', nilai: (r) => namaPeran(r.peran) },
             { label: 'Aktif terakhir', nilai: (r) => (r.aktif_terakhir ? waktu(r.aktif_terakhir) : 'Belum tercatat') },
@@ -134,7 +134,7 @@ export default function PerStafTab({ onNavigate }) {
             hint="Langkah yang batas waktunya sudah lewat dan belum ada buktinya di data" testId="kartu-terlambat" />
           <StatTile label="Tepat waktu" value={kartu.data ? persen(k.tepat_waktu) : '—'}
             sub={kartu.data ? `${k.dinilai} kewajiban jatuh tempo di periode ini` : ''}
-            hint="Selesai sebelum batas oleh pemegangnya sendiri ÷ kewajiban yang sudah jatuh tempo" testId="kartu-tepat" />
+            hint="Selesai sebelum batas oleh penanggung jawabnya sendiri ÷ kewajiban yang sudah jatuh tempo" testId="kartu-tepat" />
           <StatTile label="Tidak aktif ≥ 3 hari kerja" value={kartu.data ? k.tidak_aktif_3_hari : '—'}
             accent={k.tidak_aktif_3_hari > 0 ? 'warning' : 'default'}
             hint="Aktivitas terakhir lebih dari 3 hari kerja lalu, atau belum pernah" testId="kartu-tidak-aktif" />

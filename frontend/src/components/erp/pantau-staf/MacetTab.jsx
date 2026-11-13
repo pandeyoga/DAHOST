@@ -61,7 +61,7 @@ export function FormMaafkan({ kejadian, onClose, onTersimpan }) {
   };
   return (
     <FormPopup open onClose={onClose} judul="Maafkan kewajiban ini" onSimpan={simpan} menyimpan={menyimpan}
-      keterangan={`${kejadian.nama} · ${labelDokumen(kejadian)}. Tidak dihitung di skor pemegangnya.`}
+      keterangan={`${kejadian.nama} · ${labelDokumen(kejadian)}. Tidak dihitung di skor penanggung jawabnya.`}
       labelSimpan="Maafkan" galat={galat} testId="form-maafkan">
       <Isian label="Alasan" wajib htmlFor="maaf-alasan">
         <Textarea id="maaf-alasan" value={alasan} maxLength={300} onChange={(e) => setAlasan(e.target.value)}
@@ -91,7 +91,7 @@ export function RantaiPopup({ kejadianId, onClose, onNavigate }) {
                 <p className="text-xs text-muted-foreground">
                   {x.status === 'selesai'
                     ? `Dikerjakan ${x.pelaku_nama || 'pelaku tidak tercatat'} · ${waktu(x.selesai_at)}`
-                    : `Menunggu ${pemegangLabel(x) || 'pemegang belum ditetapkan'} sejak ${waktu(x.mulai)} · batas ${waktu(x.tenggat)}`}
+                    : `Menunggu ${pemegangLabel(x) || 'penanggung jawab belum ditetapkan'} sejak ${waktu(x.mulai)} · batas ${waktu(x.tenggat)}`}
                 </p>
                 {x.dimaafkan?.alasan && <p className="text-xs text-muted-foreground">Dimaafkan: {x.dimaafkan.alasan}</p>}
               </div>
@@ -108,7 +108,7 @@ export function RantaiPopup({ kejadianId, onClose, onNavigate }) {
 export function GrupPopup({ grup, onClose, onNavigate }) {
   return (
     <DetailPopup open onClose={onClose} judul={`${grup.nama} · ${labelDokumen(grup)}`}
-      keterangan={`Menunggu ${pemegangLabel(grup) || 'pemegang belum ditetapkan'}`} status={<StatusKewajiban k={grup} />}
+      keterangan={`Menunggu ${pemegangLabel(grup) || 'penanggung jawab belum ditetapkan'}`} status={<StatusKewajiban k={grup} />}
       testId="pantau-staf-grup"
       aksi={grup.link_module && (
         <Button size="sm" variant="outline" onClick={() => { onClose(); onNavigate?.(grup.link_module, grup.link_params || undefined); }}>
@@ -138,23 +138,23 @@ export default function MacetTab({ onNavigate }) {
         {k.keterangan && <p className="truncate text-xs text-muted-foreground md:max-w-[14rem]">{k.keterangan}</p>}</div>) },
     { kunci: 'langkah', label: 'Langkah', isi: (k) => (
       <div className="min-w-0"><p>{k.nama}</p><p className="text-xs text-muted-foreground">{k.alur_label}</p></div>) },
-    { kunci: 'menunggu', label: 'Menunggu', isi: (k) => (pemegangLabel(k)
+    { kunci: 'menunggu', label: 'Penanggung jawab', isi: (k) => (pemegangLabel(k)
       ? <span className="text-sm">{pemegangLabel(k)}</span>
-      : <StatusBadge status="kosong" label="Belum ada pemegang" tone="warning" />) },
+      : <StatusBadge status="kosong" label="Belum ada penanggung jawab" tone="warning" />) },
     { kunci: 'sejak', label: 'Sejak', isi: (k) => <span className="text-sm md:whitespace-nowrap">{waktu(k.mulai)}{k.tanpa_waktu ? '*' : ''}</span> },
     { kunci: 'lama', label: 'Terlambat', rata: 'kanan', isi: (k) => (k.status === 'terlambat'
       ? <span className="font-semibold text-[hsl(var(--danger-text))]">{lamaTerlambat(k)}</span> : <StatusKewajiban k={k} />) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (k) => (
       <div className="flex justify-end gap-1">
         <Button size="icon-sm" variant="outline" disabled={!k.pemegang?.length} onClick={() => ingatkan(k, reload)}
-          title="Ingatkan pemegang" aria-label="Ingatkan pemegang" data-testid={`ingatkan-${k.id}`}><BellRing /></Button>
+          title="Ingatkan penanggung jawab" aria-label="Ingatkan penanggung jawab" data-testid={`ingatkan-${k.id}`}><BellRing /></Button>
         <Button size="icon-sm" variant="outline" onClick={() => setMaaf(k)} title="Maafkan (tidak dihitung di skor)"
           aria-label="Maafkan" data-testid={`maafkan-${k.id}`}><HandHeart /></Button>
       </div>) },
   ];
 
   return (
-    <PageLayout testId="pantau-staf-macet" title="Macet sekarang"
+    <PageLayout testId="pantau-staf-macet" title="Kewajiban terlambat"
       subtitle="Langkah yang batas waktunya lewat: menunggu siapa, sejak kapan, dan siapa mengerjakan langkah sebelumnya."
       filters={<>
         <FilterChips options={[{ key: 'terlambat', label: 'Terlambat' }, { key: 'semua', label: 'Terlambat & menunggu' }]}
@@ -165,10 +165,10 @@ export default function MacetTab({ onNavigate }) {
       </>}
       actions={<TombolPeriksa onSelesai={reload} />}
       tools={<>
-        <TombolUnduh namaBerkas="kewajiban-macet" namaLembar="Macet" baris={baris} testId="macet-unduh" kolom={[
+        <TombolUnduh namaBerkas="kewajiban-terlambat" namaLembar="Kewajiban terlambat" baris={baris} testId="macet-unduh" kolom={[
           { label: 'Dokumen', nilai: (k) => labelDokumen(k) }, { label: 'Keterangan', nilai: (k) => k.keterangan || '' },
           { label: 'Langkah', nilai: (k) => k.nama }, { label: 'Alur', nilai: (k) => k.alur_label },
-          { label: 'Menunggu', nilai: (k) => pemegangLabel(k) || 'Belum ada pemegang' },
+          { label: 'Penanggung jawab', nilai: (k) => pemegangLabel(k) || 'Belum ada penanggung jawab' },
           { label: 'Sejak', nilai: (k) => waktu(k.mulai) }, { label: 'Batas', nilai: (k) => waktu(k.tenggat) },
           { label: 'Terlambat', nilai: (k) => lamaTerlambat(k) },
         ]} />

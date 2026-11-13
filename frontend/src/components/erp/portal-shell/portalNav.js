@@ -161,7 +161,7 @@ export const PORTAL_NAV = {
         // Keputusan owner K3: hanya owner & admin (cermin backend routes/pantau_staf.PERAN_PEMANTAU).
         label: 'PEMANTAUAN STAF',
         items: [
-          { id: 'pantau-staf',      label: 'Monitoring Staf',  icon: UserCheck, roles: ['owner', 'admin', 'superadmin'] },
+          { id: 'pantau-staf',      label: 'Pemantauan Staf',  icon: UserCheck, roles: ['owner', 'admin', 'superadmin'] },
           { id: 'aturan-kewajiban', label: 'Aturan Kewajiban', icon: ListChecks, roles: ['owner', 'admin', 'superadmin'] },
         ],
       },
