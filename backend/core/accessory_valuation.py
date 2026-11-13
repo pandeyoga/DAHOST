@@ -188,6 +188,49 @@ async def apply_receipt_cost(db, material_id: str, qty_in: float, cost_in: float
     }
 
 
+def replaced_average(qty_before: float, cost_before: float, qty_old: float, cost_old: float,
+                     qty_new: float, cost_new: float) -> tuple[float, bool]:
+    """HPP rata-rata bergerak bila SATU penerimaan lama diganti angka baru (fungsi murni, 14 Nov 2026).
+
+    Dipakai koreksi progres cutting: potongan masuk `qty_old` @ `cost_old` diganti `qty_new` @ `cost_new`.
+        nilai baru = qty_before × HPP sekarang − qty_old × cost_old + qty_new × cost_new
+        HPP baru   = nilai baru ÷ (qty_before − qty_old + qty_new)
+    Return (HPP baru, dipotong_ke_nol). Stok sesudah koreksi 0 ⇒ HPP sekarang dipertahankan; stok sebelum koreksi
+    ≤ 0 atau belum bernilai ⇒ HPP = harga masuk baru (sama dengan `moving_average`). Nilai negatif (harga sudah
+    berubah sejak penerimaan lama) dipotong ke 0 dan dilaporkan, bukan disembunyikan.
+    """
+    qb, cb = _f(qty_before), _f(cost_before)
+    qo, co, qn, cn = _f(qty_old), _f(cost_old), _f(qty_new), _f(cost_new)
+    qty_after = qb - qo + qn
+    if qty_after <= 1e-9:
+        return round(cb, 4), False
+    if qb <= 1e-9 or cb <= 0:
+        return round(cn if cn > 0 else cb, 4), False
+    value = qb * cb - qo * co + qn * cn
+    if value < -0.01:          # selisih pembulatan HPP 4 desimal (mis. −0,0003) bukan nilai negatif sungguhan
+        return 0.0, True
+    return round(max(value, 0.0) / qty_after, 4), False
+
+
+async def replace_receipt_cost(db, material_id: str, *, qty_before: float, qty_old: float, cost_old: float,
+                               qty_new: float, cost_new: float, actor: dict | None = None,
+                               notes: str = "") -> dict:
+    """Ganti satu penerimaan lama di rata-rata bergerak (`replaced_average`) + riwayat HPP. Tanpa jurnal: dipakai
+    koreksi progres cutting, yang nilainya hanya berpindah antar persediaan (kain ↔ potongan, akun yang sama)."""
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+    old_cost = resolve_unit_cost(mat)
+    new_cost, clipped = replaced_average(qty_before, old_cost, qty_old, cost_old, qty_new, cost_new)
+    changed = abs(new_cost - old_cost) > 1e-6
+    if changed:
+        await db.rahaza_materials.update_one({"id": material_id}, {"$set": {
+            "unit_cost": new_cost, "cost_method": COST_METHOD, "cost_updated_at": _now(), "updated_at": _now()}})
+        await _record_history(db, material_id=material_id, old_cost=old_cost, new_cost=new_cost,
+                              qty_before=qty_before, qty_in=_f(qty_new) - _f(qty_old), cost_in=cost_new,
+                              source="correction", actor=actor, notes=notes)
+    return {"old_unit_cost": round(old_cost, 4), "new_unit_cost": round(new_cost, 4), "changed": changed,
+            "clipped": clipped, "qty_before": round(_f(qty_before), 4)}
+
+
 def negative_stock_adjustment(qty_before: float, cost_before: float, cost_in: float) -> float:
     """Nilai koreksi persediaan saat barang masuk ke stok MINUS (fungsi murni, 2026-11-06 Tahap 2).
 

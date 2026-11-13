@@ -298,6 +298,40 @@ async def consume_rolls(db, plan: list[dict], ref: dict, user: dict) -> list[dic
     return done
 
 
+async def return_rolls(db, consumption: list[dict], ref: dict, user: dict) -> list[dict]:
+    """Kebalikan `consume_rolls` (14 Nov 2026, koreksi progres cutting): sisa gulungan ditambah kembali sebanyak
+    pemakaian lama + movement `return`. Gulungan yang hilang dari master dilewati dan dilaporkan (`missing`)."""
+    done = []
+    for p in consumption or []:
+        qty = round(_f(p.get("qty")), 3)
+        if qty <= 0:
+            continue
+        roll = await db[ROLLS].find_one({"id": p.get("roll_id")}, {"_id": 0})
+        if not roll:
+            done.append({**p, "missing": True})
+            continue
+        field = remaining_field(roll)
+        new_remaining = round(remaining_of(roll) + qty, 3)
+        total = total_of(roll)
+        status = roll.get("status")
+        if status != "rejected":
+            status = "in_stock" if total > 0 and new_remaining >= total - 0.0001 else "partly_issued"
+        await db[ROLLS].update_one({"id": roll["id"]}, {"$set": {
+            field: new_remaining, "status": status,
+            "updated_at": _now(), "updated_by": user.get("name") or user.get("id"),
+        }})
+        await db[ROLL_MOVES].insert_one({
+            "id": _uid(), "roll_id": roll["id"], "roll_no": roll.get("roll_no", ""),
+            "movement_type": "return", "qty": qty, "unit": roll.get("uom", ""),
+            "reference_type": ref.get("type", "cutting_correction"), "reference_id": ref.get("id"),
+            "reference_no": ref.get("number", ""),
+            "notes": ref.get("notes", ""),
+            "created_at": _now(), "created_by": user.get("name") or user.get("id"),
+        })
+        done.append({**p, "remaining_after": new_remaining, "status": status})
+    return done
+
+
 async def receipts_missing_rolls(db, limit: int = 50) -> list[dict]:
     """Penerimaan kain yang SUDAH masuk stok tetapi tidak punya rincian roll.
 

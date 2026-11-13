@@ -12,16 +12,27 @@
  * Semua mutasi stok terjadi di backend lewat SSOT gudang — UI hanya melaporkan
  * hasilnya (stok kain turun, stok potongan naik) supaya user melihat efeknya.
  * HPP potongan per pcs = total biaya kain ÷ total pcs hasil (sama untuk semua baris order).
+ *
+ * 14 Nov 2026 (owner: "di cutting yang sedang berjalan, tolong bisa dilakukan EDIT"; "yang sudah selesai juga bisa"):
+ * tombol Ubah juga untuk order Berjalan/Selesai (baris yang sudah dipotong terkunci), dan tiap catatan progres punya
+ * tombol Koreksi — server membalik catatan lama lalu mencatat angka baru (alasan wajib, jejaknya tampil di riwayat).
+ *
+ * 14 Nov 2026 (owner: "jika cutting request namun kain belum ada maka bisa request pending … dan tolong tambahkan
+ * seperti filter dll agar mempermudah"): order draf yang kainnya belum cukup tampil "Menunggu kain" + alasannya
+ * (dihitung server dari stok saat dibaca — begitu kain masuk, otomatis "Kain siap"). Penyaring: status, model, warna,
+ * kain, peminta, periode dibuat, cari, dan "Hasil di atas rencana" (> 120% target, kasus 93 dari 50).
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
   Plus, RefreshCw, Search, PlayCircle, CheckCircle2, XCircle,
-  Trash2, Package, AlertCircle, Loader2, History, Scissors, PencilLine,
+  Trash2, Package, AlertCircle, Loader2, History, Scissors, PencilLine, AlertTriangle, Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import FilterChips from '@/components/ui/filter-chips';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TabelData from '@/components/ui/tabel-data';
@@ -36,6 +47,23 @@ import { fmtQty } from '../warehouse/rollLines';
 import CuttingOrderForm from './CuttingOrderForm';
 import CuttingProgressForm from './CuttingProgressForm';
 import { qtyPerUnit } from './cuttingLines';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from '../finance/PeriodPicker';
+
+/** Pil status di daftar: status tampilan server (`display_status`), "Menunggu kain" dipisah dari draf biasa. */
+const STATUS_CHIPS = [
+  { key: '', label: 'Semua', count: 'all' }, { key: 'waiting_fabric', label: 'Menunggu kain' },
+  { key: 'draft', label: 'Draf' }, { key: 'in_progress', label: 'Berjalan' }, { key: 'completed', label: 'Selesai' },
+  { key: 'cancelled', label: 'Dibatalkan' },
+];
+const NO_FACETS = { models: [], colors: [], fabrics: [], requesters: [], counts: {} };
+const statusOf = (r) => r?.display_status || r?.status;
+
+/** "Lebih 86% dari target" — hasil potong jauh di atas rencana (sering salah ketik). */
+function overText(r) {
+  const planned = Number(r.planned_output_qty || 0);
+  if (!(planned > 0)) return 'Hasil di atas rencana';
+  return `Lebih ${fmtNum(((Number(r.produced_qty || 0) - planned) / planned) * 100)}% dari target`;
+}
 
 /** Kain terpakai / rencana per satuan ("8 / 30 kg · 2 / 5 m") — kg, yard, meter tidak dijumlah. */
 function fabricUse(r) {
@@ -55,6 +83,14 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
   const [err, setErr] = useState('');
+  // Penyaring tambahan (14 Nov 2026) — pilihannya dari order yang ada (`/orders/facets`)
+  const [model, setModel] = useState('');
+  const [color, setColor] = useState('');
+  const [fabric, setFabric] = useState('');
+  const [requester, setRequester] = useState('');
+  const [periode, setPeriode] = useState(() => periodFromPreset('all'));
+  const [overOnly, setOverOnly] = useState(false);
+  const [facets, setFacets] = useState(NO_FACETS);
 
   // Form buat / ubah (satu komponen; `editOrder` = order draf yang diubah)
   const [formOpen, setFormOpen] = useState(false);
@@ -65,6 +101,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const [acting, setActing] = useState(false);
   // Standar UI/UX v2: form progres = popup sendiri; rincian disembunyikan sementara.
   const [progOpen, setProgOpen] = useState(false);
+  // Catatan progres yang sedang dikoreksi (form yang sama dengan Catat progres, terisi angka lama).
+  const [fixProg, setFixProg] = useState(null);
 
   // ── FASE H-6b (2026-08-17) — progres yang kainnya sudah keluar tetapi BELUM
   // punya dokumen "Pengeluaran Material". Ditampilkan supaya tidak ada arus
@@ -80,15 +118,39 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       const qs = new URLSearchParams();
       if (status) qs.set('status', status);
       if (q) qs.set('q', q);
+      if (model) qs.set('model_id', model);
+      if (color) qs.set('color', color);
+      if (fabric) qs.set('material_id', fabric);
+      if (requester) qs.set('created_by', requester);
+      if (periode.from) qs.set('date_from', periode.from);
+      if (periode.to) qs.set('date_to', periode.to);
+      if (overOnly) qs.set('over', 'true');
       setRows(await cuttingApi('GET', `/orders${qs.toString() ? `?${qs}` : ''}`, token));
     } catch (e) {
       setErr(e.message);
     } finally {
       setLoading(false);
     }
-  }, [token, status, q]);
+  }, [token, status, q, model, color, fabric, requester, periode, overOnly]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadFacets = useCallback(async () => {
+    if (!token) return;
+    try {
+      setFacets({ ...NO_FACETS, ...(await cuttingApi('GET', '/orders/facets', token)) });
+    } catch {
+      setFacets(NO_FACETS);
+    }
+  }, [token]);
+
+  useEffect(() => { loadFacets(); }, [loadFacets]);
+
+  const adaSaringan = !!(status || q || model || color || fabric || requester || overOnly || periode.preset !== 'all');
+  const resetSaringan = () => {
+    setStatus(''); setQ(''); setModel(''); setColor(''); setFabric(''); setRequester(''); setOverOnly(false);
+    setPeriode(periodFromPreset('all'));
+  };
 
   const loadMiMissing = useCallback(async () => {
     if (!token) return;
@@ -126,6 +188,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const openDetail = async (id) => {
     setDetailLoading(true);
     setProgOpen(false);
+    setFixProg(null);
     try {
       setDetail(await cuttingApi('GET', `/orders/${id}`, token));
     } catch (e) {
@@ -140,6 +203,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       setDetail(await cuttingApi('GET', `/orders/${id}`, token));
     } catch { /* rincian tetap yang lama; daftar tetap dimuat ulang */ }
     load();
+    loadFacets();
   };
 
   const openCreate = () => { setEditOrder(null); setFormOpen(true); };
@@ -148,6 +212,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     setFormOpen(false);
     setEditOrder(null);
     await load();
+    loadFacets();
     if (saved?.id) openDetail(saved.id);
   };
 
@@ -170,6 +235,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
   const onProgressSaved = async () => {
     setProgOpen(false);
+    setFixProg(null);
     await refreshDetail(detail.id);
     await loadMiMissing();
   };
@@ -182,6 +248,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       if (res?.notice) toast.info(res.notice, { duration: 6000 });
       if (detail?.id === row.id) setDetail(null);
       load();
+      loadFacets();
     } catch (e) {
       toast.error(e.message);
     }
@@ -189,6 +256,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
   const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
   const stLabel = (s) => (STATUS_META[s] || STATUS_META.draft).label;
+  const chipCount = (key) => (key === 'all' ? facets.counts.all : facets.counts[key]) ?? undefined;
   const kolom = [
     { kunci: 'nomor', label: 'Nomor', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums whitespace-nowrap">{r.number}</span> },
     { kunci: 'style', label: 'Hasil potongan', hp: 'keterangan', isi: (r) => (
@@ -204,6 +272,16 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
         <p className="text-xs tabular-nums text-muted-foreground">
           {(r.inputs || []).length > 1 ? `${r.inputs.length} kain` : r.input_material_code}
         </p>
+        {/* 14 Nov 2026: draf — kain sudah cukup atau masih ditunggu (dihitung dari stok saat dibaca) */}
+        {r.fabric_waiting && (
+          <p className="text-xs text-[hsl(var(--warning-text))]" title={r.fabric_note} data-testid={`cutting-waiting-${r.number}`}>
+            {(r.fabric_shortage || []).map((x) => (Number(x.short) > 0
+              ? `Kurang ${fmtNum(x.short, 2)} ${x.unit}` : 'Gulungan belum terbit')).join(' · ')}
+          </p>
+        )}
+        {r.status === 'draft' && !r.fabric_waiting && (
+          <p className="text-xs text-[hsl(var(--success-text))]" data-testid={`cutting-ready-${r.number}`}>Kain siap — bisa dimulai</p>
+        )}
       </div>) },
     { kunci: 'pakai', label: 'Kain terpakai', rata: 'kanan', isi: (r) => (
       <span className="tabular-nums whitespace-nowrap">{fabricUse(r)}</span>) },
@@ -214,8 +292,14 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
         <div className="mt-1 h-1 overflow-hidden rounded-full bg-foreground/10">
           <div className="h-full bg-primary" style={{ width: `${Math.min(r.progress_pct || 0, 100)}%` }} />
         </div>
+        {/* 14 Nov 2026 (kasus 93 dari 50): hasil > 120% target ditandai — periksa, mungkin salah ketik */}
+        {r.over_plan && (
+          <p className="mt-1 inline-flex items-center gap-1 text-xs text-[hsl(var(--warning-text))]" data-testid={`cutting-over-${r.number}`}>
+            <AlertTriangle className="h-3 w-3" />{overText(r)}
+          </p>
+        )}
       </div>) },
-    { kunci: 'status', label: 'Status', isi: (r) => <StatusPill status={r.status} /> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusPill status={statusOf(r)} /> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (
       <div className="flex justify-end gap-1.5">
         <Button size="sm" variant="outline" onClick={() => openDetail(r.id)} data-testid={`cutting-detail-${r.number}`}>Rincian</Button>
@@ -229,6 +313,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   ];
 
   const hpp = detail?.hpp_summary || {};
+  // Order berjalan & selesai boleh diubah dan catatan progresnya dikoreksi (keputusan owner 14 Nov 2026).
+  const canFix = detail?.status === 'in_progress' || detail?.status === 'completed';
 
   return (
     <PageLayout testId="cutting-orders-module" title="Order Cutting"
@@ -240,14 +326,42 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nomor, model, kain, kode potongan"
             className="pl-8" data-testid="cutting-search-input" />
         </div>
-        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false}
-          className="h-9 w-44" wrapperClassName="w-44" aria-label="Status" data-testid="cutting-status-filter">
-          <option value="">Semua status</option>
-          <option value="draft">Draf</option>
-          <option value="in_progress">Berjalan</option>
-          <option value="completed">Selesai</option>
-          <option value="cancelled">Dibatalkan</option>
+        <FilterChips value={status} onChange={setStatus} hideWhenEmpty={false} ariaLabel="Status order"
+          testId="cutting-status-filter"
+          options={STATUS_CHIPS.map((c) => ({ key: c.key, label: c.label, count: chipCount(c.count || c.key) }))} />
+        <SmartNativeSelect value={model} onChange={(e) => setModel(e.target.value)} searchable
+          searchPlaceholder="Cari model…" className="h-9 w-48" wrapperClassName="w-48" aria-label="Model"
+          data-testid="cutting-filter-model">
+          <option value="">Semua model</option>
+          {facets.models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </SmartNativeSelect>
+        <SmartNativeSelect value={color} onChange={(e) => setColor(e.target.value)} searchable
+          searchPlaceholder="Cari warna…" className="h-9 w-40" wrapperClassName="w-40" aria-label="Warna"
+          data-testid="cutting-filter-color">
+          <option value="">Semua warna</option>
+          {facets.colors.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={fabric} onChange={(e) => setFabric(e.target.value)} searchable
+          searchPlaceholder="Cari kain…" className="h-9 w-48" wrapperClassName="w-48" aria-label="Kain"
+          data-testid="cutting-filter-fabric">
+          <option value="">Semua kain</option>
+          {facets.fabrics.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={requester} onChange={(e) => setRequester(e.target.value)} searchable
+          searchPlaceholder="Cari nama…" className="h-9 w-44" wrapperClassName="w-44" aria-label="Peminta"
+          data-testid="cutting-filter-requester">
+          <option value="">Semua peminta</option>
+          {facets.requesters.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+        </SmartNativeSelect>
+        <PeriodPicker value={periode} onChange={setPeriode} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="cutting-filter-period" />
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground" htmlFor="cutting-filter-over">
+          <Checkbox id="cutting-filter-over" checked={overOnly} onCheckedChange={(v) => setOverOnly(!!v)}
+            data-testid="cutting-filter-over" />
+          Hasil di atas rencana{Number(facets.counts.over_plan) > 0 ? ` (${facets.counts.over_plan})` : ''}
+        </label>
+        {adaSaringan && (
+          <Button variant="link" size="sm" onClick={resetSaringan} data-testid="cutting-filter-reset">Hapus saringan</Button>
+        )}
       </>}
       tools={<>
         <TombolUnduh namaBerkas="order-cutting" namaLembar="Order cutting" baris={rows} testId="cutting-unduh"
@@ -258,9 +372,13 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             { label: 'Kain terpakai', nilai: (r) => fabricUse(r) },
             { label: 'Potongan jadi (pcs)', nilai: (r) => Number(r.produced_qty || 0) },
             { label: 'Target (pcs)', nilai: (r) => Number(r.planned_output_qty || 0) },
-            { label: 'Status', nilai: (r) => stLabel(r.status) }, { label: 'Dibuat', nilai: (r) => fmtDateTime(r.created_at) },
+            { label: 'Status', nilai: (r) => stLabel(statusOf(r)) }, { label: 'Dibuat', nilai: (r) => fmtDateTime(r.created_at) },
+            { label: 'Peminta', nilai: (r) => r.created_by_name || '' },
+            { label: 'Kain belum cukup', nilai: (r) => r.fabric_note || '' },
+            { label: 'Hasil di atas rencana', nilai: (r) => (r.over_plan ? overText(r) : '') },
           ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        <Button variant="outline" size="icon" onClick={() => { load(); loadFacets(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang"
           data-testid="cutting-refresh-btn">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
@@ -323,9 +441,12 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={(r) => openDetail(r.id)} testId="cutting-orders-table"
           kosong={<EmptyState icon={Scissors} testId="cutting-empty-state"
-            title={q || status ? 'Tidak ada order yang cocok' : 'Belum ada order cutting'}
-            description={q || status ? 'Ubah kata pencarian atau status.' : 'Mulai dengan memilih kain dari master material Gudang.'}
-            action={!q && !status && <Button onClick={openCreate}><Plus />Buat cutting</Button>} />} />
+            title={adaSaringan ? 'Tidak ada order yang cocok' : 'Belum ada order cutting'}
+            description={adaSaringan ? 'Ubah kata pencarian atau penyaringnya.'
+              : 'Mulai dengan memilih kain dari master material Gudang — kain yang belum ada stoknya tetap bisa diminta.'}
+            action={adaSaringan
+              ? <Button variant="outline" onClick={resetSaringan}>Hapus saringan</Button>
+              : <Button onClick={openCreate}><Plus />Buat cutting</Button>} />} />
       )}
 
       {/* ── FORM BUAT / UBAH CUTTING (popup panjang): kain & gulungan → hasil potongan ── */}
@@ -334,11 +455,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
       {/* ── RINCIAN ORDER (popup) ─────────────────────────────────────── */}
       {detail && (
-        <DetailPopup open={!progOpen && !formOpen} onClose={() => setDetail(null)} judul={`Cutting ${detail.number}`} testId="cutting-detail-panel"
+        <DetailPopup open={!progOpen && !formOpen && !fixProg} onClose={() => setDetail(null)} judul={`Cutting ${detail.number}`} testId="cutting-detail-panel"
           keterangan={`Dibuat ${fmtDateTime(detail.created_at)} oleh ${detail.created_by_name || '—'} · gudang sumber ${detail.location_name || '—'}`}
-          status={<StatusPill status={detail.status} />}
+          status={<StatusPill status={statusOf(detail)} />}
           aksi={<>
-            {detail.status === 'draft' && (
+            {(detail.status === 'draft' || canFix) && (
               <Button size="sm" variant="outline" onClick={openEdit} disabled={acting} data-testid="cutting-edit-btn">
                 <PencilLine />Ubah
               </Button>
@@ -367,6 +488,19 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             )}
           </>}>
           {detailLoading && <div className="h-1 animate-pulse rounded bg-primary" />}
+
+          {/* 14 Nov 2026: request yang kainnya belum ada tetap tersimpan; keadaan kain dihitung dari stok saat dibuka */}
+          {detail.status === 'draft' && detail.fabric_waiting && (
+            <Notice tone="warning" icon={Clock} testId="cutting-detail-waiting" title="Menunggu kain">
+              {(detail.fabric_shortage || []).map((x) => x.reason).join('; ')}. Order ini otomatis tampil siap dimulai
+              begitu kainnya masuk gudang (penerimaan, impor roll, atau opname).
+            </Notice>
+          )}
+          {detail.status === 'draft' && !detail.fabric_waiting && (
+            <Notice tone="success" icon={CheckCircle2} testId="cutting-detail-ready">
+              Kain sudah cukup di gudang — order ini bisa dimulai.
+            </Notice>
+          )}
 
           {/* Kain & gulungan */}
           <div className="space-y-2">
@@ -509,6 +643,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     { label: 'Gulungan dipakai', nilai: (p) => (p.roll_consumption || []).map((rc) => `${rc.roll_no} −${fmtQty(rc.qty)}`).join(', ') },
                     { label: 'Dokumen keluar', nilai: (p) => p.material_issue_number || 'Belum ada' },
                     { label: 'Catatan', nilai: (p) => p.note || '' }, { label: 'Oleh', nilai: (p) => p.created_by_name || '' },
+                    { label: 'Koreksi', nilai: (p) => correctionText(p) },
                   ]} />
               </div>
             </div>
@@ -520,11 +655,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                   {/* SESI #32 — nilai yang BERPINDAH dari kain ke potongan */}
                   <TableHead className="text-right">Nilai kain keluar</TableHead><TableHead className="text-right">HPP masuk</TableHead>
                   <TableHead>Gulungan dipakai</TableHead><TableHead>Dokumen keluar</TableHead>
-                  <TableHead>Catatan</TableHead><TableHead>Oleh</TableHead>
+                  <TableHead>Catatan</TableHead><TableHead>Oleh</TableHead><TableHead />
                 </TableRow></TableHeader>
                 <TableBody>
                   {(detail.progress || []).length === 0 ? (
-                    <TableRow><TableCell colSpan={11}>
+                    <TableRow><TableCell colSpan={12}>
                       <EmptyState icon={History} title="Progres belum dicatat"
                         description={detail.status === 'in_progress' ? 'Tekan Catat progres setelah kain dipotong.' : 'Mulai cutting dulu, lalu catat progresnya.'} />
                     </TableCell></TableRow>
@@ -566,8 +701,24 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                               <StatusBadge status="" label={p.material_issue_number} tone="success" className="tabular-nums" /></span>
                           : <StatusBadge status="" label="Belum ada" tone="warning" />}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{p.note || '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {p.note || (p.correction_reason ? '' : '—')}
+                        {/* Jejak koreksi (14 Nov 2026): siapa, kapan, alasan — angka lama tersimpan di server */}
+                        {p.correction_reason && (
+                          <p className="text-xs text-[hsl(var(--warning-text))]" data-testid={`cutting-progress-fixed-${p.id}`}>
+                            {correctionText(p)}
+                          </p>
+                        )}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{p.created_by_name || '—'}</TableCell>
+                      <TableCell className="text-right">
+                        {canFix && (
+                          <Button size="sm" variant="outline" onClick={() => setFixProg(p)} disabled={acting}
+                            data-testid={`cutting-progress-edit-${p.id}`}>
+                            <PencilLine />Koreksi
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -580,12 +731,20 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       )}
 
       {/* ── FORM CATAT PROGRES (popup panjang; rincian disembunyikan sementara) ── */}
-      {detail && detail.status === 'in_progress' && (
-        <CuttingProgressForm open={progOpen} onClose={() => setProgOpen(false)} order={detail} token={token}
-          onSaved={onProgressSaved} onNavigate={onNavigate} />
+      {detail && (detail.status === 'in_progress' || fixProg) && (
+        <CuttingProgressForm open={progOpen || !!fixProg} onClose={() => { setProgOpen(false); setFixProg(null); }}
+          order={detail} token={token} correcting={fixProg} onSaved={onProgressSaved} onNavigate={onNavigate} />
       )}
     </PageLayout>
   );
+}
+
+/** "Dikoreksi 14/11 10.05 oleh Sari: salah ketik" — jejak koreksi terakhir satu catatan progres. */
+function correctionText(p) {
+  if (!p?.correction_reason) return '';
+  const times = Number(p.correction_count) > 1 ? ` (${p.correction_count}×)` : '';
+  return `${p.voided ? 'Dikosongkan' : 'Dikoreksi'}${times} ${fmtDateTime(p.corrected_at)} oleh `
+    + `${p.corrected_by_name || '—'}: ${p.correction_reason}`;
 }
 
 /** Kain keluar satu progres tanpa dokumen MI (order banyak kain: per kain, satuannya bisa beda). */

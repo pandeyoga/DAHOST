@@ -10,6 +10,11 @@
  *
  * Aturan lama tetap: kain wajib dari master; gulungan wajib untuk kain yang dilacak per gulungan (boleh ditunjuk
  * saat lapor progres); peringatan stok kosong; model wajib dari Master Produk; ukuran wajib.
+ *
+ * 14 Nov 2026 (keputusan owner): order Berjalan / Selesai juga bisa diubah lewat form ini. Gudang sumber, kain yang
+ * sudah dipotong, gulungan yang sudah terpakai, dan model/varian hasil yang sudah jadi TERKUNCI (angka potongnya
+ * dibetulkan lewat Koreksi di riwayat progres); target, rencana kain, baris PO, gulungan tambahan, catatan, dan baris
+ * yang belum dipotong tetap bisa diubah. `line_id` baris dikirim supaya catatan progres tetap menunjuk baris yang sama.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, AlertCircle, Scissors } from 'lucide-react';
@@ -40,8 +45,14 @@ const matLabel = (m) => `${m.code} · ${m.name}`
 
 const stockAt = (m, locId) => Number(((m?.stock_locations || []).find((l) => l.location_id === locId) || {}).qty || 0);
 
+/** Baris kain order berjalan yang sudah dipotong (kainnya terkunci). */
+const inputLocked = (i) => Number(i.consumed_input_qty || 0) > 0 || Number(i.waste_qty || 0) > 0
+  || (i.roll_ids || []).some((r) => Number(r.consumed_qty || 0) > 0);
+
 export default function CuttingOrderForm({ open, onClose, token, order = null, onSaved, onNavigate }) {
   const editing = !!order;
+  // Order Berjalan / Selesai (14 Nov 2026): yang sudah dipotong terkunci, selebihnya bisa diubah.
+  const running = editing && !!order?.status && order.status !== 'draft';
   const [materials, setMaterials] = useState([]);
   const [locations, setLocations] = useState([]);
   const [models, setModels] = useState([]);
@@ -120,13 +131,16 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
     if (!open) return undefined;
     let alive = true;
     const ins = order?.inputs?.length
-      ? order.inputs.map((i) => ({ ...newInputLine(), input_material_id: i.input_material_id || '',
-        planned_input_qty: String(i.planned_input_qty ?? ''), roll_ids: (i.roll_ids || []).map((r) => r.roll_id) }))
+      ? order.inputs.map((i) => ({ ...newInputLine(), line_id: i.line_id, input_material_id: i.input_material_id || '',
+        planned_input_qty: String(i.planned_input_qty ?? ''), roll_ids: (i.roll_ids || []).map((r) => r.roll_id),
+        locked: running && inputLocked(i), consumed: Number(i.consumed_input_qty || 0), unit: i.input_unit || '',
+        used_rolls: (i.roll_ids || []).filter((r) => Number(r.consumed_qty || 0) > 0) }))
       : [newInputLine()];
     const outs = order?.outputs?.length
-      ? order.outputs.map((o) => ({ ...newOutputLine(o.roll_ids || []), model_id: o.model_id || '',
+      ? order.outputs.map((o) => ({ ...newOutputLine(o.roll_ids || []), line_id: o.line_id, model_id: o.model_id || '',
         variant_id: o.variant_id || '', size_id: o.size_id || '', po_item_id: o.po_item_id || '',
-        output_color: o.output_color || '', planned_output_qty: String(o.planned_output_qty ?? '') }))
+        output_color: o.output_color || '', planned_output_qty: String(o.planned_output_qty ?? ''),
+        produced: running ? Number(o.produced_qty || 0) : 0, label: o.label || '' }))
       : [newOutputLine()];
     setForm({ location_id: order?.location_id || '', notes: order?.notes || '', inputs: ins, outputs: outs });
     setOnlyInStock(!order);
@@ -187,8 +201,11 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
   };
 
   // Gulungan baru dicentang ⇒ bawaannya dipakai semua baris hasil (hapus centang di baris yang tidak memakainya).
+  // Gulungan yang sudah terpakai oleh catatan progres tidak bisa dilepas (14 Nov 2026).
   const toggleRoll = (key, rid) => setForm((f) => {
-    const has = (f.inputs.find((i) => i.key === key) || {}).roll_ids?.includes(rid);
+    const line = f.inputs.find((i) => i.key === key) || {};
+    if ((line.used_rolls || []).some((r) => r.roll_id === rid)) return f;
+    const has = line.roll_ids?.includes(rid);
     return {
       ...f,
       inputs: f.inputs.map((i) => (i.key !== key ? i
@@ -233,7 +250,9 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
   };
 
   // Baris PO dipilih → ukuran (dan varian bila ada) mengikuti baris PO itu.
+  // Hasil yang sudah dipotong: hanya tautan PO-nya yang berganti (model/varian/ukuran terkunci).
   const pickPoLine = (o, pid) => {
+    if (o.produced > 0) { setOutput(o.key, { po_item_id: pid }); return; }
     const ln = (poLinesByModel[o.model_id] || []).find((x) => x.id === pid);
     const vs = variantsByModel[o.model_id] || [];
     if (!ln) { setOutput(o.key, { po_item_id: pid }); return; }
@@ -334,16 +353,18 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
       const body = {
         location_id: form.location_id,
         notes: form.notes,
-        inputs: ins.map((i) => ({ input_material_id: i.input_material_id,
+        inputs: ins.map((i) => ({ ...(i.line_id ? { line_id: i.line_id } : {}), input_material_id: i.input_material_id,
           planned_input_qty: Number(i.planned_input_qty), roll_ids: i.roll_ids })),
-        outputs: form.outputs.map((o) => ({ model_id: o.model_id, variant_id: o.variant_id, size_id: o.size_id,
-          po_item_id: o.po_item_id, output_color: o.output_color,
+        outputs: form.outputs.map((o) => ({ ...(o.line_id ? { line_id: o.line_id } : {}), model_id: o.model_id,
+          variant_id: o.variant_id, size_id: o.size_id, po_item_id: o.po_item_id, output_color: o.output_color,
           planned_output_qty: Number(o.planned_output_qty), roll_ids: o.roll_ids })),
       };
       const saved = editing
         ? await cuttingApi('PUT', `/orders/${order.id}`, token, body)
         : await cuttingApi('POST', '/orders', token, body);
       toast.success(editing ? `Cutting ${saved.number} diubah.` : `Cutting ${saved.number} dibuat (draf).`);
+      // 14 Nov 2026: kain belum cukup → order tetap tersimpan, statusnya "Menunggu kain" + alasannya
+      if (saved?.fabric_waiting) toast.info(`Menunggu kain: ${saved.fabric_note}`, { duration: 9000 });
       onSaved?.(saved);
     } catch (e) {
       toast.error(e.message, { duration: 9000 });
@@ -401,14 +422,20 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
     if (m && !opts.some((x) => x.id === m.id)) opts.unshift(m);
     const picked = rm.items.filter((r) => i.roll_ids.includes(r.id));
     const pickedSum = picked.reduce((s, r) => s + rollRemaining(r), 0);
-    const short = picked.length > 0 && pickedSum + 0.0001 < Number(i.planned_input_qty || 0);
+    // order berjalan: yang dibandingkan dengan sisa gulungan = rencana yang BELUM terpakai
+    const stillNeed = Math.max(Number(i.planned_input_qty || 0) - Number(i.consumed || 0), 0);
+    const short = picked.length > 0 && pickedSum + 0.0001 < stillNeed;
     const need = bomNeedFor(i);
+    const usedIds = (i.used_rolls || []).map((r) => r.roll_id);
     return (
       <div key={i.key} className="space-y-3 rounded-lg border border-[var(--glass-border)] p-3"
         data-testid={`cutting-input-row-${n}`}>
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">Kain {n + 1}</p>
-          {form.inputs.length > 1 && (
+          <p className="text-xs font-medium text-muted-foreground">
+            Kain {n + 1}
+            {i.locked && ` · sudah dipotong ${fmtQtyTrim(i.consumed)} ${i.unit || m?.unit || ''} — kain terkunci`}
+          </p>
+          {form.inputs.length > 1 && !i.locked && (
             <Button type="button" size="icon-sm" variant="ghost" onClick={() => removeInput(i.key)}
               title="Hapus kain ini" aria-label="Hapus kain ini" data-testid={`cutting-input-remove-${n}`}><Trash2 /></Button>
           )}
@@ -421,7 +448,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
               : 'Kain diambil dari master material Gudang.'}>
             <SmartNativeSelect value={i.input_material_id} onChange={(e) => onPickMaterial(i.key, e.target.value)}
               className="h-9 w-full" searchable searchPlaceholder="Cari kode, nama, atau warna kain…"
-              data-testid={`cutting-input-material-${n}`}>
+              disabled={i.locked} data-testid={`cutting-input-material-${n}`}>
               <option value="">— Pilih kain —</option>
               {opts.map((x) => <option key={x.id} value={x.id}>{matLabel(x)}</option>)}
             </SmartNativeSelect>
@@ -441,16 +468,22 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
           </Isian>
         </div>
         {m && Number(m.stock_qty || 0) <= 0 && (
-          <Notice tone="warning" icon={AlertCircle}>
-            Kain ini belum punya stok di gudang mana pun. Order bisa disimpan sebagai draf, tetapi tidak bisa dimulai
-            sebelum penerimaan barang dicatat di Portal Gudang.
+          <Notice tone="warning" icon={AlertCircle} testId={`cutting-no-stock-${n}`}>
+            Kain ini belum ada stoknya. Order tetap bisa disimpan — tampil <b>Menunggu kain</b> dan otomatis siap
+            dimulai begitu kainnya masuk gudang (penerimaan, impor roll, atau opname).
           </Notice>
         )}
-        {m && rm.roll_required && rm.items.length === 0 && (
-          <Notice tone="danger" icon={AlertCircle} testId={`cutting-no-rolls-warning-${n}`}>
-            Kain ini <b>belum punya gulungan</b> di sistem, jadi order tidak bisa disimpan — tidak akan bisa dibuktikan
-            gulungan mana yang dipotong. Terbitkan gulungannya dulu di <b>Gudang › Roll Kain › tab “Penerimaan tanpa roll”</b>,
-            atau isi Rincian Roll saat Penerimaan Barang.
+        {(i.used_rolls || []).length > 0 && (
+          <p className="text-xs text-muted-foreground" data-testid={`cutting-used-rolls-${n}`}>
+            Gulungan sudah terpakai (tidak bisa dilepas):{' '}
+            {i.used_rolls.map((r) => `${r.roll_no} −${fmtQty(r.consumed_qty)} ${r.uom || ''}`.trim()).join(', ')}
+          </p>
+        )}
+        {m && Number(m.stock_qty || 0) > 0 && rm.roll_required && rm.items.length === 0 && !i.locked && (
+          <Notice tone="warning" icon={AlertCircle} testId={`cutting-no-rolls-warning-${n}`}>
+            Stok kain ini ada, tetapi <b>gulungannya belum diterbitkan</b>. Order tetap bisa disimpan sebagai
+            <b> Menunggu kain</b>; gulungan wajib ditunjuk saat lapor progres. Terbitkan di
+            <b> Gudang › Roll Kain › tab “Penerimaan tanpa roll”</b>, atau isi Rincian Roll saat Penerimaan Barang.
           </Notice>
         )}
         {m && rm.roll_required && rm.items.length > 0 && (
@@ -463,7 +496,8 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
                 return (
                   <label key={r.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-foreground/5"
                     data-testid={`cutting-roll-option-${r.roll_no}`}>
-                    <Checkbox checked={checked} onCheckedChange={() => toggleRoll(i.key, r.id)} />
+                    <Checkbox checked={checked} disabled={usedIds.includes(r.id)}
+                      onCheckedChange={() => toggleRoll(i.key, r.id)} />
                     <span className="tabular-nums text-foreground">{r.roll_no}</span>
                     <span className="text-xs text-muted-foreground">
                       sisa {fmtQty(rollRemaining(r))} {r.uom}
@@ -479,7 +513,8 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
               <p className={`mt-1 text-xs ${short ? 'text-[hsl(var(--warning-text))]' : 'text-muted-foreground'}`}
                 data-testid={`cutting-roll-picked-summary-${n}`}>
                 {picked.length} gulungan dipilih · sisa terpilih {fmtQty(pickedSum)} {rm.uom}
-                {Number(i.planned_input_qty) > 0 && ` · rencana pakai ${fmtQty(i.planned_input_qty)} ${m.unit}`}
+                {Number(i.planned_input_qty) > 0 && ` · rencana pakai ${fmtQty(stillNeed)} ${m.unit}`}
+                {Number(i.consumed) > 0 && ' lagi'}
                 {short && ' — sisa gulungan kurang dari rencana; tambah gulungan atau turunkan rencana.'}
               </p>
             )}
@@ -536,7 +571,8 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
   // ── Bagian 2: satu baris hasil ──
   const renderOutput = (o, n) => {
     const vs = variantsByModel[o.model_id] || [];
-    const pls = poLinesByModel[o.model_id] || [];
+    const cut = o.produced > 0;   // sudah dipotong: model/varian/ukuran terkunci, baris PO hanya yang ukurannya sama
+    const pls = (poLinesByModel[o.model_id] || []).filter((x) => !cut || !x.size_id || !o.size_id || x.size_id === o.size_id);
     const pl = pls.find((x) => x.id === o.po_item_id);
     const vopts = pl?.size_id ? vs.filter((v) => !v.size_id || v.size_id === pl.size_id) : vs;
     const bom = bomByKey[o.key];
@@ -547,7 +583,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
         <TableCell className="align-top">
           <div className="flex gap-1.5">
             <SmartNativeSelect value={o.model_id} onChange={(e) => onPickModel(o.key, e.target.value)}
-              className="h-9 w-full" wrapperClassName="min-w-0 flex-1" searchable
+              className="h-9 w-full" wrapperClassName="min-w-0 flex-1" searchable disabled={cut}
               searchPlaceholder="Cari kode atau nama model…" data-testid={`cutting-model-select-${n}`}>
               <option value="">— pilih model —</option>
               {models.map((m) => (
@@ -557,15 +593,22 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
                 </option>
               ))}
             </SmartNativeSelect>
-            <Button type="button" size="icon" variant="outline" onClick={() => openNewModel(o.key)}
-              title="Model baru" aria-label="Model baru" data-testid={`cutting-new-model-btn-${n}`}><Plus /></Button>
+            {!cut && (
+              <Button type="button" size="icon" variant="outline" onClick={() => openNewModel(o.key)}
+                title="Model baru" aria-label="Model baru" data-testid={`cutting-new-model-btn-${n}`}><Plus /></Button>
+            )}
           </div>
+          {cut && (
+            <p className="mt-1 text-xs text-muted-foreground" data-testid={`cutting-output-locked-${n}`}>
+              Sudah dipotong {fmtNum(o.produced)} pcs — model & varian terkunci (betulkan lewat Koreksi progres).
+            </p>
+          )}
           {bomInfo(bom)}
         </TableCell>
         <TableCell className="align-top">
           {o.model_id && !vs.length ? (
             <SmartNativeSelect value={o.size_id} onChange={(e) => setOutput(o.key, { size_id: e.target.value })}
-              className="h-9 w-full" data-testid={`cutting-size-select-${n}`}>
+              className="h-9 w-full" disabled={cut} data-testid={`cutting-size-select-${n}`}>
               <option value="">— pilih ukuran —</option>
               {sizes.map((s) => (
                 <option key={s.id} value={s.id}>
@@ -575,7 +618,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
             </SmartNativeSelect>
           ) : (
             <SmartNativeSelect value={o.variant_id} onChange={(e) => onPickVariant(o, e.target.value)}
-              disabled={!o.model_id} className="h-9 w-full" searchable searchPlaceholder="Cari warna, ukuran, atau SKU…"
+              disabled={!o.model_id || cut} className="h-9 w-full" searchable searchPlaceholder="Cari warna, ukuran, atau SKU…"
               data-testid={`cutting-variant-select-${n}`}>
               <option value="">{o.model_id ? '— pilih warna · ukuran —' : '— pilih model dulu —'}</option>
               {vopts.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
@@ -605,7 +648,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
         </TableCell>
         <TableCell className="align-top" data-testid={`cutting-output-rolls-${n}`}>{renderOutRolls(o)}</TableCell>
         <TableCell className="align-top text-right">
-          {form.outputs.length > 1 && (
+          {form.outputs.length > 1 && !cut && (
             <Button type="button" size="icon-sm" variant="ghost" onClick={() => removeOutput(o.key)}
               title="Hapus baris" aria-label="Hapus baris" data-testid={`cutting-output-remove-${n}`}><Trash2 /></Button>
           )}
@@ -623,12 +666,16 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
       <FormPopup open={open && !newModelFor} onClose={onClose} ukuran="panjang"
         judul={editing ? `Ubah order cutting ${order.number}` : 'Buat order cutting'}
         onSimpan={submit} menyimpan={saving} labelSimpan={editing ? 'Simpan perubahan' : 'Simpan draf'}
-        keterangan="Satu order boleh memakai beberapa kain dan gulungan, dan menghasilkan beberapa model. Master potongan dibuat otomatis saat cutting dimulai."
+        keterangan={running
+          ? 'Order ini sudah berjalan. Kain, gulungan, dan hasil yang sudah dipotong terkunci — angka potongnya dibetulkan lewat tombol Koreksi di riwayat progres. Target, rencana, baris PO, gulungan tambahan, dan baris yang belum dipotong tetap bisa diubah.'
+          : 'Satu order boleh memakai beberapa kain dan gulungan, dan menghasilkan beberapa model. Master potongan dibuat otomatis saat cutting dimulai.'}
         testId="cutting-create-form">
         <Isian label="Gudang sumber kain" wajib
-          petunjuk="Semua kain order ini dipotong dari gudang ini, jadi gulungannya juga harus di sini.">
+          petunjuk={running
+            ? 'Tidak bisa diganti setelah cutting dimulai — stok kain dan potongannya sudah tercatat di gudang ini.'
+            : 'Semua kain order ini dipotong dari gudang ini, jadi gulungannya juga harus di sini.'}>
           <SmartNativeSelect value={form.location_id} onChange={(e) => setForm((f) => ({ ...f, location_id: e.target.value }))}
-            className="h-9 w-full" data-testid="cutting-location-select">
+            className="h-9 w-full" disabled={running} data-testid="cutting-location-select">
             <option value="">— Pilih gudang —</option>
             {locationOptions.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
           </SmartNativeSelect>
