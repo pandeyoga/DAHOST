@@ -83,7 +83,10 @@
     }
     const hs = [...heights.keys()].sort((a, b) => a - b);
     if (hs.length > 2) add('TOMBOL-TINGGI-BEDA', null, `tinggi tombol: ${hs.map((h) => `${h}px×${heights.get(h)}`).join(', ')}`);
-    if (btns.filter((b) => getComputedStyle(b).backgroundColor === getComputedStyle(document.querySelector('button.bg-primary') || b).backgroundColor && hasBg(b) && (b.innerText || '').trim().length > 2 && !b.closest('table')).length > 2) {
+    // 14 Nov 2026: tanpa tombol utama sama sekali, dulu tiap tombol dibandingkan dengan dirinya sendiri (`|| b`)
+    // sehingga SEMUA tombol berlatar (garis, tab, pil) terhitung "utama" — salah tangkap.
+    const utama = document.querySelector('button.bg-primary');
+    if (utama && btns.filter((b) => getComputedStyle(b).backgroundColor === getComputedStyle(utama).backgroundColor && hasBg(b) && (b.innerText || '').trim().length > 2 && !b.closest('table')).length > 2) {
       add('TOMBOL-UTAMA-BANYAK', null, 'lebih dari 2 tombol berwarna utama di satu layar');
     }
 

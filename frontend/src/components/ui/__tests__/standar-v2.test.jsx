@@ -77,6 +77,23 @@ describe('TabelData', () => {
     expect(div.querySelector('[data-testid="t-kosong-hp"]').textContent).toBe('kosong');
     unmount();
   });
+  it('rincian tampil tepat di bawah baris yang dibuka (RowDetail), juga di kartu HP', () => {
+    // 14 Nov 2026 (Pemantauan staf › Alur kerja): rincian satu langkah di halaman, bukan popup.
+    const { div, unmount } = render(
+      <TabelData testId="t" kolom={[{ kunci: 'nama', label: 'Nama', hp: 'judul' }, { kunci: 'n', label: 'Jumlah' }]}
+        baris={[{ id: 1, nama: 'A', n: 2 }, { id: 2, nama: 'B', n: 5 }]}
+        rincian={(b) => (b.id === 2 ? <p>isi B</p> : null)} />,
+    );
+    const rows = [...div.querySelectorAll('tbody tr')];
+    expect(rows.length).toBe(3);
+    expect(rows[2].getAttribute('data-testid')).toBe('t-rincian');
+    expect(rows[2].querySelector('td').getAttribute('colspan')).toBe('2');
+    expect(rows[2].textContent).toBe('isi B');
+    expect(rows[1].getAttribute('aria-expanded')).toBe('true');
+    expect(rows[0].getAttribute('aria-expanded')).toBe('false');
+    expect(div.querySelectorAll('[data-testid="t-rincian-hp"]').length).toBe(1);
+    unmount();
+  });
   it('tanpa baris dan tanpa isi kosong → pesan bawaan "Belum ada data"', () => {
     const { div, unmount } = render(<TabelData testId="t" kolom={[{ kunci: 'nama', label: 'Nama' }]} baris={undefined} />);
     expect(div.querySelector('[data-testid="t-kosong"]').textContent).toContain('Belum ada data');

@@ -98,7 +98,7 @@ export default function FormAturan({ aturan, pilihan, onClose, onTersimpan }) {
         <Switch id="aturan-aktif" checked={f.aktif} onCheckedChange={set('aktif')} data-testid="aturan-aktif" />
         <span>Aktif — kewajiban dibuat dan dipantau untuk langkah ini</span>
       </label>
-      <Isian label="Pemegang" wajib htmlFor="aturan-jenis">
+      <Isian label="Penanggung jawab" wajib htmlFor="aturan-jenis">
         <SmartNativeSelect id="aturan-jenis" value={f.jenis} onChange={(e) => set('jenis')(e.target.value)} data-testid="aturan-jenis">
           <option value="akun">Akun tertentu</option>
           <option value="peran">Semua akun dengan peran tertentu</option>
@@ -106,16 +106,16 @@ export default function FormAturan({ aturan, pilihan, onClose, onTersimpan }) {
         </SmartNativeSelect>
       </Isian>
       {f.jenis === 'akun' && (
-        <Isian label="Akun pemegang" wajib>
+        <Isian label="Akun penanggung jawab" wajib>
           <PilihBanyak opsi={akunOpsi} nilai={f.akun_ids} onChange={set('akun_ids')} testId="aturan-akun" placeholder="Cari nama atau peran" />
         </Isian>
       )}
       {f.jenis === 'peran' && (
-        <Isian label="Peran pemegang" wajib>
+        <Isian label="Peran penanggung jawab" wajib>
           <PilihBanyak opsi={peranOpsi} nilai={f.peran} onChange={set('peran')} testId="aturan-peran" placeholder="Cari peran" />
         </Isian>
       )}
-      <Isian label="Cadangan saat pemegang cuti atau izin" petunjuk="Kosong = kewajiban dimaafkan otomatis bila pemegang cuti/izin.">
+      <Isian label="Cadangan saat penanggung jawab cuti atau izin" petunjuk="Kosong = kewajiban dimaafkan otomatis bila penanggung jawab cuti/izin.">
         <PilihBanyak opsi={akunOpsi} nilai={f.cadangan_ids} onChange={set('cadangan_ids')} testId="aturan-cadangan" placeholder="Cari nama" />
       </Isian>
       <Isian label="Batas waktu" wajib>

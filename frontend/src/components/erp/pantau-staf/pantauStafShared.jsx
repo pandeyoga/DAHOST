@@ -1,5 +1,6 @@
 /**
- * Bersama untuk layar Monitoring Staf & Aturan Kewajiban (Portal Manajemen, keputusan owner 10 Nov 2026).
+ * Bersama untuk layar Pemantauan staf & Aturan kewajiban (Portal Manajemen, keputusan owner 10 Nov 2026;
+ * alur kerja harian 14 Nov 2026).
  * Angka dari /api/pantau-staf/* (`core/pantau_staf`, satu sumber untuk kartu, tabel, rincian, Asisten AI).
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -38,6 +39,31 @@ export function NilaiBadge({ nilai, ujiCoba }) {
 
 export const waktu = (v) => formatDateTimeID(v, { fallback: '—' });
 
+/** Jam WIB "09.34" dari waktu tersimpan. */
+export const jamWIB = (v) => (v
+  ? new Date(v).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit' })
+  : '—');
+
+/** Tanggal hari ini WIB "YYYY-MM-DD" (nilai DatePicker). */
+export const hariIniWIB = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
+/** Angka gaya Indonesia: 1.234 / 1.234,5. */
+export const angka = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 });
+
+/** Keadaan satu langkah alur kerja → label & nada (warna) yang sama di semua tab. */
+export const KEADAAN_LANGKAH = {
+  macet: { label: 'Macet', tone: 'danger' },
+  menunggu: { label: 'Ada yang menunggu', tone: 'warning' },
+  dikerjakan: { label: 'Dikerjakan', tone: 'success' },
+  kosong: { label: 'Tidak ada kegiatan', tone: 'muted' },
+};
+export const KEADAAN_ALUR = {
+  macet: { label: 'Macet', tone: 'danger' },
+  menunggu: { label: 'Ada yang menunggu', tone: 'warning' },
+  jalan: { label: 'Berjalan', tone: 'success' },
+  kosong: { label: 'Tidak ada kegiatan', tone: 'muted' },
+};
+
 /** Nama peran untuk layar: peran buatan owner ("HR Generalist") apa adanya, kode ("pic_toko") diterjemahkan. */
 export const namaPeran = (r) => (!r ? '—' : /[A-Z\s&/]/.test(r) ? r : labelKodePeran(r));
 
@@ -66,6 +92,7 @@ export function lamaTerlambat(k) {
   return j >= 1 ? `${Math.round(j)} jam` : 'kurang dari 1 jam';
 }
 
+/** Nama penanggung jawab kewajiban (pemegang aturan) untuk layar. */
 export function pemegangLabel(k) {
   if (!k?.pemegang?.length) return null;
   return k.pemegang.join(', ') + (k.dialihkan_ke_cadangan ? ' (cadangan)' : '');

@@ -28,7 +28,7 @@ function pemegangTeks(a) {
   const p = a.pemegang || {};
   if (p.jenis === 'akun') return a.pemegang_nama?.length ? a.pemegang_nama.join(', ') : null;
   if (p.jenis === 'peran') return p.peran?.length ? `Peran: ${p.peran.map(namaPeran).join(', ')}` : null;
-  return `Dari dokumen: ${a.pemegang_bawaan?.label || 'pemegang di dokumen'}`;
+  return `Dari dokumen: ${a.pemegang_bawaan?.label || 'penanggung jawab di dokumen'}`;
 }
 
 function StatusAturan({ a }) {
@@ -55,7 +55,7 @@ function PerLangkahTab() {
     { kunci: 'nama', label: 'Langkah', hp: 'judul', isi: (a) => (
       <div className="min-w-0 md:max-w-[20rem]"><p className="font-medium">{a.nama}</p>
         <p className="truncate text-xs text-muted-foreground" title={a.pemicu}>{a.alur_label} · mulai: {a.pemicu}</p></div>) },
-    { kunci: 'pemegang', label: 'Pemegang', isi: (a) => <span className="text-sm">{pemegangTeks(a) || '—'}</span> },
+    { kunci: 'pemegang', label: 'Penanggung jawab', isi: (a) => <span className="text-sm">{pemegangTeks(a) || '—'}</span> },
     { kunci: 'batas', label: 'Batas waktu', isi: (a) => <span className="text-sm">{a.tenggat_label}</span> },
     { kunci: 'status', label: 'Status', isi: (a) => <StatusAturan a={a} /> },
     { kunci: 'terbuka', label: 'Terbuka', rata: 'kanan', isi: (a) => (
@@ -67,19 +67,19 @@ function PerLangkahTab() {
 
   return (
     <PageLayout testId="aturan-per-langkah" title="Per langkah"
-      subtitle="Pemegang, batas waktu, dan cadangan untuk setiap langkah alur dan kewajiban harian."
+      subtitle="Penanggung jawab, batas waktu, dan cadangan untuk setiap langkah alur dan kewajiban harian."
       actions={<TombolPeriksa onSelesai={reload} />}
       filters={<>
         <SmartNativeSelect value={alur} onChange={(e) => setAlur(e.target.value)} wrapperClassName="w-60" data-testid="aturan-alur">
           {opsi.map((o) => <option key={o.key} value={o.key}>{o.key ? o.label : 'Semua alur'} ({o.count})</option>)}
         </SmartNativeSelect>
-        <SearchBox value={cari} onChange={setCari} placeholder="Cari langkah atau pemegang" testId="aturan-cari" />
+        <SearchBox value={cari} onChange={setCari} placeholder="Cari langkah atau penanggung jawab" testId="aturan-cari" />
       </>}
       tools={<>
         <TombolUnduh namaBerkas="aturan-kewajiban" namaLembar="Aturan" baris={baris} testId="aturan-unduh" kolom={[
           { label: 'Alur', nilai: (a) => a.alur_label }, { label: 'Langkah', nilai: (a) => a.nama },
           { label: 'Mulai', nilai: (a) => a.pemicu }, { label: 'Bukti selesai', nilai: (a) => a.bukti },
-          { label: 'Pemegang', nilai: (a) => pemegangTeks(a) || '' },
+          { label: 'Penanggung jawab', nilai: (a) => pemegangTeks(a) || '' },
           { label: 'Cadangan', nilai: (a) => (a.cadangan_nama || []).join(', ') },
           { label: 'Batas waktu', nilai: (a) => a.tenggat_label }, { label: 'Bobot', nilai: (a) => a.bobot },
           { label: 'Aktif', nilai: (a) => (a.aktif ? 'Ya' : 'Tidak') },
@@ -89,8 +89,8 @@ function PerLangkahTab() {
       summary={<>
         {error && <Notice tone="danger">{error}</Notice>}
         {belumDiisi > 0 && (
-          <Notice tone="warning" title={`${belumDiisi} langkah belum punya pemegang`} testId="aturan-belum-diisi">
-            Langkah ini belum dipantau. Klik Ubah, pilih akun atau peran pemegangnya, lalu aktifkan.
+          <Notice tone="warning" title={`${belumDiisi} langkah belum punya penanggung jawab`} testId="aturan-belum-diisi">
+            Langkah ini belum dipantau. Klik Ubah, pilih akun atau peran penanggung jawabnya, lalu aktifkan.
           </Notice>
         )}
       </>}>
@@ -105,7 +105,7 @@ function PerLangkahTab() {
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Mulai menjadi kewajiban">{detail.pemicu}</BarisDetail>
             <BarisDetail label="Dianggap selesai bila">{detail.bukti}</BarisDetail>
-            <BarisDetail label="Pemegang">{pemegangTeks(detail) || 'Belum diisi'}</BarisDetail>
+            <BarisDetail label="Penanggung jawab">{pemegangTeks(detail) || 'Belum diisi'}</BarisDetail>
             <BarisDetail label="Cadangan">{detail.cadangan_nama?.length ? detail.cadangan_nama.join(', ') : '—'}</BarisDetail>
             <BarisDetail label="Dikecualikan">{detail.dikecualikan_nama?.length ? detail.dikecualikan_nama.join(', ') : '—'}</BarisDetail>
             <BarisDetail label="Batas waktu">{detail.tenggat_label}</BarisDetail>
@@ -133,7 +133,7 @@ function FormTambahKeAkun({ akun, aturan, onClose, onTersimpan }) {
     try {
       await apiPut(`/pantau-staf/aturan/${a.id}`, {
         pemegang: { jenis: 'akun', akun_ids: [...(a.pemegang?.akun_ids || []), akun.id], peran: [] }, aktif: true });
-      toast.success(`${akun.nama} kini memegang "${a.nama}".`);
+      toast.success(`${akun.nama} kini penanggung jawab "${a.nama}".`);
       onTersimpan?.();
       onClose();
     } catch (e) {
@@ -144,7 +144,7 @@ function FormTambahKeAkun({ akun, aturan, onClose, onTersimpan }) {
   };
   return (
     <FormPopup open onClose={onClose} judul={`Tambah kewajiban untuk ${akun.nama}`} onSimpan={simpan} menyimpan={menyimpan}
-      keterangan="Akun ini menjadi pemegang langkah yang dipilih, dan langkahnya diaktifkan." labelSimpan="Tambahkan"
+      keterangan="Akun ini menjadi penanggung jawab langkah yang dipilih, dan langkahnya diaktifkan." labelSimpan="Tambahkan"
       galat={galat} bisaSimpan={kandidat.length > 0} testId="form-tambah-kewajiban">
       <Isian label="Langkah" wajib htmlFor="tambah-langkah">
         <SmartNativeSelect id="tambah-langkah" value={pilih} onChange={(e) => setPilih(e.target.value)} data-testid="tambah-langkah">
@@ -176,7 +176,7 @@ function PerAkunTab() {
     try {
       await apiPut(`/pantau-staf/aturan/${a.id}`, { pemegang: { jenis: 'akun', akun_ids: sisa, peran: [] },
         ...(sisa.length ? {} : { aktif: false }) });
-      toast.success(sisa.length ? 'Akun dilepas dari langkah ini.' : 'Akun dilepas; langkah dinonaktifkan karena tidak ada pemegang lain.');
+      toast.success(sisa.length ? 'Akun dilepas dari langkah ini.' : 'Akun dilepas; langkah dinonaktifkan karena tidak ada penanggung jawab lain.');
       muat();
     } catch (e) { toast.error(e.message); }
   };
@@ -233,7 +233,7 @@ export default function AturanKewajibanModule(props) {
   useState(() => primeHubTab('aturan-kewajiban', props.initialTab || props.defaultTab, TABS.map((t) => t.key)));
   return (
     <HubTabs hubId="aturan-kewajiban" title="Aturan kewajiban"
-      subtitle="Siapa memegang setiap langkah, batas waktunya, dan cadangannya. Hanya owner dan admin yang mengubah."
+      subtitle="Siapa penanggung jawab setiap langkah, batas waktunya, dan cadangannya. Hanya owner dan admin yang mengubah."
       compactHeaders tabs={TABS} {...props} />
   );
 }

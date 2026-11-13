@@ -157,16 +157,8 @@ export function DetailPanel({ title, description, actions, onClose, children, te
   );
 }
 
-/** RowDetail — isi tambahan satu baris tabel, tepat di bawah barisnya (mis. baris-baris jurnal). */
-export function RowDetail({ colSpan, children, testId }) {
-  return (
-    <tr className="row-detail" data-testid={testId} data-row-detail="">
-      <td colSpan={colSpan} className="!p-0 bg-foreground/[0.03]">
-        <div className="px-4 py-3">{children}</div>
-      </td>
-    </tr>
-  );
-}
+/** RowDetail — isi tambahan satu baris tabel, tepat di bawah barisnya (kini di `ui/row-detail`, diekspor ulang). */
+export { RowDetail } from '@/components/ui/row-detail';
 
 /** Tombol buka/tutup baris (ikon panah) — pasangan RowDetail. */
 export function RowToggle({ open, onClick, label = 'Lihat rincian', testId }) {

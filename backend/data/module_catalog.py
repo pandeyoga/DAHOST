@@ -90,7 +90,7 @@ MODULES: list[dict] = [
     # ── akhir Asisten AI (inti) ──
     # Monitoring Staf ERP (10 Nov 2026): Monitoring Staf + Aturan Kewajiban. Route mengizinkan HANYA owner/admin/
     # superadmin (keputusan K3); `/api/pantau-staf/saya` = swalayan Portal Saya (lihat SELF_SERVICE).
-    _m("management", "mgmt_pantau_staf", "Monitoring Staf & Aturan Kewajiban", ["pantau-staf", "aturan-kewajiban"],
+    _m("management", "mgmt_pantau_staf", "Pemantauan Staf & Aturan Kewajiban", ["pantau-staf", "aturan-kewajiban"],
        ["/api/pantau-staf"], ("view", "edit", "export")),
 
     # ── PRODUKSI ────────────────────────────────────────────────────────────

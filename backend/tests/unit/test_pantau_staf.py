@@ -148,7 +148,7 @@ def test_aturan_validasi():
         A.periksa_ubahan(lama, {"aktif": True}, users=users, peran_ada=set())
     with pytest.raises(A.AturanTidakSah, match="tidak ditemukan"):
         A.periksa_ubahan(lama, {"pemegang": {"jenis": "akun", "akun_ids": ["u-x"]}}, users=users, peran_ada=set())
-    with pytest.raises(A.AturanTidakSah, match="tidak menyimpan pemegang"):
+    with pytest.raises(A.AturanTidakSah, match="tidak menyimpan penanggung jawab"):
         A.periksa_ubahan(lama, {"pemegang": {"jenis": "data"}}, users=users, peran_ada=set())
     with pytest.raises(A.AturanTidakSah, match="1–30"):
         A.periksa_ubahan(lama, {"tenggat": {"jenis": "hari_kerja", "nilai": 40}}, users=users, peran_ada=set())
@@ -384,10 +384,11 @@ def test_per_staf_dan_macet_dan_saya():
     assert m["jumlah"] == 1 and m["items"][0]["pemegang"] == ["Andi"] and m["items"][0]["terlambat_hari_kerja"] == 1
     s = run(R.saya(db, "u-andi", kini=kini))
     assert s["terlambat"] == 1 and "pemegang_ids" not in s["items"][0] and "kepatuhan" not in s
-    alur = run(R.per_alur(db, "2026-11-09", "2026-11-11", kini=kini))
-    po = [g for g in alur["alur"] if g["alur"] == "po"][0]
-    langkah = [x for x in po["langkah"] if x["aturan_id"] == "po_konfirmasi"][0]
-    assert langkah["terlambat"] == 1 and langkah["pemegang"] == ["Andi"]
+    # Alur kerja (14 Nov): langkah Konfirmasi PO memakai penanggung jawab & batas aturan yang sama
+    from core.pantau_staf import alur_kerja as AK
+    alur = run(AK.alur_kerja(db, date(2026, 11, 11), alur="produksi", kini=kini))
+    langkah = [x for x in alur["alur"][0]["langkah"] if x["id"] == "konfirmasi_po"][0]
+    assert langkah["penanggung_jawab"] == ["Andi"] and langkah["lewat_batas"] == 1 and langkah["keadaan"] == "macet"
 
 
 # ── pengingat ───────────────────────────────────────────────────────────────────────────────────────────
@@ -423,7 +424,7 @@ def test_kirim_harian_satu_pesan_per_staf_dan_ringkasan_owner(monkeypatch):
     assert out["dikirim"] == 1 and len(staf) == 1 and staf[0]["target_user_ids"] == ["u-andi"]
     own = [s for s in sent if s["type_"] == "kewajiban_ringkasan_owner"][0]
     assert set(own["target_user_ids"]) == {"u-admin", "u-bunga", "u-own"}          # owner + admin (K5), bukan atasan
-    assert "belum punya pemegang" in own["message"]
+    assert "belum punya penanggung jawab" in own["message"]
     sent.clear()
     assert run(G.kirim_harian(db, kini=wib(2026, 11, 15, 8)))["alasan"] == "hari libur"   # Minggu
 

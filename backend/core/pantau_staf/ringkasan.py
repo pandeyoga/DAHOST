@@ -12,9 +12,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from core.pantau_staf import meter
-from core.pantau_staf.katalog import ALUR_LABEL, ALUR_URUT, KATALOG_LIST
+from core.pantau_staf.katalog import ALUR_LABEL, KATALOG_LIST
 from core.pantau_staf.pemindai import FINAL, KEJADIAN, TERBUKA, akun_internal
-from core.pantau_staf.waktu import Kalender, jam_wib, label_tenggat, muat_kalender, ts
+from core.pantau_staf.waktu import Kalender, jam_wib, muat_kalender, ts
 from utils.waktu import now_utc, to_wib
 
 TIDAK_DIPANTAU = {"superadmin", "owner"}
@@ -249,46 +249,6 @@ async def macet(db, *, termasuk_menunggu: bool = False, alur: str | None = None,
     if gabung:
         items = gabung_harian(items)
     return {"items": items, "jumlah": jumlah, "baris": len(items)}
-
-
-async def per_alur(db, dari: str, sampai: str, *, kini: datetime | None = None) -> dict:
-    from core.pantau_staf.aturan import semua as semua_aturan
-    kini = kini or now_utc()
-    a, b = _rentang(dari, sampai)
-    users = {u["id"]: u for u in await akun_internal(db)}
-    aturan = {r["id"]: r for r in await semua_aturan(db)}
-    kej = await _kejadian_rentang(db, a, b)
-    per: dict = {}
-    for k in kej:
-        per.setdefault(k.get("aturan_id"), []).append(k)
-    groups = []
-    for alur in ALUR_URUT:
-        langkah = []
-        for t in sorted([t for t in KATALOG_LIST if t.alur == alur], key=lambda t: t.urutan):
-            r = aturan.get(t.id) or {}
-            ks = per.get(t.id, [])
-            terbuka = [k for k in ks if k.get("status") in TERBUKA]
-            durasi = [max((ts(k["selesai_at"]) - ts(k["mulai"])).total_seconds() / 3600, 0.0) for k in ks
-                      if k.get("status") == "selesai" and k.get("selesai_at") and k.get("mulai")
-                      and a <= ts(k["selesai_at"]) <= b and t.id != "aktif_harian"]
-            p = r.get("pemegang") or {}
-            if p.get("jenis") == "akun":
-                peg = _nama(users, p.get("akun_ids"))
-            elif p.get("jenis") == "peran":
-                peg = [f"peran {x}" for x in p.get("peran") or []]
-            else:
-                peg = [f"dari data: {(t.pemegang or {}).get('label') or 'dokumen'}"]
-            langkah.append({
-                "aturan_id": t.id, "nama": t.nama, "jenis": t.jenis, "aktif": bool(r.get("aktif")),
-                "pemegang": peg, "tenggat_label": label_tenggat(r.get("tenggat") or t.tenggat),
-                "menunggu": sum(1 for k in terbuka if k.get("status") == "menunggu"),
-                "terlambat": sum(1 for k in terbuka if k.get("status") == "terlambat"),
-                "terlama_sejak": min((k.get("mulai") for k in terbuka if k.get("mulai")), default=None),
-                "selesai": len(durasi),
-                "rata_jam": round(sum(durasi) / len(durasi), 1) if durasi else None,
-            })
-        groups.append({"alur": alur, "label": ALUR_LABEL[alur], "langkah": langkah})
-    return {"dari": dari, "sampai": sampai, "alur": groups}
 
 
 async def rincian_staf(db, uid: str, dari: str, sampai: str, *, kini: datetime | None = None) -> dict | None:

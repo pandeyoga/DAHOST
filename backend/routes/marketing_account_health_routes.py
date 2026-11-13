@@ -336,8 +336,11 @@ async def create_manual_snapshot(payload: ManualSnapshotIn, request: Request):
     Jika account_id disediakan, sistem juga akan:
     1. Update health_score di master account (marketing_platform_accounts)
     2. Trigger _recalculate_health_score untuk konsistensi
+
+    Pencatat disimpan (`created_by`/`created_by_name`, audit 13 Nov 2026) supaya Pemantauan staf tahu siapa
+    yang mencatat kesehatan akun hari itu.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     ses = payload.ses_score or 0
@@ -383,6 +386,8 @@ async def create_manual_snapshot(payload: ManualSnapshotIn, request: Request):
         "status": status,
         "notes": [payload.notes] if payload.notes else [],
         "source": "manual",
+        "created_by": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email"),
         "created_at": _now(),
         "updated_at": _now()
     }

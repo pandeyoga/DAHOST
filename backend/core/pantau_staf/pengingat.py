@@ -105,14 +105,14 @@ async def kirim_harian(db, *, kini: datetime | None = None) -> dict:
         teratas = sorted(hitung.items(), key=lambda x: -x[1])[:MAKS_BARIS]
         daftar = [f"• {(users.get(u) or {}).get('name') or u}: {n}" for u, n in teratas]
         if tanpa:
-            daftar.append(f"• {len(tanpa)} kewajiban belum punya pemegang")
+            daftar.append(f"• {len(tanpa)} kewajiban belum punya penanggung jawab")
         penerima = [uid for uid, u in users.items() if (u.get("role") or "").lower() in PENERIMA_RINGKASAN]
         if penerima:
             try:
                 await publish_notification(
                     db, type_="kewajiban_ringkasan_owner", severity="warning",
                     title=f"{len(berat)} kewajiban staf terlambat lebih dari 1 hari kerja",
-                    message="\n".join(daftar) + "\nBuka Manajemen › Monitoring Staf.",
+                    message="\n".join(daftar) + "\nBuka Manajemen › Pemantauan Staf.",
                     link_module="pantau-staf", target_user_ids=penerima, dedup_key=f"kewajiban_owner_{tgl}",
                     dedup_minutes=SEHARI_MENIT)
                 ringkas = 1

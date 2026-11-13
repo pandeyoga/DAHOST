@@ -1,9 +1,10 @@
-"""Monitoring Staf ERP — Portal Manajemen (keputusan owner 10 Nov 2026).
+"""Pemantauan Staf ERP — Portal Manajemen (keputusan owner 10 Nov 2026; alur kerja harian 14 Nov 2026).
 
-Layar "Monitoring Staf" & "Aturan Kewajiban": HANYA owner, admin, superadmin (K3 — skor tidak untuk atasan/staf).
+Layar "Pemantauan staf" & "Aturan kewajiban": HANYA owner, admin, superadmin (K3 — skor tidak untuk atasan/staf).
 Portal Saya: `GET /api/pantau-staf/saya` = daftar kewajiban milik sendiri, tanpa skor (K4) — swalayan.
 
-Mesin: `core/pantau_staf/*` (meter aktivitas, katalog titik aksi, aturan, pemindai, ringkasan, pengingat).
+Mesin: `core/pantau_staf/*` (meter aktivitas, katalog titik aksi, aturan, pemindai, ringkasan, pengingat,
+alur kerja harian `alur_kerja`).
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Request
 
 from auth import log_activity, require_auth
+from core.pantau_staf import alur_kerja as _alur
 from core.pantau_staf import aturan as _aturan
 from core.pantau_staf import pemindai, pengingat, ringkasan
 from core.pantau_staf.katalog import ALUR_LABEL, KATALOG
@@ -28,7 +30,7 @@ PERAN_PEMANTAU = ("superadmin", "admin", "owner")
 async def _pemantau(request: Request) -> dict:
     user = await require_auth(request)
     if (user.get("role") or "").lower() not in PERAN_PEMANTAU:
-        raise HTTPException(403, "Monitoring staf hanya untuk owner dan admin.")
+        raise HTTPException(403, "Pemantauan staf hanya untuk owner dan admin.")
     return user
 
 
@@ -83,11 +85,30 @@ async def get_macet(request: Request):
                                       uid=sp.get("user_id") or None, gabung=sp.get("rinci") not in ("1", "true")))
 
 
+def _tanggal(request: Request):
+    """Satu hari WIB (bawaan: hari ini). Tidak boleh di masa depan."""
+    from utils.waktu import today_wib
+    d = q_date(request.query_params.get("tanggal"), name="tanggal") or today_wib()
+    if d > today_wib():
+        raise HTTPException(400, "Tanggal tidak boleh melewati hari ini.")
+    return d
+
+
 @router.get("/alur")
 async def get_alur(request: Request):
+    """Alur kerja satu hari: per alur bisnis, langkah berurutan — dikerjakan siapa, yang menunggu, di mana macet."""
     await _pemantau(request)
-    dari, sampai = _periode(request)
-    return _out(await ringkasan.per_alur(get_db(), dari, sampai))
+    alur = request.query_params.get("alur") or None
+    if alur and alur not in _alur.ALUR:
+        raise HTTPException(400, "Alur tidak dikenal.")
+    return _out(await _alur.alur_kerja(get_db(), _tanggal(request), alur=alur))
+
+
+@router.get("/aktivitas")
+async def get_aktivitas(request: Request):
+    """Pekerjaan tiap staf pada satu hari (kalimat staf, dari langkah alur yang sama) + akun yang tidak aktif."""
+    await _pemantau(request)
+    return _out(await _alur.aktivitas_staf(get_db(), _tanggal(request)))
 
 
 @router.get("/kejadian/{kid}")
@@ -109,9 +130,9 @@ async def post_ingatkan(kid: str, request: Request):
     if k.get("status") not in pemindai.TERBUKA:
         raise HTTPException(409, "Kewajiban ini sudah tidak menunggu.")
     if not k.get("pemegang_ids"):
-        raise HTTPException(409, "Kewajiban ini belum punya pemegang. Isi pemegangnya di Aturan Kewajiban.")
+        raise HTTPException(409, "Kewajiban ini belum punya penanggung jawab. Isi di menu Aturan kewajiban.")
     n = await pengingat.ingatkan_satu(db, k, oleh=user)
-    return {"ok": True, "penerima": n, "pesan": "Pengingat terkirim ke pemegang."}
+    return {"ok": True, "penerima": n, "pesan": "Pengingat terkirim ke penanggung jawab."}
 
 
 @router.post("/kejadian/{kid}/maafkan")
