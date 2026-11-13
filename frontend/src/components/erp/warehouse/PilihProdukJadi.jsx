@@ -11,6 +11,7 @@
  * kartu ringkas di HP); baris diklik atau kotaknya dicentang untuk memilih.
  *
  * Props: terpilih = { [id]: any } (yang sudah dipilih) · onUbah(item, centang) · alasanTolak(item) → teks | null
+ *        · cari + onCari (opsional) → kata cari dipegang induk, mis. untuk draf yang bertahan saat popup ditutup
  */
 import { useEffect, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
@@ -65,9 +66,15 @@ export function kolomBarang(ambil, catatan) {
 
 export default function PilihProdukJadi({
   lokasiId = '', adaStok = false, terpilih = {}, onUbah, alasanTolak, testId = 'pilih-produk',
+  cari: cariLuar, onCari,
 }) {
-  const [cari, setCari] = useState('');
-  const [q, setQ] = useState('');
+  // 14 Nov 2026: kata cari boleh dipegang induk (`cari` + `onCari`) supaya ikut tersimpan sebagai draf
+  // (Scan Keluar). Tanpa kedua prop itu, kata cari tetap milik komponen ini seperti dulu.
+  const terkontrol = cariLuar !== undefined;
+  const [cariSendiri, setCariSendiri] = useState('');
+  const cari = terkontrol ? (cariLuar || '') : cariSendiri;
+  const setCari = (v) => { if (terkontrol) onCari?.(v); else setCariSendiri(v); };
+  const [q, setQ] = useState(() => cari.trim());
   const [hasil, setHasil] = useState({ items: [], total: 0, terpotong: false });
   const [memuat, setMemuat] = useState(true);
   const [galat, setGalat] = useState('');
