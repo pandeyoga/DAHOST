@@ -381,7 +381,7 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
       )}>
       {correcting && (
         <Notice tone="info" icon={History} testId="cutting-progress-old">
-          Catatan lama ({fmtDateTime(correcting.created_at)} oleh {correcting.created_by_name || '—'}):{' '}
+          Tercatat sekarang ({fmtDateTime(correcting.created_at)} oleh {correcting.created_by_name || '—'}):{' '}
           kain {(correcting.inputs || []).length
             ? correcting.inputs.map((x) => `${x.input_material_code} ${fmtNum(x.input_consumed, 2)} ${x.input_unit}`).join(', ')
             : `${fmtNum(correcting.input_consumed, 2)} ${order.input_unit || ''}`}
