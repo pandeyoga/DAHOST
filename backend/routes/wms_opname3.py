@@ -39,10 +39,14 @@ def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname", sess
             raise HTTPException(403, f"Opname stok awal: hanya Keuangan/owner yang boleh {what} (nilai stok "
                                      "awal dibukukan ke ekuitas saldo awal).")
         return
-    from routes.shared import can_act
-    if not can_act(user, "wh.opname.approve", "wh.opname.manage", "warehouse.approve",
-                   legacy_roles=APPROVE_ROLES):
-        raise HTTPException(403, f"Hanya supervisor/admin gudang yang boleh {what}")
+    from routes.shared import can_act, user_permissions
+    # 13 Nov 2026: HANYA centang "Setujui" modul opname (Gudang › Opname Stok Gudang; Aksesoris › Stok Opname
+    # Aksesoris) atau izin lama wh.opname.approve. Dulu "Setujui" Stok, wh.opname.manage dan warehouse.approve ikut
+    # meloloskan, sehingga owner tidak bisa memisahkan siapa yang boleh menyetujui hasil opname.
+    centang = {"mod.wh_opname.approve", "mod.acc_opname.approve"} & user_permissions(user)
+    if not (centang or can_act(user, "wh.opname.approve", legacy_roles=APPROVE_ROLES)):
+        raise HTTPException(403, f"Peran Anda belum dicentang \"Setujui\" pada Opname Stok di Manajemen Role "
+                                 f"(diperlukan untuk {what}).")
 
 
 # ── kompat uji/pemanggil lama (resolusi lewat SSOT core.scan_resolver) ──────────

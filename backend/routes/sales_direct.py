@@ -48,6 +48,9 @@ def _num(v, field="nilai"):
 
 async def _require_write(request: Request):
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 13 Nov 2026: centang owner (katalog) dihormati — routes.shared.lolos_centang
+        return user
     role = (user.get("role") or "").lower()
     perms = user.get("_permissions") or []
     if role in WRITE_ROLES or "*" in perms or "sales.manage" in perms or "finance.manage" in perms:

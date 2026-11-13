@@ -121,7 +121,7 @@ def require_roles(*roles: str, perm=None):
     2026-11-08: peran buatan owner ("HR Generalist", "Koordinator Packing", …) tidak ada di daftar kode
     peran. `perm` (satu kunci atau tuple, salah satu cukup) = izin yang mengatur area endpoint itu; aturannya
     sama dengan `auth.check_role` (superadmin, kode peran di daftar, izin "*", atau izin yang diminta).
-    Tanpa `perm` perilakunya persis seperti dulu.
+    13 Nov 2026: centang owner untuk aksi endpoint (katalog) juga meloloskan (`routes.shared.lolos_centang`).
     """
     allowed = {r.lower() for r in roles} | {"superadmin", "admin"}
     keys = (perm,) if isinstance(perm, str) else tuple(perm or ())
@@ -130,14 +130,26 @@ def require_roles(*roles: str, perm=None):
         role = _role_of(request)
         if role in allowed:
             return
-        if keys:
+        from data.module_catalog import request_key
+        try:
+            kunci_aksi = request_key(request.method, request.url.path)
+        except AttributeError:  # request palsu tanpa method/url
+            kunci_aksi = None
+        user = None
+        if keys or kunci_aksi:  # tanpa izin & di luar katalog: cukup kode peran (tanpa query DB, seperti dulu)
             try:
                 user = await _auth.require_auth(request)
             except HTTPException:
                 user = None
-            if user and _auth.check_role(user, sorted(allowed), keys):
-                return
-        raise HTTPException(403, f"Akses ditolak: butuh peran {', '.join(sorted(roles))}.")
+        if user and keys and _auth.check_role(user, sorted(allowed), keys):
+            return
+        # 13 Nov 2026: centang owner untuk aksi endpoint ini (katalog) juga meloloskan — daftar peran di kode tidak
+        # boleh mengalahkan centang (routes.shared.lolos_centang).
+        from routes.shared import lolos_centang
+        if user and lolos_centang(user):
+            return
+        raise HTTPException(403, f"Akses ditolak: butuh peran {', '.join(sorted(roles))} atau centang aksi ini "
+                                 "di Manajemen Role.")
     _dep.__name__ = f"require_roles[{','.join(sorted(allowed))}{'|' + ','.join(keys) if keys else ''}]"
     return _dep
 

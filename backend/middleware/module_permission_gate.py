@@ -3,8 +3,8 @@
 Satu gerbang untuk semua endpoint yang prefix-nya terdaftar di `data/module_catalog.py`:
   method + kata kunci path -> aksi (view/create/edit/delete/approve/export) -> `mod.<modul>.<aksi>`.
 
-Model "fallback aman" (per portal): gerbang hanya aktif bila peran/pengguna sudah diberi
-minimal satu izin `mod.*` pada portal modul tersebut. Super role (superadmin/admin/owner),
+13 Nov 2026: gerbang aktif untuk SEMUA modul katalog (tanpa aturan lama per portal) — centang owner
+satu-satunya penentu. Super role (superadmin/admin/owner),
 izin "*", peran eksternal (punya penjaga portal sendiri), dan endpoint swalayan Portal Saya
 (`module_catalog.SELF_SERVICE`) selalu dilewati.
 """
@@ -16,7 +16,7 @@ import logging
 from auth import _load_live_user, _load_portal_config, _load_rbac, verify_download_token, verify_token_str
 from core.authz import EXTERNAL_ROLES
 from data.module_catalog import (
-    ACTION_LABELS, PORTAL_LABELS, detect_action, granular_portals, is_self_service, match_module, perm_key,
+    ACTION_LABELS, PORTAL_LABELS, granular_portals, is_self_service, perm_key, resolve,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,8 +38,14 @@ def _token_payload(scope) -> dict | None:
 
 
 async def evaluate(method: str, path: str, payload: dict | None):
-    """Return (module, action, reason) bila DITOLAK, else None."""
-    mod = match_module(path)
+    """Return (module, action, reason) bila DITOLAK, else None.
+
+    13 Nov 2026 (owner: "bisa semuanya, jangan setengah-setengah"): centang = SATU-SATUNYA penentu. Aturan lama
+    "portal yang belum punya satu pun centang `mod.*` memakai aturan lama" dihapus — setiap modul wajib dicentang.
+    Peran yang dulu memakai aturan lama sudah dicentangkan setara aksesnya lewat migrasi
+    `2026_11_13_centang_akses_penuh`.
+    """
+    mod, action = resolve(method, path)
     if not mod or not payload:
         return None
     # Swalayan Portal Saya (absen, cuti, lembur, kasbon, slip sendiri): kepemilikan dijaga handler.
@@ -53,7 +59,6 @@ async def evaluate(method: str, path: str, payload: dict | None):
     perms = set(role_perms) | set(extra)
     if "*" in perms:
         return None
-    action = detect_action(method, path, mod)
     if action == "view" and mod["lookup"]:
         return None
     # 1) Akses PORTAL (khusus aksi tulis/approve/export; baca lintas-portal tetap untuk layar pintasan):
@@ -66,9 +71,7 @@ async def evaluate(method: str, path: str, payload: dict | None):
         allowed = set(effective_portals(role, role_portals, extra_portals)) | granular_portals(perms)
         if not ({mod["portal"], *mod["also_portals"]} & allowed):
             return mod, action, "portal"
-    # 2) Izin granular per modul (aktif per portal setelah owner mencentang izin mod.*).
-    if mod["portal"] not in granular_portals(perms):
-        return None
+    # 2) Izin per modul: wajib dicentang (tanpa aturan lama per portal sejak 13 Nov 2026).
     if perm_key(mod["id"], action) in perms:
         return None
     return mod, action, "perm"
@@ -80,8 +83,7 @@ def _catat_aktivitas(scope, payload: dict, status: int) -> None:
     try:
         from core.pantau_staf import meter
         method, path = scope.get("method", "GET"), scope.get("path", "")
-        mod = match_module(path)
-        action = detect_action(method, path, mod) if mod else None
+        mod, action = resolve(method, path)
         meter.catat_latar(user_id=payload.get("id"), role=payload.get("role"), method=method, status=status,
                           module=mod, action=action)
     except Exception:  # noqa: BLE001 — pencatatan tidak boleh mengganggu permintaan

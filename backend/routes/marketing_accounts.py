@@ -19,7 +19,6 @@ from routes.marketing_shared import _uid, _now, _get_user, _sanitize, PlatformAc
 from routes.marketing_shared import refresh_stale_health_scores
 from core import marketing_sales_shape as _shape
 from core.authz import only  # T-01 2.3
-from core.roles import MGMT_ROLES  # T-01 2.3
 
 logger = logging.getLogger(__name__)
 
@@ -206,23 +205,34 @@ async def _resolve_pic(db, pic_user_id, current: Optional[str] = None):
     return pid, (user.get("name") or user.get("email"))
 
 
-STORE_MANAGE_DENIED = ("Hanya owner, admin, SPV, atau manager marketing yang boleh menambah, mengubah, "
-                       "atau mengarsipkan toko. Bila ada data toko yang salah, minta mereka memperbaikinya.")
+STORE_MANAGE_DENIED = ("Peran Anda belum dicentang \"Kelola Akun\" (Tambah, Ubah, atau Hapus) di Manajemen Role. "
+                       "Bila ada data toko yang salah, minta owner atau SPV Marketing memperbaikinya.")
 
 
-def can_manage_stores(user: Optional[dict]) -> bool:
-    """Boleh menambah/mengubah/mengarsipkan master toko? (keputusan owner 5 Nov 2026)
+def can_manage_stores(user: Optional[dict], action: Optional[str] = None) -> bool:
+    """Boleh menambah/mengubah/menghapus master toko?
 
-    Dulu siapa pun yang login boleh menambah & mengubah toko. PIC toko lalu membuat toko yang
-    SUDAH ADA (SHOPEE - OUTFIT = SHP-02, TIKTOK - OUTFIT = TTK-02); tiap toko baru juga langsung
-    membuat akun Penjualan + Piutang di Bagan Akun — satu toko jadi tercatat dua kali.
+    5 Nov 2026: dibatasi ke SPV/manajemen karena PIC toko membuat toko yang SUDAH ADA (satu toko tercatat dua kali,
+    plus akun Penjualan + Piutang ganda di Bagan Akun). 13 Nov 2026 (owner: "mana yang bisa menambahkan akun mana
+    yang tidak"; Content Creator "bisa menambahkan hak kelola akun"): hak ini kini CENTANG "Kelola Akun"
+    (`mod.mkt_accounts.create/edit/delete`) di Manajemen Role, bukan daftar peran di kode. Toko ganda tetap ditolak
+    `_find_duplicate_store`.
+    `action` None = salah satu aksi (untuk tombol di layar).
     """
-    return scope.can_write_target(user) or str((user or {}).get("role") or "").lower() in MGMT_ROLES
+    from routes.shared import SUPER_ROLES, user_permissions
+    if str((user or {}).get("role") or "").lower() in SUPER_ROLES:
+        return True
+    perms = user_permissions(user or {})
+    if "*" in perms:
+        return True
+    acts = (action,) if action else ("create", "edit", "delete")
+    return any(f"mod.mkt_accounts.{a}" in perms for a in acts)
 
 
 async def _assert_can_manage_stores(request: Request) -> dict:
     user = await require_auth(request)
-    if not can_manage_stores(user):
+    from routes.shared import lolos_centang
+    if not lolos_centang(user):
         raise HTTPException(403, STORE_MANAGE_DENIED)
     return user
 
@@ -804,8 +814,9 @@ async def delete_platform_account_permanently(account_id: str, request: Request)
     (akun pendapatan toko & piutang sub-ledger buatan sistem: dinonaktifkan, tidak dihapus).
     """
     user = await require_auth(request)
-    if str(user.get("role") or "").lower() != "superadmin":
-        raise HTTPException(403, "Hapus permanen toko hanya untuk super admin. "
+    from routes.shared import lolos_centang
+    if not lolos_centang(user):  # 13 Nov 2026: centang Kelola Akun › Hapus (dulu khusus super admin)
+        raise HTTPException(403, "Peran Anda belum dicentang \"Kelola Akun › Hapus\" di Manajemen Role. "
                                  "Gunakan Arsipkan untuk menonaktifkan toko.")
     db = get_db()
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})

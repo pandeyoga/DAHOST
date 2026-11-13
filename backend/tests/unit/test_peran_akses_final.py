@@ -145,9 +145,9 @@ def test_gerbang_modul_menolak_portal_bawaan_yang_tidak_dicentang(gerbang):
     # Pengadaan = bawaan spv_cuting, tapi owner hanya mencentang Cutting + Gudang → aksi tulis ditolak.
     denied = run(gate.evaluate("POST", f"{prefix}/pr-1/approve", gerbang("spv_cuting", ["cutting", "warehouse"])))
     assert denied is not None and denied[2] == "portal"
-    # Dicentang → lolos; peran belum diatur → aturan lama (tidak dicek portalnya).
-    assert run(gate.evaluate("POST", f"{prefix}/pr-1/approve", gerbang("spv_cuting", ["cutting", "procurement"]))) is None
-    assert run(gate.evaluate("POST", f"{prefix}/pr-1/approve", gerbang("spv_cuting", []))) is None
+    # Portal dicentang tetapi aksi modul belum dicentang → ditolak (13 Nov 2026: tanpa aturan lama per portal).
+    denied = run(gate.evaluate("POST", f"{prefix}/pr-1/approve", gerbang("spv_cuting", ["cutting", "procurement"])))
+    assert denied is not None and denied[2] == "perm"
 
 
 # ═════════════════════════ 3. benih peran hanya instalasi baru ═════════════════════════
