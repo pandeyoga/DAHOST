@@ -94,6 +94,9 @@ ALLOWED_TRANSITIONS = {
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get("role") or "").lower()
     if role in ("superadmin", "admin"):
         return user

@@ -173,10 +173,12 @@ export function currentRole() {
  * tetap di backend (`core/cmt_override.OVERRIDE_ROLES`).
  */
 export function navItemAllowed(item, role) {
-  const roles = item?.roles;
-  if (!Array.isArray(roles) || roles.length === 0) return true;
   const r = (role || currentRole() || '').toLowerCase();
   if (SUPER_ROLES.includes(r)) return true;
+  // 14 Nov 2026: `aksi` = pintu tampil hanya bila aksi itu dicentang untuk menunya (Manajemen Role).
+  if (item?.aksi && !canDo(item.id, item.aksi)) return false;
+  const roles = item?.roles;
+  if (!Array.isArray(roles) || roles.length === 0) return true;
   return roles.map(x => String(x).toLowerCase()).includes(r);
 }
 

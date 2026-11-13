@@ -45,6 +45,9 @@ def _s(doc):
 
 async def _require_hr(request: Request):
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     if (user.get("role") or "").lower() in ("superadmin","admin","owner","hr","manager","supervisor"):
         return user
     raise HTTPException(403, "Akses ditolak.")

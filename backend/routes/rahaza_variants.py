@@ -25,6 +25,7 @@ Schema rahaza_model_variants:
    sku(UNIQUE aktif), barcode?, notes?, product_status? (new|best_seller|slow|dead|stop|null),
    active, created_at, updated_at}
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
@@ -68,6 +69,8 @@ async def _require_admin(request: Request):
     """RBAC master product (keputusan user): SEMUA staff internal boleh CRUD.
     Hanya role eksternal (vendor/klien) yang ditolak."""
     user = await require_auth(request)
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get("role") or "").lower()
     if role in ("cmt_vendor", "vendor", "klien_maklon"):
         raise HTTPException(403, "Akses master hanya untuk staff internal.")
@@ -89,8 +92,10 @@ PRODUK_HAPUS_PERMS = ("products.delete", "rnd.manage", "bom.manage")
 
 def izinkan_hapus_permanen(user: dict) -> None:
     """403 bila `user` tidak boleh menghapus permanen master produk (model, varian, warna, ukuran, kategori, BOM)."""
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     from auth import check_role
-    if not check_role(user, list(PRODUK_HAPUS_ROLES), PRODUK_HAPUS_PERMS):
+    if not (check_role(user, list(PRODUK_HAPUS_ROLES), PRODUK_HAPUS_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Akses ditolak: hapus permanen data master produk hanya untuk tim produksi, R&D, "
                                  "atau manajemen. Nonaktifkan saja, atau minta atasan menghapusnya.")
 

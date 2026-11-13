@@ -18,6 +18,9 @@ router = APIRouter(prefix="/api/dewi/cmt-intake", tags=["dewi-cmt-intake"])
 
 def _require_admin(user: dict):
     # 2026-08-06 — gerbang izin terpusat (routes.shared.can_act, fallback aman).
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     if not can_act(user, "cmt.view", "cmt.intake.manage", "production.manage",
                    legacy_roles=PROD_ADMIN_ROLES):
         raise HTTPException(403, "Akses ditolak: butuh izin monitoring intake CMT (cmt.view).")

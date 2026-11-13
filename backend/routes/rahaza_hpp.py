@@ -47,6 +47,9 @@ def _now(): return datetime.now(timezone.utc)
 
 async def _require_fin(request: Request):
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get("role") or "").lower()
     if role in FINANCE_ROLES:  # FIN-02
         return user

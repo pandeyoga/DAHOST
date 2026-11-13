@@ -30,6 +30,7 @@ itu apa adanya: berapa per batch, sisa stok tiap batch, dan rata-rata lapisan
 yang MASIH ada stoknya (angka yang dipakai margin Katalog Marketing).
 """
 from __future__ import annotations
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 
 import logging
 from datetime import datetime, timezone
@@ -68,7 +69,9 @@ def _user(request: Request) -> dict:
 
 
 def _guard(user: dict, roles: list, what: str) -> None:
-    if not check_role(user, roles, "production.manage"):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, roles, "production.manage") or lolos_centang(user)):
         raise HTTPException(403, f"Akses ditolak: butuh izin {what}")
 
 

@@ -19,6 +19,7 @@
   GET  /api/kirim-cmt/po/{po_id}/accessory-plan       rencana aksesoris PO tersimpan
   PUT  /api/kirim-cmt/po/{po_id}/accessory-plan       simpan rencana (rencana serah baris BOM + baris tambahan)
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import HTTPException, Request
 
 from auth import check_role, log_activity, require_auth, serialize_doc
@@ -276,7 +277,7 @@ async def kirim_nota_batal(nid: str, request: Request):
 async def kirim_repost_journal(sid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, FIN_REPOST_ROLES):
+    if not (check_role(user, FIN_REPOST_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Hanya admin produksi / keuangan yang boleh memposting ulang jurnal.")
     db = get_db()
     ship = await db.vendor_shipments.find_one({"id": sid}, {"_id": 0})
@@ -375,7 +376,7 @@ async def kirim_request_detail(src: str, rid: str, request: Request):
 async def kirim_request_create(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]):
+    if not (check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]) or lolos_centang(user)):
         raise HTTPException(403, "Forbidden")
     db = get_db()
     body = await request.json()
@@ -390,7 +391,7 @@ async def kirim_request_create(request: Request):
 async def kirim_request_approve(src: str, rid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]):
+    if not (check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]) or lolos_centang(user)):
         raise HTTPException(403, "Forbidden")
     db = get_db()
     try:
@@ -423,7 +424,7 @@ async def kirim_request_approve(src: str, rid: str, request: Request):
 async def kirim_request_reject(src: str, rid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]):
+    if not (check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]) or lolos_centang(user)):
         raise HTTPException(403, "Forbidden")
     db = get_db()
     body = await request.json()
@@ -532,7 +533,7 @@ async def accessory_plan_get(po_id: str, request: Request):
 async def accessory_plan_put(po_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES):
+    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Forbidden")
     db = get_db()
     body = await request.json()

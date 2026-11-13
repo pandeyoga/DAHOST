@@ -789,6 +789,9 @@ _PAY_ROLES = tuple(dict.fromkeys(FINANCE_ROLES + ('admin_maklon', 'manager')))
 
 
 def _require_payment_role(user: dict) -> None:
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     if (user.get('role') or '').lower() not in _PAY_ROLES:
         raise HTTPException(403, 'Hanya Keuangan / admin maklon yang boleh mencatat pembayaran klien.')
 

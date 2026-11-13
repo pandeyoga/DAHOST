@@ -5,6 +5,7 @@ Endpoints: /api/reminders/*
 Refactored: Session #12 P2 (split from operations.py 2580 LOC monolith,
 deprecated accessories section removed)
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
@@ -48,7 +49,7 @@ async def get_reminders(request: Request):
 @router.post("/reminders")
 async def create_reminder(request: Request):
     user = await require_auth(request)
-    if not check_role(user, VENDOR_REMINDER_WRITER_ROLES):
+    if not (check_role(user, VENDOR_REMINDER_WRITER_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -122,7 +123,7 @@ async def update_reminder(reminder_id: str, request: Request):
 @router.delete("/reminders/{reminder_id}")
 async def delete_reminder(reminder_id: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, VENDOR_REMINDER_DELETE_ROLES):
+    if not (check_role(user, VENDOR_REMINDER_DELETE_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     await db.reminders.delete_one({'id': reminder_id})

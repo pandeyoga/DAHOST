@@ -17,6 +17,7 @@ Endpoints:
   POST /api/rahaza/alerts/evaluate   — manual trigger (admin); publishes + returns counts
   GET  /api/rahaza/alerts/preview    — returns what WOULD alert; no publish
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, check_role
@@ -77,8 +78,10 @@ async def _get_settings(db) -> dict:
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     # 2026-11-08: kode peran lama ATAU izin `production.manage` ("Ubah data di Portal Produksi").
-    if not check_role(user, ("admin", "superadmin", "owner", "manager_production"), "production.manage"):
+    if not (check_role(user, ("admin", "superadmin", "owner", "manager_production"), "production.manage") or lolos_centang(user)):
         raise HTTPException(403, "Butuh role Admin/Manager Produksi untuk mengubah setting alert")
     return user
 

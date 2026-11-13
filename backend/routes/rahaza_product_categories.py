@@ -41,6 +41,9 @@ def _now():
 async def _require_internal(request: Request):
     """RBAC master produk (sama dengan master model): staff internal saja."""
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get('role') or '').lower()
     if role in ('cmt_vendor', 'vendor', 'klien_maklon'):
         raise HTTPException(403, 'Akses master hanya untuk staff internal.')

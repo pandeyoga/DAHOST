@@ -7,6 +7,7 @@ identical to the original definitions in server.py. This is the most central
 entity in the ERP (HIGH risk phase per the plan) — every line below is an
 exact cut-paste from server.py, no logic was altered.
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -574,7 +575,7 @@ async def po_accessory_create_request(po_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES):
+    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya admin/supervisor produksi yang boleh mengajukan pembelian aksesoris')
     db = get_db()
     po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
@@ -715,7 +716,7 @@ async def close_po_short(po_id: str, request: Request):
     else shrink the draft AR invoice to qty_received)."""
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES):
+    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()

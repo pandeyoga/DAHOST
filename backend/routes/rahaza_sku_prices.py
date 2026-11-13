@@ -41,6 +41,9 @@ async def _require_master_writer(request: Request) -> dict:
     """Sama dengan penjaga master produk (`rahaza_production._require_admin`) + peran portal marketing ditolak
     (router master produk dipasang dengan `_DENY_MKT` di server.py)."""
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
     role = (user.get('role') or '').lower()
     if role in EXTERNAL_ROLES or role in MARKETING_PORTAL_ROLES:
         raise HTTPException(403, 'Harga jual resmi per SKU hanya bisa diubah staf internal yang mengelola master '

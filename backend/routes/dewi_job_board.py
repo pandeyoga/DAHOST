@@ -8,6 +8,7 @@ Features:
 - Application tracking
 - Career path visualization
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -30,7 +31,9 @@ JOB_BOARD_PERM = "hr.manage"
 
 
 def _require_job_board_hr(user: dict, message: str) -> None:
-    if not check_role(user, JOB_BOARD_ROLES, JOB_BOARD_PERM):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, JOB_BOARD_ROLES, JOB_BOARD_PERM) or lolos_centang(user)):
         raise HTTPException(403, message)
 
 # ============================================================================

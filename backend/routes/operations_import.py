@@ -5,6 +5,7 @@ Endpoints: /api/import-data, /api/import-template
 
 Refactored: Session #11.19 Phase 3.2 (extracted from operations.py 2354 LOC monolith)
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import logging
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api", tags=["operations-import"])
 @router.post("/import-data")
 async def import_data(request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not (check_role(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()

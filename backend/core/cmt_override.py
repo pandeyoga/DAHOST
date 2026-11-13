@@ -91,7 +91,14 @@ def header_value(request: Request) -> str:
 
 
 def is_override_role(user: dict) -> bool:
-    return (user.get('role') or '').strip().lower() in OVERRIDE_ROLES
+    """Boleh "Input atas nama CMT"? 14 Nov 2026 (tahap 2): centang Produksi › Input atas nama Vendor CMT
+    (`mod.prod_cmt_override.create`/`edit`), bukan kode peran. `OVERRIDE_ROLES` tinggal acuan migrasi
+    2026_11_14_centang_tahap2 (peran yang dulu boleh sudah dicentangkan)."""
+    from routes.shared import SUPER_ROLES, user_permissions
+    if (user.get('role') or '').strip().lower() in SUPER_ROLES:
+        return True
+    perms = user_permissions(user)
+    return "*" in perms or bool({"mod.prod_cmt_override.create", "mod.prod_cmt_override.edit"} & perms)
 
 
 async def resolve_override(request: Request, user: dict, db) -> dict | None:

@@ -2,6 +2,7 @@
 Rahaza Auto-Attendance - ZKTeco Devices
 Physical Fingerprint Device Sync (ZKTeco/Fingerspot)
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import hashlib
 import logging
 import uuid
@@ -271,7 +272,9 @@ _AUTO = {
 
 
 def _require_fp(user: dict) -> None:
-    if not check_role(user, FP_ROLES, FP_PERM):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, FP_ROLES, FP_PERM) or lolos_centang(user)):
         raise HTTPException(403, "Hanya admin/HR.")
 
 

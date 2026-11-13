@@ -2,6 +2,7 @@
 Dewi Accessories - Stock
 Stock overview, movements, receive, issue
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 import uuid
@@ -460,7 +461,7 @@ async def scrap_stock(request: Request):
     boleh melakukan write-off.
     """
     user = await require_auth(request)
-    if not check_role(user, SCRAP_ROLES, "inv.stock.manage"):
+    if not (check_role(user, SCRAP_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, SCRAP_FORBIDDEN_MSG)
     db = get_db()
     body = await request.json()

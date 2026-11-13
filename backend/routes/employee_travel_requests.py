@@ -20,6 +20,7 @@ Endpoints:
   POST /travel/{id}/complete            — mark trip completed
   GET  /travel/{id}/per-diem-calc       — preview per diem calculation
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -634,7 +635,7 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     """
     db = get_db()
     # 2026-11-08: kode peran Keuangan ATAU izin bayar (`FINANCE_PAY_PERMS`; tidak tersirat dari modul SDM).
-    if not check_role(user, ADVANCE_PAYER_ROLES, FINANCE_PAY_PERMS):
+    if not (check_role(user, ADVANCE_PAYER_ROLES, FINANCE_PAY_PERMS) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya Keuangan yang dapat membayar uang muka dinas (pemisahan tugas: HR tidak membayar).')
     # 2026-11-06 (pola P9): dinas DIKUNCI selama uang muka dibayar (penolakan / bayar kedua → 409).
     token = await doc_lock.claim(db, 'employee_travel_requests', req_id, field='advance_lock', actor=user,

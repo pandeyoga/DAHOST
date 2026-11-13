@@ -241,8 +241,7 @@ export const PORTAL_NAV = {
           { id: 'prod-shipments-vendor', label: 'Kirim ke CMT', icon: Scissors },
           // Kewenangan LEBIH SEMPIT daripada portalnya (keputusan owner 2b): mengisi atas nama vendor CMT
           // berdampak langsung ke TAGIHAN CMT. Daftar role WAJIB sama dengan backend core/cmt_override.OVERRIDE_ROLES.
-          { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog,
-            roles: ['admin', 'superadmin', 'admin_produksi', 'supervisor_produksi', 'ppic'] },
+          { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog },
           { id: 'da-cmt-receive',        label: 'Terima & QC',  icon: Truck },
           { id: 'cmt-permak',            label: 'Perbaikan',    icon: Wrench },
           { id: 'prod-shipments-buyer',  label: 'Kirim hasil',  icon: PackageOpen },
@@ -729,8 +728,7 @@ export const PORTAL_NAV = {
           { id: 'maklon-pos-engine',     label: 'PO Maklon',    icon: ClipboardSignature },
           { id: 'bahan-produksi',        label: 'Bahan',        icon: ClipboardPen },
           { id: 'prod-shipments-vendor', label: 'Kirim ke CMT', icon: Scissors },
-          { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog,
-            roles: ['admin', 'superadmin', 'admin_produksi', 'supervisor_produksi', 'ppic'] },
+          { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog },
           { id: 'da-cmt-receive',        label: 'Terima & QC',  icon: Truck },
           { id: 'cmt-permak',            label: 'Perbaikan',    icon: Wrench },
           { id: 'prod-shipments-buyer',  label: 'Kirim hasil',  icon: PackageOpen },
@@ -779,8 +777,8 @@ export const PORTAL_NAV = {
         items: [
           { id: 'marketing-accounts',  label: 'Kelola Akun',       icon: Store },
           // 2026-11-05: koreksi data toko = mengubah master toko → hanya owner/admin/SPV/manager
-          { id: 'marketing-account-review', label: 'Koreksi Data Toko', icon: ClipboardCheck,
-            roles: ['owner', 'admin', 'superadmin', 'spv_marketing', 'manager_marketing', 'manager'] },
+          // 14 Nov 2026: tampil bila Kelola Akun › Ubah dicentang (dulu daftar kode peran).
+          { id: 'marketing-account-review', label: 'Koreksi Data Toko', icon: ClipboardCheck, aksi: 'edit' },
           { id: 'marketing-sales',     label: 'Input Sales',       icon: TrendingUp },
           { id: 'marketing-import',    label: 'Impor Data',        icon: FileSpreadsheet },
           { id: 'marketing-orders',    label: 'Order Terpadu',     icon: ShoppingBag },

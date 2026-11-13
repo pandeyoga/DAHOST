@@ -13,6 +13,7 @@ Question template (stored inline per cycle):
   questions: [ { id, text, category (performance|collaboration|leadership|technical),
                  min_score, max_score, require_comment } ]
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -155,7 +156,7 @@ async def close_cycle(cycle_id: str, request: Request):
     """HR closes cycle, compute aggregate scores."""
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `hr.manage` (modul Manajemen Kinerja).
-    if not check_role(user, ("superadmin", "admin", "owner", "hr", "manager"), "hr.manage"):
+    if not (check_role(user, ("superadmin", "admin", "owner", "hr", "manager"), "hr.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR yang dapat tutup cycle.")
     db = get_db()
 

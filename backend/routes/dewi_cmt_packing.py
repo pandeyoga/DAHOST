@@ -27,6 +27,7 @@ Endpoints:
 """
 # ruff: noqa: E741
 
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, HTTPException, Request, Depends
 from routes.production_rbac import deny_external_dep
 from fastapi.responses import JSONResponse
@@ -165,7 +166,7 @@ async def backfill_wip_fg(request: Request, dry_run: bool = True):
     """Iter 116: posting WIP→FG utk Terima FG dari CMT PO INTERNAL lama yang sudah selesai QC
     tapi belum berjurnal (sebelum iter 115). dry_run=true hanya menampilkan kandidat."""
     user = await require_auth(request)
-    if not check_role(user, ["admin", "owner", "accounting", "finance", "manager_keuangan", "staff_keuangan"], "finance.manage"):
+    if not (check_role(user, ["admin", "owner", "accounting", "finance", "manager_keuangan", "staff_keuangan"], "finance.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya Finance/Admin.")
     db = get_db()
     done_statuses = [ST_DONE, "approved", "Approved", "Done", "completed_qc"]

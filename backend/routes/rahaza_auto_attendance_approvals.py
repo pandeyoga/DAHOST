@@ -2,6 +2,7 @@
 Rahaza Auto-Attendance - Approvals
 HR Approval Queue for pending attendance
 """
+from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import uuid
 import os
 from datetime import datetime, timezone
@@ -55,7 +56,9 @@ ATT_APPROVER_PERM = "hr.approve"
 
 
 def _require_attendance_approver(user: dict) -> None:
-    if not check_role(user, ATT_APPROVER_ROLES, ATT_APPROVER_PERM):
+    if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
+        return user
+    if not (check_role(user, ATT_APPROVER_ROLES, ATT_APPROVER_PERM) or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR/Admin.")
 
 
