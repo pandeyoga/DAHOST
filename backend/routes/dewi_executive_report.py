@@ -37,16 +37,14 @@ logger = logging.getLogger(__name__)
 #   2. menu "Laporan Eksekutif" disembunyikan untuk peran/pengguna → DITOLAK (termasuk peran yang
 #      izin per modul Portal Keuangan-nya sudah diatur owner tanpa centang "Lihat — Laporan Eksekutif");
 #   3. izin `mod.fin_exec_report.view`                           → boleh (peran apa pun yang dicentang);
-#   4. belum diatur owner (bawaan)                               → hanya peran yang bisa membuka
-#      Portal Manajemen atau Portal Keuangan (accounting, staff_keuangan, manager_*, …).
+#   4. selain itu DITOLAK (13 Nov 2026: tanpa aturan bawaan "peran Keuangan/Manajemen" — centang satu-satunya penentu).
 EXEC_REPORT_MODULE = "fin_exec_report"
 EXEC_REPORT_MENU = "fin-executive-report"
-EXEC_REPORT_DEFAULT_PORTALS = ("management", "finance")
 
 
 async def exec_report_access(db, user: dict) -> tuple[bool, str]:
     """(boleh?, alasan) untuk Laporan Eksekutif — lihat aturan di atas."""
-    from data.module_catalog import granular_portals, perm_key
+    from data.module_catalog import perm_key
     from routes.shared import SUPER_ROLES, resolve_role_access, user_permissions
     role = (user.get("role") or "").lower()
     if role in SUPER_ROLES:
@@ -59,11 +57,9 @@ async def exec_report_access(db, user: dict) -> tuple[bool, str]:
         return False, "hidden"
     if perm_key(EXEC_REPORT_MODULE, "view") in perms:
         return True, "permission"
-    if "finance" in granular_portals(perms):
-        return False, "not_granted"
-    if set(access.get("portals") or []) & set(EXEC_REPORT_DEFAULT_PORTALS):
-        return True, "default_portal"
-    return False, "default_portal"
+    # 13 Nov 2026: centang = satu-satunya penentu — tidak ada lagi "boleh karena portal bawaan peran Keuangan/
+    # Manajemen" (peran yang dulu lolos begitu dicentangkan lewat migrasi 2026_11_13_centang_akses_penuh).
+    return False, "not_granted"
 
 
 async def require_exec_report(request: Request) -> dict:

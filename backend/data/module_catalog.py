@@ -14,9 +14,10 @@ Tiap modul:
   extras  : izin khusus lama yang tetap ditampilkan di modul ini
   lookup  : True = GET boleh untuk semua staf internal (data acuan dropdown lintas portal)
 
-MODEL PENEGAKAN (per portal, "fallback aman"):
-  peran yang BELUM diberi satu pun izin `mod.*` pada portal X -> aturan lama berlaku;
-  begitu owner mencentang izin granular di portal X, setiap modul portal X wajib izinnya.
+MODEL PENEGAKAN (13 Nov 2026, owner: "bisa semuanya, jangan setengah-setengah"):
+  centang = satu-satunya penentu. Setiap modul katalog wajib dicentang (tanpa aturan lama per portal); penjaga di
+  kode menghormati centang lewat `routes.shared.lolos_centang`. Kunci tiap permintaan: `resolve`/`request_key`
+  (ENDPOINT_RULES dulu, lalu prefix terpanjang + `detect_action`).
 """
 from __future__ import annotations
 
@@ -219,10 +220,13 @@ MODULES: list[dict] = [
     _m("warehouse", "wh_stock", "Stok, Opname & Akurasi", ["wms-stock-hub"],
        ["/api/wms/stock", "/api/warehouse/stock", "/api/warehouse/movements", "/api/warehouse/stock-adjustments",
         "/api/rahaza/material-stock", "/api/rahaza/material-movements", "/api/rahaza/material-adjust",
-        "/api/rahaza/material-transfer", "/api/wms/opname3", "/api/rahaza/fg-matrix", "/api/rahaza/fg-movements",
+        "/api/rahaza/material-transfer", "/api/rahaza/fg-matrix", "/api/rahaza/fg-movements",
         "/api/wms/fg", "/api/wms/stock-schema", "/api/wms/legacy", "/api/wms/search"], _ALL,
-       {"view": ["inv.stock.view"], "manage": ["inv.stock.manage", "wh.opname.manage"],
-        "approve": ["wh.opname.approve", "warehouse.approve"]}),
+       {"view": ["inv.stock.view"], "manage": ["inv.stock.manage"], "approve": ["warehouse.approve"]}),
+    # 13 Nov 2026 (owner: persetujuan opname barang jadi Koordinator Packing "nanti dulu") — opname gudang (termasuk
+    # barang jadi) punya kotak centang sendiri; dulu ikut "Setujui" Stok & izin lama warehouse.approve.
+    _m("warehouse", "wh_opname", "Opname Stok Gudang (hitung, setujui hasil)", [], ["/api/wms/opname3"], _ALL,
+       {"view": ["inv.stock.view"], "manage": ["wh.opname.manage"], "approve": ["wh.opname.approve"]}),
     _m("warehouse", "wh_receiving", "Penerimaan Barang & QC Masuk", ["wh-receiving"],
        ["/api/warehouse/receiving", "/api/rahaza/material-receive", "/api/rahaza/grn-qc", "/api/rahaza/grs",
         "/api/wms/pending"], _ALL,
@@ -504,9 +508,34 @@ MODULES: list[dict] = [
     _m("maklon", "mak_ai_quote", "Estimasi Harga Maklon", ["maklon-ai-quote", "maklon-klien-katalog"],
        ["/api/maklon/ai-quote"],
        ("view", "create", "approve", "export"), _MAKLON),
+    # 13 Nov 2026 — UANG KELUAR punya kotak centang sendiri (pemisahan tugas K25: centang modul SDM/Pengadaan/Maklon
+    # tidak pernah membuka pembayaran). Endpoint dipetakan lewat ENDPOINT_RULES; "Setujui" = boleh membayar/mencairkan.
+    _m("finance", "fin_pencairan", "Pembayaran & Pencairan Uang", [], [], ("approve",),
+       {"approve": ["fin.payment.manage"]}),
 ]
 
 MODULE_BY_ID = {m["id"]: m for m in MODULES}
+
+# 13 Nov 2026 — aturan PER ENDPOINT, dicek SEBELUM pencocokan prefix: aksi yang path-nya milik modul lain tetapi
+# perlu kotak centang sendiri. (METHOD, regex path penuh, modul, aksi). Satu-satunya tempat memetakan pengecualian.
+ENDPOINT_RULES: list[tuple[str, str, str, str]] = [
+    # Pemeriksaan QC penerimaan = keputusan (lulus/tolak barang), bukan sekadar "Tambah".
+    ("POST", r"/api/rahaza/grn-qc/inspect/[^/]+", "wh_receiving", "approve"),
+    # Uang keluar → Keuangan › Pembayaran & Pencairan Uang (K25).
+    ("PATCH", r"/api/dewi/kasbon/requests/[^/]+/disburse", "fin_pencairan", "approve"),
+    ("POST", r"/api/hr/expenses/claims/[^/]+/disburse", "fin_pencairan", "approve"),
+    ("POST", r"/api/rahaza/hr/employee-loans/disburse", "fin_pencairan", "approve"),
+    ("POST", r"/api/finance/petty-cash/advances/[^/]+/settle", "fin_pencairan", "approve"),
+    ("POST", r"/api/rahaza/ap-invoices/[^/]+/payment", "fin_pencairan", "approve"),
+    ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/pay", "fin_pencairan", "approve"),
+    ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/disbursements/[^/]+/void", "fin_pencairan", "approve"),
+    ("POST", r"/api/finance/bank-transfers/[^/]+/void", "fin_pencairan", "approve"),
+    # Bayar gaji/BPJS/PPh21 = keputusan penggajian ("Setujui"), bukan "Tambah".
+    ("POST", r"/api/rahaza/payroll-runs/[^/]+/pay(-bpjs|-pph21)?", "hr_payroll", "approve"),
+    # Batal jurnal = keputusan pembukuan; perbaikan massal kopling BOM = operasi perbaikan data.
+    ("POST", r"/api/rahaza/journals/[^/]+/void", "fin_journal", "approve"),
+    ("POST", r"/api/rahaza/boms/relink-materials", "prod_master_product", "approve"),
+]
 
 # Portal lain yang menampilkan menu modul ini (pintasan lintas-portal di portalNav.js).
 # Dipakai gerbang akses-portal agar layar pintasan tetap jalan. Perbarui bila menu dipindah.
@@ -646,6 +675,40 @@ def detect_action(method: str, path: str, module: dict) -> str:
     return action
 
 
+_ENDPOINT_RULES_RX = [(m.upper(), re.compile(p + r"/?"), MODULE_BY_ID[mid], act) for m, p, mid, act in ENDPOINT_RULES]
+assert all(act in MODULE_BY_ID[mid]["actions"] for _, _, mid, act in ENDPOINT_RULES), "ENDPOINT_RULES: aksi tidak ada"
+
+
+def resolve(method: str, path: str):
+    """(modul, aksi) yang mengatur satu permintaan — SATU aturan untuk gerbang modul dan penjaga di kode.
+
+    Urutan: ENDPOINT_RULES (pengecualian per endpoint) → prefix terpanjang + `detect_action`. (None, None) bila
+    endpoint tidak tercatat di katalog.
+    """
+    method = (method or "GET").upper()
+    for m, rx, mod, act in _ENDPOINT_RULES_RX:
+        if m == method and rx.fullmatch(path or ""):
+            return mod, act
+    mod = match_module(path)
+    return (mod, detect_action(method, path, mod)) if mod else (None, None)
+
+
+def request_key(method: str, path: str) -> str | None:
+    """Kunci centang `mod.<modul>.<aksi>` yang boleh meloloskan PENJAGA DI KODE untuk permintaan ini.
+
+    None = di luar katalog, ATAU aksi tulis (POST/PUT/PATCH/DELETE) yang hanya jatuh ke "Lihat" karena modulnya tidak
+    punya aksi tulis — centang Lihat tidak pernah meloloskan perubahan data (POST baca seperti /preview tetap Lihat).
+    """
+    mod, act = resolve(method, path)
+    if not mod:
+        return None
+    if act == "view" and (method or "GET").upper() not in ("GET", "HEAD", "OPTIONS"):
+        tokens = set(re.split(r"[/\-_.]+", (path or "").lower()))
+        if not tokens & _READ_TOKENS:
+            return None
+    return perm_key(mod["id"], act)
+
+
 def _parse(key: str):
     parts = key.split(".")
     if len(parts) == 3 and parts[0] == "mod" and parts[1] in MODULE_BY_ID:
@@ -688,11 +751,15 @@ def expand_permissions(keys) -> list:
 
 
 def menu_access(keys, is_super: bool = False) -> tuple[list, dict]:
-    """(menu tersembunyi, {menu_id: [aksi]}) — hanya untuk portal yang sudah granular."""
+    """(menu tersembunyi, {menu_id: [aksi]}) untuk SEMUA portal katalog.
+
+    13 Nov 2026: tidak ada lagi portal "belum granular" — menu modul tanpa centang Lihat disembunyikan di mana pun
+    (dulu hanya di portal yang sudah punya satu centang `mod.*`).
+    """
     if is_super or "*" in (keys or ()):
         return [], {}
     keys = set(keys or ())
-    gportals = granular_portals(keys)
+    gportals = set(GRANULAR_PORTALS)
     access: dict = {}
     for mod in MODULES:
         if mod["portal"] not in gportals:
@@ -732,14 +799,33 @@ def all_granular_keys() -> set:
     return {perm_key(m["id"], a) for m in MODULES for a in m["actions"]}
 
 
-def suggest_from_legacy(keys, portal: str, has_portal_access: bool) -> list:
+# Awalan izin lama tingkat portal (`<awalan>.view/manage/approve`) bila berbeda dengan id portal.
+_PORTAL_LEGACY_PREFIX = {"procurement": "purchasing"}
+
+
+def suggest_from_legacy(keys, portal: str, has_portal_access: bool, strict: bool = False) -> list:
     """Usulan izin `mod.*` untuk satu portal yang setara dengan izin lama + akses portal.
 
     Aksi dengan pemetaan `implies` diberikan bila SEMUA izin lama itu dimiliki; aksi tanpa
     pemetaan diberikan bila peran sudah bisa membuka portalnya (aturan lama = penjaga router).
     Aksi apa pun otomatis ikut memberi `view`.
+
+    `strict` (migrasi 13 Nov 2026): bila peran MEMEGANG izin lama tingkat portal (`<portal>.view/manage/approve`),
+    aksi tanpa pemetaan hanya diberikan sesuai izin itu — Lihat/Unduh butuh view atau manage, Tambah/Ubah/Hapus
+    butuh manage, Setujui butuh approve — supaya konversi tidak memberi lebih dari yang dipegang sekarang.
     """
     keys = set(keys or ())
+    pre = _PORTAL_LEGACY_PREFIX.get(portal, portal)
+    portal_keys = {a for a in ("view", "manage", "approve") if f"{pre}.{a}" in keys} if strict else set()
+
+    def _tanpa_pemetaan(act):
+        if not portal_keys:
+            return has_portal_access
+        if act in ("view", "export"):
+            return bool(portal_keys & {"view", "manage"})
+        if act in ("create", "edit", "delete"):
+            return "manage" in portal_keys
+        return act in portal_keys
     out = []
     for mod in MODULES:
         if mod["portal"] != portal:
@@ -748,7 +834,7 @@ def suggest_from_legacy(keys, portal: str, has_portal_access: bool) -> list:
         granted = []
         for act in mod["actions"]:
             need = imp.get(act) or (imp.get("manage") if act in ("create", "edit", "delete") else None)
-            ok = all(k in keys for k in need) if need else has_portal_access
+            ok = all(k in keys for k in need) if need else _tanpa_pemetaan(act)
             if ok:
                 granted.append(act)
         if granted and "view" in mod["actions"] and "view" not in granted:

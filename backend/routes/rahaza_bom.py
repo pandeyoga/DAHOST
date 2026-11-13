@@ -278,6 +278,9 @@ BOM_REPAIR_ROLES = [
 
 async def _require_bom_repair(request: Request):
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 13 Nov 2026: centang owner (katalog) dihormati — routes.shared.lolos_centang
+        return user
     if not check_role(user, BOM_REPAIR_ROLES):
         raise HTTPException(
             403,

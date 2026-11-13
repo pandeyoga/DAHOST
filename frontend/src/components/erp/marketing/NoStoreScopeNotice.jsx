@@ -28,13 +28,18 @@ const SCOPED_ROLES = ['staff_marketing', 'pic_toko', 'host_live', 'cs_staff'];
 /** Pemakai ini hanya melihat toko yang DIPEGANGNYA (PIC atau Assign Staf)? */
 export const isStoreScopedUser = () => SCOPED_ROLES.includes(currentRole());
 
-// Sama dengan backend `routes.marketing_accounts.can_manage_stores` (TARGET_WRITER_ROLES + MGMT_ROLES).
-// Hanya soal TAMPILAN — penjaga sungguhan di backend (2026-11-05, keputusan owner).
-export const STORE_MANAGER_ROLES = ['owner', 'admin', 'superadmin', 'spv_marketing', 'manager_marketing', 'manager'];
+// Sama dengan backend `routes.marketing_accounts.can_manage_stores`: 13 Nov 2026 — centang "Kelola Akun"
+// (`mod.mkt_accounts.create/edit/delete`) di Manajemen Role, bukan daftar peran. Hanya TAMPILAN — penjaga di backend.
+const SUPER = ['owner', 'admin', 'superadmin'];
+const izinSaya = () => {
+  try { return JSON.parse(localStorage.getItem('erp_user') || '{}').permissions || []; } catch { return []; }
+};
+const bolehToko = (aksi) => SUPER.includes(currentRole()) || izinSaya().some(
+  (k) => k === '*' || (aksi ? k === `mod.mkt_accounts.${aksi}` : /^mod\.mkt_accounts\.(create|edit|delete)$/.test(k)));
 /** Boleh menambah / mengubah / mengarsipkan master toko? */
-export const canManageStores = () => STORE_MANAGER_ROLES.includes(currentRole());
-/** Hapus PERMANEN toko (hanya toko yang belum punya data) — khusus super admin (owner, 5 Nov 2026). */
-export const canDeleteStores = () => currentRole() === 'superadmin';
+export const canManageStores = () => bolehToko(null);
+/** Hapus PERMANEN toko (hanya toko yang belum punya data) — centang Kelola Akun › Hapus. */
+export const canDeleteStores = () => bolehToko('delete');
 
 /** Kalimat jalan keluar yang sama di semua layar (2026-11-05: PIC kini ikut memberi akses). */
 export const NO_STORE_HINT = 'Minta SPV Marketing atau owner memilih Anda sebagai PIC toko di Manajemen Akun, '

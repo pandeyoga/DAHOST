@@ -111,7 +111,11 @@ def test_aksi_sdm_keuangan_bukan_swalayan_tetap_ditolak(as_role, role, method, p
     ("tim_packing", "POST", "/api/rahaza/boms"),
 ])
 def test_layar_pintasan_lintas_portal_boleh_menulis(as_role, role, method, path):
-    assert _denied(method, path, as_role(role)) is None
+    # 13 Nov 2026: centang = satu-satunya penentu. Layar pintasan lintas portal boleh menulis BILA aksi modul
+    # pemiliknya dicentang (dulu: lolos tanpa centang selama portal pemiliknya belum diatur per modul).
+    from data.module_catalog import request_key
+    assert _denied(method, path, as_role(role)) is not None              # tanpa centang → ditolak
+    assert _denied(method, path, as_role(role, perms=[request_key(method, path)])) is None
 
 
 @pytest.mark.parametrize("role,method,path", [

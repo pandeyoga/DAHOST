@@ -570,10 +570,12 @@ def rbac_db(db):
 
 @pytest.mark.parametrize("uid,role,perms,expected", [
     ("u-adm", "superadmin", ["*"], (True, "super")),
-    ("u-acc", "accounting", [], (True, "default_portal")),               # bawaan peran Keuangan
-    ("u-mp", "manager_produksi", [], (True, "default_portal")),          # bawaan peran Manajemen
-    ("u-op", "operator", [], (False, "default_portal")),                 # dulu 200 → total gaji terbaca
-    ("u-tp", "tim_packing", [], (False, "default_portal")),
+    # 13 Nov 2026: centang = satu-satunya penentu — peran Keuangan/Manajemen tanpa centang tidak lagi lolos "bawaan"
+    # (peran yang dulu lolos dicentangkan migrasi 2026_11_13_centang_akses_penuh). Menu tanpa Lihat = tersembunyi.
+    ("u-acc", "accounting", [], (False, "hidden")),
+    ("u-mp", "manager_produksi", [], (False, "hidden")),
+    ("u-op", "operator", [], (False, "hidden")),                         # dulu 200 → total gaji terbaca
+    ("u-tp", "tim_packing", [], (False, "hidden")),
     ("u-cus", "keuangan_terbatas", ["mod.fin_ar.view"], (False, "hidden")),     # owner mengatur granular tanpa centang
     ("u-hid", "staff_keuangan", [], (False, "hidden")),                  # menu disembunyikan di Manajemen Role
     ("u-op2", "operator", ["mod.fin_exec_report.view"], (True, "permission")),  # owner mencentang izin → boleh
@@ -602,7 +604,13 @@ def test_k33_penjaga_router_403_untuk_operator(rbac_db, monkeypatch):
             run(r.endpoint(fm.FakeRequest()))
         assert e.value.status_code == 403, r.path
     monkeypatch.setattr(ex, "require_auth", as_acc)
-    assert run(ex.require_exec_report(fm.FakeRequest()))["id"] == "u-acc"
+    with pytest.raises(HTTPException):                       # tanpa centang → ditolak walau peran Keuangan
+        run(ex.require_exec_report(fm.FakeRequest()))
+
+    async def as_op2(*_a, **_k):
+        return {"id": "u-op2", "role": "operator", "_permissions": ["mod.fin_exec_report.view"]}
+    monkeypatch.setattr(ex, "require_auth", as_op2)
+    assert run(ex.require_exec_report(fm.FakeRequest()))["id"] == "u-op2"
 
 
 def test_k33_karyawan_aktif_dan_laba_bersih_rumus_lr(db):

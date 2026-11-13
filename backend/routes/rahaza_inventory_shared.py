@@ -50,6 +50,9 @@ DEFAULT_MATERIAL_CATEGORIES = [
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 13 Nov 2026: centang owner (katalog) dihormati — routes.shared.lolos_centang
+        return user
     role = (user.get("role") or "").lower()
     if role in ("superadmin", "admin", "owner"):
         return user
