@@ -248,6 +248,100 @@ async def apply_progress_value_multi(db, *, fabrics: list[dict], panels: list[di
             trace["panel_qty_before"] = p0["panel_qty_before"]
 
 
+async def apply_correction_value(db, *, fabric_returns: list[dict], fabrics: list[dict], panels: list[dict],
+                                 actor: dict | None = None, reference: str = "") -> dict:
+    """Koreksi progres cutting (keputusan owner 14 Nov 2026): nilai catatan LAMA dibalik, nilai catatan BARU diterapkan.
+
+    `fabric_returns` = [{fabric_id, qty, unit_cost, qty_before}] — kain terpakai lama, harga kain SAAT keluar, dan stok
+    kain SEBELUM koreksi menggerakkan stok. `fabrics` = [{fabric_id, qty}] — kain terpakai baru. `panels` =
+    [{panel_id, qty_old, cpp_old, qty_new, qty_before}] — pcs lama @ HPP masuk lama, pcs baru, stok potongan SEBELUM koreksi.
+
+      1. Kain lama kembali ke nilai kain pada harga SAAT keluar (rata-rata bergerak; bukan harga beli terakhir).
+      2. HPP masuk baru/pcs = Σ(kain baru × harga kain sesudah langkah 1) ÷ Σ pcs baru — aturan yang sama dengan progres
+         (`apply_progress_value_multi`; kain tanpa harga tidak dipaksa jadi angka).
+      3. Tiap potongan: penerimaan lama (qty_old @ cpp_old) DIGANTI penerimaan baru (qty_new @ HPP masuk baru) di rata-rata
+         bergerak (`accessory_valuation.replaced_average`).
+    Nilai hanya berpindah antar persediaan (kain ↔ potongan) — tidak ada jurnal, sama seperti progres. Tidak pernah melempar.
+    """
+    trace = {"value_source": VALUE_SOURCE, "value_out": 0.0, "cost_per_pcs_in": 0.0, "value_status": "unvalued",
+             "value_note": "", "fabrics": [], "panels": [], "fabric_returns": [], "fabric_unit_cost": 0.0,
+             "panel_unit_cost_before": 0.0, "panel_unit_cost_after": 0.0, "panel_qty_before": 0.0}
+    notes = f"Koreksi progres cutting {reference}".strip()
+    try:
+        for fr in fabric_returns:
+            qty, cost = _f(fr.get("qty")), _f(fr.get("unit_cost"))
+            row = {"fabric_id": fr.get("fabric_id"), "qty": round(qty, 4), "unit_cost": round(cost, 4)}
+            if qty > 0 and cost > 0:
+                res = await accessory_valuation.apply_receipt_cost(
+                    db, fr["fabric_id"], qty, cost, qty_before=fr.get("qty_before"), actor=actor,
+                    notes=f"{notes} — kain kembali pada harga saat keluar", update_last_purchase=False)
+                row.update({"unit_cost_before": res.get("old_unit_cost"), "unit_cost_after": res.get("new_unit_cost")})
+            trace["fabric_returns"].append(row)
+
+        total_pcs = sum(_f(p.get("qty_new")) for p in panels)
+        missing: list[dict] = []
+        value_total = 0.0
+        for fx in fabrics:
+            fabric = await db.rahaza_materials.find_one({"id": fx.get("fabric_id")}, {"_id": 0}) or {}
+            cost = accessory_valuation.resolve_unit_cost(fabric)
+            qty = _f(fx.get("qty"))
+            value = round(cost * qty, 4) if cost > 0 else 0.0
+            value_total += value
+            trace["fabrics"].append({"fabric_id": fx.get("fabric_id"), "code": fabric.get("code", ""),
+                                     "qty": round(qty, 4), "fabric_unit_cost": round(cost, 4), "value_out": value})
+            if cost <= 0:
+                missing.append(fabric)
+        value_total = round(value_total, 4)
+        trace["value_out"] = value_total
+        if len(trace["fabrics"]) == 1:
+            trace["fabric_unit_cost"] = trace["fabrics"][0]["fabric_unit_cost"]
+        cpp = round(value_total / total_pcs, 6) if total_pcs > 0 and value_total > 0 else 0.0
+        trace["cost_per_pcs_in"] = cpp
+        if total_pcs <= 0:
+            trace["value_note"] = "Catatan progres dikosongkan — nilai lama dikembalikan ke kain."
+        elif cpp <= 0:
+            f0 = missing[0] if missing else {}
+            trace["value_note"] = unvalued_message(", ".join(m.get("code", "") for m in missing) or f0.get("code", ""),
+                                                   f0.get("name", "") if len(missing) == 1 else "")
+        else:
+            trace["value_status"] = "valued"
+            trace["value_note"] = (f"Nilai kain keluar {value_total:,.2f} dibagi {total_pcs:g} pcs = {cpp:,.2f}/pcs, "
+                                   "menggantikan angka catatan lama di rata-rata bergerak potongan.")
+            if missing:
+                trace["value_note"] += (" Kain " + ", ".join(m.get("code", "") or "?" for m in missing)
+                                        + " belum punya harga, jadi belum ikut HPP potongan.")
+        src = trace["fabrics"][0] if trace["fabrics"] else {}
+        clipped = []
+        for p in panels:
+            res = await accessory_valuation.replace_receipt_cost(
+                db, p["panel_id"], qty_before=_f(p.get("qty_before")), qty_old=_f(p.get("qty_old")),
+                cost_old=_f(p.get("cpp_old")), qty_new=_f(p.get("qty_new")), cost_new=cpp, actor=actor, notes=notes)
+            trace["panels"].append({"panel_id": p["panel_id"], "qty": round(_f(p.get("qty_new")), 4),
+                                    "qty_old": round(_f(p.get("qty_old")), 4),
+                                    "panel_qty_before": round(_f(p.get("qty_before")), 4),
+                                    "panel_unit_cost_before": res["old_unit_cost"],
+                                    "panel_unit_cost_after": res["new_unit_cost"], "clipped": res["clipped"]})
+            if res["clipped"]:
+                clipped.append(p["panel_id"])
+            if _f(p.get("qty_new")) > 0:
+                await _mark_panel(db, p["panel_id"], trace["value_status"], trace["value_note"],
+                                  {"code": src.get("code", "")})
+        if clipped:
+            trace["value_note"] += (" HPP potongan dipotong ke 0 karena nilai lamanya lebih besar dari nilai stok "
+                                    "sekarang (harga sudah berubah sejak catatan lama) — periksa di Valuasi HPP.")
+        return trace
+    except Exception as e:  # noqa: BLE001 — stok sudah dikoreksi; nilai tidak boleh membatalkannya
+        _log.exception("nilai koreksi progres cutting gagal dihitung: %s", e)
+        trace["value_note"] = f"nilai koreksi gagal dihitung: {e}"
+        return trace
+    finally:
+        if len(trace["panels"]) == 1:
+            p0 = trace["panels"][0]
+            trace["panel_unit_cost_before"] = p0["panel_unit_cost_before"]
+            trace["panel_unit_cost_after"] = p0["panel_unit_cost_after"]
+            trace["panel_qty_before"] = p0["panel_qty_before"]
+
+
 async def _mark_panel(db, panel_id: str, status: str, note: str, fabric: dict) -> None:
     """Tandai master potongan supaya LAYAR bisa mengatakan status nilainya."""
     patch = {

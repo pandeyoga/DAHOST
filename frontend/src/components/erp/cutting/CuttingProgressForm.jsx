@@ -7,9 +7,13 @@
  *   · Per HASIL: pcs jadi + "Gulungan dipakai" (ketelusuran gulungan → hasil, bukan dasar HPP).
  *   · Tabel "Gulungan → hasil potongan" progres ini + perkiraan HPP/pcs = biaya kain ÷ total pcs (sama semua baris).
  * Kain yang tidak dipakai pada progres ini cukup dikosongkan.
+ *
+ * 14 Nov 2026 (owner: "di cutting yang sedang berjalan, tolong bisa dilakukan EDIT"; order Selesai juga): `correcting`
+ * = catatan progres yang dikoreksi. Isian terisi angka lama, gulungan menampilkan sisa + pemakaian catatan itu, alasan
+ * wajib, dan server membalik catatan lama (stok, gulungan, HPP, dokumen keluar) sebelum angka baru dicatat.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Scissors } from 'lucide-react';
+import { AlertCircle, Eraser, History, Scissors } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,7 +21,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { EmptyState, Notice } from '../moduleAtoms';
-import { cuttingApi, fmtNum, fmtRp } from './cuttingApi';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { cuttingApi, fmtDateTime, fmtNum, fmtRp } from './cuttingApi';
 import useUomOptions from '../../../hooks/useUomOptions';
 import { UomSelect, UomConversionHint, toBaseQty } from '../uom/UomPicker';
 // FASE H-6 — gulungan WAJIB ditunjuk saat memotong kain yang punya gulungan.
@@ -26,13 +31,35 @@ import { rollRemaining } from './cuttingLines';
 
 const EMPTY_LINE = { input_consumed: '', input_uom: '', leftover_qty: '', waste_qty: '', waste_uom: '', roll_ids: [] };
 const EMPTY_ROLLS = { items: [], roll_required: false, total_remaining: 0, uom: '', other_location_count: 0 };
+const numText = (v) => (Number(v) > 0 ? String(Math.round(Number(v) * 10000) / 10000) : '');
 
-export default function CuttingProgressForm({ open, onClose, order, token, onSaved, onNavigate }) {
+/** Angka satu catatan progres per baris kain (satuan order) — catatan lama satu-kain memakai field tingkat atas. */
+function oldInputOf(prog, line, single) {
+  const rows = prog?.inputs || [];
+  const x = rows.length
+    ? rows.find((p) => p.line_id === line.line_id || p.input_material_id === line.input_material_id)
+    : (single ? prog : null);
+  if (!x) return null;
+  const taken = x.input_taken ?? (Number(x.input_consumed || 0) + Number(x.leftover_qty || 0));
+  return { taken, leftover: x.leftover_qty, waste: x.waste_qty, consumed: x.input_consumed,
+    rolls: [...new Set((x.roll_consumption || []).map((r) => r.roll_id).filter(Boolean))] };
+}
+
+/** pcs satu catatan progres per baris hasil. */
+function oldOutputOf(prog, line, single) {
+  const rows = prog?.outputs || [];
+  const x = rows.length ? rows.find((p) => p.line_id === line.line_id || p.output_material_id === line.output_material_id)
+    : (single ? { output_qty: prog?.output_qty } : null);
+  return x ? { qty: x.output_qty, rolls: x.roll_ids || null } : null;
+}
+
+export default function CuttingProgressForm({ open, onClose, order, token, onSaved, onNavigate, correcting = null }) {
   const ins = useMemo(() => order?.inputs || [], [order]);
   const outs = useMemo(() => order?.outputs || [], [order]);
   const [lines, setLines] = useState({});
   const [outState, setOutState] = useState({});
   const [note, setNote] = useState('');
+  const [reason, setReason] = useState('');
   const [rollsBy, setRollsBy] = useState({});
   const [saving, setSaving] = useState(false);
   // ROADMAP P1 (2026-08-05) — operator lantai boleh mencatat pemakaian kain dalam satuan lain (rol/gram/yard).
@@ -41,10 +68,20 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
   useEffect(() => {
     if (!open || !order) return undefined;
     let alive = true;
-    setLines(Object.fromEntries(ins.map((i) => [i.line_id, { ...EMPTY_LINE, roll_ids: [] }])));
-    setOutState(Object.fromEntries(outs.map((x) => [x.line_id, { output_qty: '', roll_ids: null }])));
-    setNote('');
-    const locQs = order.location_id ? `&location_id=${encodeURIComponent(order.location_id)}` : '';
+    setLines(Object.fromEntries(ins.map((i) => {
+      const old = correcting ? oldInputOf(correcting, i, ins.length === 1) : null;
+      return [i.line_id, old ? { ...EMPTY_LINE, input_consumed: numText(old.taken), leftover_qty: numText(old.leftover),
+        waste_qty: numText(old.waste), roll_ids: old.rolls } : { ...EMPTY_LINE, roll_ids: [] }];
+    })));
+    setOutState(Object.fromEntries(outs.map((x) => {
+      const old = correcting ? oldOutputOf(correcting, x, outs.length === 1) : null;
+      return [x.line_id, { output_qty: old ? numText(old.qty) : '', roll_ids: old && outs.length > 1 ? old.rolls : null }];
+    })));
+    setNote(correcting?.note || '');
+    setReason('');
+    // Koreksi: sisa gulungan + pemakaian catatan ini (yang dikembalikan dulu oleh server)
+    const locQs = (order.location_id ? `&location_id=${encodeURIComponent(order.location_id)}` : '')
+      + (correcting ? `&progress_id=${encodeURIComponent(correcting.id)}` : '');
     ins.forEach(async (i) => {
       try {
         const res = await cuttingApi('GET', `/rolls?material_id=${i.input_material_id}${locQs}`, token);
@@ -60,7 +97,7 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, order?.id]);
+  }, [open, order?.id, correcting?.id]);
 
   const setLine = (lid, patch) => setLines((m) => ({ ...m, [lid]: { ...(m[lid] || EMPTY_LINE), ...patch } }));
 
@@ -119,7 +156,32 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
   const anyBlocking = ins.some((i) => calc[i.line_id]?.blocking);
   const anyShortage = ins.some((i) => calc[i.line_id]?.active && calc[i.line_id]?.alloc.shortage > 0);
 
+  const reasonOk = !correcting || reason.trim().length >= 5;
+
+  /** Koreksi: kosongkan catatan ini (mis. tercatat dua kali) — server mengembalikan semua efeknya. */
+  const voidRecord = async () => {
+    if (!reasonOk) { toast.error('Isi alasan koreksi dulu (minimal 5 huruf).'); return; }
+    if (!(await confirmDialog({
+      title: 'Kosongkan catatan progres ini?',
+      body: 'Kain dan gulungan kembali ke stok, potongan dari catatan ini ditarik dari stok, dan dokumen keluarnya dibatalkan. Potongan yang sudah dikirim ke CMT tidak bisa ditarik.',
+      confirmLabel: 'Kosongkan', danger: true }))) return;
+    setSaving(true);
+    try {
+      const res = await cuttingApi('PUT', `/orders/${order.id}/progress/${correcting.id}`, token,
+        { void: true, reason: reason.trim() });
+      toast.success('Catatan progres dikosongkan — stok gudang sudah dikembalikan.');
+      if (res?.notice) toast.info(res.notice, { duration: 9000 });
+      if (res?.mi_warning) toast.error(res.mi_warning, { duration: 12000 });
+      onSaved?.(res);
+    } catch (e) {
+      toast.error(e.message, { duration: 12000 });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const submit = async () => {
+    if (!reasonOk) { toast.error('Isi alasan koreksi dulu (minimal 5 huruf) — koreksi menggerakkan stok dan HPP.'); return; }
     const act = ins.filter((i) => calc[i.line_id]?.active);
     if (!act.length) { toast.error('Isi kain terpakai minimal untuk satu kain.'); return; }
     if (act.some((i) => !(calc[i.line_id].used > 0))) {
@@ -134,7 +196,9 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
     }
     setSaving(true);
     try {
-      const res = await cuttingApi('POST', `/orders/${order.id}/progress`, token, {
+      const res = await cuttingApi(correcting ? 'PUT' : 'POST',
+        correcting ? `/orders/${order.id}/progress/${correcting.id}` : `/orders/${order.id}/progress`, token, {
+        ...(correcting ? { reason: reason.trim() } : {}),
         inputs: act.map((i) => {
           const st = lines[i.line_id];
           const c = calc[i.line_id];
@@ -155,6 +219,14 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
         })),
         note,
       });
+      if (correcting) {
+        toast.success('Catatan progres dikoreksi — stok gudang & HPP potongan sudah disesuaikan.');
+        if (res?.notice) toast.info(res.notice, { duration: 9000 });
+        if (res?.mi_warning) toast.error(res.mi_warning, { duration: 12000 });
+        if (res?.value_warning) toast.warning(res.value_warning, { duration: 12000 });
+        onSaved?.(res);
+        return;
+      }
       toast.success('Progres tercatat — stok gudang sudah diperbarui.');
       // FASE H-6b — nomor dokumen arus keluarnya (atau peringatan kalau dokumen gagal terbit).
       const lp = res?.last_progress || {};
@@ -297,9 +369,26 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
 
   return (
     <FormPopup open={open} onClose={onClose} ukuran="panjang" testId="cutting-progress-form"
-      judul={`Catat progres potong · ${order.number}`}
-      keterangan="Setiap catatan langsung memotong stok tiap kain, menambah stok potongan tiap baris hasil, dan mengurangi sisa gulungan yang ditunjuk."
-      onSimpan={submit} menyimpan={saving} labelSimpan="Catat" bisaSimpan={!anyBlocking && !anyShortage}>
+      judul={correcting ? `Koreksi catatan progres · ${order.number}` : `Catat progres potong · ${order.number}`}
+      keterangan={correcting
+        ? 'Angka lama dibalik dulu (stok kain, sisa gulungan, stok potongan, HPP, dokumen keluar), lalu angka di bawah ini dicatat. Potongan yang sudah dikirim ke CMT tidak bisa ditarik.'
+        : 'Setiap catatan langsung memotong stok tiap kain, menambah stok potongan tiap baris hasil, dan mengurangi sisa gulungan yang ditunjuk.'}
+      onSimpan={submit} menyimpan={saving} labelSimpan={correcting ? 'Simpan koreksi' : 'Catat'}
+      bisaSimpan={!anyBlocking && !anyShortage && reasonOk}
+      aksiKiri={correcting && (
+        <Button type="button" variant="outline" onClick={voidRecord} disabled={saving}
+          data-testid="cutting-progress-void"><Eraser />Kosongkan catatan</Button>
+      )}>
+      {correcting && (
+        <Notice tone="info" icon={History} testId="cutting-progress-old">
+          Catatan lama ({fmtDateTime(correcting.created_at)} oleh {correcting.created_by_name || '—'}):{' '}
+          kain {(correcting.inputs || []).length
+            ? correcting.inputs.map((x) => `${x.input_material_code} ${fmtNum(x.input_consumed, 2)} ${x.input_unit}`).join(', ')
+            : `${fmtNum(correcting.input_consumed, 2)} ${order.input_unit || ''}`}
+          {' '}→ {fmtNum(correcting.output_qty)} pcs.
+          {Number(correcting.correction_count) > 0 && ` Sudah dikoreksi ${correcting.correction_count}×.`}
+        </Notice>
+      )}
       {ins.map((i, n) => renderInput(i, n))}
 
       <div className="space-y-2">
@@ -393,6 +482,12 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
       <Isian label="Catatan">
         <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="mis. shift pagi" data-testid="cutting-progress-note" />
       </Isian>
+      {correcting && (
+        <Isian label="Alasan koreksi" wajib petunjuk="Tersimpan di riwayat catatan ini bersama nama Anda dan waktunya.">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="mis. salah ketik jumlah potongan, seharusnya 50 pcs" data-testid="cutting-progress-reason" />
+        </Isian>
+      )}
     </FormPopup>
   );
 }

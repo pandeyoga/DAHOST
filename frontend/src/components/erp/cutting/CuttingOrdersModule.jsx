@@ -12,6 +12,10 @@
  * Semua mutasi stok terjadi di backend lewat SSOT gudang — UI hanya melaporkan
  * hasilnya (stok kain turun, stok potongan naik) supaya user melihat efeknya.
  * HPP potongan per pcs = total biaya kain ÷ total pcs hasil (sama untuk semua baris order).
+ *
+ * 14 Nov 2026 (owner: "di cutting yang sedang berjalan, tolong bisa dilakukan EDIT"; "yang sudah selesai juga bisa"):
+ * tombol Ubah juga untuk order Berjalan/Selesai (baris yang sudah dipotong terkunci), dan tiap catatan progres punya
+ * tombol Koreksi — server membalik catatan lama lalu mencatat angka baru (alasan wajib, jejaknya tampil di riwayat).
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -65,6 +69,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const [acting, setActing] = useState(false);
   // Standar UI/UX v2: form progres = popup sendiri; rincian disembunyikan sementara.
   const [progOpen, setProgOpen] = useState(false);
+  // Catatan progres yang sedang dikoreksi (form yang sama dengan Catat progres, terisi angka lama).
+  const [fixProg, setFixProg] = useState(null);
 
   // ── FASE H-6b (2026-08-17) — progres yang kainnya sudah keluar tetapi BELUM
   // punya dokumen "Pengeluaran Material". Ditampilkan supaya tidak ada arus
@@ -126,6 +132,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const openDetail = async (id) => {
     setDetailLoading(true);
     setProgOpen(false);
+    setFixProg(null);
     try {
       setDetail(await cuttingApi('GET', `/orders/${id}`, token));
     } catch (e) {
@@ -170,6 +177,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
   const onProgressSaved = async () => {
     setProgOpen(false);
+    setFixProg(null);
     await refreshDetail(detail.id);
     await loadMiMissing();
   };
@@ -229,6 +237,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   ];
 
   const hpp = detail?.hpp_summary || {};
+  // Order berjalan & selesai boleh diubah dan catatan progresnya dikoreksi (keputusan owner 14 Nov 2026).
+  const canFix = detail?.status === 'in_progress' || detail?.status === 'completed';
 
   return (
     <PageLayout testId="cutting-orders-module" title="Order Cutting"
@@ -334,11 +344,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
       {/* ── RINCIAN ORDER (popup) ─────────────────────────────────────── */}
       {detail && (
-        <DetailPopup open={!progOpen && !formOpen} onClose={() => setDetail(null)} judul={`Cutting ${detail.number}`} testId="cutting-detail-panel"
+        <DetailPopup open={!progOpen && !formOpen && !fixProg} onClose={() => setDetail(null)} judul={`Cutting ${detail.number}`} testId="cutting-detail-panel"
           keterangan={`Dibuat ${fmtDateTime(detail.created_at)} oleh ${detail.created_by_name || '—'} · gudang sumber ${detail.location_name || '—'}`}
           status={<StatusPill status={detail.status} />}
           aksi={<>
-            {detail.status === 'draft' && (
+            {(detail.status === 'draft' || canFix) && (
               <Button size="sm" variant="outline" onClick={openEdit} disabled={acting} data-testid="cutting-edit-btn">
                 <PencilLine />Ubah
               </Button>
@@ -509,6 +519,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     { label: 'Gulungan dipakai', nilai: (p) => (p.roll_consumption || []).map((rc) => `${rc.roll_no} −${fmtQty(rc.qty)}`).join(', ') },
                     { label: 'Dokumen keluar', nilai: (p) => p.material_issue_number || 'Belum ada' },
                     { label: 'Catatan', nilai: (p) => p.note || '' }, { label: 'Oleh', nilai: (p) => p.created_by_name || '' },
+                    { label: 'Koreksi', nilai: (p) => correctionText(p) },
                   ]} />
               </div>
             </div>
@@ -520,11 +531,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                   {/* SESI #32 — nilai yang BERPINDAH dari kain ke potongan */}
                   <TableHead className="text-right">Nilai kain keluar</TableHead><TableHead className="text-right">HPP masuk</TableHead>
                   <TableHead>Gulungan dipakai</TableHead><TableHead>Dokumen keluar</TableHead>
-                  <TableHead>Catatan</TableHead><TableHead>Oleh</TableHead>
+                  <TableHead>Catatan</TableHead><TableHead>Oleh</TableHead><TableHead />
                 </TableRow></TableHeader>
                 <TableBody>
                   {(detail.progress || []).length === 0 ? (
-                    <TableRow><TableCell colSpan={11}>
+                    <TableRow><TableCell colSpan={12}>
                       <EmptyState icon={History} title="Progres belum dicatat"
                         description={detail.status === 'in_progress' ? 'Tekan Catat progres setelah kain dipotong.' : 'Mulai cutting dulu, lalu catat progresnya.'} />
                     </TableCell></TableRow>
@@ -566,8 +577,24 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                               <StatusBadge status="" label={p.material_issue_number} tone="success" className="tabular-nums" /></span>
                           : <StatusBadge status="" label="Belum ada" tone="warning" />}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{p.note || '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {p.note || (p.correction_reason ? '' : '—')}
+                        {/* Jejak koreksi (14 Nov 2026): siapa, kapan, alasan — angka lama tersimpan di server */}
+                        {p.correction_reason && (
+                          <p className="text-xs text-[hsl(var(--warning-text))]" data-testid={`cutting-progress-fixed-${p.id}`}>
+                            {correctionText(p)}
+                          </p>
+                        )}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{p.created_by_name || '—'}</TableCell>
+                      <TableCell className="text-right">
+                        {canFix && (
+                          <Button size="sm" variant="outline" onClick={() => setFixProg(p)} disabled={acting}
+                            data-testid={`cutting-progress-edit-${p.id}`}>
+                            <PencilLine />Koreksi
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -580,12 +607,20 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       )}
 
       {/* ── FORM CATAT PROGRES (popup panjang; rincian disembunyikan sementara) ── */}
-      {detail && detail.status === 'in_progress' && (
-        <CuttingProgressForm open={progOpen} onClose={() => setProgOpen(false)} order={detail} token={token}
-          onSaved={onProgressSaved} onNavigate={onNavigate} />
+      {detail && (detail.status === 'in_progress' || fixProg) && (
+        <CuttingProgressForm open={progOpen || !!fixProg} onClose={() => { setProgOpen(false); setFixProg(null); }}
+          order={detail} token={token} correcting={fixProg} onSaved={onProgressSaved} onNavigate={onNavigate} />
       )}
     </PageLayout>
   );
+}
+
+/** "Dikoreksi 14/11 10.05 oleh Sari: salah ketik" — jejak koreksi terakhir satu catatan progres. */
+function correctionText(p) {
+  if (!p?.correction_reason) return '';
+  const times = Number(p.correction_count) > 1 ? ` (${p.correction_count}×)` : '';
+  return `${p.voided ? 'Dikosongkan' : 'Dikoreksi'}${times} ${fmtDateTime(p.corrected_at)} oleh `
+    + `${p.corrected_by_name || '—'}: ${p.correction_reason}`;
 }
 
 /** Kain keluar satu progres tanpa dokumen MI (order banyak kain: per kain, satuannya bisa beda). */

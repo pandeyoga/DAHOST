@@ -114,8 +114,47 @@ def _roll_summary(progress: dict) -> tuple[list, list]:
     return cons, numbers
 
 
+async def void_for_progress(db, order: dict, progress: dict, user: dict, reason: str) -> dict | None:
+    """Koreksi progres cutting (14 Nov 2026): dokumen MI lama DIBATALKAN, bukan dihapus.
+
+    Dokumen tetap terbaca (status `cancelled`, alasan, siapa, kapan) dan kartu stok mendapat baris balik (`receive`,
+    `ref_type='cutting_issue_cancel'`) sehingga arus keluar lama tidak terhitung dua kali dengan dokumen pengganti.
+    Tautan `cutting_progress_id` dipindah ke `voided_cutting_progress_id` supaya indeks unik "satu progres = satu MI
+    berlaku" tetap benar dan `doc_for_progress` bisa menerbitkan dokumen pengganti. TIDAK menyentuh stok.
+    """
+    from routes.rahaza_inventory_shared import _log_movement, _now
+
+    pid = progress.get("id")
+    mi = await db[MI].find_one({"cutting_progress_id": pid}, {"_id": 0}) if pid else None
+    if not mi:
+        return None
+    await db[MI].update_one({"id": mi["id"]}, {
+        "$set": {"status": "cancelled", "cancelled_at": _now(), "cancelled_by": user.get("id"),
+                 "cancelled_by_name": user.get("name", ""),
+                 "cancel_reason": f"Koreksi progres cutting {order.get('number', '')}: {reason}".strip(),
+                 "voided_cutting_progress_id": pid, "updated_at": _now()},
+        "$unset": {"cutting_progress_id": ""}})
+    loc_id = progress.get("location_id") or order.get("location_id")
+    if loc_id:
+        for it in mi.get("items") or []:
+            q = round(_f(it.get("qty_issued")), 4)
+            if q <= 0 or not it.get("material_id"):
+                continue
+            await _log_movement(
+                db, {"id": user.get("id"), "name": user.get("name", "")},
+                type="receive", material_id=it["material_id"], qty=q,
+                from_location_id=None, to_location_id=it.get("location_id") or loc_id,
+                ref_type="cutting_issue_cancel", ref_id=mi["id"],
+                notes=f"Batal MI {mi.get('mi_number', '')} · koreksi Cutting {order.get('number', '')}".strip(" ·"))
+    o = await db[ORDERS].find_one({"id": order.get("id")}, {"_id": 0, "material_issue_numbers": 1}) or {}
+    keep = [n for n in (o.get("material_issue_numbers") or []) if n != mi.get("mi_number")]
+    await db[ORDERS].update_one({"id": order.get("id")}, {"$set": {"material_issue_numbers": keep}})
+    await db[PROGRESS].update_one({"id": pid}, {"$set": {"material_issue_id": None, "material_issue_number": ""}})
+    return mi
+
+
 async def doc_for_progress(db, order: dict, progress: dict, user: dict,
-                           *, backfilled: bool = False) -> dict:
+                           *, backfilled: bool = False, replaces: dict | None = None) -> dict:
     """Terbitkan (atau pakai-ulang) dokumen Material Issue untuk SATU laporan progres.
 
     TIDAK menyentuh stok — lihat keputusan desain 1 di docstring modul.
@@ -219,7 +258,11 @@ async def doc_for_progress(db, order: dict, progress: dict, user: dict,
             f"{_f(progress.get('output_qty')):g} pcs {out_codes or 'potongan'}"
             + (f" (gulungan {', '.join(roll_numbers)})" if roll_numbers else "")
             + (" · diterbitkan retroaktif (FASE H-6b)" if backfilled else " (FASE H-6b)")
+            + (f" · pengganti {replaces.get('mi_number', '')} (koreksi progres)" if replaces else "")
         ).strip(),
+        # 14 Nov 2026: dokumen pengganti hasil koreksi progres — menunjuk dokumen lama yang dibatalkan
+        "replaces_mi_id": (replaces or {}).get("id"),
+        "replaces_mi_number": (replaces or {}).get("mi_number", ""),
         "created_by": user.get("id"),
         "created_by_name": user.get("name", ""),
         "created_at": progress.get("created_at") or _now(),
