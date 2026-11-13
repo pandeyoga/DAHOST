@@ -206,6 +206,9 @@ async def supplier_link_patch(db, body: dict, existing: dict | None = None, *, f
 async def _require_procurement(request: Request):
     """Butuh peran pengadaan / gudang / keuangan / manajemen."""
     user = await require_auth(request)
+    from routes.shared import lolos_centang
+    if lolos_centang(user):  # 13 Nov 2026: centang owner (katalog) dihormati — routes.shared.lolos_centang
+        return user
     role = (user.get("role") or "").lower()
     if role in (
         "superadmin", "admin", "owner", "manager",

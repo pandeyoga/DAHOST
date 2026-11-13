@@ -180,6 +180,7 @@ export default function RoleManagementModule({ token, userRole }) {
   const allPerms = useMemo(
     () => groups.flatMap((g) => g.modules.flatMap((m) => m.permissions)), [groups],
   );
+  const allPermKeys = useMemo(() => new Set(allPerms.map((p) => p.key)), [allPerms]);
   const [legacyOpen, setLegacyOpen] = useState({});
   const permSet = useMemo(() => new Set(draft.permissions), [draft.permissions]);
 
@@ -213,7 +214,8 @@ export default function RoleManagementModule({ token, userRole }) {
       if (g && g[2] === 'view') Array.from(s).filter((k) => k.startsWith(`mod.${g[1]}.`)).forEach((k) => s.delete(k));
     } else {
       s.add(key);
-      if (g && g[2] !== 'view') s.add(`mod.${g[1]}.view`);
+      // Modul tanpa aksi Lihat (mis. Master Toko, Pembayaran & Pencairan) tidak punya kunci view.
+      if (g && g[2] !== 'view' && allPermKeys.has(`mod.${g[1]}.view`)) s.add(`mod.${g[1]}.view`);
     }
     return Array.from(s);
   });
@@ -494,8 +496,8 @@ export default function RoleManagementModule({ token, userRole }) {
       )}
 
       <Notice tone="info" testId="role-access-notice">
-        Selama daftar portal atau izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur
-        yang mati). Begitu minimal satu portal atau izin dicentang, peran itu hanya mengikuti yang dicentang.
+        Akses mengikuti <b>centang</b>: aksi yang tidak dicentang ditolak dan menu tanpa centang Lihat disembunyikan,
+        di semua portal. Portal yang belum dipilih memakai daftar portal bawaan, tetapi isinya tetap mengikuti centang.
         Peran yang belum diatur (tanpa portal dan izin) dan tidak dipakai siapa pun tidak ditawarkan saat menambah
         pengguna; peran itu muncul lagi begitu portal atau izinnya diisi.
       </Notice>
@@ -612,7 +614,7 @@ export default function RoleManagementModule({ token, userRole }) {
         <section className="space-y-3 border-t border-[var(--glass-border)] pt-4">
           <SectionTitle
             step="3" title="Hak akses (izin aksi & persetujuan)"
-            desc="Per modul: Lihat / Tambah / Ubah / Hapus / Setujui / Unduh. Begitu satu izin per modul dicentang di sebuah portal, semua modul portal itu wajib izinnya (menu tanpa Lihat disembunyikan, aksi tanpa izin ditolak server)."
+            desc="Per modul: Lihat / Tambah / Ubah / Hapus / Setujui / Unduh. Setiap modul wajib dicentang: menu tanpa Lihat disembunyikan dan aksi tanpa centang ditolak server. Centang inilah satu-satunya penentu — penjaga di dalam program mengikutinya."
             right={<StatusBadge status="izin" label={`${draft.permissions.length} izin dipilih`} tone="primary" testId="perm-count-badge" />}
           />
 

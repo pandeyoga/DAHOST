@@ -587,8 +587,8 @@ def test_15_maklon_portal_may_write_cmt_billing(monkeypatch):
     async def live(uid):
         return {"id": uid, "role": "admin_maklon"}
 
-    async def rbac(role, uid):
-        return [], []
+    async def rbac(role, uid):  # 13 Nov 2026: centang = satu-satunya penentu (aksi modul pemilik dicentang)
+        return ["mod.prod_cmt_billing.view", "mod.prod_cmt_billing.create", "mod.prod_cmt_billing.approve"], []
 
     async def portals(role, uid):
         return ["maklon", "self", "collaboration"], []

@@ -28,8 +28,12 @@ from core import marketing_account_scope as scope  # noqa: E402
 import routes.marketing_accounts as ma  # noqa: E402
 from routes.marketing_shared import PlatformAccountCreate, PlatformAccountUpdate  # noqa: E402
 
-PIC = {"id": "u-mar", "name": "Mar'atus", "role": "pic_toko"}
-SPV = {"id": "u-spv", "name": "SPV", "role": "spv_marketing"}
+PIC = {"id": "u-mar", "name": "Mar'atus", "role": "pic_toko", "_permissions": ["mod.mkt_accounts.view"]}
+# 13 Nov 2026: hak tambah/ubah/hapus toko = centang "Kelola Akun" (mod.mkt_accounts.*), bukan kode peran.
+SPV = {"id": "u-spv", "name": "SPV", "role": "spv_marketing",
+       "_permissions": ["mod.mkt_accounts.create", "mod.mkt_accounts.edit"]}
+_AKSI = {"create_platform_account": "create", "update_platform_account": "edit",
+         "archive_platform_account": "delete", "delete_platform_account_permanently": "delete"}
 T0 = datetime(2026, 9, 1, tzinfo=timezone.utc)
 T1 = datetime(2026, 11, 5, tzinfo=timezone.utc)
 STORES = [
@@ -51,6 +55,8 @@ def _db():
 
 
 def _call(fn, db, user, monkeypatch, *args):
+    user = {**user, "_aksi_request": f"mod.mkt_accounts.{_AKSI[fn.__name__]}" if fn.__name__ in _AKSI else None}
+
     async def _auth(_req):
         return user
     monkeypatch.setattr(ma, "require_auth", _auth)
@@ -199,7 +205,7 @@ def test_hapus_permanen_ditolak_bila_toko_punya_data(monkeypatch):
     assert [a for a in db.marketing_platform_accounts.docs if a["id"] == "a-d1"]  # tidak terhapus
 
 
-@pytest.mark.parametrize("user", [SPV, {"id": "u-adm", "name": "Admin", "role": "admin"}, PIC])
+@pytest.mark.parametrize("user", [SPV, PIC])   # tanpa centang Master Toko › Hapus (13 Nov 2026)
 def test_hapus_permanen_hanya_super_admin(monkeypatch, user):
     with pytest.raises(HTTPException) as e:
         _call(ma.delete_platform_account_permanently, _db_dobel(monkeypatch), user, monkeypatch, "a-d1")

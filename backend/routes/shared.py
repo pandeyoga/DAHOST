@@ -349,6 +349,21 @@ def has_perm(user, *keys) -> bool:
     return bool(perms & {k for k in keys if k})
 
 
+def lolos_centang(user) -> bool:
+    """Penjaga di kode menghormati centang owner (13 Nov 2026, owner: "bisa semuanya, jangan setengah-setengah").
+
+    True bila aksi endpoint yang sedang diproses (`user["_aksi_request"]`, dari katalog `module_catalog.resolve`,
+    diisi `auth.require_auth`) DICENTANG untuk peran/pengguna ini — atau peran super. Dipakai penjaga yang
+    melempar 403 di awal handler (peran tetap / izin lama), supaya centang tidak dikalahkan daftar di kode. Aturan
+    pemisahan tugas (bukan pemohon sendiri, saldo, status dokumen) tetap dijaga handler masing-masing.
+    """
+    role = str(user.get("role") or "").lower()
+    if role in SUPER_ROLES:
+        return True
+    key = user.get("_aksi_request")
+    return bool(key) and key in user_permissions(user)
+
+
 def can_act(user, *keys, legacy_roles=(), legacy_any=False) -> bool:
     """Cek izin dengan fallback aman (lihat model di atas). Tidak melempar error.
 
@@ -378,7 +393,7 @@ def assert_can_act(user, *keys, portal=None, legacy_roles=(), legacy_any=False,
     """
     from fastapi import HTTPException  # lazy
     roles = tuple(legacy_roles) + (tuple(PORTAL_ACCESS.get(portal, ())) if portal else ())
-    if not can_act(user, *keys, legacy_roles=roles, legacy_any=legacy_any):
+    if not (can_act(user, *keys, legacy_roles=roles, legacy_any=legacy_any) or lolos_centang(user)):
         raise HTTPException(403, f"Akses ditolak: Anda tidak berhak {what}.")
     return user
 
@@ -388,7 +403,7 @@ async def require_perm(request, *keys, legacy_roles=(), legacy_any=False, messag
     from fastapi import HTTPException  # lazy
     from auth import require_auth       # lazy: hindari circular import
     user = await require_auth(request)
-    if can_act(user, *keys, legacy_roles=legacy_roles, legacy_any=legacy_any):
+    if can_act(user, *keys, legacy_roles=legacy_roles, legacy_any=legacy_any) or lolos_centang(user):
         return user
     label = ", ".join([k for k in keys if k]) or "izin khusus"
     raise HTTPException(403, message or f"Akses ditolak: butuh izin ({label}).")
