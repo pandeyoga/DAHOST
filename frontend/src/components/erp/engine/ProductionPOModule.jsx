@@ -121,6 +121,10 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   // baris item yang salah. Sekarang: banner inline di dalam modal (data-testid
   // `po-form-error`) + fokus otomatis ke baris item bermasalah.
   const [formError, setFormError] = useState(null);   // { text, itemIdx }
+  // 14 Nov 2026 (owner): tombol Buat PO terkunci selama menyimpan. Dulu klik ganda membuat dua PO kembar
+  // (selisih 0,09 detik); server kini juga menolaknya (core.po_tolak_dobel).
+  const [menyimpan, setMenyimpan] = useState(false);
+  const menyimpanRef = useRef(false);
   // FASE G (2026-08-16) — kebijakan nomor dokumen (otomatis/manual) dibaca dari
   // SSOT penomoran. Tanpa ini layar tetap menyuruh mengetik nomor walau owner
   // sudah menyetelnya OTOMATIS, dan pemakai menanggung penolakan backend atas
@@ -464,6 +468,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     // nomor ketikan saat mode otomatis (dan menyebut nomor yang akan dipakai),
     // supaya tidak ada nomor yang "lolos" tanpa mengikuti pola.
     if (!editData && numPolicy?.mode === 'auto') delete payload.po_number;
+    if (menyimpanRef.current) return;   // kiriman kedua (klik ganda / Enter + klik) diabaikan
+    menyimpanRef.current = true;
+    setMenyimpan(true);
     try {
       // 12 Nov 2026 (K-M2): model lambat/tidak laku → server minta alasan (dialog) lalu dikirim ulang.
       const data = await denganAlasanMerchandiser((extra) => (editData
@@ -481,7 +488,12 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       setShowModal(false);
       refetchPOs();
       reloadDetail();
-    } catch (err) { setFormError({ text: err.message || 'Gagal menyimpan PO', itemIdx: null }); }
+    } catch (err) {
+      setFormError({ text: err.message || 'Gagal menyimpan PO', itemIdx: null });
+    } finally {
+      menyimpanRef.current = false;
+      setMenyimpan(false);
+    }
   };
 
   // Tahap 9 (keputusan 8): rincian dibuka di halaman (PODetailPanel di slot `detail`), bukan popup.
@@ -863,7 +875,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         <FormPopup open onClose={() => { setShowModal(false); setFormError(null); }} ukuran="panjang" testId="po-form"
           judul={editData ? `Ubah PO ${editData.po_number}` : (isInternal ? 'Buat PO produksi internal' : 'Buat PO maklon')}
           keterangan={isInternal ? 'Kepala → baris produk → aksesoris → total.' : 'Kepala → baris artikel klien → aksesoris → total.'}
-          onSimpan={handleSubmit} labelSimpan={editData ? 'Simpan perubahan' : 'Buat PO'} galat={formError?.text}>
+          onSimpan={handleSubmit} menyimpan={menyimpan} labelSimpan={editData ? 'Simpan perubahan' : 'Buat PO'} galat={formError?.text}>
           <div className="space-y-4" data-testid="po-form-body" data-business-type={bizKey}>
             {rateLocked && (
               <Notice tone="warning" icon={Lock} testId="po-rate-locked">{editData.rate_lock.message}</Notice>
@@ -1068,9 +1080,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                         <GlassInput required type="number" min={hasShipments ? minQty : 1} value={item.qty}
                           onChange={e => updateItem(idx, 'qty', e.target.value)} placeholder="100" data-testid={`po-item-${idx}-qty`} />
                       </Field>
-                      <Field label="No. seri / batch" required>
+                      <Field label="Kode potongan / no. seri" required>
                         <GlassInput required className="tabular-nums" value={item.serial_number || ''}
-                          onChange={e => handleSerialChange(idx, e.target.value)} placeholder="SN-2026-001" data-testid={`po-item-serial-${idx}`} />
+                          onChange={e => handleSerialChange(idx, e.target.value)} placeholder="DA-1896" data-testid={`po-item-serial-${idx}`} />
                       </Field>
                       <Field label="Upah jahit per pcs (Rp)" className="col-span-2 sm:col-span-1">
                         <MoneyInput glass value={item.cmt_price_snapshot} disabled={rateLocked}
@@ -1088,7 +1100,11 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                     {(() => {
                       const cur = (item.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ');
                       if (!cur) return null;
-                      const inFormDup = form.items.some((o, j) => j !== idx && (o.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ') === cur);
+                      // 14 Nov 2026: satu kode potongan boleh banyak baris (warna/ukuran dari batch yang sama);
+                      // yang kembar hanya kode + varian yang sama (aturan server: core.po_tolak_dobel).
+                      const varKey = (o) => o.rahaza_variant_id || o.maklon_variant_id || (o.sku || '').trim().toUpperCase();
+                      const inFormDup = !!varKey(item) && form.items.some((o, j) => j !== idx
+                        && (o.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ') === cur && varKey(o) === varKey(item));
                       const chk = serialChecks[idx];
                       if (chk?.loading) {
                         return <p className="text-xs text-muted-foreground inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> Mengecek nomor seri…</p>;
@@ -1099,14 +1115,14 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                           <p className="text-xs text-[hsl(var(--danger-text))] flex items-start gap-1" data-testid={`po-item-serial-warn-${idx}`}>
                             <AlertTriangle size={11} className="mt-px flex-shrink-0" />
                             <span>
-                              Nomor seri dobel.{inFormDup ? ' Sama dengan baris lain di PO ini.' : ''}
-                              {dbUsages.length > 0 ? ` Sudah dipakai di ${dbUsages[0].po_number}${dbUsages.length > 1 ? ` +${dbUsages.length - 1} lagi` : ''}.` : ''}
-                              <span className="text-muted-foreground"> Boleh lanjut — hanya peringatan.</span>
+                              {inFormDup ? 'Baris kembar: kode potongan dan varian ini sudah ada di baris lain PO ini — gabungkan jumlahnya.' : ''}
+                              {dbUsages.length > 0 ? `${inFormDup ? ' ' : ''}Kode potongan ini sudah dipakai di ${dbUsages[0].po_number}${dbUsages.length > 1 ? ` +${dbUsages.length - 1} lagi` : ''}.` : ''}
+                              <span className="text-muted-foreground"> PO tidak bisa disimpan sebelum ini dibetulkan.</span>
                             </span>
                           </p>
                         );
                       }
-                      return chk && !chk.loading ? <p className="text-xs text-[hsl(var(--success-text))]">Nomor seri unik.</p> : null;
+                      return chk && !chk.loading ? <p className="text-xs text-[hsl(var(--success-text))]">Kode potongan belum dipakai PO lain.</p> : null;
                     })()}
                     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
                       <span className="text-muted-foreground" data-testid={`po-item-${idx}-rate-hint`} data-source={sug?.source || ''}>
