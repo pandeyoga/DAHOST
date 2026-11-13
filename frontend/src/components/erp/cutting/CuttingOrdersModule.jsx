@@ -377,7 +377,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             { label: 'Kain belum cukup', nilai: (r) => r.fabric_note || '' },
             { label: 'Hasil di atas rencana', nilai: (r) => (r.over_plan ? overText(r) : '') },
           ]} />
-        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+        <Button variant="outline" size="icon" onClick={() => { load(); loadFacets(); }} disabled={loading}
+          title="Muat ulang" aria-label="Muat ulang"
           data-testid="cutting-refresh-btn">
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
