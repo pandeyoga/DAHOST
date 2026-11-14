@@ -53,7 +53,8 @@ const ageDays = (v) => {
   if (!d) return '—';
   return Math.max(0, daysBetweenISO(d, todayWIB()));
 };
-const rp = (n) => `Rp ${(Number(n) || 0).toLocaleString('id-ID')}`;
+// rupiah utuh — HPP rata-rata bisa berdesimal (mis. 55.497,25); layar menampilkan rupiah bulat
+const rp = (n) => `Rp ${Math.round(Number(n) || 0).toLocaleString('id-ID')}`;
 const SHIPMENT_STATUS_CONFIG = {
   pending: { label: 'Belum dikirim', tone: 'warning' },
   shipped: { label: 'Dikirim', tone: 'info' },
@@ -375,8 +376,8 @@ export default function SampleDeliveryModule({ token }) {
       <p className="md:max-w-[14rem] md:truncate" title={(x.lines || []).map((b) => `${b.sku || b.product} ×${b.quantity}`).join(', ')}>{ringkasProduk(x)}
         <span className="block text-xs text-muted-foreground">{x.total_qty || x.quantity || 0} pcs</span></p>) },
     { kunci: 'hpp', label: 'HPP + ongkir (Rp)', rata: 'kanan', isi: (x) => (
-      <span className="tabular-nums font-medium">{(x.biaya_total || 0).toLocaleString('id-ID')}
-        <span className="block text-xs font-normal text-muted-foreground">ongkir {(x.ongkir || 0).toLocaleString('id-ID')}</span></span>) },
+      <span className="tabular-nums font-medium">{Math.round(Number(x.biaya_total) || 0).toLocaleString('id-ID')}
+        <span className="block text-xs font-normal text-muted-foreground">ongkir {Math.round(Number(x.ongkir) || 0).toLocaleString('id-ID')}</span></span>) },
     { kunci: 'gudang', label: 'Gudang', isi: (x) => (
       <span className="text-xs md:max-w-[11rem] md:whitespace-normal">{x.ringkas_gudang || <span className="text-muted-foreground">—</span>}</span>) },
     { kunci: 'kirim', label: 'Status kirim', isi: (x) => pilihStatus(x, 'shipment_status', SHIPMENT_STATUS_CONFIG, 'sample-ship-select') },
@@ -398,8 +399,8 @@ export default function SampleDeliveryModule({ token }) {
         <span className="block text-xs text-muted-foreground">{[b.sku, b.size, b.color].filter(Boolean).join(' · ') || '—'}</span></span>) },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (b) => <span className="tabular-nums">{b.quantity || 0}</span> },
     { kunci: 'hpp', label: 'HPP (Rp)', rata: 'kanan', isi: (b) => (
-      <span className="tabular-nums">{(b.total_hpp || 0).toLocaleString('id-ID')}
-        <span className="block text-xs text-muted-foreground">{(b.hpp || 0).toLocaleString('id-ID')}/pcs</span></span>) },
+      <span className="tabular-nums">{Math.round(Number(b.total_hpp) || 0).toLocaleString('id-ID')}
+        <span className="block text-xs text-muted-foreground">{Math.round(Number(b.hpp) || 0).toLocaleString('id-ID')}/pcs</span></span>) },
     { kunci: 'gudang', label: 'Gudang', isi: (b) => (
       <span className="flex flex-col items-start gap-1"><LencanaGudang baris={b} />
         {b.keterangan_gudang && <span className="text-xs text-muted-foreground">{b.keterangan_gudang}</span>}
@@ -538,7 +539,7 @@ export default function SampleDeliveryModule({ token }) {
               const hpp = hppBaris(b);
               return (
                 <div key={b.key} className="space-y-1.5" data-testid={`sample-line-${idx}`}>
-                  <div className="grid grid-cols-[1fr_5.5rem_auto] items-start gap-2">
+                  <div className="grid grid-cols-[minmax(0,1fr)_5rem_auto] items-start gap-2">
                     {b.catalog_item_id || !b.product ? (
                       <SmartNativeSelect value={b.catalog_item_id || ''} searchable={true} disabled={!form.account_id || kunci}
                         onChange={(e) => pilihProduk(b.key, e.target.value)} aria-label={`Produk ${idx + 1}`}
