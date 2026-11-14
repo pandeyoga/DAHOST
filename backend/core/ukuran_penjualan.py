@@ -1160,6 +1160,52 @@ async def bentrok_iklan(db, account_id: str, rows: Sequence[Tuple[str, str, str]
     return out
 
 
+LABEL_SALURAN_IKLAN = {"shopee_ads": "Iklan Shopee", "tiktok_ads": "Iklan TikTok", "meta_ads": "Iklan Meta",
+                       "google_ads": "Iklan Google", "affiliate": "Afiliasi", "lainnya": "Lainnya"}
+
+
+def kunci_iklan_manual(doc: dict) -> Tuple[str, str, str]:
+    """Kunci satu entri iklan MANUAL: (hari, saluran iklan, nama kampanye ternormalisasi)."""
+    return (tanggal_iklan(doc) or "", str(doc.get("ad_platform") or "").strip().lower(),
+            _norm(doc.get("campaign_name")))
+
+
+async def dobel_iklan_manual(db, account_id: str, doc: dict, *,
+                             kecuali_id: Optional[str] = None) -> Optional[dict]:
+    """Entri MANUAL lain untuk toko + hari + saluran iklan + kampanye yang sama (14 Nov 2026).
+
+    M-09 hanya menolak bentrok dengan jalur impor; dua entri manual yang sama dulu lolos dan
+    biayanya dijumlah dua kali. Nama kampanye dibandingkan tanpa peduli huruf besar/kecil & spasi
+    (normalisasi yang sama dengan M-09).
+    """
+    hari, saluran, kampanye = kunci_iklan_manual(doc)
+    if not (account_id and hari and kampanye):
+        return None
+    q = {"$and": [{"account_id": account_id}, filter_iklan_rentang(hari, hari), dict(TANPA_CONTOH)]}
+    async for d in db[ADS].find(q, {"_id": 0}):
+        if kecuali_id and d.get("id") == kecuali_id:
+            continue
+        if jalur_iklan(d) != "manual":
+            continue
+        if kunci_iklan_manual(d) == (hari, saluran, kampanye):
+            return d
+    return None
+
+
+def pesan_dobel_iklan_manual(hit: dict, *, saat: str) -> str:
+    hari = tanggal_iklan(hit) or ""
+    try:
+        dd = date.fromisoformat(hari)
+        tgl = f"{dd.day} {_BULAN_PENDEK[dd.month - 1]} {dd.year}"
+    except ValueError:
+        tgl = hari
+    saluran = LABEL_SALURAN_IKLAN.get(str(hit.get("ad_platform") or ""), "")
+    spend = f"Rp{round(_num(hit.get('spend'))):,}".replace(",", ".")
+    return (f"{saat} dibatalkan: biaya iklan kampanye '{hit.get('campaign_name')}' tanggal {tgl}"
+            f"{f' ({saluran})' if saluran else ''} sudah dicatat manual ({spend}). Ubah baris yang sudah "
+            "ada itu, jangan menambah baris baru, supaya biayanya tidak terhitung dua kali.")
+
+
 def pesan_bentrok_iklan(hits: Sequence[dict], *, saat: str) -> str:
     contoh = "; ".join(
         f"'{h['campaign_name']}' {h['dari']}{'' if h['dari'] == h['sampai'] else '..' + h['sampai']} "

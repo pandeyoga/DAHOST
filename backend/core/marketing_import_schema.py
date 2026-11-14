@@ -27,7 +27,9 @@ datanya, dan setiap jenis menyatakan secara eksplisit:
                       dipakai Shopee/TikTok/Tokopedia + contoh isi
 * `dedupe`          — kunci alami untuk mencegah baris ganda saat impor diulang
 * `module_hint`     — pintu mana di portal yang akan menampilkan hasilnya, supaya
-                      staf tahu ke mana harus melihat setelah commit
+                      staf tahu ke mana harus melihat setelah commit. Ditulis dengan NAMA
+                      MENU yang dilihat staf (mis. "Laporan Marketing › Performa iklan"),
+                      bukan id menu — teks ini tampil apa adanya di layar impor.
 
 Sinonim ditulis apa adanya seperti yang muncul di file ekspor marketplace
 (termasuk versi Bahasa Inggris), karena itulah yang membuat pemetaan otomatis
@@ -256,7 +258,7 @@ SALES = SourceType(
     collection="marketing_sales_data",
     describe="Rekap harian satu akun: revenue, jumlah order, dan metrik toko "
              "(rating, conversion, keterlambatan kirim). Satu baris = satu tanggal.",
-    module_hint="marketing-sales",
+    module_hint="Input Sales",
     account_scope="required",
     dedupe=("account_id", "date", "revenue_type"),
     fields=(
@@ -313,7 +315,7 @@ ORDERS = SourceType(
     describe="Satu baris = satu pesanan. Kalau kolom SKU diisi dan SKU-nya ada di "
              "katalog toko, item katalognya ditautkan otomatis (nama produk & harga "
              "ikut master, tidak diketik ulang).",
-    module_hint="marketing-orders",
+    module_hint="Order Terpadu",
     account_scope="required",
     dedupe=("account_id", "order_id"),
     identity="order_id",
@@ -555,7 +557,7 @@ MARKETPLACE_ORDERS = SourceType(
              "PENJUAL saja; diskon yang dibiayai platform ikut omzet dan dicatat "
              "terpisah sebagai subsidi platform. Komisi tidak ada di ekspor ini — "
              "hanya datang dari Pencairan.",
-    module_hint="marketing-orders",
+    module_hint="Order Terpadu",
     account_scope="required",
     dedupe=("account_id", "platform", "order_id"),
     identity="order_id",
@@ -873,7 +875,7 @@ MARKETPLACE_FULFILLMENT = SourceType(
              "diimpor DITOLAK — jenis ini tidak pernah membuat pesanan baru "
              "(impor 'Pesanan Marketplace' dulu). Status tidak boleh MUNDUR "
              "kecuali ada bukti batal/retur.",
-    module_hint="marketing-orders",
+    module_hint="Order Terpadu",
     account_scope="required",
     dedupe=("account_id", "platform", "order_id"),
     identity="order_id",
@@ -947,7 +949,7 @@ ADS = SourceType(
     collection="marketing_ads_data",
     describe="Belanja iklan per kampanye per tanggal untuk satu akun. CTR/CPA/ROAS "
              "dihitung sistem dari spend, klik, dan revenue — tidak perlu diisi.",
-    module_hint="marketing-reports (tab Iklan)",
+    module_hint="Laporan Marketing › Performa iklan, dan realisasi Iklan di Target & Anggaran",
     account_scope="required",
     dedupe=("account_id", "date", "campaign_name"),
     fields=(
@@ -1031,7 +1033,7 @@ LIVE_SESSIONS = SourceType(
     describe="Satu baris = satu sesi live. WAJIB memilih akun DAN host yang sudah "
              "di-assign ke akun itu, supaya jam kerja, gaji host, dan omzetnya "
              "tercatat pada toko yang benar.",
-    module_hint="marketing-live-hub",
+    module_hint="Live Selling",
     account_scope="required",
     context=("host",),
     dedupe=("account_id", "session_date", "title"),
@@ -1085,7 +1087,7 @@ LIVE_SESSION_PRODUCTS = SourceType(
              "harus ada di katalog toko itu — baris yang SKU-nya tidak dikenal "
              "ditolak (bukan disimpan tanpa tautan), karena rincian yang tidak "
              "tertaut master tidak bisa dipakai laporan.",
-    module_hint="marketing-live-hub → tombol Rincian pada sesi",
+    module_hint="Live Selling › Sesi live (tombol Rincian pada sesi)",
     account_scope="required",
     context=("live_session",),
     dedupe=("session_id", "catalog_item_id"),
@@ -1123,7 +1125,7 @@ LIVEHOST_SHIFTS = SourceType(
     collection="marketing_livehost_shifts",
     describe="Jadwal shift host per tanggal untuk satu akun. Host wajib sudah "
              "di-assign ke akun tersebut.",
-    module_hint="marketing-live-hub (tab Host)",
+    module_hint="Live Selling › Host live",
     account_scope="required",
     context=("host",),
     dedupe=("account_id", "host_id", "date", "shift_start_time"),
@@ -1152,7 +1154,7 @@ CATALOG_ITEMS = SourceType(
     collection="marketing_catalog_items",
     describe="Daftar produk yang dijual di satu akun. Kalau SKU-nya sama dengan "
              "master FG, stok & HPP bisa disinkronkan setelah impor.",
-    module_hint="marketing-catalog",
+    module_hint="Manajemen Katalog",
     account_scope="required",
     context=("catalog",),
     dedupe=("catalog_id", "sku"),
@@ -1191,7 +1193,7 @@ CONTENT = SourceType(
     group="Konten",
     collection="marketing_content_calendar",
     describe="Rencana konten per tanggal untuk satu akun.",
-    module_hint="marketing-content-calendar",
+    module_hint="Kalender Konten",
     account_scope="required",
     dedupe=("account_id", "date", "title"),
     fields=(
@@ -1222,7 +1224,7 @@ DISCOUNTS = SourceType(
     group="Konten",
     collection="marketing_discounts",
     describe="Kampanye diskon/voucher per akun beserta periode berlakunya.",
-    module_hint="marketing-discounts",
+    module_hint="Kampanye Diskon",
     account_scope="required",
     dedupe=("account_id", "name", "start_date"),
     fields=(
@@ -1263,7 +1265,7 @@ LAUNCHES = SourceType(
     group="Konten",
     collection="marketing_product_launches",
     describe="Rencana/realisasi peluncuran produk baru di satu akun.",
-    module_hint="marketing-product-launches",
+    module_hint="Peluncuran Produk",
     account_scope="required",
     dedupe=("account_id", "product_name", "launch_date"),
     fields=(
@@ -1303,7 +1305,7 @@ SAMPLES = SourceType(
     describe="Pengiriman sample produk ke kreator/afiliator. WAJIB memilih akun; "
              "kreator dipilih dari daftar yang sudah di-assign ke akun itu, sehingga "
              "biaya sample tidak dibebankan ke toko yang salah.",
-    module_hint="marketing-samples",
+    module_hint="Kirim Sample",
     account_scope="required",
     context=("creator",),
     dedupe=("account_id", "date", "username", "product"),
@@ -1347,7 +1349,7 @@ CREATORS = SourceType(
     collection="marketing_kol_creators",
     describe="Master kreator. Akun yang dipilih menjadi assignment awal kreator "
              "(boleh ditambah akun lain setelah impor).",
-    module_hint="marketing-kol-hub",
+    module_hint="KOL & Kreator",
     account_scope="optional",
     dedupe=("creator_code",),
     fields=(
@@ -1378,7 +1380,7 @@ RETURNS = SourceType(
     collection="marketing_returns",
     describe="Pengembalian barang per akun. Kalau No. Pesanan cocok dengan order "
              "yang ada, retur ditautkan ke order tersebut.",
-    module_hint="marketing-after-sales",
+    module_hint="Komplain & Retur",
     account_scope="required",
     dedupe=("account_id", "order_id", "product"),
     identity="order_id",
@@ -1464,7 +1466,7 @@ REVIEWS = SourceType(
     group="After-Sales",
     collection="marketing_reviews",
     describe="Ulasan pembeli per akun. Dipakai menghitung skor kesehatan akun.",
-    module_hint="marketing-reviews",
+    module_hint="Rating & Ulasan",
     account_scope="required",
     dedupe=("account_id", "order_id", "product"),
     identity="order_id",
@@ -1497,7 +1499,7 @@ COMPLAINTS = SourceType(
     group="After-Sales",
     collection="marketing_complaints",
     describe="Komplain masuk per akun beserta tingkat keparahan (untuk SLA).",
-    module_hint="marketing-after-sales",
+    module_hint="Komplain & Retur",
     account_scope="required",
     dedupe=("account_id", "complaint_number"),
     identity="complaint_number",
@@ -1536,7 +1538,7 @@ HEALTH = SourceType(
     collection="marketing_account_health",
     describe="Snapshot metrik kesehatan akun (skor toko, keterlambatan kirim, "
              "pembatalan, respon chat) pada satu tanggal.",
-    module_hint="marketing-health",
+    module_hint="Kesehatan Akun",
     account_scope="required",
     dedupe=("account_id", "snapshot_date"),
     fields=(
@@ -1641,7 +1643,7 @@ SHOPEE_SHOP_KPI = SourceType(
              "(halaman produk / live / video / affiliate / iklan). Angka ini KPI "
              "platform — dipakai membaca traffic & kontribusi kanal, TIDAK "
              "menggantikan omzet pesanan.",
-    module_hint="marketing-content-calendar → tab KPI Platform",
+    module_hint="Kalender Konten › KPI platform",
     export_hint="Seller Center → Data Bisnis → Statistik Toko → Ekspor (.xlsx)",
     account_scope="required",
     dedupe=("account_id", "date", "channel"),
@@ -1658,7 +1660,7 @@ SHOPEE_CONTENT_KPI = SourceType(
              "penonton, ditonton, durasi tonton, suka/komentar/share, pengikut "
              "baru, dan penjualan yang diakui platform pada kanal itu. Kanal "
              "(live/video) dibaca dari kolom penanda di berkas — bukan dari nama berkas.",
-    module_hint="marketing-content-calendar → tab KPI Platform",
+    module_hint="Kalender Konten › KPI platform",
     export_hint="Seller Center → Bisnis Saya → Live Streaming / Video → Ekspor data (.csv)",
     account_scope="required",
     dedupe=("account_id", "date", "channel"),
@@ -1682,7 +1684,7 @@ SHOPEE_ADS_CPC = SourceType(
     describe="Laporan iklan CPC Shopee per kampanye untuk satu periode: biaya, "
              "tayangan, klik, konversi, omzet iklan, ROAS, dan ACOS. Biaya iklan "
              "otomatis ikut realisasi anggaran kategori 'ads' pada Target & Anggaran.",
-    module_hint="marketing-ads (tab Iklan) & Target & Anggaran (realisasi anggaran)",
+    module_hint="Laporan Marketing › Performa iklan, dan realisasi Iklan di Target & Anggaran",
     export_hint="Seller Center → Iklan Saya → Laporan Iklan → Semua Laporan Iklan CPC (.csv)",
     account_scope="required",
     dedupe=("account_id", "campaign_name", "period_start", "period_end"),
@@ -1771,7 +1773,7 @@ TIKTOK_GMV_MAX = SourceType(
              "periode laporan. Berkas ekspornya tidak memuat tanggal, jadi periode wajib "
              "diisi saat unggah. Baris tanpa biaya dibuang. Pendapatan kotor TikTok "
              "termasuk pesanan organik — hanya untuk ROI iklan, bukan omzet.",
-    module_hint="marketing-ads (tab Iklan) & Target & Anggaran (realisasi anggaran)",
+    module_hint="Laporan Marketing › Performa iklan, dan realisasi Iklan di Target & Anggaran",
     export_hint="TikTok Seller Center → Iklan → GMV Max → pilih rentang tanggal (dalam satu "
                 "bulan) → Ekspor data. Tulis periodenya di layar unggah.",
     account_scope="required",
@@ -1838,7 +1840,7 @@ CONTENT_PERFORMANCE = SourceType(
              "Link yang sudah ada diperbarui; link baru dibuat sebagai konten "
              "berstatus 'posted'. GMV di sini adalah angka platform per konten dan "
              "TIDAK dijumlah dengan omzet pesanan.",
-    module_hint="marketing-content-calendar → tab Performa Konten & Scorecard Kreator",
+    module_hint="Kalender Konten › Performa konten dan Scorecard kreator",
     export_hint="Seller Center/TikTok: ekspor daftar video/konten yang memuat kolom "
                 "link konten + views/GMV per konten",
     account_scope="required",

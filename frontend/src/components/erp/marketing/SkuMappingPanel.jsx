@@ -116,11 +116,12 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
     <Card className="bg-[hsl(var(--card))]" data-testid="sku-mapping-panel">
       <CardHeader className="pb-3">
         <CardTitle className="text-base flex items-center gap-2">
-          <Link2 className="w-4 h-4 text-primary" /> Pemetaan SKU Platform → Item Katalog
+          <Link2 className="w-4 h-4 text-primary" /> Tautkan SKU platform ke item katalog
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Omzet sudah masuk. Pemetaan ini menghubungkan SKU platform ke item katalog supaya
-          HPP, marjin, dan stok bisa dihitung — dan impor berikutnya tertaut otomatis.
+          Omzet sudah masuk. Tautan ini menghubungkan SKU platform ke item katalog supaya
+          HPP, marjin, dan stok bisa dihitung — dan impor berikutnya tertaut otomatis. Tautan yang sama
+          bisa dilihat dan diubah nanti di menu Jembatan SKU.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">

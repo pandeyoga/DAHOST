@@ -1366,7 +1366,7 @@ def build_template_xlsx(st: SourceType) -> bytes:
     doc["A1"] = f"TEMPLATE IMPOR — {st.label}"
     doc["A1"].font = Font(bold=True, size=13)
     doc["A2"] = st.describe
-    doc["A3"] = f"Data masuk ke tabel: {st.collection} · tampil di menu: {st.module_hint}"
+    doc["A3"] = f"Hasil impor tampil di menu: {st.module_hint}"
     doc["A4"] = ("Toko/akun TIDAK diisi di file ini — dipilih di layar sebelum upload, "
                  "supaya satu file tidak bisa tercampur antar toko.")
     for i, h in enumerate(["Kolom", "Jenis Isi", "Wajib", "Keterangan / Pilihan yang sah"], 1):

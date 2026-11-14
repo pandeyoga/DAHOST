@@ -10,7 +10,7 @@
  * dengan simpan yang sama; hapus belanja lewat konfirmasi; warna lewat token.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, RefreshCw, Lock, Pencil } from 'lucide-react';
+import { Plus, Trash2, RefreshCw, Lock, Pencil, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -39,6 +39,10 @@ const CATS = [
   { key: 'sample',   label: 'Sampel',         hint: 'Isi manual' },
   { key: 'diskon',   label: 'Diskon / promo', hint: 'Otomatis: dari pesanan' },
 ];
+// 14 Nov 2026 — belanja manual bawaannya Sampel: kategori lain sudah terisi otomatis dari data sumbernya,
+// mencatatnya lagi di sini membuat biaya terhitung dua kali.
+const KATEGORI_MANUAL = 'sample';
+const KATEGORI_OTOMATIS = new Set(CATS.filter((c) => c.key !== KATEGORI_MANUAL).map((c) => c.key));
 const FEE_TYPES = [
   { v: 'none', l: 'Tidak ada' },
   { v: 'fixed', l: 'Fee tetap' },
@@ -102,7 +106,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
   const [kolList, setKolList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [savingBudget, setSavingBudget] = useState(false);
-  const [newSpend, setNewSpend] = useState({ category: 'ads', amount: '', description: '' });
+  const [newSpend, setNewSpend] = useState({ category: KATEGORI_MANUAL, amount: '', description: '' });
   const [addingSpend, setAddingSpend] = useState(false);
   // Standar UI/UX v2: isian dibuka lewat popup form (dulu isian langsung di halaman).
   const [bukaRencana, setBukaRencana] = useState(false);
@@ -172,7 +176,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Gagal catat spend');
       toast.success('Belanja dicatat');
-      setNewSpend({ category: 'ads', amount: '', description: '' });
+      setNewSpend({ category: KATEGORI_MANUAL, amount: '', description: '' });
       load();
       return true;
     } catch (e) { toast.error(e.message); return false; }
@@ -477,6 +481,11 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
             {CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </SmartNativeSelect>
         </Isian>
+        {KATEGORI_OTOMATIS.has(newSpend.category) && (
+          <Notice tone="warning" icon={AlertTriangle} testId="spend-category-otomatis">
+            Kategori ini terisi otomatis; mencatatnya di sini membuat biaya terhitung dua kali.
+          </Notice>
+        )}
         <Isian label="Jumlah (Rp)" wajib>
           <MoneyInput value={newSpend.amount} data-testid="spend-amount-input" placeholder="0"
             onChange={(e) => setNewSpend((s) => ({ ...s, amount: e.target.value }))} />

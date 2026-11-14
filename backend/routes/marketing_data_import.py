@@ -1673,7 +1673,7 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
             d["catalog_item_id"] = None
             d["master_link_source"] = "unlinked"
             warn.append(_why_name or "SKU/produk tidak ada di katalog toko — order tersimpan "
-                        "tapi belum tertaut barang (tautkan di Pemetaan SKU)")
+                        "tapi belum tertaut barang (tautkan di menu Jembatan SKU)")
         qty = _num("quantity", 1) or 1
         price = _num("price_final") or _num("price_original")
         if not d.get("total_payment"):
@@ -1844,7 +1844,7 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
 
         if n_unlinked:
             warn.append(f"{n_unlinked} dari {len(items_out)} SKU belum tertaut item katalog — "
-                        f"omzet TETAP masuk; lengkapi lewat layar 'Pemetaan SKU'")
+                        f"omzet TETAP masuk; lengkapi lewat menu Penjualan Multi-Channel › Jembatan SKU")
             warn.extend(name_reasons[:3])
 
     elif st.key == "ads":
@@ -2953,7 +2953,7 @@ async def sku_map_list(session_id: str, request: Request,
     s = await _load_session(db, session_id, request)
     st = get_source_type(s["source_type"])
     if not st.is_grouped:
-        raise HTTPException(400, "Pemetaan SKU hanya untuk impor pesanan marketplace")
+        raise HTTPException(400, "Penautan SKU di sini hanya untuk impor pesanan marketplace.")
     aid = s.get("account_id")
 
     # sumber SKU: dokumen hasil commit bila sudah ada, kalau belum dari pratinjau
@@ -3119,7 +3119,7 @@ async def sku_map_save(session_id: str, request: Request, body: List[SkuMapIn]):
         orders_touched += res.modified_count
 
     await log_activity(user.get("id", ""), user.get("name", ""),
-                       f"Pemetaan SKU platform: {mapped} SKU ditautkan, "
+                       f"Tautan SKU platform dari impor: {mapped} SKU ditautkan, "
                        f"{orders_touched} pesanan diperbarui",
                        "marketing-data-import", session_id)
     return {"ok": True, "mapped": mapped, "orders_updated": orders_touched,
