@@ -740,6 +740,12 @@ MODUL_SETARA: tuple[tuple[str, str], ...] = (
     # Centang "Stok Opname Aksesoris" juga meloloskan buat/hitung/ajukan; PERSETUJUAN tetap dipisah per asal sesi
     # di routes/wms_opname3 (sesi aksesoris = centang aksesoris, sesi gudang = centang Opname Stok Gudang).
     (r"/api/wms/opname3(/.*)?", "acc_opname"),
+    # 14 Nov 2026 (owner: akun PIC toko — Dashboard Marketing "Angka siklus … tidak bisa dimuat: tidak punya izin
+    # 'Lihat' pada modul 'Target & Anggaran' (Portal Manajemen)"). Layar Target & Anggaran (dan bagian siklus
+    # Dashboard Marketing) dipakai dua portal: Marketing (`mkt_targets`) dan Manajemen (`mgmt_marketing_cycle`).
+    # Centang modul mana pun berlaku untuk layanan keduanya.
+    (r"/api/marketing/cycle(/.*)?", "mkt_targets"),
+    (r"/api/marketing/(targets|budget)(/.*)?", "mgmt_marketing_cycle"),
 )
 _MODUL_SETARA_RX = [(re.compile(p + r"/?"), MODULE_BY_ID[mid]) for p, mid in MODUL_SETARA]
 

@@ -297,3 +297,15 @@ def test_migrasi_opname_salin_hak_lama_kecuali_keputusan_owner():
     assert "mod.fin_pencairan.approve" in m.usulan("Finance & Purchase", ["finance"], ["finance.manage",
                                                                                         "mod.fin_ar.view"])[0]
     assert "mod.fin_pencairan.approve" not in m.usulan("HR Generalist", ["hr"], ["hr.manage"])[0]
+
+
+@pytest.mark.parametrize("method,path,perm", [
+    ("GET", "/api/marketing/cycle/overview", "mod.mkt_targets.view"),          # PIC toko: Dashboard Marketing › siklus
+    ("GET", "/api/marketing/cycle/overview", "mod.mgmt_marketing_cycle.view"),
+    ("GET", "/api/marketing/targets", "mod.mgmt_marketing_cycle.view"),        # Manajemen membuka layar yang sama
+    ("PUT", "/api/marketing/budget/plan", "mod.mgmt_marketing_cycle.edit"),
+])
+def test_target_anggaran_dua_portal_setara(gerbang, method, path, perm):
+    portal = ["toko"] if perm.startswith("mod.mkt_") else ["management"]
+    assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, [perm]))) is None
+    assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, ["mod.mkt_dashboard.view"])))
