@@ -20,7 +20,8 @@ Endpoints:
 from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from datetime import datetime, timezone, timedelta, date
 from typing import Optional
 import asyncio
@@ -81,7 +82,7 @@ async def _require_admin(request: Request):
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
     # 2026-11-08: kode peran lama ATAU izin `production.manage` ("Ubah data di Portal Produksi").
-    if not (check_role(user, ("admin", "superadmin", "owner", "manager_production"), "production.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ("admin", "superadmin", "owner", "manager_production"), "production.manage") or lolos_centang(user)):
         raise HTTPException(403, "Butuh role Admin/Manager Produksi untuk mengubah setting alert")
     return user
 
@@ -509,7 +510,9 @@ async def preview_alerts(request: Request):
 
 def redact_preview(res: dict, user: dict) -> dict:
     """Buang alert kontrak dari pratinjau untuk peran di luar CONTRACT_VIEW_ROLES."""
-    if (user.get("role") or "").lower() in CONTRACT_VIEW_ROLES:
+    # 14 Nov 2026: centang SDM › Data Karyawan & Resign (Lihat) atau izin SDM; kode peran hanya selama centang belum diatur.
+    from core.authz import izin_atau_peran_lama
+    if izin_atau_peran_lama(user, CONTRACT_VIEW_ROLES, ("mod.hr_employees.view", "hr.manage", "hr.employee.manage")):
         return res
     counts = dict(res.get("counts") or {})
     counts.pop("contract_expiry", None)

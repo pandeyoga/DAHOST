@@ -41,7 +41,8 @@ from core import production_qty_ledger as qty_ledger
 from core import client_goods  # Tahap 9C: stok titipan klien maklon
 from utils.counters import gen_prefixed_number
 from utils.variant_ssot import resolve_variant, ensure_fg_material
-from auth import require_auth, serialize_doc, check_role, log_activity
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama, pesan_centang  # 14 Nov 2026: centang owner = penentu
 from utils.waktu import wib_date_str, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ async def backfill_wip_fg(request: Request, dry_run: bool = True):
     """Iter 116: posting WIP→FG utk Terima FG dari CMT PO INTERNAL lama yang sudah selesai QC
     tapi belum berjurnal (sebelum iter 115). dry_run=true hanya menampilkan kandidat."""
     user = await require_auth(request)
-    if not (check_role(user, ["admin", "owner", "accounting", "finance", "manager_keuangan", "staff_keuangan"], "finance.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ["admin", "owner", "accounting", "finance", "manager_keuangan", "staff_keuangan"], "finance.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya Finance/Admin.")
     db = get_db()
     done_statuses = [ST_DONE, "approved", "Approved", "Done", "completed_qc"]
@@ -1072,9 +1073,11 @@ async def resolve_short_shipment(short_id: str, request: Request):
     pemotongan tagihan otomatis; Finance memprosesnya di modul tagihan CMT."""
     user = await require_auth(request)
     db = get_db()
-    if not check_role(user, ["admin", "admin_maklon", "admin_produksi",
-                            "supervisor_produksi", "owner", "manager", "finance"]):
-        raise HTTPException(403, "Hanya Admin/Finance yang boleh menyelesaikan selisih kirim")
+    # 14 Nov 2026: keputusan selisih = centang Terima & QC › Setujui (katalog membaca "resolve" sebagai Lihat, jadi
+    # centang aksi endpoint tidak dipakai di sini). Daftar peran lama hanya selama centang peran belum diatur.
+    if not izin_atau_peran_lama(user, ["admin", "admin_maklon", "admin_produksi",
+                            "supervisor_produksi", "owner", "manager", "finance"], "mod.prod_cmt_receive.approve"):
+        raise HTTPException(403, pesan_centang(user, "mod.prod_cmt_receive.approve"))
     body = await request.json()
     from core import short_shipment as shortmod
     try:

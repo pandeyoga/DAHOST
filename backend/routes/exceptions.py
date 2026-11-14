@@ -11,7 +11,8 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
 from auth import require_auth, check_role, log_activity, serialize_doc
-from routes.production_rbac import (PROD_ADMIN_ROLES, is_vendor, vendor_identity, deny_klien, require_write_actor)
+from core.authz import wajib_centang
+from routes.production_rbac import (assert_prod_admin, is_vendor, vendor_identity, deny_klien, require_write_actor)
 from core.helpers import new_id, now, parse_date, to_end_of_day
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
 from core.cmt_override import (apply_scope, effective_vendor_id, resolve_override,
@@ -230,7 +231,7 @@ async def create_material_request(request: Request):
 async def update_material_request(req_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     # 2026-11-06 (pola P9): permintaan DIKUNCI selama diputuskan. Dulu Setuju ganda membuat DUA kiriman
@@ -407,7 +408,7 @@ async def get_return(ret_id: str, request: Request):
 async def create_return(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     return_id = new_id()
@@ -484,7 +485,7 @@ async def create_return(request: Request):
 async def update_return(ret_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     body.pop('_id', None); body.pop('id', None); body.pop('items', None)
@@ -507,7 +508,7 @@ async def update_return(ret_id: str, request: Request):
 async def delete_return(ret_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
+    wajib_centang(user, apa='menghapus data ini')   # 14 Nov 2026: centang Hapus modulnya (dulu khusus superadmin)
     db = get_db()
     doc = await db.production_returns.find_one({'id': ret_id})
     if not doc: raise HTTPException(404, 'Not found')
@@ -756,7 +757,7 @@ async def update_variance_status(vid: str, request: Request):
     """Admin updates variance status (Acknowledged/Resolved)"""
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     
@@ -804,7 +805,7 @@ async def post_variance_to_gl(vid: str, request: Request):
     """DIPENSIUNKAN (Tahap 9) — selalu HTTP 410 dengan penjelasan; tidak ada jurnal yang dibuat."""
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     if not await db.production_variances.find_one({'id': vid}, {'_id': 0, 'id': 1}):
         raise HTTPException(404, 'Variance not found')
@@ -816,7 +817,7 @@ async def retry_variance_posting(vid: str, request: Request):
     """DIPENSIUNKAN (Tahap 9) — sama dengan post-gl: HTTP 410, tidak ada jurnal yang dibuat."""
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     if not await db.production_variances.find_one({'id': vid}, {'_id': 0, 'id': 1}):
         raise HTTPException(404, 'Variance not found')

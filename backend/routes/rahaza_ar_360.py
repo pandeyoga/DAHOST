@@ -96,7 +96,8 @@ async def _require_finance(request: Request) -> dict:
     perms = user.get('_permissions') or []
     if '*' in perms or 'finance.manage' in perms or 'finance.read' in perms:
         return user
-    raise HTTPException(403, 'Forbidden: butuh role finance/accountant/manager.')
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

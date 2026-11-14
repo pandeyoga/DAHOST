@@ -15,9 +15,12 @@ def _can_decide_finance(user: dict) -> bool:
     """Admin/owner, peran yang bisa membuka Portal Keuangan, atau peran lama finance/manager.
     2026-11-02: dulu hanya ("admin","superadmin","finance","manager") — peran `finance` tidak ada di
     sistem sehingga Keuangan (accounting/staff_keuangan) tidak bisa menyetujui pelepasan."""
-    from routes.shared import SUPER_ROLES, check_portal_access
-    role = (user.get("role") or "").lower()
-    return role in SUPER_ROLES or role in ("superadmin", "finance", "manager") or check_portal_access(user, "finance")
+    # 14 Nov 2026 (owner: centang = penentu): portal Keuangan yang dicentang owner, atau centang Keuangan › Aset Tetap &
+    # Penyusutan › Setujui; kode peran lama finance/manager hanya selama owner belum mengatur centang peran itu.
+    from core.authz import izin_atau_peran_lama
+    from routes.shared import check_portal_access
+    return (izin_atau_peran_lama(user, ("finance", "manager"), ("mod.fin_fixed_assets.approve",))
+            or check_portal_access(user, "finance"))
 
 
 async def _execute_disposal(db, asset: dict, disposal_date: str, disposal_value: float, reason: str, user: dict) -> dict:

@@ -31,7 +31,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role, require_demo_seed_allowed
+from auth import require_auth, serialize_doc, log_activity, require_demo_seed_allowed
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
 
@@ -919,7 +920,7 @@ async def build_canonical_storage(request: Request):
     Aman diulang; tidak menghapus/menimpa penempatan fisik yang sudah ada.
     """
     user = await require_auth(request)
-    if not (check_role(user, ["admin"]) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ["admin"]) or lolos_centang(user)):
         raise HTTPException(403, "Hanya admin/superadmin yang boleh membangun struktur gudang.")
     db = get_db()
 

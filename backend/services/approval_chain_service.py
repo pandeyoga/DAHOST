@@ -311,6 +311,14 @@ LEVEL_ROLE_ALIASES = {
     "finance": {"accounting", "staff_keuangan", "manager_keuangan"},
 }
 LEVEL_SUPER_ROLES = {"superadmin", "admin", "owner"}
+# 14 Nov 2026 (owner: centang = penentu): centang yang setara tiap level rantai — peran buatan owner yang dicentang
+# boleh memutus level itu walau namanya tidak ada di LEVEL_ROLE_ALIASES. Level "owner" tetap direksi/owner.
+LEVEL_PERMS = {
+    "manager": ("mod.mgmt_approval.approve",),
+    "admin": ("mod.mgmt_approval.approve",),
+    "hr": ("hr.approve",),
+    "finance": ("finance.approve",),
+}
 
 
 def _may_act_on_level(user: Dict, lv_entry: Dict) -> bool:
@@ -320,7 +328,10 @@ def _may_act_on_level(user: Dict, lv_entry: Dict) -> bool:
     want = str(lv_entry.get("role") or "").lower()
     if not want:
         return True          # rantai tanpa role → jangan blokir alur lama
-    return role in LEVEL_ROLE_ALIASES.get(want, {want})
+    if role in LEVEL_ROLE_ALIASES.get(want, {want}):
+        return True
+    from routes.shared import has_perm
+    return bool(LEVEL_PERMS.get(want)) and has_perm(user, *LEVEL_PERMS[want])
 
 
 async def _is_own_request(db, user: Dict, doc: Dict) -> bool:

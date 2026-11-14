@@ -27,7 +27,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 
-from auth import check_role, log_activity, require_auth, serialize_doc
+from auth import log_activity, require_auth, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import scan_out as so
 from database import get_db
 
@@ -44,13 +45,14 @@ async def _require(request: Request, roles: list, perm: str, what: str) -> dict:
     user = await require_auth(request)
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, roles, perm) or lolos_centang(user)):
-        raise HTTPException(403, f"Akses ditolak: {what}.")
+    if not izin_atau_peran_lama(user, roles, perm):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, apa="Scan Keluar Penjualan"))
     return user
 
 
 def _can_supervise(user: dict) -> bool:
-    return check_role(user, so.SUPERVISE_ROLES, "warehouse.approve")
+    return izin_atau_peran_lama(user, so.SUPERVISE_ROLES, "warehouse.approve")
 
 
 @router.get("/locations")
@@ -143,7 +145,7 @@ async def today(request: Request, location_id: Optional[str] = None):
         "other_open_sheets": others,
         "retry_queue": retry,
         "can_supervise": _can_supervise(user),
-        "can_scan": check_role(user, so.SCAN_ROLES, "warehouse.manage"),
+        "can_scan": izin_atau_peran_lama(user, so.SCAN_ROLES, "warehouse.manage"),
         "me": {"id": str(user.get("id") or ""), "name": user.get("name")},
         "langkah2": await so.langkah2_status(db),
     })

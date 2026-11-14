@@ -22,7 +22,6 @@ Phase B (CMT → DA → Buyer, 2026-07-16):
         (dari `source_receipt_ids`) minus qty yg sudah dispatch dari receipt yang sama.
   * COGS posting hanya jalan untuk `receiver_type='buyer'` (dispatch riil).
 """
-from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
@@ -30,7 +29,8 @@ from auth import require_auth, check_role, log_activity, serialize_doc
 import logging
 
 logger = logging.getLogger(__name__)
-from routes.production_rbac import (PROD_ADMIN_ROLES, is_vendor, deny_klien, require_write_actor,
+from core.authz import wajib_centang
+from routes.production_rbac import (assert_prod_admin, PROD_ADMIN_ROLES, is_vendor, deny_klien, require_write_actor,
     resolve_vendor_doc)
 from core.helpers import new_id, now, parse_date
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
@@ -1253,7 +1253,7 @@ async def update_buyer_shipment(bsid: str, request: Request):
 async def delete_buyer_shipment(bsid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
+    wajib_centang(user, apa='menghapus data ini')   # 14 Nov 2026: centang Hapus modulnya (dulu khusus superadmin)
     db = get_db()
     doc = await db.buyer_shipments.find_one({'id': bsid})
     if not doc: raise HTTPException(404, 'Not found')
@@ -1342,8 +1342,7 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Hanya Admin/Superadmin yang dapat melakukan force edit')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     reason = (body.get('reason') or '').strip()
@@ -1528,8 +1527,7 @@ async def set_buyer_shipment_item_received(item_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Hanya Admin/Superadmin yang dapat mengisi qty diterima')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     if 'qty_received' not in body:
@@ -1679,8 +1677,7 @@ async def resolve_buyer_short(short_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES + ['finance', 'admin_finance']) or lolos_centang(user)):
-        raise HTTPException(403, 'Hanya Admin/Finance yang boleh memutuskan selisih buyer')
+    wajib_centang(user, peran_lama=PROD_ADMIN_ROLES + ['finance', 'admin_finance'])
     db = get_db()
     body = await request.json()
     from core import short_shipment as shortmod

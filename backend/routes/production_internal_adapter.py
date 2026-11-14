@@ -22,7 +22,8 @@ import logging
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
+from auth import require_auth, log_activity, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.helpers import new_id, now
 from routes.production_rbac import deny_klien
 from routes.rahaza_bom import _is_kglike
@@ -385,8 +386,9 @@ async def create_mi_draft_from_job(db, job: dict, user: dict, default_loc=None):
 async def draft_mi_from_job_endpoint(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, MI_DRAFT_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, MI_DRAFT_ROLES) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     job_id = body.get('job_id')
@@ -541,8 +543,9 @@ async def hpp_for_job(job_id: str, request: Request):
 async def snapshot_hpp_job(job_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, HPP_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, HPP_ROLES) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     data = await upsert_hpp_snapshot_job(db, job_id, user)
     return serialize_doc(data)
@@ -572,8 +575,9 @@ async def on_job_completed_internal(db, job: dict, user: dict) -> dict:
 async def create_po_from_order(order_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, FROM_ORDER_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, FROM_ORDER_ROLES) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = {}
     try:

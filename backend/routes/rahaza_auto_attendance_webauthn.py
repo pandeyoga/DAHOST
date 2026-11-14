@@ -10,7 +10,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from dotenv import load_dotenv
 from utils.waktu import today_wib
 
@@ -75,7 +76,7 @@ async def list_webauthn_devices(request: Request, employee_id: Optional[str] = N
     else:
         # HR dapat lihat semua; karyawan hanya lihat milik sendiri
         # 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` melihat perangkat semua karyawan.
-        if not check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage"):
+        if not izin_atau_peran_lama(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage"):
             # Cari employee_id dari user
             emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0})
             if emp:
@@ -529,9 +530,11 @@ async def revoke_webauthn_device(device_id: str, request: Request):
     owner_ok = cred.get("employee_id") in (user.get("employee_id"), (my_emp or {}).get("id")) or \
         cred.get("user_id") == user["id"]
     # 2026-11-08: HR = kode peran lama ATAU izin `hr.attendance.manage`.
-    if not owner_ok and not check_role(user, ("hr", "hr_manager", "staff_hr", "superadmin", "admin", "owner"),
+    if not owner_ok and not izin_atau_peran_lama(user, ("hr", "hr_manager", "staff_hr", "superadmin", "admin", "owner"),
                                        "hr.attendance.manage"):
-        raise HTTPException(403, "Akses ditolak: biometrik milik karyawan lain hanya bisa dicabut HR/admin.")
+        raise HTTPException(403, "Biometrik milik karyawan lain hanya bisa dicabut pengguna yang dicentang \"Ubah\" pada "
+                                 "modul \"Absensi, Istirahat & Izin\" (Portal SDM / HRIS). Minta owner mencentangnya di "
+                                 "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
     await db.rahaza_webauthn_credentials.update_one(
         {"id": device_id}, {"$set": {"revoked_at": _now()}}
     )

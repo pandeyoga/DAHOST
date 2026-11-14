@@ -6,7 +6,7 @@
 import { CloudOff, Hourglass, KeyRound, Power, UserX, Wallet } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '../moduleAtoms';
-import { canAccessPortal } from '../portalAccess';
+import { canAccessPortal, moduleActions } from '../portalAccess';
 
 const PERAN_MONITOR = ['superadmin', 'admin', 'manager', 'owner'];
 
@@ -19,7 +19,11 @@ export function StatusBelumSiap({ status, peran, onNavigate, onCobaLagi }) {
     );
   }
   const admin = canAccessPortal(peran, 'sysadmin');
-  const bolehMonitor = PERAN_MONITOR.includes(String(peran || '').toLowerCase());
+  // 14 Nov 2026: tautan Monitor AI mengikuti centang Manajemen › Monitor AI › Lihat (server: ai_usage_monitor._check_admin);
+  // daftar peran hanya dipakai bila akses per menu belum dimuat (peran super / sesi lama).
+  const aksiMonitor = moduleActions('ai-usage-monitor');
+  const bolehMonitor = aksiMonitor === null ? PERAN_MONITOR.includes(String(peran || '').toLowerCase())
+    : aksiMonitor.includes('view');
   const keMonitor = bolehMonitor && onNavigate ? { label: 'Buka Monitor AI', variant: 'outline', onClick: () => onNavigate('ai-usage-monitor') } : undefined;
   if (status.galat) {
     return (

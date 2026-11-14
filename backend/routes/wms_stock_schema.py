@@ -20,7 +20,8 @@ from fastapi import APIRouter, Request, HTTPException, Query
 import logging
 
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
+from auth import require_auth, log_activity, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import stock_reconcile
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ _FORBIDDEN = (
 def _guard(user: dict):
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, RECONCILE_ROLES, PERM_KEY) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, RECONCILE_ROLES, PERM_KEY) or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN)
 
 

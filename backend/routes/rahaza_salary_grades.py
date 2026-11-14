@@ -16,7 +16,8 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role, log_activity
+from auth import require_auth, log_activity
+from core.authz import izin_atau_peran_lama, pesan_centang  # 14 Nov 2026: centang owner = penentu
 
 router = APIRouter(prefix="/api/rahaza/salary-grades", tags=["rahaza-salary-grades"])
 
@@ -41,8 +42,8 @@ SALARY_GRADE_PERM = "salary.manage"
 
 async def _require_admin(request: Request):
     user = await require_auth(request)
-    if not check_role(user, SALARY_GRADE_ROLES, SALARY_GRADE_PERM):
-        raise HTTPException(403, "Hanya Admin/HR yang dapat mengelola struktur gaji.")
+    if not izin_atau_peran_lama(user, SALARY_GRADE_ROLES, SALARY_GRADE_PERM):
+        raise HTTPException(403, pesan_centang(user, apa="mengelola struktur gaji"))
     return user
 
 

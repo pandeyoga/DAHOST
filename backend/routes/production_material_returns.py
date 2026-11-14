@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, log_activity, check_role
+from auth import require_auth, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.counters import next_counter, gen_prefixed_number
 from core import stock_service
 from core import accessory_valuation, quarantine  # 2026-11-06 (Tahap 1): HPP rata-rata saat retur
@@ -507,7 +508,7 @@ async def submit_return(request: Request, return_id: str):
 async def approve_return(request: Request, return_id: str, body: ActionModel):
     """Supervisor produksi menyetujui return."""
     user = await require_auth(request)
-    if not (check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Hanya supervisor/manager yang dapat menyetujui.")
     db = get_db()
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)})
@@ -540,7 +541,7 @@ async def approve_return(request: Request, return_id: str, body: ActionModel):
 @router.post("/{return_id}/reject")
 async def reject_return(request: Request, return_id: str, body: ActionModel):
     user = await require_auth(request)
-    if not (check_role(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, RETURN_DECIDER_ROLES, RETURN_DECIDER_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Hanya supervisor/manager yang dapat menolak.")
     db = get_db()
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)})

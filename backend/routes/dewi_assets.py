@@ -50,7 +50,8 @@ async def _require_hr(request: Request):
         return user
     if (user.get("role") or "").lower() in ("superadmin","admin","owner","hr","manager","supervisor"):
         return user
-    raise HTTPException(403, "Akses ditolak.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 # ─── MASTER ASET ─────────────────────────────────────────────────────────────

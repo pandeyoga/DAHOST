@@ -106,7 +106,8 @@ def sees_all_requests(user: dict) -> bool:
     if can_view_all_employees(user):
         return True
     perms = user.get("_permissions") or []
-    return any(p in perms for p in ("*", "hr.approve", "finance.approve", "proc.po.approve"))
+    return any(p in perms for p in ("*", "hr.approve", "finance.approve", "proc.po.approve",
+                                    "mod.mgmt_approval.approve"))
 
 
 def _visible_query(user: dict, q: dict) -> dict:
@@ -151,8 +152,8 @@ async def list_chains(
 @router.post("/chains")
 async def create_chain(request: Request, body: ChainCreateModel):
     user = await require_auth(request)
-    if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
-        raise HTTPException(403, "Hanya admin/owner yang dapat membuat chain.")
+    from core.authz import wajib_centang   # 14 Nov 2026: centang Pusat Persetujuan (Tambah/Ubah/Hapus), dulu admin/owner saja
+    wajib_centang(user, apa="membuat rantai persetujuan")
     db = get_db()
     chain_id = await next_counter(db, "approval_chains")
     doc = {
@@ -179,8 +180,8 @@ async def create_chain(request: Request, body: ChainCreateModel):
 @router.put("/chains/{chain_id}")
 async def update_chain(request: Request, chain_id: str, body: ChainUpdateModel):
     user = await require_auth(request)
-    if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
-        raise HTTPException(403, "Hanya admin/owner yang dapat mengubah chain.")
+    from core.authz import wajib_centang   # 14 Nov 2026: centang Pusat Persetujuan (Tambah/Ubah/Hapus), dulu admin/owner saja
+    wajib_centang(user, apa="mengubah rantai persetujuan")
     db = get_db()
     doc = await db.approval_chains.find_one({"id": _coerce_id(chain_id)})
     if not doc:
@@ -196,8 +197,8 @@ async def update_chain(request: Request, chain_id: str, body: ChainUpdateModel):
 @router.delete("/chains/{chain_id}")
 async def delete_chain(request: Request, chain_id: str):
     user = await require_auth(request)
-    if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
-        raise HTTPException(403, "Hanya admin/owner yang dapat menghapus chain.")
+    from core.authz import wajib_centang   # 14 Nov 2026: centang Pusat Persetujuan (Tambah/Ubah/Hapus), dulu admin/owner saja
+    wajib_centang(user, apa="menghapus rantai persetujuan")
     db = get_db()
     await db.approval_chains.update_one(
         {"id": _coerce_id(chain_id)}, {"$set": {"is_active": False, "updated_at": _now()}}

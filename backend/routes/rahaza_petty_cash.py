@@ -38,7 +38,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime, timezone, date, timedelta
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from routes.rahaza_posting import (
     _create_posted_je, _find_existing_je, get_mapping
 )
@@ -58,12 +59,12 @@ ALL_ROLES     = tuple(FINANCE_ROLES) + ('cashier', 'staff')
 
 # 2026-11-08: kode peran lama ATAU izin kas & bank (`FINANCE_CASH_PERMS`) — peran buatan owner dulu 403.
 def _is_finance(user: dict) -> bool:
-    return check_role(user, FINANCE_ROLES, FINANCE_CASH_PERMS)
+    return izin_atau_peran_lama(user, FINANCE_ROLES, FINANCE_CASH_PERMS)
 
 
 def _is_cash_user(user: dict) -> bool:
     """Kasir + Keuangan (FIN-04) — sama dengan `_is_finance` ditambah kode peran kasir lama."""
-    return check_role(user, ALL_ROLES, FINANCE_CASH_PERMS)
+    return izin_atau_peran_lama(user, ALL_ROLES, FINANCE_CASH_PERMS)
 
 TXN_TYPES = ('expense', 'advance', 'return', 'replenish', 'opening')
 

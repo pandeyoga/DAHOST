@@ -13,7 +13,8 @@ from datetime import datetime
 import logging
 from database import get_db
 from auth import require_auth, check_role, log_activity, serialize_doc
-from routes.production_rbac import (PROD_ADMIN_ROLES, is_vendor, vendor_identity, deny_klien, require_write_actor,
+from core.authz import wajib_centang
+from routes.production_rbac import (assert_prod_admin, is_vendor, vendor_identity, deny_klien, require_write_actor,
     resolve_vendor_doc)
 from core.helpers import new_id, now, parse_date
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
@@ -761,7 +762,7 @@ async def create_job_from_shipment(db, shipment_id: str, vendor_id: str, user: d
 async def delete_job(jid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
+    wajib_centang(user, apa='menghapus data ini')   # 14 Nov 2026: centang Hapus modulnya (dulu khusus superadmin)
     db = get_db()
     doc = await db.production_jobs.find_one({'id': jid})
     if not doc: raise HTTPException(404, 'Not found')
@@ -1352,7 +1353,7 @@ async def get_work_orders(request: Request):
 async def create_work_order(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     po = await db.production_pos.find_one({'id': body.get('po_id')})
@@ -1377,7 +1378,7 @@ async def create_work_order(request: Request):
 async def delete_work_order(woid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
+    wajib_centang(user, apa='menghapus data ini')   # 14 Nov 2026: centang Hapus modulnya (dulu khusus superadmin)
     db = get_db()
     doc = await db.work_orders.find_one({'id': woid})
     if not doc: raise HTTPException(404, 'Not found')
@@ -1390,7 +1391,7 @@ async def delete_work_order(woid: str, request: Request):
 async def recalculate_jobs(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     fixed = 0
     # First: backfill po_item_id on child shipment items that are missing it

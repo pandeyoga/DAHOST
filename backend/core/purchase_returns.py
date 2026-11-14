@@ -35,6 +35,7 @@ Modul ini berisi fungsi MURNI (perencana jurnal & hitung tagihan GR) + penerimaa
 Endpoint ada di `routes/rahaza_purchase_returns.py`.
 """
 from __future__ import annotations
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 import logging
 import uuid
@@ -360,6 +361,5 @@ async def receive_late(db, *, gr: dict, line: dict, qty: float, unit_price: floa
 
 def is_finance(user: dict) -> bool:
     """Keuangan (harga potongan lepas reject, nota debit, refund)."""
-    from auth import check_role
     from core.roles import FINANCE_ROLES
-    return check_role(user or {}, list(FINANCE_ROLES), "fin.ap.manage")
+    return izin_atau_peran_lama(user or {}, list(FINANCE_ROLES), "fin.ap.manage")

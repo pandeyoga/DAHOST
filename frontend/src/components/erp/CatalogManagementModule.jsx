@@ -38,6 +38,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { formatDateTimeID } from '@/lib/format';
 import { parseServerTime } from '@/lib/waktu';
 import { toast } from 'sonner';
+import { moduleActions } from './portalAccess';
 import { FGProductPickerDialog } from './FGProductPickerDialog';
 // 2026-08-12 — "Isi dari Master Produk" (banyak toko sekaligus) hidup sebagai TAB di
 // sini, bukan sebagai pintu menu terpisah: staf yang membuka Manajemen Katalog dan
@@ -150,7 +151,11 @@ export default function CatalogManagementModule({ token, moduleId, initialTab, u
   });
   const [rapikanBuka, setRapikanBuka] = useState(false);
   const [riwayatBuka, setRiwayatBuka] = useState(false);
-  const bolehRapikan = PERAN_RAPIKAN.includes(String(userRole || '').toLowerCase());
+  // 14 Nov 2026: "Rapikan item tersembunyi" = centang Manajemen Katalog › Tambah (server: lolos_centang di
+  // marketing_catalog_tools._require_cleanup); daftar peran hanya bila akses per menu belum dimuat.
+  const aksiKatalog = moduleActions('marketing-catalog');
+  const bolehRapikan = aksiKatalog === null ? PERAN_RAPIKAN.includes(String(userRole || '').toLowerCase())
+    : aksiKatalog.includes('create');
   const [statusOptions, setStatusOptions] = useState([]);
 
   // ── Load functions ────────────────────────────────────────────────

@@ -19,16 +19,16 @@
   GET  /api/kirim-cmt/po/{po_id}/accessory-plan       rencana aksesoris PO tersimpan
   PUT  /api/kirim-cmt/po/{po_id}/accessory-plan       simpan rencana (rencana serah baris BOM + baris tambahan)
 """
-from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import HTTPException, Request
 
-from auth import check_role, log_activity, require_auth, serialize_doc
+from auth import log_activity, require_auth, serialize_doc
 from core import kirim_cmt
 from core import kirim_permintaan as kp
 from core import satuan_serah as ss
 from core.cmt_override import resolve_override
 from database import get_db
-from routes.production_rbac import PROD_ADMIN_ROLES, deny_klien, is_vendor, vendor_identity
+from core.authz import pesan_centang, wajib_centang
+from routes.production_rbac import assert_prod_admin, PROD_ADMIN_ROLES, deny_klien, is_vendor, vendor_identity
 from routes.vendor_shipment import router
 
 FIN_REPOST_ROLES = PROD_ADMIN_ROLES + ['accounting', 'staff_keuangan', 'manager_keuangan', 'admin_gudang']
@@ -113,9 +113,13 @@ async def kirim_shipment_detail(sid: str, request: Request):
 
 # ── 2b. Nota aksesoris ke CMT (permintaan owner 10–11 Nov 2026, `core.nota_aksesoris_cmt`) ────────────────────────
 def _boleh_kelola_nota(user: dict) -> bool:
-    """Admin produksi/maklon (pemilik layar Kirim ke CMT) atau Keuangan (peran keuangan / izin finance.manage)."""
+    """Centang aksi endpoint (potong nota = Tagihan CMT › Setujui, batal = Kirim ke CMT › Setujui) atau izin Keuangan.
+
+    14 Nov 2026: daftar peran lama (admin produksi/maklon, keuangan) hanya berlaku selama owner belum mengatur
+    centang peran itu — dulu daftar itu menolak peran yang sudah dicentang."""
+    from core.authz import boleh_centang
     from core.roles import FINANCE_ROLES
-    return check_role(user, FIN_REPOST_ROLES + list(FINANCE_ROLES), perm_key="finance.manage")
+    return boleh_centang(user, "finance.manage", peran_lama=FIN_REPOST_ROLES + list(FINANCE_ROLES))
 
 
 async def _nota_kiriman_info(db, ship: dict, lines: dict) -> dict:
@@ -147,8 +151,9 @@ async def kirim_nota_create(sid: str, request: Request):
     from core import nota_aksesoris_cmt as nac
     user = await require_auth(request)
     deny_klien(user)
-    if is_vendor(user) or not check_role(user, PROD_ADMIN_ROLES):
-        raise HTTPException(403, "Hanya admin produksi/maklon yang boleh membuat nota aksesoris.")
+    if is_vendor(user):
+        raise HTTPException(403, "Akun vendor tidak boleh membuat nota aksesoris.")
+    assert_prod_admin(user)
     db = get_db()
     ship = await db.vendor_shipments.find_one({"id": sid}, {"_id": 0})
     if not ship:
@@ -254,7 +259,7 @@ async def kirim_nota_potong(nid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
     if is_vendor(user) or not _boleh_kelola_nota(user):
-        raise HTTPException(403, "Hanya admin produksi / keuangan yang boleh memotong tagihan CMT.")
+        raise HTTPException(403, pesan_centang(user, apa="memotong tagihan CMT"))
     db = get_db()
     await _nota_or_404(db, nid, request, user)
     return serialize_doc(nac.ringkas(await nac.potong_sekarang(db, nid, user)))
@@ -266,7 +271,7 @@ async def kirim_nota_batal(nid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
     if is_vendor(user) or not _boleh_kelola_nota(user):
-        raise HTTPException(403, "Hanya admin produksi / keuangan yang boleh membatalkan nota aksesoris.")
+        raise HTTPException(403, pesan_centang(user, apa="membatalkan nota aksesoris"))
     db = get_db()
     await _nota_or_404(db, nid, request, user)
     body = await request.json()
@@ -277,8 +282,7 @@ async def kirim_nota_batal(nid: str, request: Request):
 async def kirim_repost_journal(sid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, FIN_REPOST_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, "Hanya admin produksi / keuangan yang boleh memposting ulang jurnal.")
+    wajib_centang(user, peran_lama=FIN_REPOST_ROLES, apa="memposting ulang jurnal")
     db = get_db()
     ship = await db.vendor_shipments.find_one({"id": sid}, {"_id": 0})
     if not ship:
@@ -376,8 +380,7 @@ async def kirim_request_detail(src: str, rid: str, request: Request):
 async def kirim_request_create(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]) or lolos_centang(user)):
-        raise HTTPException(403, "Forbidden")
+    wajib_centang(user, peran_lama=PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"])
     db = get_db()
     body = await request.json()
     po = await db.production_pos.find_one({"id": body.get("po_id")}, {"_id": 0, "business_type": 1})
@@ -391,8 +394,7 @@ async def kirim_request_create(request: Request):
 async def kirim_request_approve(src: str, rid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]) or lolos_centang(user)):
-        raise HTTPException(403, "Forbidden")
+    wajib_centang(user, peran_lama=PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"])
     db = get_db()
     try:
         body = await request.json()
@@ -424,8 +426,7 @@ async def kirim_request_approve(src: str, rid: str, request: Request):
 async def kirim_request_reject(src: str, rid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"]) or lolos_centang(user)):
-        raise HTTPException(403, "Forbidden")
+    wajib_centang(user, peran_lama=PROD_ADMIN_ROLES + ["admin_maklon", "manager_produksi"])
     db = get_db()
     body = await request.json()
     doc = await _load_request(db, src, rid)
@@ -533,8 +534,7 @@ async def accessory_plan_get(po_id: str, request: Request):
 async def accessory_plan_put(po_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, "Forbidden")
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     if not await db.production_pos.find_one({"id": po_id}, {"_id": 1}):

@@ -14,7 +14,8 @@ import logging
 from fastapi import APIRouter, Request, HTTPException
 
 from database import get_db
-from auth import require_auth, check_role, log_activity
+from auth import require_auth, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.helpers import now
 from utils.doc_numbering import (
     DEFAULT_CONFIGS, SEQ_RESETS, get_number_config, preview_number,
@@ -61,7 +62,7 @@ async def get_config(doc_type: str, request: Request):
 @router.put("/{doc_type}")
 async def save_config(doc_type: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, _ADMIN_ROLES):
+    if not izin_atau_peran_lama(user, _ADMIN_ROLES):
         raise HTTPException(403, 'Hanya admin yang dapat mengubah format nomor dokumen.')
     db = get_db()
     body = await request.json()

@@ -102,9 +102,9 @@ async def create_sales_data(
             raise HTTPException(400, f"Rekap {data.date} ({data.revenue_type}) sudah ada "
                                      f"untuk toko ini — buka barisnya untuk mengubah")
         # ── jalur OVERRIDE (SPV) ─────────────────────────────────────────────
-        if not _is_pic_role(user):
-            raise HTTPException(403, "Hanya SPV/Manager Marketing (atau admin) yang boleh "
-                                     "mengganti angka turunan")
+        if not _is_pic_role(user, "mod.mkt_sales.approve"):
+            from core.authz import pesan_centang
+            raise HTTPException(403, pesan_centang(user, "mod.mkt_sales.approve"))
         if not reason:
             raise HTTPException(400, "Alasan wajib diisi saat mengganti angka turunan — "
                                      "ini yang membuat perubahan bisa dipertanggungjawabkan")
@@ -260,9 +260,9 @@ async def recompute_daily_from_orders(
     await require_auth(request)
     db = get_db()
     user = _get_user(request)
-    if not _is_pic_role(user):
-        raise HTTPException(403, "Hanya SPV/Manager Marketing (atau admin) yang boleh "
-                                 "menghitung ulang rekap harian")
+    if not _is_pic_role(user, "mod.mkt_sales.approve"):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, "mod.mkt_sales.approve"))
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})
     if not account:
         raise HTTPException(404, "Akun toko tidak ditemukan")

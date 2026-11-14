@@ -29,7 +29,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, log_activity, check_role
+from auth import require_auth, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from services.hr_shift_service import (
     create_shift,
     assign_shift,
@@ -62,7 +63,7 @@ def _require_shift_writer(user: dict) -> None:
     from routes.shared import lolos_centang
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if check_role(user, SHIFT_WRITER_ROLES, "hr.attendance.manage") or "hr.manage" in (user.get("_permissions") or []):
+    if izin_atau_peran_lama(user, SHIFT_WRITER_ROLES, "hr.attendance.manage") or "hr.manage" in (user.get("_permissions") or []):
         return
     raise HTTPException(403, MSG_SHIFT_WRITER)
 
@@ -493,8 +494,8 @@ async def delete_shift(request: Request, shift_id: str, hard: bool = False):
     hapus permanen bila shift belum dipakai (hitungan SATU dengan `routes.rahaza_master.pemakaian_shift` — master
     shift yang sama); selain itu 409 dan layar menawarkan Nonaktifkan. Gerbang peran sama dengan menonaktifkan."""
     user = await require_auth(request)
-    if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
-        raise HTTPException(403, "Hanya admin dan owner yang boleh menonaktifkan atau menghapus shift.")
+    from core.authz import wajib_centang   # 14 Nov 2026: centang SDM › Shift & Penjadwalan › Hapus (dulu admin/owner saja)
+    wajib_centang(user, apa="menonaktifkan atau menghapus shift")
     db = get_db()
     if hard:
         from core.hapus_master import tolak_bila_dipakai

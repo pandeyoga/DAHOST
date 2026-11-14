@@ -11,7 +11,8 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
 from auth import require_auth, check_role, log_activity, serialize_doc
-from routes.production_rbac import (PROD_ADMIN_ROLES, PROD_VENDOR_ROLES,
+from core.authz import wajib_centang
+from routes.production_rbac import (assert_prod_admin,
     is_vendor, vendor_identity, deny_klien, require_write_actor,
     resolve_vendor_doc)
 from core.helpers import new_id, now, parse_date
@@ -297,7 +298,7 @@ async def get_vendor_shipment(sid: str, request: Request):
 async def create_vendor_shipment(request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     return JSONResponse(await create_vendor_shipment_internal(db, body, user), status_code=201)
@@ -726,7 +727,7 @@ async def draft_pos_of_shipment(db, sid: str) -> list:
 async def update_vendor_shipment(sid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES + PROD_VENDOR_ROLES): raise HTTPException(403, 'Forbidden')
+    require_write_actor(user)   # vendor (miliknya) atau staf DA bercentang
     db = get_db()
     body = await request.json()
     body.pop('_id', None); body.pop('id', None); body.pop('items', None)
@@ -811,7 +812,7 @@ async def shipment_issued_mis(db, sid: str) -> list:
 async def delete_vendor_shipment(sid: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
+    wajib_centang(user, apa='menghapus data ini')   # 14 Nov 2026: centang Hapus modulnya (dulu khusus superadmin)
     db = get_db()
     doc = await db.vendor_shipments.find_one({'id': sid})
     if not doc: raise HTTPException(404, 'Not found')

@@ -19,7 +19,8 @@ Admin Utility:
 """
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth, serialize_doc, check_role
+from auth import require_auth, serialize_doc
+from core.authz import izin_atau_peran_lama, pesan_centang  # 14 Nov 2026: centang owner = penentu
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
@@ -191,8 +192,9 @@ async def self_payslip_detail(slip_id: str, request: Request):
 async def admin_link_employee(request: Request):
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `hr.employee.manage` ("Kelola data karyawan").
-    if not check_role(user, ["superadmin", "admin", "owner", "hr"], "hr.employee.manage"):
-        raise HTTPException(403, "Hanya admin / HR yang boleh menghubungkan akun ke karyawan.")
+    # 14 Nov 2026: di luar katalog modul — centang SDM › Data Karyawan › Ubah (izin hr.employee.manage tersirat).
+    if not izin_atau_peran_lama(user, ["superadmin", "admin", "owner", "hr"], ("hr.employee.manage", "mod.hr_employees.edit")):
+        raise HTTPException(403, pesan_centang(user, "mod.hr_employees.edit"))
     db = get_db()
     body = await request.json()
     user_id   = body.get("user_id")

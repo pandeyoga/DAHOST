@@ -19,22 +19,23 @@ const SUPER_ROLES = ['superadmin', 'super_admin', 'admin', 'owner'];
 /**
  * Cek izin tanpa komponen — bisa dipakai di logika biasa.
  *
- * `roles` (opsional): mode "kode peran ATAU izin" — cermin `auth.check_role` di server, dipakai tombol yang
- * endpoint-nya memeriksa `check_role(user, roles, perm)`. Lolos bila superadmin, peran ada di `roles`,
- * punya izin "*", atau punya salah satu izin `perm`/`keys`. Tanpa jalan pintas owner/admin dan tanpa
- * "permisif bila izin kosong", supaya tombol tidak tampil untuk akun yang ditolak server.
+ * `roles` (opsional): mode "izin, lalu kode peran lama" — cermin `core.authz.izin_atau_peran_lama` /
+ * `routes.shared.can_act` di server. Lolos bila peran super, punya izin "*", atau punya salah satu izin
+ * `perm`/`keys` (izin lama tersirat dari centang `mod.*`). Kode peran di `roles` hanya berlaku selama peran itu
+ * BELUM punya centang sama sekali (14 Nov 2026, owner: centang = penentu; dulu kode peran mengalahkan centang).
  * 2026-11-08: peran buatan owner ("HR Generalist", "Accounting & Finance", …) dulu tidak melihat tombolnya.
  */
 export function checkPerm({ user, role, hasPerm, perm, keys, roles }) {
   const effectiveRole = String(role || user?.role || '').toLowerCase();
   if (Array.isArray(roles)) {
-    // Kode peran dibandingkan persis seperti `auth.check_role` (peran buatan owner bisa bernama mirip kode).
     const rawRole = String(role || user?.role || '');
-    if (rawRole === 'superadmin') return true;
-    if (roles.includes(rawRole)) return true;
+    if (SUPER_ROLES.includes(rawRole.toLowerCase())) return true;
     const ownedPerms = Array.isArray(user?.permissions) ? user.permissions : [];
     if (ownedPerms.includes('*')) return true;
-    return [perm, ...(Array.isArray(keys) ? keys : [])].filter(Boolean).some((k) => ownedPerms.includes(k));
+    if ([perm, ...(Array.isArray(keys) ? keys : [])].filter(Boolean).some((k) => ownedPerms.includes(k))) return true;
+    // Kode peran lama: hanya selama peran ini belum diatur centangnya (izin kosong), dibandingkan tanpa beda huruf.
+    if (ownedPerms.length > 0) return false;
+    return roles.map((r) => String(r).toLowerCase()).includes(rawRole.toLowerCase());
   }
   if (SUPER_ROLES.includes(effectiveRole)) return true;
 

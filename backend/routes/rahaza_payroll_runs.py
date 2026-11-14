@@ -849,13 +849,18 @@ CANCEL_ONE_STEP_ROLES = ("owner", "superadmin")
 
 
 def _is_hr_actor(user: dict) -> bool:
-    role = (user.get("role") or "").lower()
-    perms = set(user.get("_permissions") or [])
-    return role in HR_ROLES or bool(perms & {"*", "hr.manage", "payroll.manage"})
+    """Pengaju pembatalan run (SDM): izin hr.manage/payroll.manage (centang Penggajian Tambah/Ubah/Hapus).
+    14 Nov 2026: kode peran HR_ROLES hanya selama owner belum mengatur centang peran itu."""
+    from core.authz import izin_atau_peran_lama
+    return izin_atau_peran_lama(user, HR_ROLES, ("hr.manage", "payroll.manage"))
 
 
 def _is_finance_actor(user: dict) -> bool:
-    return (user.get("role") or "").lower() in FINANCE_ROLES
+    """Penyetuju pembatalan run (Keuangan, K34): izin Keuangan yang hanya tersirat dari centang modul Keuangan —
+    pemisahan tugas tetap (centang SDM tidak menyiratkannya). Dulu kode peran Keuangan saja: peran Keuangan buatan
+    owner tidak bisa menyetujui. Kode peran FINANCE_ROLES hanya selama owner belum mengatur centang peran itu."""
+    from core.authz import izin_atau_peran_lama
+    return izin_atau_peran_lama(user, FINANCE_ROLES, ("finance.approve", "finance.manage", "fin.payment.manage"))
 
 
 # 2026-11-02 (K30) — "PERLU TINDAKAN" untuk Keuangan: pengajuan pembatalan run gaji FINAL.

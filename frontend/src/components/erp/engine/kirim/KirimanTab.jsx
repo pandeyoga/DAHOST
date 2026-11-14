@@ -21,6 +21,7 @@ import { EmptyState, Notice } from '../../moduleAtoms';
 import KirimanDetail, { downloadPdf } from './KirimanDetail';
 import KirimanForm from './KirimanForm';
 import { ShipStatusBadge, ShipTypeBadge, fmtDate, fmtNum } from './kirimShared';
+import { moduleActions } from '../../portalAccess';
 
 const PER_PAGE = 25;
 
@@ -36,9 +37,14 @@ export default function KirimanTab({ portalId, userRole, hasPerm = () => false, 
   const [open, setOpen] = useState(null);          // id kiriman yang dirinci
   const [creating, setCreating] = useState(false);
   const [expanded, setExpanded] = useState({});
-  const canCreate = userRole === 'superadmin' || hasPerm('vendor_shipment.create') || hasPerm('shipment.create')
-    || ['admin', 'admin_produksi', 'admin_maklon', 'supervisor_produksi', 'owner', 'manager', 'ppic'].includes(userRole);
-  const canDelete = userRole === 'superadmin';
+  // 14 Nov 2026: tombol mengikuti centang Produksi › Kirim ke CMT (Tambah / Hapus) — sama dengan gerbang server
+  // (hapus kiriman dulu khusus superadmin). Daftar peran lama hanya dipakai bila akses per menu belum dimuat.
+  const aksiKirim = moduleActions('prod-shipments-vendor');
+  const canCreate = aksiKirim === null
+    ? (userRole === 'superadmin' || hasPerm('vendor_shipment.create') || hasPerm('shipment.create')
+      || ['admin', 'admin_produksi', 'admin_maklon', 'supervisor_produksi', 'owner', 'manager', 'ppic'].includes(userRole))
+    : aksiKirim.includes('create');
+  const canDelete = aksiKirim === null ? ['superadmin', 'admin', 'owner'].includes(userRole) : aksiKirim.includes('delete');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');

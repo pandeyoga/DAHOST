@@ -4,11 +4,10 @@ Menegaskan pemisahan permanen vendor_shipments (maklon/pcs) vs wh_cmt_dispatches
 dan mendeteksi tumpang-tindih (split-brain). TIDAK menulis / menggabung data.
 Prefix: /api/dewi/cmt-recon
 """
-from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from database import get_db
-from auth import require_auth, check_role, serialize_doc
-from routes.production_rbac import PROD_ADMIN_ROLES
+from auth import require_auth, serialize_doc
+from routes.production_rbac import assert_prod_admin
 from services.cmt_recon import dispatch_reconciliation
 
 router = APIRouter(prefix="/api/dewi/cmt-recon", tags=["dewi-cmt-recon"])
@@ -18,7 +17,6 @@ router = APIRouter(prefix="/api/dewi/cmt-recon", tags=["dewi-cmt-recon"])
 async def get_dispatch_recon(request: Request):
     """Rekonsiliasi 2 domain dispatch CMT + deteksi tumpang-tindih. READ-ONLY."""
     user = await require_auth(request)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, "Hanya admin produksi/maklon yang boleh mengakses rekonsiliasi dispatch CMT.")
+    assert_prod_admin(user)
     db = get_db()
     return serialize_doc(await dispatch_reconciliation(db))

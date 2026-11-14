@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity, check_role
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.query_guards import q_date
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, TaskTemplateCreate, RecurrenceConfig
 from core.authz import only  # T-01 2.3
@@ -306,9 +307,10 @@ async def trigger_auto_create_tasks(request: Request):
     """
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `toko.manage` (peran buatan owner).
-    if not check_role(user, ["admin", "owner", "superadmin", "pic_marketing", "pic_toko", "manager_marketing"],
+    if not izin_atau_peran_lama(user, ["admin", "owner", "superadmin", "pic_marketing", "pic_toko", "manager_marketing"],
                       "toko.manage"):
-        raise HTTPException(403, "Hanya admin/PIC/manager marketing yang bisa trigger ini")
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, apa="menjalankan pembuatan tugas otomatis"))
     
     try:
         from utils.scheduler import job_auto_create_marketing_tasks

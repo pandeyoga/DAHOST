@@ -59,7 +59,8 @@ async def _require_admin(request: Request):
     perms = user.get("_permissions") or []
     if "*" in perms or "inventory.manage" in perms or "warehouse.manage" in perms:
         return user
-    raise HTTPException(403, "Forbidden: butuh permission inventory / warehouse.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 async def _require_mi_editor(request: Request):

@@ -17,7 +17,8 @@ from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner 
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from database import get_db
-from auth import (require_auth, check_role, hash_password, log_activity, serialize_doc, generate_password)
+from auth import (require_auth, hash_password, log_activity, serialize_doc, generate_password)
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from routes.shared import new_id, now
 from cascade_delete import cascade_delete_po  # T-05: satu salinan (backend/cascade_delete.py)
 import logging
@@ -99,8 +100,9 @@ async def get_garment(gid: str, request: Request):
 @router.post("/garments")
 async def create_garment(request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     garment_id = new_id()
@@ -127,8 +129,9 @@ async def create_garment(request: Request):
 @router.put("/garments/{gid}")
 async def update_garment(gid: str, request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     body.pop('_id', None)
@@ -145,7 +148,7 @@ async def update_garment(gid: str, request: Request):
 async def delete_garment(gid: str, request: Request):
     user = await require_auth(request)
     if user.get('role') != 'superadmin':
-        raise HTTPException(403, 'Forbidden: Only Superadmin can delete')
+        raise HTTPException(403, 'Hapus permanen master lama ini ikut menghapus data turunannya (PO, akun login portal). Aturan pengaman: hanya superadmin. Gunakan master baru (Master Produk / Master Pelanggan) yang mengikuti centang.')
     db = get_db()
     doc = await db.garments.find_one({'id': gid})
     if not doc:
@@ -191,8 +194,9 @@ async def get_buyer(bid: str, request: Request):
 @router.post("/buyers")
 async def create_buyer(request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     buyer_id = new_id()
@@ -224,8 +228,9 @@ async def create_buyer(request: Request):
 @router.put("/buyers/{bid}")
 async def update_buyer(bid: str, request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     body.pop('_id', None)
@@ -241,7 +246,7 @@ async def update_buyer(bid: str, request: Request):
 async def delete_buyer(bid: str, request: Request):
     user = await require_auth(request)
     if user.get('role') != 'superadmin':
-        raise HTTPException(403, 'Forbidden')
+        raise HTTPException(403, 'Hapus permanen master lama ini ikut menghapus data turunannya (PO, akun login portal). Aturan pengaman: hanya superadmin. Gunakan master baru (Master Produk / Master Pelanggan) yang mengikuti centang.')
     db = get_db()
     doc = await db.buyers.find_one({'id': bid})
     if not doc:
@@ -286,8 +291,9 @@ async def get_product(pid: str, request: Request):
 @router.post("/products")
 async def create_product(request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     product = {'id': new_id(), **body, 'status': body.get('status', 'active'), 'photo_url': '', 'created_at': now(), 'updated_at': now()}
@@ -298,8 +304,9 @@ async def create_product(request: Request):
 @router.put("/products/{pid}")
 async def update_product(pid: str, request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     body.pop('_id', None)
@@ -312,7 +319,7 @@ async def update_product(pid: str, request: Request):
 async def delete_product(pid: str, request: Request):
     user = await require_auth(request)
     if user.get('role') != 'superadmin':
-        raise HTTPException(403, 'Forbidden')
+        raise HTTPException(403, 'Hapus permanen master lama ini ikut menghapus data turunannya (PO, akun login portal). Aturan pengaman: hanya superadmin. Gunakan master baru (Master Produk / Master Pelanggan) yang mengikuti centang.')
     db = get_db()
     doc = await db.products.find_one({'id': pid})
     if not doc:
@@ -325,8 +332,9 @@ async def delete_product(pid: str, request: Request):
 @router.post("/products/{pid}/photo")
 async def upload_product_photo(pid: str, request: Request, file: UploadFile = File(...)):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     product = await db.products.find_one({'id': pid})
     if not product:
@@ -418,8 +426,9 @@ async def get_variant(vid: str, request: Request):
 @router.post("/product-variants")
 async def create_variant(request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     product = await db.products.find_one({'id': body.get('product_id')})
@@ -438,8 +447,9 @@ async def create_variant(request: Request):
 @router.put("/product-variants/{vid}")
 async def update_variant(vid: str, request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     body.pop('_id', None)
@@ -451,7 +461,7 @@ async def update_variant(vid: str, request: Request):
 async def delete_variant(vid: str, request: Request):
     user = await require_auth(request)
     if user.get('role') != 'superadmin':
-        raise HTTPException(403, 'Forbidden')
+        raise HTTPException(403, 'Hapus permanen master lama ini ikut menghapus data turunannya (PO, akun login portal). Aturan pengaman: hanya superadmin. Gunakan master baru (Master Produk / Master Pelanggan) yang mengikuti centang.')
     db = get_db()
     doc = await db.product_variants.find_one({'id': vid})
     if not doc:

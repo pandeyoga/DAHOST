@@ -47,7 +47,8 @@ async def _require_hr_admin(request: Request):
     perms = user.get("_permissions") or []
     if "*" in perms or "hr.manage" in perms or "hr.view_reports" in perms:
         return user
-    raise HTTPException(403, "Forbidden: butuh akses HR/Manager untuk melihat laporan.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 _PRESENT = ("hadir", "present")

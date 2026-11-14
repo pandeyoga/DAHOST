@@ -38,7 +38,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from auth import check_role, log_activity, require_auth
+from auth import log_activity, require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import fg_cost_layers as fcl
 from core import product_costing as pc
 from core import sewing_rate as sr
@@ -71,8 +72,9 @@ def _user(request: Request) -> dict:
 def _guard(user: dict, roles: list, what: str) -> None:
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, roles, "production.manage") or lolos_centang(user)):
-        raise HTTPException(403, f"Akses ditolak: butuh izin {what}")
+    if not izin_atau_peran_lama(user, roles, "production.manage"):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, apa=what.split(" (")[0]))
 
 
 class RateIn(BaseModel):
