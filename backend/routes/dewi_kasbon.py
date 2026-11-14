@@ -55,7 +55,8 @@ _PRIVILEGED_ROLES = {r.lower() for r in _HR_OR_FIN} | {"superadmin", "admin"}
 
 def _is_privileged(user: dict) -> bool:
     """HR/Keuangan/owner/super (atau izin '*', atau izin menu Kasbon SDM/Keuangan yang diberi owner)."""
-    if (user.get("role") or "").lower() in _PRIVILEGED_ROLES:
+    from core.authz import izin_atau_peran_lama
+    if izin_atau_peran_lama(user, _PRIVILEGED_ROLES):   # 14 Nov 2026: kode peran hanya selama centang belum diatur
         return True
     perms = set(user.get("_permissions") or [])
     return "*" in perms or any(p.startswith(("mod.hr_kasbon.", "mod.fin_kasbon.")) for p in perms)
@@ -661,8 +662,9 @@ async def _record_repayment_locked(req_id: str, request: Request, db, user):
         raise HTTPException(400, "Kasbon harus berstatus aktif untuk dicatat pembayarannya")
 
     outstanding = float(doc.get("outstanding_balance", 0))
-    if (user.get("role") or "").lower() not in _PRIVILEGED_ROLES:
-        raise HTTPException(403, "Hanya HR/Keuangan yang boleh mencatat pembayaran kasbon.")  # FIN-03
+    from core.authz import boleh_centang, pesan_centang
+    if not boleh_centang(user, peran_lama=_PRIVILEGED_ROLES):   # 14 Nov 2026: centang aksi endpoint (FIN-03)
+        raise HTTPException(403, pesan_centang(user, apa="mencatat pembayaran kasbon"))
     # 2026-11-02 (P5 butir 5): "Potong Gaji" dari Keuangan DIHAPUS. Dulu entri ini langsung melunasi kasbon
     # (Dr 2-1200 / Cr 1-1320) lalu payroll MELEWATI potongan periode itu → gaji dibayar penuh dan uangnya
     # (400.000 pada uji Basah) tidak pernah ditarik. Potongan gaji kini HANYA lewat run payroll FINAL;
@@ -1006,8 +1008,9 @@ async def apply_payroll_deductions(
     hanya HR/Keuangan, wajib `run_id` run berstatus finalized, dan potongan diambil dari slip run itu.
     Body: {run_id}
     """
-    if (user.get("role") or "").lower() not in _PRIVILEGED_ROLES:
-        raise HTTPException(403, "Hanya HR/Keuangan yang boleh mencatat potongan kasbon payroll.")
+    from core.authz import boleh_centang, pesan_centang
+    if not boleh_centang(user, peran_lama=_PRIVILEGED_ROLES):   # 14 Nov 2026: centang aksi endpoint
+        raise HTTPException(403, pesan_centang(user, apa="mencatat potongan kasbon payroll"))
     body = await request.json()
     run_id = (body.get("run_id") or "").strip()
     if not run_id:

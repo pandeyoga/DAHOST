@@ -103,13 +103,19 @@ def _pasang_auth(monkeypatch, user):
     monkeypatch.setattr(authz._auth, "require_auth", _auth)
 
 
-def test_require_roles_tanpa_perm_perilaku_lama(monkeypatch):
+def test_require_roles_tanpa_perm_kode_peran_hanya_bila_belum_diatur(monkeypatch):
+    """14 Nov 2026 (owner: centang = penentu): kode peran di daftar hanya berlaku selama owner belum mengatur centang
+    peran itu (pola routes.shared.can_act); peran dibaca LIVE dari akun, bukan dari token."""
     dep = authz.require_roles("hr")
-    _pasang_auth(monkeypatch, U(PERAN_BUATAN, "hr.manage"))
+    _pasang_auth(monkeypatch, U("hr"))                         # belum diatur → kode peran lama
     run(dep(_ReqJWT("hr")))
+    _pasang_auth(monkeypatch, U("hr", IZIN_LAIN))              # sudah diatur tanpa centang aksi ini → ditolak
     with pytest.raises(HTTPException) as e:
-        run(dep(_ReqJWT(PERAN_BUATAN)))           # tanpa perm= izin tidak dibaca sama sekali
-    assert e.value.status_code == 403
+        run(dep(_ReqJWT("hr")))
+    assert e.value.status_code == 403 and "Peran & Hak Akses" in e.value.detail
+    _pasang_auth(monkeypatch, U(PERAN_BUATAN, "hr.manage"))
+    with pytest.raises(HTTPException):
+        run(dep(_ReqJWT(PERAN_BUATAN)))           # tanpa perm= izin lama tidak dibaca sama sekali
 
 
 def test_require_roles_dengan_perm(monkeypatch):

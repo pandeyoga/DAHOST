@@ -23,6 +23,8 @@ import { EmptyState, Notice } from '../../moduleAtoms';
 import { DISPOSAL_STATUS_CONFIG } from '../constants';
 import { angka, apicall, fmtCurrency, fmtDate, useHP } from '../utils';
 import { StatusBadge } from '../components/StatusBadge';
+import { checkPerm } from '@/lib/rbac';
+import { canAccessPortal } from '../../portalAccess';
 
 const SARINGAN = [
   { key: 'pending', label: 'Menunggu' },
@@ -30,6 +32,8 @@ const SARINGAN = [
   { key: 'rejected', label: 'Ditolak' },
   { key: 'all', label: 'Semua' },
 ];
+
+const storedUser = () => { try { return JSON.parse(localStorage.getItem('erp_user') || 'null') || {}; } catch { return {}; } };
 
 export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
   const [requests, setRequests] = useState([]);
@@ -39,7 +43,10 @@ export function DisposalApprovalInbox({ token, userRole, onRefresh }) {
   const [notes, setNotes] = useState('');
   const [processing, setProcessing] = useState(false);
   const [detail, setDetail] = useState(null);
-  const canReview = ['admin', 'superadmin', 'finance', 'manager'].includes(userRole);
+  // 14 Nov 2026: cermin server asset/disposal._can_decide_finance — portal Keuangan yang dicentang owner atau centang
+  // Aset Tetap & Penyusutan › Setujui; kode peran lama finance/manager hanya selama centang peran belum diatur.
+  const canReview = checkPerm({ user: storedUser(), role: userRole, roles: ['finance', 'manager'],
+    keys: ['mod.fin_fixed_assets.approve'] }) || canAccessPortal(userRole, 'finance');
   const hp = useHP();
 
   const load = useCallback(async () => {

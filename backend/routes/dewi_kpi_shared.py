@@ -43,6 +43,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
 from auth import require_auth, check_role
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from routes.shared import get_pagination_params, paginated_response
 
 router = APIRouter(prefix="/api/dewi/kpi", tags=["dewi-kpi"])
@@ -87,7 +88,7 @@ KPI_HR_PERM = "hr.manage"
 
 def is_kpi_hr(user: dict) -> bool:
     """HR/atasan KPI: kode peran lama atau izin `hr.manage` — dipakai `_require_hr` dan saringan daftar goal."""
-    return check_role(user, KPI_HR_ROLES, KPI_HR_PERM)
+    return izin_atau_peran_lama(user, KPI_HR_ROLES, KPI_HR_PERM)
 
 
 async def _require_hr(request: Request):
@@ -97,7 +98,8 @@ async def _require_hr(request: Request):
         return user
     if is_kpi_hr(user):
         return user
-    raise HTTPException(403, "Akses ditolak: butuh role HR/Manager/Supervisor.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user, apa="mengelola KPI"))
 
 async def _get_linked_employee(db, user: dict):
     """Delegasi ke SSOT `utils.employee_identity.resolve_my_employee` (FASE 15).

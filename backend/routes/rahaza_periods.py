@@ -198,8 +198,8 @@ async def reopen_period(period_code: str, request: Request):
 async def lock_period(period_code: str, request: Request):
     """Final lock (audit). Only admin/superadmin."""
     user = await require_auth(request)
-    if (user.get("role") or "").lower() not in ("superadmin", "admin", "owner"):
-        raise HTTPException(403, "Hanya admin/superadmin yang boleh lock periode.")
+    from core.authz import wajib_centang   # 14 Nov 2026: centang Jurnal, Akrual & Tutup Buku › Setujui (dulu admin saja)
+    wajib_centang(user, apa="mengunci periode")
     db = get_db()
     ent = await _period_entity(request)
     per = await db.rahaza_periods.find_one({"period_code": period_code, **entity_match(ent)})

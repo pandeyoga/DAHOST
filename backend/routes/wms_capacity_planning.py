@@ -164,7 +164,9 @@ class CapacityConfigIn(BaseModel):
     shifts_per_day: Optional[int] = Field(default=None, ge=1, le=4)
 
 
-@router.put("/config", dependencies=only(*PRODUCTION_ROLES, perm="production.manage"))
+# 14 Nov 2026: modul Dashboard Produksi hanya Lihat/Unduh, jadi ubah parameter kapasitas memakai centang
+# Produksi › Master Proses, Line & Mesin › Ubah (kode peran PRODUCTION_ROLES hanya selama centang belum diatur).
+@router.put("/config", dependencies=only(*PRODUCTION_ROLES, perm=("production.manage", "mod.prod_master_process.edit")))
 async def update_capacity_config(body: CapacityConfigIn, request: Request):
     user = await require_auth(request)
     db = get_db()

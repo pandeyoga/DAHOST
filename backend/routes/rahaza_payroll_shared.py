@@ -148,14 +148,17 @@ PAYROLL_HR_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
 
 async def _require_hr(request: Request):
     """Authorization: hanya peran PAYROLL_HR_ROLES (atau izin hr.manage / payroll.manage) yang boleh mengelola payroll."""
+    from core.authz import izin_atau_peran_lama
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role in PAYROLL_HR_ROLES:
+    # Q8 (pengecualian sengaja): TIDAK dibuka centang aksi endpoint (centang Lihat Penggajian milik Keuangan tidak
+    # membuka gaji per orang). 14 Nov 2026 (owner: centang = penentu): izin penggajian hr.manage/payroll.manage
+    # (tersirat dari centang Penggajian › Tambah/Ubah/Hapus) memutuskan; PAYROLL_HR_ROLES hanya selama owner belum
+    # mengatur centang peran itu.
+    if izin_atau_peran_lama(user, PAYROLL_HR_ROLES, ("hr.manage", "payroll.manage")):
         return user
-    perms = user.get("_permissions") or []
-    if "*" in perms or "hr.manage" in perms or "payroll.manage" in perms:
-        return user
-    raise HTTPException(403, "Forbidden: butuh permission HR/payroll.")
+    raise HTTPException(403, "Akses ditolak: rincian & pengelolaan gaji per orang butuh centang \"Tambah\", \"Ubah\", "
+                             "atau \"Hapus\" pada modul \"Penggajian & Struktur Gaji\" (Portal SDM / HRIS). Minta owner "
+                             "mencentangnya di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
 
 
 # ── Q8 (keputusan owner 9 Nov 2026, "ikuti rekomendasi"): siapa melihat GAJI PER ORANG ─────────────────────
@@ -170,11 +173,10 @@ PAYROLL_TRANSFER_PERMS = ("finance.manage", "fin.payment.manage", "fin.cash.mana
 
 def can_view_payroll_detail(user: dict | None) -> bool:
     """Boleh melihat rincian gaji per orang (slip, komponen, Excel per karyawan)?"""
-    u = user or {}
-    if (u.get("role") or "").lower() in PAYROLL_HR_ROLES:
-        return True
-    perms = u.get("_permissions") or []
-    return any(p in perms for p in PAYROLL_DETAIL_PERMS)
+    # Q8 tetap: rincian per orang = izin penggajian (hr.manage/payroll.manage, tersirat dari centang Tambah/Ubah/Hapus
+    # Penggajian). 14 Nov 2026: kode peran PAYROLL_HR_ROLES hanya selama owner belum mengatur centang peran itu.
+    from core.authz import izin_atau_peran_lama
+    return izin_atau_peran_lama(user or {}, PAYROLL_HR_ROLES, PAYROLL_DETAIL_PERMS[1:])
 
 
 def can_view_payroll_transfer(user: dict | None) -> bool:
@@ -182,11 +184,9 @@ def can_view_payroll_transfer(user: dict | None) -> bool:
     if can_view_payroll_detail(user):
         return True
     u = user or {}
+    from core.authz import izin_atau_peran_lama
     from core.roles import FINANCE_ROLES
-    if (u.get("role") or "").lower() in FINANCE_ROLES:
-        return True
-    perms = u.get("_permissions") or []
-    if any(p in perms for p in PAYROLL_TRANSFER_PERMS):
+    if izin_atau_peran_lama(u, FINANCE_ROLES, PAYROLL_TRANSFER_PERMS):
         return True
     from routes.shared import check_portal_access
     return bool(check_portal_access(u, "finance"))

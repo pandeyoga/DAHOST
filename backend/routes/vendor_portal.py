@@ -23,7 +23,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, hash_password, check_role, bump_rbac_cache
+from auth import require_auth, serialize_doc, log_activity, hash_password, bump_rbac_cache
+from core.authz import wajib_centang  # 14 Nov 2026: centang owner = penentu
 import uuid
 from utils.waktu import wib_date_str
 
@@ -58,9 +59,15 @@ logger = __import__('logging').getLogger(__name__)
 def _now(): return datetime.now(timezone.utc)
 def _uid(): return str(uuid.uuid4())
 
-def _require_admin(user: dict):
-    if not check_role(user, ['admin', 'superadmin', 'owner', 'manager', 'ppic']):
-        raise HTTPException(403, "Hanya admin yang dapat mengakses endpoint ini.")
+_VENDOR_ADMIN_ROLES = ['admin', 'superadmin', 'owner', 'manager', 'ppic']
+
+
+def _require_admin(user: dict, *kunci):
+    """Master Vendor CMT (mitra & akun): centang Produksi › Vendor CMT untuk aksi endpoint ini (14 Nov 2026).
+
+    Dulu daftar kode peran saja — peran yang sudah dicentang owner (mis. admin produksi) ditolak. Daftar lama hanya
+    berlaku selama owner belum mengatur centang peran itu. `kunci` = centang untuk endpoint di luar katalog modul."""
+    wajib_centang(user, *kunci, peran_lama=_VENDOR_ADMIN_ROLES, apa="mengelola master Vendor CMT")
 
 def _require_vendor(user: dict):
     if user.get('role') != 'cmt_vendor':
@@ -433,7 +440,7 @@ async def list_all_jobs(
     status:     str = Query(default=''),
 ):
     user = await require_auth(request)
-    _require_admin(user)
+    _require_admin(user, 'mod.prod_vendor_cmt.view')   # /jobs di luar katalog modul: data lama, baca saja
     db = get_db()
     filt: dict = {}
     if partner_id:
@@ -687,7 +694,7 @@ async def admin_progress_audit(
 ):
     """Admin: Lihat semua progress report dari semua vendor."""
     user = await require_auth(request)
-    _require_admin(user)
+    _require_admin(user, 'mod.prod_vendor_cmt.view')   # /jobs di luar katalog modul: data lama, baca saja
     db = get_db()
     filt: dict = {}
     if partner_id:

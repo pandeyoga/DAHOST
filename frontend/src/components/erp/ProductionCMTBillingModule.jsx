@@ -440,7 +440,7 @@ function BillDetail({ detail, canPost, bolehBayar, bolehJurnal, posting, onClose
       {bill.variance_flagged && (
         <Notice tone={blocked > 0 ? 'danger' : 'warning'} icon={AlertTriangle} testId="cmt-bill-variance-alert"
           title={bill.variance_resolution ? 'Selisih sudah diputuskan Keuangan' : blocked > 0 ? `Rp ${fmtNum(blocked)} tertahan — selisih perlu diputuskan Keuangan` : 'Ada selisih qty pada penerimaan'}
-          action={canPost && !bill.variance_resolution && Number(bill.overbilled_amount || 0) > 0 && (
+          action={canPost && bolehJurnal && !bill.variance_resolution && Number(bill.overbilled_amount || 0) > 0 && (
             <span className="flex gap-2">
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => resolve('potong')} data-testid="cmt-resolve-potong">Potong dari tagihan</Button>
               <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => resolve('bayar')} data-testid="cmt-resolve-bayar">Bayar penuh</Button>

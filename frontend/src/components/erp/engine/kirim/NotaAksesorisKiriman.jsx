@@ -18,6 +18,7 @@ import { apiFetch, apiPost } from '../../../../lib/api';
 import { Notice, StatusBadge } from '../../moduleAtoms';
 import NotaAksesorisIsian, { notaGalat, notaPayload, totalNota } from './NotaAksesorisIsian';
 import { SectionLabel, fmtRp } from './kirimShared';
+import { punyaCentang } from '@/lib/rbac';
 
 const NADA = { issued: 'warning', overdue: 'warning', partial_paid: 'warning', paid: 'success', cancelled: 'muted' };
 
@@ -105,7 +106,8 @@ export default function NotaAksesorisKiriman({ shipmentId, vendorName, info, can
             <span className="flex flex-wrap items-center gap-1">
               <Button type="button" variant="outline" size="sm" onClick={() => unduhNotaPdf(n)} data-testid="kirim-detail-nota-pdf">
                 <Download className="w-3.5 h-3.5" />Cetak nota</Button>
-              {canManage && ['issued', 'partial_paid', 'overdue'].includes(n.status) && Number(n.balance) > 0 && (
+              {/* 14 Nov 2026: memotong tagihan jahit = centang Produksi › Tagihan CMT › Setujui (aturan server) */}
+              {canManage && punyaCentang(null, 'mod.prod_cmt_billing.approve') && ['issued', 'partial_paid', 'overdue'].includes(n.status) && Number(n.balance) > 0 && (
                 <Button type="button" variant="outline" size="sm" onClick={potong} disabled={busy} data-testid="kirim-detail-nota-potong">
                   <Scissors className="w-3.5 h-3.5" />Potong dari tagihan jahit</Button>
               )}

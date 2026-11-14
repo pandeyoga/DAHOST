@@ -21,6 +21,7 @@ import HubTabs from './hubs/HubTabs';
 import { formatDateID } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
+import { checkPerm } from '@/lib/rbac';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const UKURAN_HALAMAN = 50;
@@ -172,7 +173,8 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
   const [actingId, setActingId]       = useState(null);
   const token   = localStorage.getItem('erp_token');
   const headers = { Authorization: `Bearer ${token}` };
-  const isManagerRole = ['superadmin','admin','owner','manager','hr'].includes((user?.role||'').toLowerCase());
+  // 14 Nov 2026: centang Pusat Persetujuan › Setujui (gerbang server); kode peran manager/hr hanya selama centang belum diatur.
+  const isManagerRole = checkPerm({ user, roles: ['manager', 'hr'], keys: ['mod.mgmt_approval.approve'] });
   // 2026-11-08: tombol putuskan juga tampil untuk ajuan yang menunggu AKUN INI (`/approvals/pending` = level aktif
   // ber-peran sama dengan peran akun, termasuk peran buatan owner yang dipasang di alur) — aturan server yang sama.
   const myPendingIds = useMemo(() => new Set(myPending.map((p) => p.id)), [myPending]);

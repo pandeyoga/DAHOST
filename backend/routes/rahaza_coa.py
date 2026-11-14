@@ -45,7 +45,8 @@ async def _require_fin(request: Request):
     perms = user.get("_permissions") or []
     if "*" in perms or "finance.manage" in perms:
         return user
-    raise HTTPException(403, "Forbidden: butuh permission finance.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 def _normal_balance_for(acc_type: str, flags: dict | None = None) -> str:

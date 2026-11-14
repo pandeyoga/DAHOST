@@ -99,8 +99,11 @@ async def revoke_delegation(delegation_id: str, request: Request):
     if not doc:
         raise HTTPException(404, "Delegation tidak ditemukan.")
     # T-01 2.3: hanya pendelegasi sendiri atau HR/admin yang boleh mencabut.
-    if doc.get("delegator_id") != user.get("id") and (user.get("role") or "").lower() not in HR_ROLES + ("admin", "superadmin"):
-        raise HTTPException(403, "Hanya pendelegasi atau HR yang boleh mencabut delegasi ini.")
+    # Pendelegasi sendiri (kepemilikan) atau pengelola SDM: centang aksi endpoint (Struktur Organisasi & Delegasi) /
+    # izin hr.manage; 14 Nov 2026: kode peran HR hanya selama owner belum mengatur centang peran itu.
+    from core.authz import boleh_centang, pesan_centang
+    if doc.get("delegator_id") != user.get("id") and not boleh_centang(user, "hr.manage", peran_lama=HR_ROLES):
+        raise HTTPException(403, "Delegasi ini milik orang lain. " + pesan_centang(user, apa="mencabut delegasi orang lain"))
     res = await db.rahaza_approval_delegations.update_one(
         {"id": delegation_id},
         {"$set": {"is_active": False, "revoked_at": _now()}}

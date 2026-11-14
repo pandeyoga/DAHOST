@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["style-master"])
@@ -29,7 +30,7 @@ async def _require_admin(request: Request):
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
     # 2026-11-08: kode peran lama ATAU izin `rnd.manage` (modul Style, Pola & Tech Pack — memuat master style).
-    if not (check_role(user, ("superadmin", "admin", "manager", "gudang"), "rnd.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ("superadmin", "admin", "manager", "gudang"), "rnd.manage") or lolos_centang(user)):
         raise HTTPException(403, "Tidak ada akses.")
     return user
 

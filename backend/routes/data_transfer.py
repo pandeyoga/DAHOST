@@ -252,6 +252,33 @@ REGISTRY = {
                     "key": ["Kode potongan / No PO", "CMT"], "columns": po_berjalan.template_columns()},
 }
 
+# 14 Nov 2026 (owner: centang = penentu): hak Unduh/Impor per tabel = centang modul pemilik datanya (Unduh = aksi
+# "Unduh", impor = aksi "Tambah"). `export_roles`/`import_roles` di atas hanya berlaku selama owner belum mengatur
+# centang peran itu. Tabel tanpa pasangan centang (pengguna, log aktivitas, impor saldo awal, impor master generik
+# yang dulu khusus admin) tetap khusus owner/admin — Administrasi Sistem.
+_CENTANG_TABEL = {
+    "maklon_clients": (None, "mod.mak_clients.export"),
+    "platform_accounts": (None, "mod.mkt_accounts.export"),
+    "posting_profiles": (None, "mod.fin_master.export"),
+    "holidays": ("mod.hr_holiday_calendar.create", "mod.hr_holiday_calendar.export"),
+    "wh_bins": ("mod.wh_tools.create", "mod.wh_tools.export"),
+    "payroll_profiles": (None, "mod.hr_payroll.export"),
+    "boms": (None, "mod.rnd_master_product.export"),
+    "maklon_pos": (None, "mod.mak_po.export"),
+    "production_pos": (None, "mod.prod_po.export"),
+    "cutting_requests": (None, "mod.cut_orders.export"),
+    "cmt_jobs": (None, "mod.prod_jobs.export"),
+    "ar_invoices": (None, "mod.fin_ar.export"),
+    "maklon_invoices": (None, "mod.mak_billing.export"),
+    "material_issues": (None, "mod.wh_material_issue.export"),
+    "material_stock": (None, "mod.wh_stock.export"),
+    "attendance_events": (None, "mod.hr_attendance.export"),
+    "buyer_shipments": (None, "mod.prod_buyer_shipment.export"),
+}
+for _k, (_imp, _exp) in _CENTANG_TABEL.items():
+    if _k in REGISTRY:
+        REGISTRY[_k]["import_perm"], REGISTRY[_k]["export_perm"] = _imp, _exp
+
 
 # ── RBAC helpers ─────────────────────────────────────────────────────────────
 def _role(user):
@@ -259,21 +286,25 @@ def _role(user):
 
 
 def _can_export(user, entry):
+    from core.authz import izin_atau_peran_lama
     if entry.get("exportable") is False:
         return False
-    r = _role(user)
-    if r in ADMIN_ROLES:
+    if _role(user) in ADMIN_ROLES:
         return True
     roles = entry.get("export_roles") or []
-    return "*" in roles or r in roles
+    if "*" in roles:
+        return True
+    return izin_atau_peran_lama(user, roles, tuple(k for k in (entry.get("export_perm"),) if k))
 
 
 def _can_import(user, entry):
+    from core.authz import izin_atau_peran_lama
     if not entry.get("importable"):
         return False
-    r = _role(user)
-    allowed = set(entry.get("import_roles") or ADMIN_ROLES)
-    return r in allowed
+    if _role(user) in ADMIN_ROLES:
+        return True
+    roles = entry.get("import_roles") or sorted(ADMIN_ROLES)
+    return izin_atau_peran_lama(user, roles, tuple(k for k in (entry.get("import_perm"),) if k))
 
 
 async def _may(request, user, entry, kind: str) -> bool:

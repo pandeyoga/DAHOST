@@ -27,7 +27,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, date, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import doc_lock
 import logging
 import uuid
@@ -81,11 +82,11 @@ TRAVEL_VIEW_ALL_ROLES = ('superadmin', 'admin', 'owner', 'hr', 'manager', 'finan
 
 
 def can_view_all_travel(user: dict) -> bool:
-    return check_role(user, TRAVEL_VIEW_ALL_ROLES, EXPENSE_VIEW_ALL_PERMS)
+    return izin_atau_peran_lama(user, TRAVEL_VIEW_ALL_ROLES, EXPENSE_VIEW_ALL_PERMS)
 
 
 def is_travel_approver(user: dict) -> bool:
-    return check_role(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS)
+    return izin_atau_peran_lama(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS)
 
 
 GL_EMPLOYEE_ADVANCE = '1-1610'   # Uang Muka Karyawan
@@ -635,7 +636,7 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     """
     db = get_db()
     # 2026-11-08: kode peran Keuangan ATAU izin bayar (`FINANCE_PAY_PERMS`; tidak tersirat dari modul SDM).
-    if not (check_role(user, ADVANCE_PAYER_ROLES, FINANCE_PAY_PERMS) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ADVANCE_PAYER_ROLES, FINANCE_PAY_PERMS) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya Keuangan yang dapat membayar uang muka dinas (pemisahan tugas: HR tidak membayar).')
     # 2026-11-06 (pola P9): dinas DIKUNCI selama uang muka dibayar (penolakan / bayar kedua → 409).
     token = await doc_lock.claim(db, 'employee_travel_requests', req_id, field='advance_lock', actor=user,

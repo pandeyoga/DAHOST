@@ -10,6 +10,7 @@ import logging
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, check_role, log_activity, hash_password, generate_password
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from routes.shared import new_id, now, parse_date
 
 logger = logging.getLogger(__name__)
@@ -21,8 +22,9 @@ router = APIRouter(prefix="/api", tags=["operations-import"])
 @router.post("/import-data")
 async def import_data(request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user))
     db = get_db()
     body = await request.json()
     import_type = body.get('type', '')

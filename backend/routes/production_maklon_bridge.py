@@ -9,14 +9,13 @@ PO-360) tetap bekerja tanpa perubahan.
 Yang TIDAK dilakukan adapter ini: membuat rahaza_work_orders (engine lama —
 digantikan production_jobs, lihat PRODUKSI_E10_ADAPTER_MIGRASI.md).
 """
-from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 import logging
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
+from auth import require_auth, log_activity, serialize_doc
 from core.helpers import new_id, now
 from core import cmt_vendor_master
-from routes.production_rbac import PROD_ADMIN_ROLES, deny_klien
+from routes.production_rbac import assert_prod_admin, deny_klien
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["maklon-finance-bridge"])
@@ -242,8 +241,7 @@ async def try_sync_maklon_finance(db, po_id: str, user: dict):
 async def sync_maklon_finance_endpoint(po_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     result = await sync_po_to_maklon_finance(db, po_id, user)
     if not result.get('ok') and not result.get('skipped'):

@@ -41,10 +41,14 @@ DEFAULT_TIER_CHOICES = tuple(TIER_MODELS)
 
 
 async def _check_admin(request: Request):
+    """Baca Monitor AI (ringkasan, anggaran, hari ini, pengaturan): centang Manajemen › Monitor AI › Lihat.
+
+    14 Nov 2026: dulu kode peran saja (superadmin/admin/manager/owner) — peran yang dicentang owner ditolak.
+    `manager` hanya berlaku selama owner belum mengatur centang peran itu. Mengubah pengaturan tetap owner/admin
+    (modul Monitor AI tidak punya aksi Ubah; keputusan owner 10 Nov)."""
+    from core.authz import wajib_centang
     user = await require_auth(request)
-    if user.get("role") not in ["superadmin", "admin", "manager", "owner"]:
-        raise HTTPException(403, "Admin access required")
-    return user
+    return wajib_centang(user, "mod.mgmt_ai_usage.view", peran_lama=("manager",), apa="melihat Monitor AI")
 
 
 @router.get("/summary")

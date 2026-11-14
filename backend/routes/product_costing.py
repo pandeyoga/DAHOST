@@ -43,12 +43,13 @@ async def _read_user(request: Request) -> dict:
 
 
 async def _write_user(request: Request) -> dict:
+    from core.authz import boleh_centang, pesan_centang
     user = await _read_user(request)
-    role = (user.get("role") or "").lower()
-    perms = user.get("_permissions") or []
-    if role in WRITE_ROLES or "*" in perms or "finance.manage" in perms or "hpp.manage" in perms:
+    # 14 Nov 2026: centang aksi endpoint (HPP & Costing) atau izin HPP/Keuangan; WRITE_ROLES hanya selama owner
+    # belum mengatur centang peran itu.
+    if boleh_centang(user, "finance.manage", "hpp.manage", peran_lama=WRITE_ROLES):
         return user
-    raise HTTPException(403, "Butuh hak Keuangan/Produksi untuk mengubah HPP produk.")
+    raise HTTPException(403, pesan_centang(user, apa="mengubah HPP produk"))
 
 
 def _b(v, default=None):
@@ -226,12 +227,15 @@ async def apply_all(request: Request):
 async def _require_finance_write(request: Request) -> dict:
     """Menutup sisa WIP = membuat jurnal ⇒ hanya Keuangan/admin."""
     from core.roles import FINANCE_ROLES
+    from core.authz import izin_atau_peran_lama
     user = await _read_user(request)
-    role = (user.get("role") or "").lower()
-    perms = user.get("_permissions") or []
-    if role in FINANCE_ROLES or "*" in perms or "finance.manage" in perms:
+    # Aturan bisnis: menutup sisa WIP membuat jurnal ⇒ izin Keuangan (tersirat dari centang modul Keuangan, mis.
+    # Jurnal/Pengaturan Keuangan). Kode peran Keuangan hanya selama owner belum mengatur centang peran itu.
+    if izin_atau_peran_lama(user, FINANCE_ROLES, "finance.manage"):
         return user
-    raise HTTPException(403, "Hanya Keuangan yang boleh menutup sisa WIP PO.")
+    raise HTTPException(403, "Menutup sisa WIP PO membuat jurnal: peran Anda belum dicentang izin Keuangan (mis. "
+                             "\"Ubah\" pada modul \"Jurnal, Akrual & Tutup Buku\", Portal Keuangan). Minta owner "
+                             "mencentangnya di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
 
 
 @router.get("/po-wip")

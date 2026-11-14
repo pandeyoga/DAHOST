@@ -16,6 +16,7 @@ import { Notice, StatusBadge } from '../../moduleAtoms';
 import FileAttachmentPanel from '../FileAttachmentPanel';
 import { AksesorisTable, PotonganTable, SectionLabel, ShipStatusBadge, ShipTypeBadge, fmtDate, fmtNum, fmtRp } from './kirimShared';
 import NotaAksesorisKiriman from './NotaAksesorisKiriman';
+import { punyaCentang } from '@/lib/rbac';
 
 export async function downloadPdf(type, id, filename, label) {
   try {
@@ -131,7 +132,8 @@ export default function KirimanDetail({ id, canDelete, canManage = false, onClos
             {j.negative_lines > 0 && <span className="text-[hsl(var(--warning-text))]"> · {j.negative_lines} baris stok minus</span>}
           </span>
         ) : <span className="text-muted-foreground">{s.opening ? 'Saldo awal cutoff — tanpa pengeluaran gudang.' : 'Belum ada dokumen pengeluaran gudang.'}</span>}
-        {j && j.status === 'issued' && (
+        {/* 14 Nov 2026: server meminta centang Keuangan › Jurnal › Setujui — tanpa itu tombol tidak ditampilkan */}
+        {j && j.status === 'issued' && punyaCentang(null, 'mod.fin_journal.approve') && (
           <Button type="button" variant="outline" size="sm" onClick={repost} disabled={busy} data-testid="kirim-detail-repost">
             <Landmark className="w-3.5 h-3.5" />Posting ulang jurnal
           </Button>

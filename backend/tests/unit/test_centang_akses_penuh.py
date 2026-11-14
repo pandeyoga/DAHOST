@@ -308,7 +308,9 @@ def test_migrasi_opname_salin_hak_lama_kecuali_keputusan_owner():
 def test_target_anggaran_dua_portal_setara(gerbang, method, path, perm):
     portal = ["toko"] if perm.startswith("mod.mkt_") else ["management"]
     assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, [perm]))) is None
-    assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, ["mod.mkt_dashboard.view"])))
+    # 14 Nov 2026: layanan yang dipanggil layar Dashboard Marketing ikut terbuka bagi centang Dashboard (uji
+    # test_cek_akses.py); modul yang layarnya TIDAK memakai layanan ini tetap ditolak.
+    assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, ["mod.mkt_samples.view"])))
 
 
 def test_marketing_target_periode_pemegang_ikut_centang():
@@ -329,8 +331,12 @@ def test_tombol_aksi_yang_tidak_dimiliki_modul_menu_tidak_disembunyikan():
     """14 Nov 2026: Laporan Marketing (modul hanya Lihat/Unduh) — tombol Input biaya iklan milik modul iklan tidak
     boleh disembunyikan layar; aksi yang DIMILIKI modul menu tetap mengikuti centang."""
     from data.module_catalog import menu_access
-    _, akses = menu_access(["mod.mkt_dashboard.view", "mod.mkt_targets.view"])
+    _, akses = menu_access(["mod.mkt_dashboard.view", "mod.mkt_targets.view", "mod.mkt_content.create",
+                            "mod.mkt_content.edit"])
     assert "create" in akses["marketing-reports"] and "edit" in akses["marketing-reports"]
     assert "create" not in akses["marketing-targets"]            # Target & Anggaran punya aksi Tambah → ikut centang
+    # peran tanpa centang modul iklan (mis. Host Live): tombol iklan tidak tampil — dulu tampil lalu ditolak server
+    _, host = menu_access(["mod.mkt_dashboard.view", "mod.mkt_live.create"])
+    assert "create" not in host["marketing-reports"] and "delete" not in host["marketing-reports"]
     _, tanpa = menu_access(["mod.mkt_targets.view"])
     assert "view" not in tanpa.get("marketing-reports", [])        # tanpa Lihat tetap tersembunyi

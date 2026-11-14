@@ -28,6 +28,7 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { EmptyState, Notice } from '../moduleAtoms';
 import { cuttingApi, fmtNum, fmtRp } from './cuttingApi';
+import { punyaCentang } from '@/lib/rbac';
 import { fmtQty } from '../warehouse/rollLines';
 import {
   newInputLine, newOutputLine, rollRemaining, variantLabel, summarizeVariantsByModel, estimateHpp,
@@ -593,7 +594,8 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
                 </option>
               ))}
             </SmartNativeSelect>
-            {!cut && (
+            {/* 14 Nov 2026: model baru = centang Produksi › Master Produk › Tambah (keputusan owner) */}
+            {!cut && punyaCentang(null, 'mod.prod_master_product.create') && (
               <Button type="button" size="icon" variant="outline" onClick={() => openNewModel(o.key)}
                 title="Model baru" aria-label="Model baru" data-testid={`cutting-new-model-btn-${n}`}><Plus /></Button>
             )}

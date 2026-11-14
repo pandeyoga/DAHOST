@@ -15,7 +15,8 @@ from typing import Optional, List, Dict
 from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/skill-gap", tags=["skill-gap"])
@@ -27,7 +28,7 @@ SKILL_GAP_PERM = "hr.manage"
 def _require_skill_gap(user: dict, roles: list, message: str) -> None:
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, roles, SKILL_GAP_PERM) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, roles, SKILL_GAP_PERM) or lolos_centang(user)):
         raise HTTPException(403, message)
 
 # ============================================================================

@@ -817,7 +817,7 @@ def test_status_po_produksi_basi_409_tanpa_sinkron_keuangan(monkeypatch):
                                    "business_type": "maklon"})
     monkeypatch.setattr(ppos, "get_db", lambda: db)
     monkeypatch.setattr(ppos, "require_auth", _auth(SA))
-    monkeypatch.setattr(ppos, "check_role", lambda *a, **k: True)
+    monkeypatch.setattr(ppos, "assert_prod_admin", lambda *a, **k: None)   # 14 Nov 2026: penjaga staf produksi
     monkeypatch.setattr(ppos, "deny_klien", lambda *a, **k: None)
     sync = counting(monkeypatch, bridge, "try_sync_maklon_finance")
     stale(db, "production_pos", status="Distributed")
@@ -1162,7 +1162,7 @@ def test_aksi_tugas_marketing_dan_quick_complete_po_klik_ganda_409(monkeypatch):
     monkeypatch.setattr(mt, "_get_user", lambda r: dict(SA))
     monkeypatch.setattr(ppos, "get_db", lambda: db)
     monkeypatch.setattr(ppos, "require_auth", _auth(SA))
-    monkeypatch.setattr(ppos, "check_role", lambda *a, **k: True)
+    monkeypatch.setattr(ppos, "assert_prod_admin", lambda *a, **k: None)   # 14 Nov 2026: penjaga staf produksi
     monkeypatch.setattr(ppos, "deny_klien", lambda *a, **k: None)
     seen = []
 

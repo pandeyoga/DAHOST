@@ -20,7 +20,8 @@ import io
 import logging
 
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
+from auth import require_auth, log_activity, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import accessory_valuation
 from core.stock_rbac import SCRAP_ROLES, DISPOSE_ROLES
 from services import accessory_valuation_mailer as mailer
@@ -169,7 +170,7 @@ async def export_valuation(request: Request,
 async def set_cost(request: Request):
     """Koreksi HPP manual. Body: `{acc_id, unit_cost, notes?}`."""
     user = await require_auth(request)
-    if not (check_role(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_COST)
     db = get_db()
     body = await request.json()
@@ -228,7 +229,7 @@ async def get_unvalued_digest(request: Request,
 async def send_unvalued_digest_now(request: Request):
     """Kirim ringkasan "belum dinilai" SEKARANG (tanpa menunggu jadwal 07:30)."""
     user = await require_auth(request)
-    if not (check_role(user, DIGEST_SEND_ROLES, "inv.stock.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, DIGEST_SEND_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_DIGEST)
     db = get_db()
     out = await accessory_valuation.send_unvalued_digest(db, force=True, actor=user)
@@ -277,7 +278,7 @@ async def update_report_schedule(request: Request):
     supaya tidak ada dua sumber kebenaran untuk konfigurasi email.
     """
     user = await require_auth(request)
-    if not (check_role(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_SCHEDULE)
     db = get_db()
     body = await request.json()
@@ -314,7 +315,7 @@ async def send_report_now(request: Request,
                           month: str = Query(None, description="YYYY-MM; kosong = bulan lalu")):
     """Kirim rapor valuasi periode `month` SEKARANG (lampiran Excel + PDF) ke keuangan."""
     user = await require_auth(request)
-    if not (check_role(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, SET_COST_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, _FORBIDDEN_SCHEDULE)
     db = get_db()
     if month:

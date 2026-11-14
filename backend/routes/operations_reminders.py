@@ -9,7 +9,8 @@ from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
+from auth import require_auth, log_activity, serialize_doc
+from core.authz import izin_atau_peran_lama, pesan_centang  # 14 Nov 2026: centang owner = penentu
 from routes.shared import new_id, now
 
 router = APIRouter(prefix="/api", tags=["reminders"])
@@ -18,6 +19,10 @@ router = APIRouter(prefix="/api", tags=["reminders"])
 # `buat_pengingat` supaya aturannya satu); hanya admin yang boleh menghapus. Nilai tidak berubah (2026-11-08).
 VENDOR_REMINDER_WRITER_ROLES = ['admin', 'admin_produksi', 'supervisor_produksi', 'ppic']
 VENDOR_REMINDER_DELETE_ROLES = ['admin']
+# 14 Nov 2026: `/api/reminders` di luar katalog modul — centang Produksi › Vendor CMT (Tambah/Ubah/Hapus) yang
+# memutuskan; daftar peran di atas hanya berlaku selama owner belum mengatur centang peran itu.
+REMINDER_PERM = {'create': 'mod.prod_vendor_cmt.create', 'edit': 'mod.prod_vendor_cmt.edit',
+                 'delete': 'mod.prod_vendor_cmt.delete'}
 
 @router.get("/reminders")
 async def get_reminders(request: Request):
@@ -49,8 +54,8 @@ async def get_reminders(request: Request):
 @router.post("/reminders")
 async def create_reminder(request: Request):
     user = await require_auth(request)
-    if not (check_role(user, VENDOR_REMINDER_WRITER_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, VENDOR_REMINDER_WRITER_ROLES, REMINDER_PERM['create']) or lolos_centang(user)):
+        raise HTTPException(403, pesan_centang(user, REMINDER_PERM['create']))
     db = get_db()
     body = await request.json()
     vendor_id = body.get('vendor_id')
@@ -112,7 +117,7 @@ async def update_reminder(reminder_id: str, request: Request):
         if _stamp:
             update.update({f'response_{k}': v for k, v in _stamp.items()})
     # Admin updating
-    if check_role(user, VENDOR_REMINDER_WRITER_ROLES):
+    if izin_atau_peran_lama(user, VENDOR_REMINDER_WRITER_ROLES, REMINDER_PERM['edit']):
         if 'status' in body:
             update['status'] = body['status']
         if 'message' in body:
@@ -123,8 +128,8 @@ async def update_reminder(reminder_id: str, request: Request):
 @router.delete("/reminders/{reminder_id}")
 async def delete_reminder(reminder_id: str, request: Request):
     user = await require_auth(request)
-    if not (check_role(user, VENDOR_REMINDER_DELETE_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    if not (izin_atau_peran_lama(user, VENDOR_REMINDER_DELETE_ROLES, REMINDER_PERM['delete']) or lolos_centang(user)):
+        raise HTTPException(403, pesan_centang(user, REMINDER_PERM['delete']))
     db = get_db()
     await db.reminders.delete_one({'id': reminder_id})
     return {'success': True}

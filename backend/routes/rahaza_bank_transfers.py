@@ -13,7 +13,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, date
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from routes.rahaza_posting import _create_posted_je, _find_existing_je, get_mapping
 from core import entities as ent_mod
 import logging
@@ -31,7 +32,7 @@ from core.roles import FINANCE_ROLES, FINANCE_CASH_PERMS  # FIN-02: satu sumber 
 def _is_cash_officer(user: dict) -> bool:
     """2026-11-08: kode peran Keuangan ATAU izin kas & bank (`FINANCE_CASH_PERMS`) — peran buatan owner
     ("Accounting & Finance") dulu 403. Cermin layar: BankTransferModule.jsx (canManage)."""
-    return check_role(user, FINANCE_ROLES, FINANCE_CASH_PERMS)
+    return izin_atau_peran_lama(user, FINANCE_ROLES, FINANCE_CASH_PERMS)
 
 
 def _uid(): return str(uuid.uuid4())

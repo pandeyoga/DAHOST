@@ -243,8 +243,9 @@ async def approve_task(task_id: str, request: Request):
     db = get_db()
     user = _get_user(request)
 
-    if not _is_pic_role(user):
-        raise HTTPException(403, "Hanya PIC Marketing (admin/owner/manager) yang dapat approve task")
+    if not _is_pic_role(user, "mod.mkt_tasks.approve"):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, "mod.mkt_tasks.approve"))
 
     task = await db.marketing_tasks.find_one({"id": task_id}, {"_id": 0})
     if not task:
@@ -287,8 +288,9 @@ async def reject_task(task_id: str, reason: str, request: Request):
     db = get_db()
     user = _get_user(request)
 
-    if not _is_pic_role(user):
-        raise HTTPException(403, "Hanya PIC Marketing (admin/owner/manager) yang dapat reject task")
+    if not _is_pic_role(user, "mod.mkt_tasks.approve"):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, "mod.mkt_tasks.approve"))
 
     task = await db.marketing_tasks.find_one({"id": task_id}, {"_id": 0})
     if not task:

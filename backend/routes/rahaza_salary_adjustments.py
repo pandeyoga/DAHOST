@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-salary"])
 
@@ -39,18 +40,17 @@ SALARY_HR_PERMS = ("hr.manage", "salary.manage")
 
 
 def is_salary_hr(user: dict) -> bool:
-    return check_role(user, SALARY_HR_ROLES, SALARY_HR_PERMS)
+    return izin_atau_peran_lama(user, SALARY_HR_ROLES, SALARY_HR_PERMS)
 
 
 async def _require_hr(request: Request):
+    from core.authz import boleh_centang, pesan_centang
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    if role in ("superadmin", "admin", "owner", "hr", "manager"):
+    # 14 Nov 2026: centang aksi endpoint atau izin hr.manage/salary.manage; kode peran lama hanya selama owner belum
+    # mengatur centang peran itu.
+    if boleh_centang(user, "hr.manage", "salary.manage", peran_lama=("hr", "manager")):
         return user
-    perms = user.get("_permissions") or []
-    if "*" in perms or "hr.manage" in perms or "salary.manage" in perms:
-        return user
-    raise HTTPException(403, "Forbidden: butuh akses HR/Manager.")
+    raise HTTPException(403, pesan_centang(user, apa="mengelola penyesuaian gaji"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

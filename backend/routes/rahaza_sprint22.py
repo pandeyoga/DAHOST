@@ -49,21 +49,21 @@ def _yesterday() -> str:
     return (today_wib() - timedelta(days=1)).isoformat()
 
 
-async def _require_supervisor(request: Request):
+async def _require_supervisor(request: Request, *kunci):
     """Require supervisor, manager, or admin access."""
     user = await require_auth(request)
     from routes.shared import lolos_centang
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    role = (user.get("role") or "").lower()
+    # 14 Nov 2026: kunci centang untuk aksi tulis yang di katalog jatuh ke modul Dashboard (hanya Lihat/Unduh) —
+    # generate MI = Gudang › Pengeluaran Material › Tambah; penugasan massal = Master Proses, Line & Mesin › Tambah.
+    # Kode peran lama hanya selama owner belum mengatur centang peran itu.
+    from core.authz import izin_atau_peran_lama, pesan_centang
     allowed = ("superadmin", "admin", "manager", "manager_produksi", "supervisor",
                "staff_produksi", "owner")
-    if role in allowed:
+    if izin_atau_peran_lama(user, allowed, ("production.manage", *kunci)):
         return user
-    perms = user.get("_permissions") or []
-    if "*" in perms or "production.manage" in perms:
-        return user
-    raise HTTPException(403, "Forbidden: butuh akses Supervisor/Manager Produksi.")
+    raise HTTPException(403, pesan_centang(user, *kunci, apa="memakai alat supervisor produksi"))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -242,7 +242,7 @@ async def generate_bulk_mi(request: Request):
     Generate Material Issues for multiple WOs in one batch.
     Skips WOs with existing MI or unavailable materials (if strict=True).
     """
-    user = await _require_supervisor(request)
+    user = await _require_supervisor(request, "mod.wh_material_issue.create")
     db = get_db()
     body = await request.json()
     wo_ids: list = body.get("wo_ids") or []
@@ -425,7 +425,7 @@ async def bulk_create_assignments(request: Request):
     Bulk-create line assignments for today (or specified date).
     Used by "Copy Yesterday" feature.
     """
-    user = await _require_supervisor(request)
+    user = await _require_supervisor(request, "mod.prod_master_process.create")
     db = get_db()
     body = await request.json()
     assign_date = body.get("assign_date") or _today()

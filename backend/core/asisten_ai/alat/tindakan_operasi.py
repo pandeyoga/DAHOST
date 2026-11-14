@@ -17,6 +17,7 @@ dengan layar), dan `batalkan` bila endpoint-nya memungkinkan. Tidak ada tulis la
                         menghapus notifikasinya sendiri) ⇒ tanpa `batalkan`.
 """
 from __future__ import annotations
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 import logging
 import re
@@ -85,9 +86,8 @@ def _peran(ctx) -> str:
 
 
 def _boleh(ctx, peran: list | tuple, izin: Optional[str] = None) -> bool:
-    """Aturan peran yang SAMA dengan endpoint (`auth.check_role`)."""
-    from auth import check_role
-    return bool(check_role(getattr(ctx, "user", None) or {}, list(peran), izin))
+    """Aturan yang SAMA dengan endpoint: izin/centang dulu, kode peran hanya selama centang peran belum diatur."""
+    return bool(izin_atau_peran_lama(getattr(ctx, "user", None) or {}, list(peran), izin))
 
 
 def _hari_ini(ctx) -> date:
@@ -257,12 +257,12 @@ class BuatPengingat:
 
     @staticmethod
     async def _siapkan_vendor(ctx, a: dict, judul: str) -> dict:
-        from routes.operations_reminders import VENDOR_REMINDER_DELETE_ROLES, VENDOR_REMINDER_WRITER_ROLES
+        from routes.operations_reminders import REMINDER_PERM, VENDOR_REMINDER_DELETE_ROLES, VENDOR_REMINDER_WRITER_ROLES
         if "ulang" in a:
             raise AlatError(400, "Isian 'ulang' hanya untuk pengingat pribadi.")
-        if not _boleh(ctx, VENDOR_REMINDER_WRITER_ROLES):
-            raise AlatError(403, "Pengingat ke vendor CMT hanya boleh dikirim admin produksi, PPIC, supervisor "
-                                 "produksi, atau admin. Akun ini tidak punya hak itu.")
+        if not _boleh(ctx, VENDOR_REMINDER_WRITER_ROLES, REMINDER_PERM["create"]):
+            from core.authz import pesan_centang
+            raise AlatError(403, pesan_centang(getattr(ctx, "user", None), REMINDER_PERM["create"]))
         if not a.get("vendor"):
             raise AlatError(400, "Pengingat vendor butuh nama atau id vendor CMT.")
         if not (a.get("keterangan") or "").strip():
@@ -278,8 +278,9 @@ class BuatPengingat:
         if a.get("nomor_po"):
             perubahan.append({"label": "PO terkait", "sebelum": _KOSONG, "sesudah": _teks(a["nomor_po"], 60)})
         catatan = ["Pengingat langsung tampil di Portal CMT vendor ini dan menunggu balasan vendor."]
-        if not _boleh(ctx, VENDOR_REMINDER_DELETE_ROLES):
-            catatan.append("Setelah terkirim, pengingat vendor hanya bisa ditarik admin.")
+        if not _boleh(ctx, VENDOR_REMINDER_DELETE_ROLES, REMINDER_PERM["delete"]):
+            catatan.append("Setelah terkirim, pengingat vendor hanya bisa ditarik pengguna yang dicentang Hapus "
+                           "pada modul Vendor CMT.")
         return {"judul": "Kirim pengingat ke vendor CMT",
                 "ringkas": f"{judul} → {v.get('garment_name') or 'vendor'}.",
                 "perubahan": perubahan, "catatan": catatan, "peringatan": [],
@@ -293,7 +294,7 @@ class BuatPengingat:
     async def jalankan(ctx, args: dict, rencana: dict) -> dict:
         a = _bersih_args(args)
         if (a.get("jenis") or "pribadi") == "vendor":
-            from routes.operations_reminders import VENDOR_REMINDER_DELETE_ROLES
+            from routes.operations_reminders import REMINDER_PERM, VENDOR_REMINDER_DELETE_ROLES
             v = await _cari_vendor(ctx, a["vendor"])
             out = await ctx.api("POST", "/api/reminders", json={
                 "vendor_id": v["id"], "po_number": a.get("nomor_po") or "", "reminder_type": "general",
@@ -302,7 +303,7 @@ class BuatPengingat:
             rid = (out or {}).get("id")
             if not rid:
                 raise AlatError(502, "Sistem tidak mengembalikan nomor pengingat vendor. Periksa Portal CMT.")
-            batal = {"jenis": "vendor", "id": rid} if _boleh(ctx, VENDOR_REMINDER_DELETE_ROLES) else None
+            batal = {"jenis": "vendor", "id": rid} if _boleh(ctx, VENDOR_REMINDER_DELETE_ROLES, REMINDER_PERM["delete"]) else None
             return {"ringkas": f"Pengingat terkirim ke vendor {v.get('garment_name') or ''}.".replace("  ", " "),
                     "hasil": {"pengingat_vendor_id": rid, "vendor_id": v["id"]}, "pembatalan": batal}
         out = await ctx.api("POST", "/api/portal/reminders", json={
@@ -435,8 +436,8 @@ class BuatObjektifOkr:
         from routes.dewi_okr import can_write_objective
         a = _bersih_args(args)
         if not can_write_objective(getattr(ctx, "user", None)):
-            raise AlatError(403, "Objektif OKR hanya boleh dibuat owner, manajer, atau admin. "
-                                 "Akun ini tidak punya hak itu.")
+            from core.authz import pesan_centang
+            raise AlatError(403, pesan_centang(None, "mod.mgmt_okr.create"))
         await _wajib_gerbang(ctx, "POST", f"{_OKR}/objectives")
         pemilik = await BuatObjektifOkr._pemilik(ctx, a.get("pemilik"))
         ada = ((await ctx.api("GET", f"{_OKR}/objectives",
@@ -836,8 +837,9 @@ class JadwalkanLaporan:
         from core.stock_rbac import SCRAP_ROLES
         a = _bersih_args(args)
         if not _boleh(ctx, SCRAP_ROLES, "inv.stock.manage"):
-            raise AlatError(403, "Jadwal rapor valuasi hanya boleh diatur Admin Gudang, Supervisor, Keuangan, "
-                                 "atau Owner. Akun ini tidak punya hak itu.")
+            from core.authz import pesan_centang
+            raise AlatError(403, pesan_centang(None, apa="mengatur jadwal rapor valuasi (centang Ubah pada modul "
+                                                         "Dashboard, Valuasi & Laporan Aksesoris)"))
         await _wajib_gerbang(ctx, "PUT", _JADWAL)
         if not any(k in a for k in ("aktif", "email_tambah", "email_hapus")):
             raise AlatError(400, "Sebutkan perubahannya: aktif/nonaktif, email_tambah, atau email_hapus.")

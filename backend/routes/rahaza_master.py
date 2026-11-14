@@ -21,7 +21,8 @@ Conventions:
 from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.roles import HR_ROLES, PRODUCTION_ROLES, WAREHOUSE_ROLES
 from typing import Optional
 import uuid
@@ -221,7 +222,7 @@ def _wajib_pengelola(user: dict, kunci: str) -> None:
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
     roles, perms, pesan = _GERBANG_HAPUS[kunci]
-    if not (check_role(user, list(roles), perms) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, list(roles), perms) or lolos_centang(user)):
         raise HTTPException(403, pesan)
 
 

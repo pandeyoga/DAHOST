@@ -223,8 +223,11 @@ async def send_test_push(request: Request):
 async def send_push(request: Request):
     """(Admin/System) Send push notification to specific user or all subscribers."""
     user = await require_auth(request)
-    if (user.get("role") or "").lower() not in HR_ROLES + ("admin", "superadmin"):
-        raise HTTPException(403, "Hanya admin/HR yang boleh mengirim push notification.")  # T-01 2.5
+    # 14 Nov 2026: di luar katalog modul — centang SDM › Papan Pengumuman › Tambah; kode peran HR hanya selama owner
+    # belum mengatur centang peran itu.
+    from core.authz import izin_atau_peran_lama, pesan_centang
+    if not izin_atau_peran_lama(user, HR_ROLES, ("mod.hr_announcements.create",)):
+        raise HTTPException(403, pesan_centang(user, "mod.hr_announcements.create"))  # T-01 2.5
     if not is_configured():
         raise HTTPException(503, "Web Push belum dikonfigurasi di server.")
     db = get_db()

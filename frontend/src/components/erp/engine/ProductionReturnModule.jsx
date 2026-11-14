@@ -10,6 +10,7 @@ import SearchableSelect from './SearchableSelect';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
+import { moduleActions } from '../portalAccess';
 
 const STATUS_OPTIONS = ['Repair Needed', 'In Repair', 'Completed', 'Shipped Back'];
 const DEFECT_TYPES = ['Jahitan Longgar', 'Warna Pudar', 'Ukuran Tidak Sesuai', 'Material Rusak', 'Kancing Copot', 'Resleting Rusak', 'Noda/Kotor', 'Lainnya'];
@@ -47,7 +48,10 @@ export default function ProductionReturnModule({ userRole }) {
     items: []
   });
 
-  const isSuperAdmin = userRole === 'superadmin';
+  // 14 Nov 2026: Hapus mengikuti centang Pantau Produksi › Hapus (server: dulu khusus superadmin); tanpa data akses per
+  // menu (sesi lama) tetap peran super saja.
+  const aksiRetur = moduleActions('pantau-produksi');
+  const isSuperAdmin = aksiRetur === null ? ['superadmin', 'admin', 'owner'].includes(userRole) : aksiRetur.includes('delete');
   const canEdit = ['superadmin', 'admin'].includes(userRole);
 
   useEffect(() => { fetchReturns(); fetchPOs(); }, []);

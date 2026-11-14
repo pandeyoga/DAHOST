@@ -93,7 +93,8 @@ async def _require_hr_admin(request: Request):
     perms = user.get("_permissions") or []
     if "*" in perms or "hr.manage" in perms:
         return user
-    raise HTTPException(403, "Forbidden: butuh akses HR/Admin.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 async def _require_leave_approver(request: Request):
@@ -121,9 +122,10 @@ async def _require_leave_decider(db, leave_id: str, user: dict, action: str) -> 
 async def _ensure_own_or_hr(db, user: dict, employee_id: str, message: str):
     """Pemohon sendiri atau HR/admin (T-01 2.3) — endpoint swalayan Portal Saya dilewati gerbang modul,
     jadi kepemilikan WAJIB dijaga di sini."""
-    role = (user.get("role") or "").lower()
-    perms = user.get("_permissions") or []
-    if role in HR_ROLES + ("admin", "superadmin") or "*" in perms or "hr.manage" in perms:
+    # 14 Nov 2026: HR = centang SDM › Cuti & Lembur (Tambah/Ubah/Hapus) atau izin hr.manage; kode peran HR hanya selama
+    # owner belum mengatur centang peran itu. Pemohon sendiri tetap boleh (kepemilikan).
+    from core.authz import izin_atau_peran_lama
+    if izin_atau_peran_lama(user, HR_ROLES, ("hr.manage", "hr.attendance.manage")):
         return
     from utils.employee_identity import resolve_my_employee
     my_emp = await resolve_my_employee(db, user)

@@ -220,7 +220,8 @@ async def _require_procurement(request: Request):
     perms = user.get("_permissions") or []
     if "*" in perms or "purchasing.manage" in perms or "warehouse.manage" in perms:
         return user
-    raise HTTPException(403, "Forbidden: butuh peran pengadaan/gudang/keuangan.")
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user))
 
 
 async def _require_procurement_read(request: Request):

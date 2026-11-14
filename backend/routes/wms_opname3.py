@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import opname_engine as eng
 
 log = logging.getLogger(__name__)
@@ -51,11 +52,11 @@ def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname", sess
     sesi gudang (kain/bahan/barang jadi) = Gudang › Opname Stok Gudang › Setujui (atau izin lama wh.opname.approve).
     Dulu centang salah satunya meloloskan kedua jenis."""
     if eng.is_opening(sess):
-        from auth import check_role
         from core.roles import FINANCE_ROLES
-        if not check_role(user, list(FINANCE_ROLES), eng.OPENING_APPROVE_PERMS):
-            raise HTTPException(403, f"Opname stok awal: hanya Keuangan/owner yang boleh {what} (nilai stok "
-                                     "awal dibukukan ke ekuitas saldo awal).")
+        if not izin_atau_peran_lama(user, list(FINANCE_ROLES), eng.OPENING_APPROVE_PERMS):
+            raise HTTPException(403, f"Opname stok awal: peran Anda belum dicentang izin Keuangan untuk {what} (nilai "
+                                     "stok awal dibukukan ke ekuitas saldo awal). Minta owner mencentang \"Ubah\" pada "
+                                     f"modul \"Pengaturan Keuangan\" (Portal Keuangan) di {LETAK_CENTANG}.")
         return
     from data.module_catalog import MODULE_BY_ID, PORTAL_LABELS
     from routes.shared import can_act
