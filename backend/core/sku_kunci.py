@@ -135,13 +135,13 @@ def pilih_lewat_nama(by_name_all: Dict[str, List[dict]], name: Any, variation: A
         return hits[0], ""
     if len(hits) > 1:
         return None, (f"Nama '{name}' + variasi '{variation or '-'}' cocok ke {len(hits)} item "
-                      "katalog — tautkan manual di Pemetaan SKU.")
+                      "katalog — tautkan manual di menu Jembatan SKU.")
     if len(cands) == 1 and variasi_cocok(cands[0], variation) is None:
         return None, (f"Nama '{name}' ada di katalog, tetapi variasinya ('{variation or '-'}') "
                       "tidak bisa dipastikan sama dengan warna/ukuran item itu — tautkan "
-                      "manual di Pemetaan SKU.")
+                      "manual di menu Jembatan SKU.")
     return None, (f"Nama '{name}' ada di katalog, tetapi tidak ada item dengan variasi "
-                  f"'{variation or '-'}' — tautkan manual di Pemetaan SKU.")
+                  f"'{variation or '-'}' — tautkan manual di menu Jembatan SKU.")
 
 
 # ── 14 Nov 2026 — tingkat tautan satu baris pesanan (form refund & Usulan AI Jembatan SKU) ──

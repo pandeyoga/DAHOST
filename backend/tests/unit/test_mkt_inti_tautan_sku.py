@@ -70,7 +70,7 @@ def test_g3_variasi_kosong_atau_asing_dibiarkan_tak_tertaut_dengan_alasan():
     idx = K.indeks_nama(KULOT)
     for var in ("", "Navy,L", "Maroon"):
         it, why = K.pilih_lewat_nama(idx, "Kulot Rayon Panjang", var)
-        assert it is None and "Pemetaan SKU" in why
+        assert it is None and "Jembatan SKU" in why and "Pemetaan SKU" not in why
     # nama unik tanpa atribut varian = boleh
     it, why = K.pilih_lewat_nama(K.indeks_nama([{"id": "x", "name": "Tas Kanvas"}]), "tas kanvas", "")
     assert it["id"] == "x"
@@ -120,7 +120,7 @@ def test_g2_g3_impor_shopee_nomor_referensi_sku_dan_nama_variasi(env):
     assert link["S1"] == ("it-hm", "sku_exact")
     assert link["S2"] == ("it-m", "name_match")                   # dulu varian XL yang salah
     assert link["S3"] == (None, "unlinked")
-    assert any("Pemetaan SKU" in " ".join(n.get("why") or []) for n in res["row_notes"])
+    assert any("Jembatan SKU" in " ".join(n.get("why") or []) for n in res["row_notes"])
 
 
 # ── G4 ─────────────────────────────────────────────────────────────────────────────────────────

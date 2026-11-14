@@ -59,14 +59,19 @@ function StatusPesanan({ status }) {
   return <StatusBadge status={status} label={c.label} tone={c.tone} />;
 }
 
+// 14 Nov 2026 — pesanan yang sudah dikirim boleh dibatalkan (COD gagal kirim / paket ditolak): server membuat
+// tugas Gudang › Retur Fisik "Menunggu paket" lewat jalur yang sama dengan ubah status massal. "Retur" hanya
+// mengubah status (retur dari pembeli diurus di Komplain & Retur), jadi paket kembali dari ekspedisi dicatat Batal.
 const VALID_NEXT = {
   new: ['packed', 'cancelled'],
   packed: ['shipped', 'cancelled'],
-  shipped: ['delivered', 'returned'],
-  delivered: ['returned'],
+  shipped: ['delivered', 'cancelled', 'returned'],
+  delivered: ['cancelled', 'returned'],
   cancelled: [],
   returned: [],
 };
+const sudahDikirim = (o) => ['shipped', 'delivered', 'completed'].includes(o?.status)
+  || !!(o?.shipped_date || o?.delivered_date);
 
 // ── Rincian pesanan (popup) + ubah status (form popup) ──
 function OrderDetailPopup({ order, onClose, onStatusChange }) {
@@ -79,14 +84,18 @@ function OrderDetailPopup({ order, onClose, onStatusChange }) {
 
   if (!order) return null;
   const nexts = VALID_NEXT[order.status] || [];
+  const dikirim = sudahDikirim(order);
+  const batalSetelahKirim = newStatus === 'cancelled' && dikirim;
+  const labelPilihan = (s) => (s === 'cancelled' && dikirim ? 'Batal (gagal kirim / paket kembali)' : labelStatus(s));
 
   const handleStatusUpdate = async () => {
     if (!newStatus) { setGalat('Pilih status baru.'); return; }
+    if (batalSetelahKirim && !note.trim()) { setGalat('Isi alasan pembatalan.'); return; }
     setUpdating(true);
     setGalat('');
     try {
       const res = await axios.patch(`${API}/api/marketing/orders/${order.id}/status`,
-        { status: newStatus, note },
+        { status: newStatus, note: note.trim() || null },
         { headers: { Authorization: `Bearer ${localStorage.getItem('erp_token')}` } }
       );
       const freed = Number(res?.data?.reservation_released || 0);
@@ -148,18 +157,30 @@ function OrderDetailPopup({ order, onClose, onStatusChange }) {
         </section>
       </DetailPopup>
       <FormPopup open={formOpen} onClose={() => setFormOpen(false)} ukuran="pendek" onSimpan={handleStatusUpdate}
-        menyimpan={updating} galat={galat} bisaSimpan={!!newStatus} judul="Ubah status pesanan" testId="order-status-form"
+        menyimpan={updating} galat={galat} bisaSimpan={!!newStatus && (!batalSetelahKirim || !!note.trim())}
+        judul="Ubah status pesanan" testId="order-status-form"
         keterangan={`${order.order_id} · sekarang ${labelStatus(order.status)}`}>
-        <Isian label="Status baru" wajib htmlFor="order-status-baru">
+        <Isian label="Status baru" wajib htmlFor="order-status-baru"
+          petunjuk={newStatus === 'returned' && dikirim
+            ? 'Retur hanya mengubah status; retur dari pembeli diurus di menu Komplain & Retur. Paket yang kembali dari ekspedisi (COD gagal kirim, ditolak pembeli) catat sebagai Batal supaya menjadi tugas Gudang.'
+            : undefined}>
           <SmartNativeSelect id="order-status-baru" className="w-full" value={newStatus}
             onChange={(e) => setNewStatus(e.target.value)} data-testid="order-status-select">
             <option value="">Pilih status baru…</option>
-            {nexts.map(s => <option key={s} value={s}>{labelStatus(s)}</option>)}
+            {nexts.map(s => <option key={s} value={s}>{labelPilihan(s)}</option>)}
           </SmartNativeSelect>
         </Isian>
-        <Isian label="Catatan" htmlFor="order-status-catatan">
-          <Input id="order-status-catatan" placeholder="Opsional" value={note} onChange={e => setNote(e.target.value)} />
-        </Isian>
+        {batalSetelahKirim ? (
+          <Isian label="Alasan pembatalan" wajib htmlFor="order-cancel-reason"
+            petunjuk='Pesanan ini sudah dikirim: otomatis menjadi tugas Gudang › Retur Fisik "Menunggu paket". Stok bertambah setelah gudang menerima paketnya.'>
+            <Textarea id="order-cancel-reason" value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+              placeholder="Contoh: COD gagal kirim / paket ditolak pembeli" data-testid="order-cancel-reason-input" />
+          </Isian>
+        ) : (
+          <Isian label="Catatan" htmlFor="order-status-catatan">
+            <Input id="order-status-catatan" placeholder="Opsional" value={note} onChange={e => setNote(e.target.value)} />
+          </Isian>
+        )}
       </FormPopup>
     </>
   );

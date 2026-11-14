@@ -86,7 +86,7 @@ async def _analisis_pesanan(db, s: dict, temuan: List[dict]) -> dict:
             "sku_belum_tertaut", "tinggi" if pangsa >= 20 else "sedang",
             "SKU belum tertaut katalog",
             f"{len(lepas)} dari {len(items)} baris SKU ({pangsa}%) belum tertaut item katalog; omzetnya "
-            f"{_fmt(omzet_lepas)} tetap masuk, tetapi HPP & stoknya belum terhitung. Lengkapi di layar Pemetaan SKU.",
+            f"{_fmt(omzet_lepas)} tetap masuk, tetapi HPP & stoknya belum terhitung. Lengkapi di menu Jembatan SKU.",
             {"baris": len(lepas), "dari_baris": len(items), "persen": pangsa, "omzet": round(omzet_lepas)}, toko))
     if omzet and subsidi:
         p = round(subsidi / omzet * 100, 1)

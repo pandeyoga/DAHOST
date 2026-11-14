@@ -65,7 +65,7 @@ const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
 const EMPTY_FORM = {
   account_id: '', account_name: '', platform: 'shopee', date: '', content_type: 'foto_produk',
   title: '', description: '', cta: '', post_time: '', reference_link: '', status: 'draft',
-  published_url: '',
+  published_url: '', creator_id: '',
 };
 
 function ContentCalendarBase({ token }) {
@@ -105,6 +105,8 @@ function ContentCalendarBase({ token }) {
 
   const [showDetail, setShowDetail] = useState(null);
   const [galatForm, setGalatForm] = useState('');
+  // 14 Nov 2026 — pemilik konten (kreator) supaya konten terhitung di Scorecard kreator.
+  const [kreator, setKreator] = useState([]);
 
   const fetchTypes = useCallback(async () => {
     try {
@@ -159,7 +161,21 @@ function ContentCalendarBase({ token }) {
     finally { setLoading(false); }
   }, [listPage, filterStatus, filterPlatform, filterType, filterAccountId, authH, toast]);
 
-  useEffect(() => { fetchTypes(); fetchSummary(); }, [fetchTypes, fetchSummary]);
+  // Daftar kreator = master KOL & Kreator (endpoint yang sama dengan layar KOL & Target); dibaca semua halaman.
+  const fetchKreator = useCallback(async () => {
+    try {
+      const semua = [];
+      for (let p = 1; p <= 20; p += 1) {
+        const res = await axios.get(`${API}/api/marketing/kol/creators`, { params: { page: p, limit: 100 }, headers: authH });
+        semua.push(...(res.data?.creators || []));
+        if (!res.data?.pagination?.has_next) break;
+      }
+      setKreator(semua.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'id')));
+    } catch { setKreator([]); }
+  }, [authH]);
+  const namaKreator = (id) => (id ? (kreator.find((c) => c.id === id)?.name || 'Kreator tidak ditemukan') : '');
+
+  useEffect(() => { fetchTypes(); fetchSummary(); fetchKreator(); }, [fetchTypes, fetchSummary, fetchKreator]);
   useEffect(() => { if (view === 'calendar') fetchMonthly(); else fetchList(); }, [view, fetchMonthly, fetchList]);
 
   // Build calendar grid
@@ -197,7 +213,7 @@ function ContentCalendarBase({ token }) {
       title: entry.title || '', description: entry.description || '',
       cta: entry.cta || '', post_time: entry.post_time || '',
       reference_link: entry.reference_link || '', status: entry.status || 'draft',
-      published_url: entry.published_url || '',
+      published_url: entry.published_url || '', creator_id: entry.creator_id || '',
     });
     setGalatForm('');
     setShowForm(true);
@@ -227,10 +243,11 @@ function ContentCalendarBase({ token }) {
     setFormLoading(true);
     try {
       if (editTarget) {
+        // creator_id '' = kreator dikosongkan (server hanya melewati nilai null)
         await axios.put(`${API}/api/marketing/content-calendar/${editTarget.id}`, form, { headers: authH });
         toast({ title: 'Konten disimpan.' });
       } else {
-        await axios.post(`${API}/api/marketing/content-calendar`, form, { headers: authH });
+        await axios.post(`${API}/api/marketing/content-calendar`, { ...form, creator_id: form.creator_id || null }, { headers: authH });
         toast({ title: 'Konten ditambahkan.' });
       }
       setShowForm(false);
@@ -455,6 +472,7 @@ function ContentCalendarBase({ token }) {
           </>}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Jenis">{jenis(showDetail)}</BarisDetail>
+            <BarisDetail label="Kreator">{namaKreator(showDetail.creator_id) || '—'}</BarisDetail>
             {showDetail.description && <BarisDetail label="Deskripsi">{showDetail.description}</BarisDetail>}
             {showDetail.cta && <BarisDetail label="CTA">{showDetail.cta}</BarisDetail>}
             {showDetail.reference_link && (
@@ -507,6 +525,17 @@ function ContentCalendarBase({ token }) {
             </SmartNativeSelect>
           </Isian>
         </div>
+        <Isian label="Kreator (opsional)" htmlFor="cc-creator"
+          petunjuk="Pemilik konten; konten dengan kreator ikut terhitung di Scorecard kreator.">
+          <SmartNativeSelect id="cc-creator" value={form.creator_id || ''} data-testid="content-creator-select"
+            onChange={(e) => setForm(f => ({ ...f, creator_id: e.target.value }))}>
+            <option value="">{kreator.length === 0 ? 'Belum ada kreator di master KOL' : 'Tanpa kreator'}</option>
+            {form.creator_id && !kreator.some((c) => c.id === form.creator_id) && (
+              <option value={form.creator_id}>{namaKreator(form.creator_id)}</option>
+            )}
+            {kreator.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
         <Isian label="Judul / hook" wajib htmlFor="cc-title">
           <Input id="cc-title" value={form.title} placeholder="Contoh: 3 gaya hijab ke kantor"
             onChange={e => setForm(f => ({...f, title: e.target.value}))} />

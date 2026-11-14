@@ -519,6 +519,14 @@ async def _tolak_iklan_dobel(db, account_id, campaign_name, date_value, *,
         raise HTTPException(409, _uk.pesan_bentrok_iklan(hits, saat="Simpan"))
 
 
+async def _tolak_iklan_manual_dobel(db, account_id, doc: dict, *, kecuali_id=None) -> None:
+    """14 Nov 2026 — dua entri manual toko + hari + saluran iklan + kampanye sama = biaya dobel."""
+    from core import ukuran_penjualan as _uk
+    hit = await _uk.dobel_iklan_manual(db, account_id, doc, kecuali_id=kecuali_id)
+    if hit:
+        raise HTTPException(409, _uk.pesan_dobel_iklan_manual(hit, saat="Simpan"))
+
+
 @router.get("/campaigns/{entry_id}")
 async def get_ads_entry(entry_id: str, request: Request):
     await require_auth(request)
@@ -547,6 +555,7 @@ async def create_ads_entry(body: AdsEntryIn, request: Request):
     doc.pop("account_id", None)
     doc["date"] = _parse_ads_date(body.date)
     await _tolak_iklan_dobel(db, account["id"], body.campaign_name, doc["date"])
+    await _tolak_iklan_manual_dobel(db, account["id"], doc)
     doc["id"] = str(uuid.uuid4())
     doc["campaign_id"] = body.campaign_id or f"CMP-{uuid.uuid4().hex[:8].upper()}"
     _scope.stamp_account(doc, account)
@@ -581,6 +590,13 @@ async def update_ads_entry(entry_id: str, body: AdsEntryUpdate, request: Request
         await _tolak_iklan_dobel(db, existing.get("account_id"), merged.get("campaign_name"),
                                  merged.get("date"), kecuali_id=entry_id,
                                  jalur=_jalur_of(existing))
+    # Dobel manual hanya diperiksa bila kuncinya BERUBAH: mengubah angka baris yang sama (atau
+    # salah satu baris kembar lama) tetap boleh; memindahkan baris ke kunci baris lain ditolak.
+    if _jalur_of(existing) == "manual":
+        from core import ukuran_penjualan as _uk
+        if _uk.kunci_iklan_manual(merged) != _uk.kunci_iklan_manual(existing):
+            await _tolak_iklan_manual_dobel(db, existing.get("account_id"), merged,
+                                            kecuali_id=entry_id)
     _ads_derived(merged)
     for k in ("ctr", "cpc", "cpa", "roas", "cvr"):
         upd[k] = merged[k]
