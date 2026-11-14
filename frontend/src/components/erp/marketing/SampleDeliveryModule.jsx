@@ -1,15 +1,21 @@
 /**
  * Kirim sample (Portal Toko) — pengiriman sample ke kreator/KOL dan tindak lanjut hasilnya.
  *
- * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, 4 StatTile berketerangan (dulu 6 kartu),
- * tabel 10 kolom + unduh Excel/CSV semua baris (dulu CSV halaman ini saja; kolom SKU/HPP satuan/ongkir/kurir/resi
- * kini di popup detail & berkas unduhan), detail popup berisi form tindak lanjut, form = FormPopup + DatePicker.
- * Tampilan "Kartu" lama diganti tabel (di HP otomatis kartu ringkas). Video (F10) kini baris kedua kolom Tindak lanjut, "Umur" (F10) baris kedua kolom Tanggal ("55 hari lalu") — keduanya tetap terlihat, tabel muat tanpa geser.
- * Perbaikan ikut: penyaring "Semua …" dulu mengirim nilai spasi ke server.
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, penyaring satu baris, 4 StatTile berketerangan, tabel + unduh
+ * Excel/CSV semua baris, detail popup berisi form tindak lanjut, form = FormPopup + DatePicker.
+ *
+ * 14 Nov 2026 (keputusan owner, permintaan PIC toko):
+ *  • SATU kiriman = banyak produk + SATU ongkir (kreator live sering menerima sampai 6 sampel). Baris produk
+ *    ditambah/dihapus di formulir; tiap baris memilih item katalog toko yang sama, HPP ikut katalog (tidak diketik).
+ *    Kiriman lama (satu produk) tampil sebagai satu baris.
+ *  • Status kirim (Belum dikirim / Dikirim / Sampai) dan tindak lanjut = pilihan di baris tabel, boleh kembali ke
+ *    status sebelumnya (dulu tombol truk satu arah).
+ *  • Kolom Gudang: stok cukup → "Menunggu gudang" sampai gudang mencatat Keluarkan stok (alasan Sampel);
+ *    stok kurang → "Diproduksi · PO-…" (draf PO Sampel R&D otomatis). Server: `core.kirim_sampel`.
  */
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Pencil, Trash2, RefreshCw, CheckCircle2, Truck, Loader2, Video, Search, TrendingUp } from 'lucide-react';
+import { Plus, Pencil, Trash2, RefreshCw, Loader2, Video, Search, TrendingUp, X } from 'lucide-react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,10 +33,10 @@ import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
 import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 import { formatDateID, formatRupiahShort } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
-import { EmptyState, StatTile, StatusBadge } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { getPlatformConfig } from './AccountBadge';
 import {
-  MarketingAccountSelect, MarketingCreatorSelect, CatalogItemSelect,
+  MarketingAccountSelect, MarketingCreatorSelect, useCatalogItems, catalogItemLabel,
 } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -60,6 +66,11 @@ const PROGRESS_STATUS_CONFIG = {
   no_response: { label: 'Tidak ada respons', tone: 'muted' },
   closed: { label: 'Ditutup', tone: 'danger' },
 };
+// Status gudang per baris produk (server: core.kirim_sampel.hitung_baris)
+const GUDANG_TONE = {
+  menunggu_gudang: 'warning', keluar_sebagian: 'warning', sudah_keluar: 'success', diproduksi: 'info',
+  perlu_po_manual: 'danger',
+};
 const JENIS_SAMPLE = { live: 'Live streaming', video: 'Video ulasan' };
 const KURIR = { jnt: 'J&T', spx: 'SPX', sicepat: 'SiCepat' };
 const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
@@ -68,12 +79,23 @@ const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (ge
 const Lencana = ({ peta, nilai }) => (nilai
   ? <StatusBadge status={nilai} label={peta[nilai]?.label || nilai} tone={peta[nilai]?.tone} />
   : <span className="text-muted-foreground">—</span>);
+const LencanaGudang = ({ baris }) => (baris.status_gudang
+  ? <StatusBadge status={baris.status_gudang} label={baris.status_gudang_label} tone={GUDANG_TONE[baris.status_gudang] || 'muted'} />
+  : <span className="text-xs text-muted-foreground">{baris.status_gudang_label || '—'}</span>);
 
+let urutBaris = 0;
+const barisKosong = () => ({ key: `b${(urutBaris += 1)}`, catalog_item_id: '', size: '', color: '', quantity: 1 });
 const EMPTY_FORM = {
-  account_id: '', account_name: '',
-  date: '', username: '', sample_type: 'video', platform: 'tiktok', product: '',
-  size: 'M', color: '', quantity: 1, hpp: 0, ongkir: 0, courier: 'jnt', video_link: '', notes: ''
+  account_id: '', account_name: '', platform: 'tiktok', date: '', creator_id: '', sample_type: 'live',
+  courier: 'jnt', ongkir: 0, tracking_number: '', video_link: '', notes: '', lines: [],
 };
+const ringkasProduk = (x) => {
+  const ls = x.lines || [];
+  if (!ls.length) return x.product || '—';
+  return ls.length > 1 ? `${ls[0].product || ls[0].sku} + ${ls.length - 1} produk lain` : (ls[0].product || ls[0].sku || '—');
+};
+// Baris yang sudah keluar gudang / sudah dibuatkan draf PO sampel: produk & jumlahnya terkunci (server menolak).
+const barisTerkunci = (b) => Number(b.qty_keluar || 0) > 0 || !!b.po_number;
 
 export default function SampleDeliveryModule({ token }) {
   const { toast } = useToast();
@@ -88,8 +110,7 @@ export default function SampleDeliveryModule({ token }) {
   const [filterShipmentStatus, setFilterShipmentStatus] = useState('');
   const [filterProgress, setFilterProgress] = useState('');
   const [filterPlatform, setFilterPlatform] = useState('');
-  // F14 — filter per TOKO. Sebelum ini `marketing_samples` bahkan tidak punya
-  // `account_id`, jadi pertanyaan "berapa biaya sample toko X" tidak terjawab.
+  // F14 — filter per TOKO (biaya sample per toko).
   const [filterAccountId, setFilterAccountId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -98,15 +119,14 @@ export default function SampleDeliveryModule({ token }) {
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formLoading, setFormLoading] = useState(false);
-
-  // Opsi ukuran & warna mengikuti item katalog yang dipilih (bukan teks bebas).
-  const [sizeOptions, setSizeOptions] = useState([]);
-  const [colorOptions, setColorOptions] = useState([]);
+  const [galatForm, setGalatForm] = useState('');
+  // Katalog toko yang dipilih — dimuat SEKALI untuk semua baris produk.
+  const { items: katalog, loading: katalogMemuat } = useCatalogItems(token, form.account_id);
+  const itemById = useMemo(() => Object.fromEntries(katalog.map((i) => [i.id, i])), [katalog]);
 
   const [showDetail, setShowDetail] = useState(null);
   const [progressUpdate, setProgressUpdate] = useState({ progress: '', sales_update: '' });
   const [actionLoading, setActionLoading] = useState('');
-  const [galatForm, setGalatForm] = useState('');
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -154,29 +174,26 @@ export default function SampleDeliveryModule({ token }) {
       setForm({
         account_id: sample.account_id || '',
         account_name: sample.account_name || '',
+        platform: sample.platform || 'tiktok',
         date: sample.date,
-        username: sample.username,
-        sample_type: sample.sample_type,
-        platform: sample.platform,
-        product: sample.product,
-        size: sample.size,
-        color: sample.color,
-        quantity: sample.quantity,
-        hpp: sample.hpp,
-        ongkir: sample.ongkir,
-        courier: sample.courier,
+        creator_id: sample.creator_id || '',
+        sample_type: sample.sample_type || 'live',
+        courier: sample.courier || 'jnt',
+        ongkir: sample.ongkir || 0,
+        tracking_number: sample.tracking_number || '',
         video_link: sample.video_link || '',
-        notes: sample.notes || ''
+        notes: sample.notes || '',
+        lines: (sample.lines || []).map((b) => ({ ...b, key: b.id })),
       });
     } else {
       setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: todayWIB() });
+      setForm({ ...EMPTY_FORM, date: todayWIB(), lines: [barisKosong()] });
     }
     setGalatForm('');
     setShowForm(true);
   };
 
-  // When account_id changes, auto-fill account_name & platform from master
+  // Ganti toko: platform ikut master; baris produk dikosongkan (katalog toko lain tidak berlaku).
   const handleAccountChange = (accountId) => {
     const acc = accountById[accountId];
     setForm(f => ({
@@ -184,8 +201,23 @@ export default function SampleDeliveryModule({ token }) {
       account_id: accountId,
       account_name: acc?.account_name || acc?.name || '',
       platform: acc?.platform || f.platform,
+      creator_id: accountId === f.account_id ? f.creator_id : '',
+      lines: accountId === f.account_id ? f.lines : f.lines.filter(barisTerkunci).concat(f.lines.some(barisTerkunci) ? [] : [barisKosong()]),
     }));
   };
+
+  const ubahBaris = (key, patch) => setForm((f) => ({ ...f, lines: f.lines.map((b) => (b.key === key ? { ...b, ...patch } : b)) }));
+  const pilihProduk = (key, id) => {
+    const it = itemById[id];
+    ubahBaris(key, { catalog_item_id: id, sku: it?.sku || '', product: it?.name || '', hpp: Number(it?.hpp || 0),
+      size: (it?.sizes && it.sizes[0]) || '', color: (it?.colors && it.colors[0]) || '' });
+  };
+  const tambahBaris = () => setForm((f) => ({ ...f, lines: [...f.lines, barisKosong()] }));
+  const hapusBaris = (key) => setForm((f) => ({ ...f, lines: f.lines.filter((b) => b.key !== key) }));
+  const hppBaris = (b) => (b.catalog_item_id && itemById[b.catalog_item_id] ? Number(itemById[b.catalog_item_id].hpp || 0) : Number(b.hpp || 0));
+  const totalHpp = form.lines.reduce((a, b) => a + hppBaris(b) * (Number(b.quantity) || 0), 0);
+  const totalPcs = form.lines.reduce((a, b) => a + (Number(b.quantity) || 0), 0);
+  const adaIsian = form.lines.some((b) => b.catalog_item_id) || !!form.creator_id;
 
   const closeForm = () => {
     setShowForm(false);
@@ -193,12 +225,20 @@ export default function SampleDeliveryModule({ token }) {
     setForm(EMPTY_FORM);
   };
 
+  const ringkasHasil = (data) => {
+    const ls = data?.lines || [];
+    const n = (st) => ls.filter((b) => b.status_gudang === st).length;
+    const po = [...new Set(ls.map((b) => b.po_number).filter(Boolean))];
+    const bagian = [];
+    if (n('menunggu_gudang') + n('keluar_sebagian')) bagian.push(`${n('menunggu_gudang') + n('keluar_sebagian')} produk menunggu gudang`);
+    if (po.length) bagian.push(`${n('diproduksi')} produk dibuatkan draf PO sampel ${po.join(', ')}`);
+    if (n('perlu_po_manual')) bagian.push(`${n('perlu_po_manual')} produk perlu PO manual`);
+    return bagian.join(' · ');
+  };
+
   const handleSave = async () => {
     setGalatForm('');
     // F14/F15 — toko, kreator, dan produk katalog WAJIB dipilih dari master.
-    // Dulu `username`/`product`/`size`/`color`/`hpp` semuanya teks/angka ketikan:
-    // satu kreator bisa pecah jadi beberapa baris laporan hanya karena beda ejaan,
-    // dan HPP yang salah ketik langsung menjadi biaya sample yang salah.
     if (!form.account_id) {
       setGalatForm('Toko belum dipilih — sample harus menempel pada satu toko.');
       return;
@@ -207,19 +247,34 @@ export default function SampleDeliveryModule({ token }) {
       setGalatForm('Kreator belum dipilih — pilih kreator yang ditugaskan ke toko ini.');
       return;
     }
-    if (!form.catalog_item_id && !form.product) {
-      setGalatForm('Produk belum dipilih — pilih produk dari katalog toko.');
+    const lines = form.lines.filter((b) => b.catalog_item_id || b.product);
+    if (!lines.length) {
+      setGalatForm('Produk belum dipilih — pilih minimal satu produk dari katalog toko.');
       return;
     }
+    if (lines.some((b) => !(Number(b.quantity) >= 1))) {
+      setGalatForm('Jumlah setiap produk minimal 1 pcs.');
+      return;
+    }
+    const ids = lines.map((b) => b.catalog_item_id).filter(Boolean);
+    if (new Set(ids).size !== ids.length) {
+      setGalatForm('Ada produk yang dipilih dua kali — gabungkan jumlahnya.');
+      return;
+    }
+    const { account_name: _an, lines: _l, ...rest } = form;
+    const payload = {
+      ...rest,
+      ongkir: Number(form.ongkir) || 0,
+      lines: lines.map((b) => ({ id: b.id, catalog_item_id: b.catalog_item_id || undefined, size: b.size || '',
+        color: b.color || '', quantity: Number(b.quantity), product: b.catalog_item_id ? undefined : b.product,
+        sku: b.catalog_item_id ? undefined : b.sku, hpp: b.catalog_item_id ? undefined : b.hpp })),
+    };
     try {
       setFormLoading(true);
-      if (editTarget) {
-        await axios.put(`${API}/api/marketing/samples/${editTarget.id}`, form, { headers: authH });
-        toast({ title: 'Berhasil', description: 'Sample disimpan.' });
-      } else {
-        await axios.post(`${API}/api/marketing/samples`, form, { headers: authH });
-        toast({ title: 'Berhasil', description: 'Sample ditambahkan.' });
-      }
+      const res = editTarget
+        ? await axios.put(`${API}/api/marketing/samples/${editTarget.id}`, payload, { headers: authH })
+        : await axios.post(`${API}/api/marketing/samples`, payload, { headers: authH });
+      toast({ title: editTarget ? 'Kiriman sampel disimpan' : 'Kiriman sampel ditambahkan', description: ringkasHasil(res.data?.data) || undefined });
       closeForm();
       fetchSamples(currentPage);
       fetchSummary();
@@ -231,11 +286,11 @@ export default function SampleDeliveryModule({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!(await confirmDialog({ title: 'Hapus sample ini?', body: 'Catatan pengiriman sample dihapus dari daftar.', confirmLabel: 'Hapus', danger: true }))) return;
-    setShowDetail(null);
+    if (!(await confirmDialog({ title: 'Hapus kiriman sampel ini?', body: 'Catatan pengiriman sampel dihapus dari daftar.', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/marketing/samples/${id}`, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Sample dihapus.' });
+      setShowDetail(null);
+      toast({ title: 'Berhasil', description: 'Kiriman sampel dihapus.' });
       fetchSamples(currentPage);
       fetchSummary();
     } catch (e) {
@@ -243,29 +298,21 @@ export default function SampleDeliveryModule({ token }) {
     }
   };
 
-  const handleShip = async (id) => {
+  // Status kirim / tindak lanjut: pilihan bebas maju-mundur (PUT /status).
+  const ubahStatus = async (smp, patch) => {
     try {
-      setActionLoading(id);
-      await axios.post(`${API}/api/marketing/samples/${id}/ship`, {}, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Sample ditandai dikirim.' });
-      fetchSamples(currentPage);
+      setActionLoading(smp.id);
+      const res = await axios.put(`${API}/api/marketing/samples/${smp.id}/status`, patch, { headers: authH });
+      const baru = res.data?.data;
+      if (baru) {
+        setSamples((xs) => xs.map((x) => (x.id === baru.id ? baru : x)));
+        setShowDetail((d) => (d && d.id === baru.id ? baru : d));
+      }
       fetchSummary();
+      return true;
     } catch (e) {
       toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
-    } finally {
-      setActionLoading('');
-    }
-  };
-
-  const handleDeliver = async (id) => {
-    try {
-      setActionLoading(id);
-      await axios.post(`${API}/api/marketing/samples/${id}/deliver`, {}, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Sample ditandai sampai.' });
-      fetchSamples(currentPage);
-      fetchSummary();
-    } catch (e) {
-      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+      return false;
     } finally {
       setActionLoading('');
     }
@@ -276,27 +323,7 @@ export default function SampleDeliveryModule({ token }) {
       toast({ title: 'Pilih status tindak lanjut', variant: 'destructive' });
       return;
     }
-    try {
-      setActionLoading(showDetail.id);
-      await axios.post(`${API}/api/marketing/samples/${showDetail.id}/update-progress`, progressUpdate, { headers: authH });
-      toast({ title: 'Berhasil', description: 'Tindak lanjut disimpan.' });
-      setShowDetail(null);
-      setProgressUpdate({ progress: '', sales_update: '' });
-      fetchSamples(currentPage);
-      fetchSummary();
-    } catch (e) {
-      toast({ title: 'Gagal', description: e.response?.data?.detail || e.message, variant: 'destructive' });
-    } finally {
-      setActionLoading('');
-    }
-  };
-
-  const clearFilters = () => {
-    setFilterShipmentStatus('');
-    setFilterProgress('');
-    setFilterPlatform('');
-    setSearchQuery('');
-    setCurrentPage(1);
+    if (await ubahStatus(showDetail, progressUpdate)) toast({ title: 'Berhasil', description: 'Tindak lanjut disimpan.' });
   };
 
   const s = summary || {};
@@ -323,15 +350,19 @@ export default function SampleDeliveryModule({ token }) {
   };
   const bukaDetail = (smp) => { setShowDetail(smp); setProgressUpdate({ progress: smp.progress, sales_update: smp.sales_update }); };
 
-  const tombolKirim = (smp) => (smp.shipment_status === 'pending' ? (
-    <Button onClick={() => handleShip(smp.id)} disabled={actionLoading === smp.id} variant="outline" size="sm" title="Tandai dikirim">
-      {actionLoading === smp.id ? <Loader2 className="animate-spin" /> : <Truck />}Dikirim
-    </Button>
-  ) : smp.shipment_status === 'shipped' ? (
-    <Button onClick={() => handleDeliver(smp.id)} disabled={actionLoading === smp.id} variant="outline" size="sm" title="Tandai sampai">
-      {actionLoading === smp.id ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}Sampai
-    </Button>
-  ) : null);
+  // Pilihan status di baris tabel — klik tidak membuka detail baris. Fungsi (bukan komponen) supaya pilihan
+  // tidak dipasang ulang setiap layar digambar ulang.
+  const pilihStatus = (smp, field, peta, testId) => (
+    <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+      <SmartNativeSelect value={smp[field] || ''} searchable={false} className="h-8 w-full text-sm" wrapperClassName="w-40 max-w-full"
+        aria-label={field === 'shipment_status' ? 'Status kirim' : 'Tindak lanjut'} data-testid={`${testId}-${smp.id}`}
+        disabled={actionLoading === smp.id}
+        onChange={(e) => { if (e.target.value && e.target.value !== smp[field]) ubahStatus(smp, { [field]: e.target.value }); }}>
+        {!peta[smp[field]] && <option value={smp[field] || ''}>{smp[field] || 'Pilih'}</option>}
+        {Object.entries(peta).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+      </SmartNativeSelect>
+    </div>
+  );
 
   const kolom = [
     { kunci: 'tanggal', label: 'Tanggal', hp: 'keterangan', isi: (x) => (
@@ -341,28 +372,46 @@ export default function SampleDeliveryModule({ token }) {
       <span className="md:whitespace-nowrap"><span className="font-medium text-foreground">{x.username || '—'}</span>
         <span className="block text-xs text-muted-foreground">{x.account_name || '—'} · {JENIS_SAMPLE[x.sample_type] || x.sample_type_label || '—'}</span></span>) },
     { kunci: 'produk', label: 'Produk', isi: (x) => (
-      <p className="md:max-w-[13rem] md:truncate" title={x.product}>{x.product || '—'}
-        {(x.size || x.color) && <span className="text-xs text-muted-foreground"> · {[x.size, x.color].filter(Boolean).join(' ')}</span>}</p>) },
-    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (x) => <span className="tabular-nums">{x.quantity || 0}</span> },
-    { kunci: 'hpp', label: 'HPP (Rp)', rata: 'kanan', isi: (x) => <span className="tabular-nums font-medium">{(x.total_hpp || 0).toLocaleString('id-ID')}</span> },
-    { kunci: 'kirim', label: 'Status kirim', isi: (x) => <Lencana peta={SHIPMENT_STATUS_CONFIG} nilai={x.shipment_status} /> },
+      <p className="md:max-w-[14rem] md:truncate" title={(x.lines || []).map((b) => `${b.sku || b.product} ×${b.quantity}`).join(', ')}>{ringkasProduk(x)}
+        <span className="block text-xs text-muted-foreground">{x.total_qty || x.quantity || 0} pcs</span></p>) },
+    { kunci: 'hpp', label: 'HPP + ongkir (Rp)', rata: 'kanan', isi: (x) => (
+      <span className="tabular-nums font-medium">{(x.biaya_total || 0).toLocaleString('id-ID')}
+        <span className="block text-xs font-normal text-muted-foreground">ongkir {(x.ongkir || 0).toLocaleString('id-ID')}</span></span>) },
+    { kunci: 'gudang', label: 'Gudang', isi: (x) => (
+      <span className="text-xs md:max-w-[11rem] md:whitespace-normal">{x.ringkas_gudang || <span className="text-muted-foreground">—</span>}</span>) },
+    { kunci: 'kirim', label: 'Status kirim', isi: (x) => pilihStatus(x, 'shipment_status', SHIPMENT_STATUS_CONFIG, 'sample-ship-select') },
     { kunci: 'progres', label: 'Tindak lanjut · video', isi: (x) => (
-      <span className="flex flex-col items-start gap-1"><Lencana peta={PROGRESS_STATUS_CONFIG} nilai={x.progress} />
+      <span className="flex flex-col items-start gap-1">{pilihStatus(x, 'progress', PROGRESS_STATUS_CONFIG, 'sample-progress-row')}
         {x.video_link ? (
           <a href={x.video_link} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
             className="inline-flex items-center gap-1 text-xs text-primary hover:underline"><Video className="h-3.5 w-3.5" />Buka video</a>
         ) : <span className="text-xs text-[hsl(var(--warning-text))]">Video belum ada</span>}</span>) },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (x) => (
       <div className="flex justify-end gap-1">
-        {tombolKirim(x)}
-        <Button onClick={() => openForm(x)} variant="ghost" size="icon-sm" title="Ubah sample" aria-label="Ubah sample"><Pencil /></Button>
+        <Button onClick={(e) => { e.stopPropagation(); openForm(x); }} variant="ghost" size="icon-sm" title="Ubah kiriman" aria-label="Ubah kiriman"><Pencil /></Button>
       </div>) },
+  ];
+
+  const kolomBaris = [
+    { kunci: 'produk', label: 'Produk', hp: 'judul', isi: (b) => (
+      <span><span className="font-medium text-foreground">{b.product || '—'}</span>
+        <span className="block text-xs text-muted-foreground">{[b.sku, b.size, b.color].filter(Boolean).join(' · ') || '—'}</span></span>) },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (b) => <span className="tabular-nums">{b.quantity || 0}</span> },
+    { kunci: 'hpp', label: 'HPP (Rp)', rata: 'kanan', isi: (b) => (
+      <span className="tabular-nums">{(b.total_hpp || 0).toLocaleString('id-ID')}
+        <span className="block text-xs text-muted-foreground">{(b.hpp || 0).toLocaleString('id-ID')}/pcs</span></span>) },
+    { kunci: 'gudang', label: 'Gudang', isi: (b) => (
+      <span className="flex flex-col items-start gap-1"><LencanaGudang baris={b} />
+        {b.keterangan_gudang && <span className="text-xs text-muted-foreground">{b.keterangan_gudang}</span>}
+        {(b.barang_keluar || []).length > 0 && (
+          <span className="text-xs text-muted-foreground">{b.barang_keluar.map((k) => `${k.issue_number || 'Keluar'} · ${k.qty} pcs`).join(', ')}</span>
+        )}</span>) },
   ];
 
   return (
     <PageLayout testId="sample-delivery-module" title="Kirim sample"
       subtitle="Pengiriman sample ke kreator/KOL, biaya HPP + ongkir, dan hasil tindak lanjutnya."
-      actions={<Button onClick={() => openForm()} data-testid="sample-create"><Plus />Tambah sample</Button>}
+      actions={<Button onClick={() => openForm()} data-testid="sample-create"><Plus />Tambah kiriman</Button>}
       filters={<>
         <div className="relative w-full sm:w-44">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -391,21 +440,21 @@ export default function SampleDeliveryModule({ token }) {
       tools={<>
         <TombolUnduh namaBerkas="kirim-sample-kreator" namaLembar="Sample" baris={samples} ambilSemua={ambilSemua} testId="sample-export-csv"
           kolom={[
+            { label: 'Kode kiriman', nilai: (x) => x.sample_code || '' },
             { label: 'Tanggal', nilai: (x) => fmtDate(x.date || x.created_at) },
             { label: 'Toko', nilai: (x) => x.account_name || '' },
             { label: 'Platform', nilai: (x) => labelPlatform(x.platform) },
             { label: 'Kreator', nilai: (x) => x.username || '' },
             { label: 'Jenis', nilai: (x) => JENIS_SAMPLE[x.sample_type] || x.sample_type_label || '' },
-            { label: 'Produk', nilai: (x) => x.product || '' },
-            { label: 'SKU', nilai: (x) => x.sku || '' },
-            { label: 'Warna', nilai: (x) => x.color || '' },
-            { label: 'Ukuran', nilai: (x) => x.size || '' },
-            { label: 'Qty', nilai: (x) => Number(x.quantity) || 0 },
-            { label: 'HPP', nilai: (x) => Number(x.hpp) || 0 },
+            { label: 'Produk', nilai: (x) => (x.lines || []).map((b) => `${b.sku || b.product} ${[b.size, b.color].filter(Boolean).join(' ')} ×${b.quantity}`.trim()).join('; ') },
+            { label: 'Jumlah produk', nilai: (x) => (x.lines || []).length },
+            { label: 'Qty', nilai: (x) => Number(x.total_qty || x.quantity) || 0 },
             { label: 'Total HPP', nilai: (x) => Number(x.total_hpp) || 0 },
             { label: 'Ongkir', nilai: (x) => Number(x.ongkir) || 0 },
+            { label: 'HPP + ongkir', nilai: (x) => Number(x.biaya_total) || 0 },
             { label: 'Kurir', nilai: (x) => KURIR[x.courier] || x.courier || '' },
             { label: 'Resi', nilai: (x) => x.tracking_number || '' },
+            { label: 'Gudang', nilai: (x) => x.ringkas_gudang || '' },
             { label: 'Status kirim', nilai: (x) => SHIPMENT_STATUS_CONFIG[x.shipment_status]?.label || x.shipment_status || '' },
             { label: 'Tindak lanjut', nilai: (x) => PROGRESS_STATUS_CONFIG[x.progress]?.label || x.progress || '' },
             { label: 'Link video', nilai: (x) => x.video_link || '' },
@@ -417,17 +466,17 @@ export default function SampleDeliveryModule({ token }) {
       </>}
       summary={(s.total || 0) > 0 && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="sample-kpi">
-          <StatTile label="Total sample" value={s.total || 0}
+          <StatTile label="Total kiriman" value={s.total || 0}
             sub={`${s.pending || 0} belum dikirim · ${s.shipped || 0} dikirim · ${s.delivered || 0} sampai`}
             hint={filterAccountId ? 'Toko terpilih; tidak ikut penyaring lain.' : 'Semua toko; tidak ikut penyaring status.'} />
           <StatTile label="Belum dikirim" value={s.pending || 0} accent={(s.pending || 0) > 0 ? 'warning' : 'default'}
-            hint="Sample yang belum ditandai dikirim." />
+            hint="Kiriman berstatus Belum dikirim." />
           <StatTile label="Terjual" value={s.sold || 0} accent="success"
             sub={`${s.follow_up || 0} ditindaklanjuti · ${s.no_response || 0} tanpa respons`}
-            hint="Sample dengan tindak lanjut 'Terjual'." />
+            hint="Kiriman dengan tindak lanjut 'Terjual'." />
           <StatTile label="Biaya sample" value={formatRupiahShort(s.total_investment || 0)}
             sub={`HPP ${formatRupiahShort(s.total_hpp || 0)} + ongkir ${formatRupiahShort(s.total_ongkir || 0)}`}
-            hint={`${rp(s.total_investment)} — jumlah total HPP + ongkir semua sample.`} />
+            hint={`${rp(s.total_investment)} — jumlah HPP semua produk + ongkir semua kiriman.`} />
         </div>
       )}
       footer={pagination && pagination.total_pages > 1 && (
@@ -435,46 +484,27 @@ export default function SampleDeliveryModule({ token }) {
           onPageChange={setCurrentPage} />
       )}>
       {loading && samples.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">Memuat sample…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat kiriman sampel…</p>
       ) : (
         <TabelData kolom={kolom} baris={samples} onKlikBaris={bukaDetail} testId="sample-table"
-          kosong={<EmptyState title={adaSaring ? 'Tidak ada sample yang cocok' : 'Belum ada sample'}
-            description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Catat sample yang dikirim ke kreator dengan tombol Tambah sample.'}
-            action={!adaSaring && <Button onClick={() => openForm()}><Plus />Tambah sample</Button>} />} />
+          kosong={<EmptyState title={adaSaring ? 'Tidak ada kiriman yang cocok' : 'Belum ada kiriman sampel'}
+            description={adaSaring ? 'Ubah saringan atau kata pencarian.' : 'Catat sampel yang dikirim ke kreator dengan tombol Tambah kiriman.'}
+            action={!adaSaring && <Button onClick={() => openForm()}><Plus />Tambah kiriman</Button>} />} />
       )}
 
-      {/* Form sample (popup) */}
+      {/* Form kiriman (popup) — banyak produk, satu ongkir */}
       <FormPopup open={showForm} onClose={closeForm} ukuran="panjang" onSimpan={handleSave} menyimpan={formLoading}
-        judul={editTarget ? 'Ubah sample' : 'Tambah sample'} galat={galatForm} testId="sample-form">
+        judul={editTarget ? `Ubah kiriman ${editTarget.sample_code || ''}`.trim() : 'Tambah kiriman sampel'} galat={galatForm}
+        adaIsian={adaIsian} testId="sample-form"
+        keterangan="Satu kiriman boleh berisi beberapa produk dengan satu ongkir.">
         <div className="grid gap-4 sm:grid-cols-2">
-        <Isian label="Akun / toko marketplace" wajib htmlFor="sample-account"
-          petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : 'Toko asal sample.'}>
-          <SmartNativeSelect id="sample-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
-            data-testid="sample-account-select">
-            <option value="">{masterAccounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
-            {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
-          </SmartNativeSelect>
-        </Isian>
-        {/* F15 — produk dari KATALOG toko; SKU, HPP, ukuran & warna ikut master. */}
-        <Isian label="Produk" wajib>
-          <CatalogItemSelect
-            token={token} accountId={form.account_id} label=""
-            value={form.catalog_item_id || ''}
-            onChange={(item) => { setSizeOptions(item?.sizes || []); setColorOptions(item?.colors || []); setForm({
-              ...form,
-              catalog_item_id: item?.id || '',
-              product: item?.name || '',
-              sku: item?.sku || '',
-              hpp: item?.hpp || 0,
-              size: (item?.sizes && item.sizes[0]) || form.size,
-              color: (item?.colors && item.colors[0]) || form.color,
-            }); }}
-            testId="sample-item-select" />
-        </Isian>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Isian label="Tanggal">
-            <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="sample-date" />
+          <Isian label="Akun / toko marketplace" wajib htmlFor="sample-account"
+            petunjuk={form.account_id ? `Platform: ${labelPlatform(form.platform)} (otomatis dari akun)` : 'Toko asal sampel.'}>
+            <SmartNativeSelect id="sample-account" value={form.account_id || ''} onChange={(e) => handleAccountChange(e.target.value)}
+              data-testid="sample-account-select">
+              <option value="">{masterAccounts.length === 0 ? 'Belum ada akun aktif' : 'Pilih akun'}</option>
+              {masterAccounts.map(acc => <option key={acc.id} value={acc.id}>{`${acc.account_name} · ${labelPlatform(acc.platform)}`}</option>)}
+            </SmartNativeSelect>
           </Isian>
           {/* F15 — kreator dipilih dari master yang DI-ASSIGN ke toko ini; `username` diisi server. */}
           <Isian label="Kreator / KOL" wajib>
@@ -483,15 +513,12 @@ export default function SampleDeliveryModule({ token }) {
           </Isian>
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
+          <Isian label="Tanggal kirim">
+            <DatePicker value={form.date || ''} onChange={(v) => setForm({ ...form, date: v })} testId="sample-date" />
+          </Isian>
           <Isian label="Jenis" htmlFor="sample-type">
             <SmartNativeSelect id="sample-type" value={form.sample_type} searchable={false} onChange={(e) => setForm({ ...form, sample_type: e.target.value })}>
               {Object.entries(JENIS_SAMPLE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Platform" htmlFor="sample-platform">
-            <SmartNativeSelect id="sample-platform" value={form.platform} searchable={false} onChange={(e) => setForm({ ...form, platform: e.target.value })}>
-              <option value="tiktok">TikTok</option>
-              <option value="instagram">Instagram</option>
             </SmartNativeSelect>
           </Isian>
           <Isian label="Kurir" htmlFor="sample-courier">
@@ -500,30 +527,82 @@ export default function SampleDeliveryModule({ token }) {
             </SmartNativeSelect>
           </Isian>
         </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Isian label="Ukuran" htmlFor="sample-size">
-            <SmartNativeSelect id="sample-size" value={form.size || ''} onChange={(e) => setForm({ ...form, size: e.target.value })}
-              data-testid="sample-size-select">
-              {(sizeOptions.length ? sizeOptions : ['All Size']).map(sz => <option key={sz} value={sz}>{sz === 'All Size' ? 'Semua ukuran' : sz}</option>)}
-            </SmartNativeSelect>
+
+        {/* Produk — satu baris per item katalog; HPP dari katalog (tidak diketik) */}
+        <Isian label="Produk" wajib
+          petunjuk={form.account_id ? 'HPP ikut katalog — ubah di Manajemen Katalog bila salah.' : 'Pilih toko dulu.'}>
+          <div className="space-y-3" data-testid="sample-lines">
+            {form.lines.map((b, idx) => {
+              const it = itemById[b.catalog_item_id];
+              const kunci = barisTerkunci(b);
+              const hpp = hppBaris(b);
+              return (
+                <div key={b.key} className="space-y-1.5" data-testid={`sample-line-${idx}`}>
+                  <div className="grid grid-cols-[1fr_5.5rem_auto] items-start gap-2">
+                    {b.catalog_item_id || !b.product ? (
+                      <SmartNativeSelect value={b.catalog_item_id || ''} searchable={true} disabled={!form.account_id || kunci}
+                        onChange={(e) => pilihProduk(b.key, e.target.value)} aria-label={`Produk ${idx + 1}`}
+                        data-testid={`sample-line-item-${idx}`}>
+                        <option value="">{!form.account_id ? 'Pilih toko dulu' : katalogMemuat ? 'Memuat katalog…' : 'Pilih produk'}</option>
+                        {b.catalog_item_id && !it && <option value={b.catalog_item_id}>{[b.sku, b.product].filter(Boolean).join(' · ')}</option>}
+                        {katalog.map((i) => <option key={i.id} value={i.id}>{catalogItemLabel(i)}</option>)}
+                      </SmartNativeSelect>
+                    ) : (
+                      <p className="flex h-9 items-center text-sm">{b.product}<span className="ml-1 text-xs text-muted-foreground">(tanpa katalog)</span></p>
+                    )}
+                    <Input type="number" min="1" inputMode="numeric" value={b.quantity} disabled={kunci} aria-label={`Jumlah produk ${idx + 1}`}
+                      className="text-right" data-testid={`sample-line-qty-${idx}`}
+                      onChange={(e) => ubahBaris(b.key, { quantity: e.target.value === '' ? '' : parseInt(e.target.value, 10) })} />
+                    <Button type="button" variant="outline" size="icon" onClick={() => hapusBaris(b.key)}
+                      disabled={kunci || form.lines.length <= 1} aria-label={`Hapus produk ${idx + 1}`} title="Hapus produk"
+                      data-testid={`sample-line-remove-${idx}`}><X /></Button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    {(it?.sizes || []).length > 1 ? (
+                      <SmartNativeSelect value={b.size || ''} searchable={false} className="h-8 text-xs" wrapperClassName="w-32"
+                        aria-label="Ukuran" disabled={kunci} onChange={(e) => ubahBaris(b.key, { size: e.target.value })}>
+                        {it.sizes.map((sz) => <option key={sz} value={sz}>{sz}</option>)}
+                      </SmartNativeSelect>
+                    ) : null}
+                    {(it?.colors || []).length > 1 ? (
+                      <SmartNativeSelect value={b.color || ''} searchable={false} className="h-8 text-xs" wrapperClassName="w-32"
+                        aria-label="Warna" disabled={kunci} onChange={(e) => ubahBaris(b.key, { color: e.target.value })}>
+                        {it.colors.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </SmartNativeSelect>
+                    ) : null}
+                    {(b.catalog_item_id || b.product) && (
+                      <span className="tabular-nums" data-testid={`sample-line-hpp-${idx}`}>
+                        {[b.size, b.color].filter(Boolean).join(' · ')}{(b.size || b.color) ? ' · ' : ''}HPP {rp(hpp)}/pcs · {rp(hpp * (Number(b.quantity) || 0))}
+                      </span>
+                    )}
+                    {b.status_gudang_label && <LencanaGudang baris={b} />}
+                  </div>
+                  {kunci && (
+                    <p className="text-xs text-muted-foreground">Sudah keluar gudang atau sudah ber-PO sampel — produk dan jumlahnya tidak bisa diubah.</p>
+                  )}
+                </div>
+              );
+            })}
+            <Button type="button" variant="outline" size="sm" onClick={tambahBaris} disabled={!form.account_id || form.lines.length >= 20}
+              data-testid="sample-line-add"><Plus />Tambah produk</Button>
+          </div>
+        </Isian>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Ongkir (satu kiriman)">
+            <MoneyInput value={form.ongkir} onChange={e => setForm({ ...form, ongkir: parseFloat(e.target.value) || 0 })} data-testid="sample-ongkir" />
           </Isian>
-          <Isian label="Warna" htmlFor="sample-color">
-            <SmartNativeSelect id="sample-color" value={form.color || ''} onChange={(e) => setForm({ ...form, color: e.target.value })}
-              data-testid="sample-color-select">
-              {(colorOptions.length ? colorOptions : ['-']).map(c => <option key={c} value={c}>{c}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Qty" htmlFor="sample-qty">
-            <Input id="sample-qty" type="number" value={form.quantity} onChange={e => setForm({ ...form, quantity: parseInt(e.target.value) })} />
-          </Isian>
-          <Isian label="HPP per pcs" petunjuk={form.catalog_item_id ? 'Dari katalog — ubah di Manajemen Katalog bila salah.' : undefined}>
-            <MoneyInput value={form.hpp} disabled={!!form.catalog_item_id}
-              onChange={e => setForm({ ...form, hpp: parseFloat(e.target.value) })} data-testid="sample-hpp" />
-          </Isian>
-          <Isian label="Ongkir">
-            <MoneyInput value={form.ongkir} onChange={e => setForm({ ...form, ongkir: parseFloat(e.target.value) })} />
+          <Isian label="No. resi" htmlFor="sample-resi" petunjuk="Opsional">
+            <Input id="sample-resi" value={form.tracking_number} onChange={e => setForm({ ...form, tracking_number: e.target.value })} />
           </Isian>
         </div>
+        <p className="text-sm tabular-nums" data-testid="sample-form-total">
+          {form.lines.filter((b) => b.catalog_item_id || b.product).length} produk · {totalPcs} pcs · HPP {rp(totalHpp)} + ongkir {rp(form.ongkir)} = <span className="font-medium">{rp(totalHpp + (Number(form.ongkir) || 0))}</span>
+        </p>
+        <Notice tone="info" testId="sample-form-stok-note">
+          Stok tiap produk diperiksa saat disimpan: stok cukup → menunggu gudang mengeluarkan (Keluarkan stok, alasan Sampel);
+          stok kurang → draf PO produksi berlabel Sampel R&D dibuat otomatis.
+        </Notice>
         <Isian label="Tautan video" htmlFor="sample-video">
           <Input id="sample-video" value={form.video_link} onChange={e => setForm({ ...form, video_link: e.target.value })} placeholder="https://vt.tiktok.com/..." />
         </Isian>
@@ -535,21 +614,20 @@ export default function SampleDeliveryModule({ token }) {
       {/* Detail + tindak lanjut (popup) */}
       {showDetail && (
         <DetailPopup open onClose={() => setShowDetail(null)} testId="sample-detail"
-          judul={`Sample untuk ${showDetail.username || 'kreator'}`}
+          judul={`Kiriman ${showDetail.sample_code || ''} untuk ${showDetail.username || 'kreator'}`}
           status={<><Lencana peta={SHIPMENT_STATUS_CONFIG} nilai={showDetail.shipment_status} />
             <Lencana peta={PROGRESS_STATUS_CONFIG} nilai={showDetail.progress} /></>}
           keterangan={`${showDetail.account_name || '—'} · ${labelPlatform(showDetail.platform)} · ${fmtDate(showDetail.date || showDetail.created_at)}`}
           aksi={<>
-            {tombolKirim(showDetail)}
+            {pilihStatus(showDetail, 'shipment_status', SHIPMENT_STATUS_CONFIG, 'sample-detail-ship')}
             <Button size="sm" variant="outline" onClick={() => { const r = showDetail; setShowDetail(null); openForm(r); }}><Pencil />Ubah</Button>
             <Button size="sm" variant="destructive" onClick={() => handleDelete(showDetail.id)}><Trash2 />Hapus</Button>
           </>}>
+          <TabelData kolom={kolomBaris} baris={showDetail.lines || []} testId="sample-detail-lines"
+            kosong={<EmptyState title="Belum ada produk" />} />
           <dl className="divide-y divide-[var(--glass-border)]">
-            <BarisDetail label="Produk">{showDetail.product || '—'}{(showDetail.size || showDetail.color) ? ` · ${[showDetail.size, showDetail.color].filter(Boolean).join(' ')}` : ''}</BarisDetail>
-            <BarisDetail label="SKU">{showDetail.sku || '—'}</BarisDetail>
             <BarisDetail label="Jenis">{JENIS_SAMPLE[showDetail.sample_type] || showDetail.sample_type_label || '—'}</BarisDetail>
-            <BarisDetail label="Qty × HPP">{showDetail.quantity || 0} × {rp(showDetail.hpp)} = <span className="font-medium">{rp(showDetail.total_hpp)}</span></BarisDetail>
-            <BarisDetail label="Ongkir">{rp(showDetail.ongkir)}</BarisDetail>
+            <BarisDetail label="Biaya">{rp(showDetail.total_hpp)} HPP + {rp(showDetail.ongkir)} ongkir = <span className="font-medium">{rp(showDetail.biaya_total)}</span></BarisDetail>
             <BarisDetail label="Kurir · resi">{KURIR[showDetail.courier] || showDetail.courier || '—'} · {showDetail.tracking_number || 'belum ada resi'}</BarisDetail>
             <BarisDetail label="Video">{showDetail.video_link
               ? <a href={showDetail.video_link} target="_blank" rel="noopener noreferrer" className="break-all text-primary hover:underline">{showDetail.video_link}</a>

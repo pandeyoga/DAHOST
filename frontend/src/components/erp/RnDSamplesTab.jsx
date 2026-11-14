@@ -11,6 +11,11 @@
  * tampil); barang yang belum ada di master tetap bisa diketik lewat pilihan "Belum ada di master" dan ditandai
  * "Belum tertaut". Status sample tidak berubah karena aksesoris — kolom status diberi keterangan
  * "Aksesoris menunggu / disiapkan / terkirim / ditolak" (`accessory_status` dari server).
+ *
+ * 2026-11-14 (keputusan owner): style yang sudah dijadikan model boleh memilih varian/ukuran sample. Saat disetujui
+ * dan variannya diketahui, server membuat draf PO produksi "Sampel R&D" (kain & aksesoris lewat alur produksi biasa).
+ * Style belum ber-model → catatan "Style belum dijadikan model — PO sampel dibuat setelah model ada" dan aksi
+ * "Buat draf PO sampel" setelah modelnya ada (POST /sample-requests/{id}/po-sampel, aman diulang).
  */
 import { useState, useEffect, useMemo } from 'react';
 import {
@@ -59,9 +64,12 @@ const statusOf = (s) => STATUS_CONF[s] || STATUS_CONF.draft;
 const prioOf = (p) => PRIORITY[p] || PRIORITY.normal;
 
 const emptyForm = {
-  style_id: '', quantity: 1, priority: 'normal', sample_pic: '', sample_pic_employee_id: '',
+  style_id: '', rahaza_variant_id: '', quantity: 1, priority: 'normal', sample_pic: '', sample_pic_employee_id: '',
   sample_pic_external: false, due_date: '', notes: '',
 };
+const labelVarian = (v) => [v.sku, v.color_name, v.size_code].filter(Boolean).join(' · ');
+// Keterangan PO sampel di daftar & rincian (server: po_number, atau po_sampel_catatan untuk request disetujui).
+const teksPoSampel = (s) => (s.po_number ? `PO sampel ${s.po_number}` : (s.status === 'approved' ? (s.po_sampel_catatan || '') : ''));
 const BARIS_AKS = () => ({ material_id: '', material_code: '', material_name: '', qty: 1, unit: 'pcs', notes: '', manual: false });
 // Pilihan cadangan: barang belum ada di master → diketik, ditautkan tim aksesoris saat diserahkan.
 const AKS_MANUAL = '__manual__';
@@ -101,6 +109,9 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   // Popup setujui (catatan opsional). Tolak memakai confirmDialog dengan alasan wajib.
   const [actionModal, setActionModal] = useState(null); // { id, type: 'approve', notes: '' }
   const [detail, setDetail] = useState(null);
+  // 14 Nov 2026: varian/ukuran style terpilih (form request) + popup "Buat draf PO sampel"
+  const [pilihanVarian, setPilihanVarian] = useState(null);   // { model_id, variants, catatan }
+  const [poModal, setPoModal] = useState(null);               // { sample, variant_id, pilihan, saving }
 
   // Session 27 — Accessory Request Modal (GAP-R3)
   const [accReqModal, setAccReqModal] = useState(null); // { sample: {...}, items: [...], urgent, needed_by_date, notes }
@@ -152,6 +163,41 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   useEffect(() => { fetchSamples(); }, [filterStatus]);
   useEffect(() => { fetchStyles(); }, []);
 
+  const muatVarian = async (styleId) => {
+    if (!styleId) return null;
+    try {
+      return await apiFetch(`/dewi/rnd/sample-requests/pilihan-varian?style_id=${encodeURIComponent(styleId)}`);
+    } catch { return null; }
+  };
+  useEffect(() => {
+    let hidup = true;
+    setPilihanVarian(null);
+    if (showForm && form.style_id) muatVarian(form.style_id).then((d) => { if (hidup) setPilihanVarian(d); });
+    return () => { hidup = false; };
+  }, [showForm, form.style_id]);
+
+  const bukaPoModal = async (s) => {
+    setDetail(null);
+    setPoModal({ sample: s, variant_id: s.rahaza_variant_id || '', pilihan: null, saving: false });
+    const d = await muatVarian(s.style_id);
+    setPoModal((m) => (m && m.sample.id === s.id ? { ...m, pilihan: d } : m));
+  };
+  const simpanPo = async () => {
+    if (!poModal?.variant_id) return toast.error('Pilih varian/ukuran sample');
+    setPoModal((m) => ({ ...m, saving: true }));
+    try {
+      const res = await apiFetch(`/dewi/rnd/sample-requests/${poModal.sample.id}/po-sampel`, {
+        method: 'POST', body: { rahaza_variant_id: poModal.variant_id },
+      });
+      toast.success(`Draf PO sampel ${res.po_number || ''} dibuat`.replace('  ', ' '));
+      setPoModal(null);
+      fetchSamples();
+    } catch (e) {
+      if (e instanceof ApiError && !e.isUnauthorized) toast.error(e?.body?.detail || 'Gagal membuat draf PO sampel');
+      setPoModal((m) => (m ? { ...m, saving: false } : m));
+    }
+  };
+
   const handleCreate = async () => {
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
     if (!(Number(form.quantity) > 0)) return toast.error('Jumlah sample minimal 1 pcs');
@@ -181,10 +227,15 @@ export default function RnDSamplesTab({ token, onNavigate }) {
 
   const kirimKeputusan = async (id, type, notes) => {
     try {
-      await apiFetch(`/dewi/rnd/sample-requests/${id}/${type}`, {
+      const res = await apiFetch(`/dewi/rnd/sample-requests/${id}/${type}`, {
         method: 'POST', body: { notes },
       });
-      toast.success(type === 'approve' ? 'Sample disetujui' : 'Sample ditolak');
+      if (type === 'approve') {
+        const ket = teksPoSampel(res || {});
+        toast.success(`Sample disetujui${ket ? ` · ${ket}` : ''}`);
+      } else {
+        toast.success('Sample ditolak');
+      }
       setActionModal(null);
       setDetail(null);
       fetchSamples();
@@ -376,6 +427,11 @@ export default function RnDSamplesTab({ token, onNavigate }) {
                 <Package className="mr-2 h-4 w-4" />Request aksesoris
               </DropdownMenuItem>
             )}
+            {s.status === 'approved' && !s.po_number && s.po_sampel_bisa_buat && (
+              <DropdownMenuItem onSelect={() => bukaPoModal(s)} data-testid={`po-sampel-${s.id}`}>
+                <Factory className="mr-2 h-4 w-4" />Buat draf PO sampel
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => hapus(s)} className="text-[hsl(var(--danger-text))]"
               data-testid={`delete-sample-${s.id}`}>
@@ -392,7 +448,7 @@ export default function RnDSamplesTab({ token, onNavigate }) {
     { kunci: 'style', label: 'Style', hp: 'keterangan', isi: (s) => (
       <div className="min-w-0">
         <p className="truncate font-medium text-foreground md:max-w-[16rem]">{s.style_name}</p>
-        <p className="text-xs text-muted-foreground">{s.style_code}</p>
+        <p className="text-xs text-muted-foreground">{[s.style_code, s.variant_label].filter(Boolean).join(' · ')}</p>
       </div>) },
     { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.quantity} pcs</span> },
     { kunci: 'pic', label: 'PIC / pembuat', isi: (s) => (
@@ -408,6 +464,11 @@ export default function RnDSamplesTab({ token, onNavigate }) {
         {aksesorisTeks(s.accessory_status) && (
           <span className="text-xs text-muted-foreground" data-testid={`sample-acc-status-${s.id}`}>
             {aksesorisTeks(s.accessory_status)}
+          </span>
+        )}
+        {teksPoSampel(s) && (
+          <span className="max-w-[14rem] whitespace-normal text-xs text-muted-foreground" data-testid={`sample-po-${s.id}`}>
+            {teksPoSampel(s)}
           </span>
         )}
       </div>) },
@@ -465,6 +526,8 @@ export default function RnDSamplesTab({ token, onNavigate }) {
             { label: 'Target selesai', nilai: (s) => (s.due_date ? formatDateID(s.due_date) : '') },
             { label: 'Status', nilai: (s) => statusOf(s.status).label },
             { label: 'Aksesoris', nilai: (s) => aksesorisTeks(s.accessory_status).replace(/^Aksesoris /, '') },
+            { label: 'Varian', nilai: (s) => [s.variant_sku, s.variant_label].filter(Boolean).join(' · ') },
+            { label: 'PO sampel', nilai: (s) => teksPoSampel(s) },
             { label: 'Catatan', nilai: (s) => s.notes || '' },
           ]} />
         <Button variant="outline" size="icon" onClick={fetchSamples} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
@@ -496,6 +559,16 @@ export default function RnDSamplesTab({ token, onNavigate }) {
           aksi={<AksiBaris s={detail} />}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Jumlah">{detail.quantity} pcs</BarisDetail>
+            <BarisDetail label="Varian">{detail.variant_sku ? [detail.variant_sku, detail.variant_label].filter(Boolean).join(' · ') : 'Belum dipilih'}</BarisDetail>
+            {(detail.po_number || detail.status === 'approved') && (
+              <BarisDetail label="PO sampel">
+                <span data-testid="sample-detail-po">{teksPoSampel(detail) || '—'}</span>
+                {detail.status === 'approved' && !detail.po_number && detail.po_sampel_bisa_buat && (
+                  <Button size="sm" variant="link" className="ml-2 px-0" onClick={() => bukaPoModal(detail)}
+                    data-testid="sample-detail-po-btn">Buat draf PO sampel</Button>
+                )}
+              </BarisDetail>
+            )}
             <BarisDetail label="Prioritas">{prioOf(detail.priority).label}</BarisDetail>
             <BarisDetail label="PIC / pembuat">
               {detail.sample_pic || 'Belum ditentukan'}{detail.sample_pic && detail.sample_pic_external ? ' (penjahit luar)' : ''}
@@ -527,12 +600,29 @@ export default function RnDSamplesTab({ token, onNavigate }) {
         keterangan="Sample dibuat dari style yang sudah ada di Style & Desain." ukuran="pendek"
         onSimpan={handleCreate} labelSimpan="Buat request" menyimpan={saving} testId="sample-form">
         <Isian label="Style" wajib htmlFor="sample-style">
-          <SmartNativeSelect id="sample-style" value={form.style_id} onChange={e => f('style_id', e.target.value)}
+          <SmartNativeSelect id="sample-style" value={form.style_id}
+            onChange={e => setForm(p => ({ ...p, style_id: e.target.value, rahaza_variant_id: '' }))}
             data-testid="sample-style-select">
             <option value="">Pilih style</option>
             {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
           </SmartNativeSelect>
         </Isian>
+        {form.style_id && (
+          (pilihanVarian?.variants || []).length > 0 ? (
+            <Isian label="Varian / ukuran" htmlFor="sample-variant"
+              petunjuk="Opsional. Bila dipilih, draf PO produksi Sampel R&D dibuat otomatis saat sample disetujui.">
+              <SmartNativeSelect id="sample-variant" value={form.rahaza_variant_id} onChange={e => f('rahaza_variant_id', e.target.value)}
+                data-testid="sample-variant-select">
+                <option value="">Belum dipilih</option>
+                {pilihanVarian.variants.map((v) => <option key={v.id} value={v.id}>{labelVarian(v)}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+          ) : (
+            <p className="text-xs text-muted-foreground" data-testid="sample-variant-note">
+              {pilihanVarian ? (pilihanVarian.catatan || 'Model ini belum punya varian aktif.') : 'Memuat varian…'}
+            </p>
+          )
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <Isian label="Jumlah (pcs)" wajib htmlFor="sample-qty">
             <Input id="sample-qty" type="number" min="1" inputMode="numeric" value={form.quantity}
@@ -581,6 +671,24 @@ export default function RnDSamplesTab({ token, onNavigate }) {
             onChange={e => setActionModal(a => ({ ...a, notes: e.target.value }))}
             placeholder="Catatan opsional" data-testid="action-notes-input" />
         </Isian>
+      </FormPopup>
+
+      {/* Buat draf PO sampel (request disetujui; style sudah dijadikan model) */}
+      <FormPopup open={!!poModal} onClose={() => setPoModal(null)} ukuran="pendek"
+        judul={`Buat draf PO sampel — ${poModal?.sample?.sample_code || ''}`}
+        keterangan={poModal ? `${poModal.sample.style_code} — ${poModal.sample.style_name} · ${poModal.sample.quantity} pcs. PO berlabel Sampel R&D, status draf.` : ''}
+        onSimpan={simpanPo} labelSimpan="Buat draf PO" menyimpan={!!poModal?.saving} bisaSimpan={!!poModal?.variant_id}
+        testId="sample-po-form">
+        {poModal && (
+          <Isian label="Varian / ukuran" wajib htmlFor="sample-po-variant"
+            petunjuk={poModal.pilihan && !(poModal.pilihan.variants || []).length ? (poModal.pilihan.catatan || 'Model ini belum punya varian aktif.') : undefined}>
+            <SmartNativeSelect id="sample-po-variant" value={poModal.variant_id}
+              onChange={e => setPoModal((m) => ({ ...m, variant_id: e.target.value }))} data-testid="sample-po-variant">
+              <option value="">{poModal.pilihan ? 'Pilih varian' : 'Memuat varian…'}</option>
+              {(poModal.pilihan?.variants || []).map((v) => <option key={v.id} value={v.id}>{labelVarian(v)}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        )}
       </FormPopup>
 
       {/* ── Session 27 — GAP-R3 Request aksesoris ──────────────────── */}

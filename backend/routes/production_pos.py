@@ -162,6 +162,9 @@ def po_list_query(sp) -> dict:
         query['business_type'] = 'internal'
     elif business_type == 'maklon':
         query['business_type'] = {'$ne': 'internal'}
+    # 14 Nov 2026: saringan "Hanya sampel R&D" (draf PO otomatis dari kiriman/permintaan sampel, `core.po_sampel`)
+    if sp.get('label') == 'sampel_rnd':
+        query['label'] = 'sampel_rnd'
     return query
 
 
@@ -364,7 +367,8 @@ def assert_maklon_buyer(body: dict) -> None:
 
 
 async def create_po_internal(db, body: dict, user: dict, *,
-                             number_issued: bool = False, opening: bool = False) -> dict:
+                             number_issued: bool = False, opening: bool = False,
+                             tanda: dict | None = None) -> dict:
     """FASE 3 — SATU jalur pembuatan PO produksi (internal & maklon).
 
     Diekstrak dari handler `POST /api/production-pos` supaya Portal MAKLON bisa
@@ -382,6 +386,10 @@ async def create_po_internal(db, body: dict, user: dict, *,
     `dewi_maklon_pos.po_number`. Menerbitkan ulang di sini berarti satu dokumen
     punya dua penomoran; memvalidasinya dengan pola milik jenis dokumen LAIN akan
     menolak nomor yang justru dibuat sistem sendiri.
+
+    `tanda` (14 Nov 2026, PO "Sampel R&D"): field tambahan yang ikut tersimpan SAAT insert, mis.
+    ``{'label': 'sampel_rnd', 'sumber': {...}}`` dari `core.po_sampel`. Sengaja argumen kode, bukan isi body
+    HTTP — label sampel tidak bisa dipasang lewat formulir Buat PO.
     """
     # FASE G (2026-08-16) — nomor PO lewat SATU kebijakan (auto/manual).
     # Dulu barisnya `if not body.get('po_number'): raise ...` lalu nomor apa pun
@@ -460,6 +468,8 @@ async def create_po_internal(db, body: dict, user: dict, *,
     if opening:
         # kunci impor saldo awal ikut tersimpan SAAT insert (indeks unik `opening_import.key`)
         po['opening_import'] = dict(body.get('opening_import') or {})
+    if tanda:
+        po.update({k: v for k, v in tanda.items() if k not in po})
     await db.production_pos.insert_one(po)
     inserted_items = []
     for idx, item in enumerate(items_data):

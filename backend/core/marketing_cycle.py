@@ -79,7 +79,10 @@ CATEGORIES: Tuple[str, ...] = ('ads', 'kol', 'komisi', 'livehost', 'sample', 'di
 
 # Kategori yang realisasinya DIHITUNG SISTEM (bukan diketik). Layar menandainya
 # `auto` supaya staf tidak mencatat ulang hal yang sama secara manual.
-AUTO_CATEGORIES: Tuple[str, ...] = ('diskon', 'ads', 'komisi', 'kol', 'livehost')
+# 14 Nov 2026 (owner): `sample` ikut otomatis = Σ (HPP + ongkir) Kirim Sample toko itu pada periodenya
+# (`_auto_sample`). Catatan manual kategori sampel tetap DITAMBAHKAN (baris terpisah, untuk sampel di luar Kirim
+# Sample) — tidak ada yang dihitung dua kali karena keduanya sumber yang berbeda.
+AUTO_CATEGORIES: Tuple[str, ...] = ('diskon', 'ads', 'komisi', 'kol', 'livehost', 'sample')
 
 # Status pesanan yang uangnya tidak pernah ada (sama dengan F2, ditulis sekali di
 # marketing_daily_rollup — diimpor supaya tidak ada dua daftar yang bisa berbeda).
@@ -631,6 +634,23 @@ async def _auto_livehost(db, account_id: str, period: str, days: int = 7) -> Dic
             'evidence': ev, 'docs': len(detail), 'detail': detail}
 
 
+def _rp(v: Any) -> str:
+    return f"Rp{_int(round(_num(v))):,}".replace(',', '.')
+
+
+async def _auto_sample(db, account_id: str, period: str, days: int = 7) -> Dict[str, Any]:
+    """Biaya sampel = Σ (HPP baris + ongkir) kiriman Marketing › Kirim Sample toko ini yang TANGGAL kirimnya di
+    dalam periode (bulanan 26–25 maupun 7 hari — rentang yang sama dengan kategori otomatis lain, `period_range`).
+    Kiriman batal tidak dihitung. Rumus satu tempat: `core.kirim_sampel.biaya_periode`."""
+    from core import kirim_sampel as _ks
+    lo, hi = period_range(period, days)
+    b = await _ks.biaya_periode(db, account_id, lo, hi)
+    ev = (f"{b['docs']} kiriman sampel {lo}..{hi} (HPP {_rp(b['hpp'])} + ongkir {_rp(b['ongkir'])})"
+          if b['docs'] else 'belum ada kiriman sampel pada periode ini')
+    return {'amount': b['amount'], 'basis': 'kirim_sample', 'evidence': ev, 'docs': b['docs'],
+            'breakdown': {'hpp': b['hpp'], 'ongkir': b['ongkir']}}
+
+
 async def manual_spend(db, account_id: str, period: str) -> Tuple[Dict[str, float], int]:
     rows = await db[SPEND].find(
         {'account_id': account_id, 'period': period}, {'_id': 0, 'category': 1, 'amount': 1}
@@ -655,12 +675,14 @@ async def auto_spend(db, account_id: str, period: str,
     komisi = await _auto_komisi(db, account_id, period, days)
     kol = await _auto_kol_fee(db, account_id, period, days)
     lh = await _auto_livehost(db, account_id, period, days)
+    smp = await _auto_sample(db, account_id, period, days)
     by_cat = empty_categories()
     by_cat['diskon'] = diskon['amount']
     by_cat['ads'] = ads['amount']
     by_cat['komisi'] = komisi['amount']
     by_cat['kol'] = kol['amount']
     by_cat['livehost'] = lh['amount']
+    by_cat['sample'] = smp['amount']
     sources = [
         {'category': 'diskon', 'amount': diskon['amount'], 'source': 'auto',
          'basis': diskon['basis'], 'evidence': diskon['evidence'], 'docs': diskon['docs'],
@@ -676,6 +698,9 @@ async def auto_spend(db, account_id: str, period: str,
         {'category': 'livehost', 'amount': lh['amount'], 'source': 'auto',
          'basis': lh['basis'], 'evidence': lh['evidence'], 'docs': lh['docs'],
          'detail': lh.get('detail')},
+        {'category': 'sample', 'amount': smp['amount'], 'source': 'auto',
+         'basis': smp['basis'], 'evidence': smp['evidence'], 'docs': smp['docs'],
+         'breakdown': smp.get('breakdown')},
     ]
     return by_cat, sources
 

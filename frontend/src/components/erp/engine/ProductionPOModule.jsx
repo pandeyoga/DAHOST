@@ -112,6 +112,8 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   const [closeTargetPO, setCloseTargetPO] = useState(null);
   const [closeDenda, setCloseDenda] = useState(() => dendaAwal(0));
   const [filterStatus, setFilterStatus] = useState('');
+  // 14 Nov 2026: "Hanya sampel R&D" — draf PO otomatis dari Kirim Sample / Sample Request (`core.po_sampel`)
+  const [filterLabel, setFilterLabel] = useState('');
   const [cari, setCari] = useState('');
   const [closeForm, setCloseForm] = useState({ close_reason: CLOSE_REASONS[0], close_notes: '' });
   const [refetchKey, setRefetchKey] = useState(0);
@@ -196,6 +198,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
     if (search) params.set('search', search);
     if (filterStatus) params.set('status', filterStatus);
     if (businessType) params.set('business_type', businessType);
+    if (filterLabel) params.set('label', filterLabel);
     const env = await apiGet(`/production-pos?${params.toString()}`);
     // Keep `pos` array around so `expandedRowRender` can show item details
     const items = Array.isArray(env?.items) ? env.items : (Array.isArray(env) ? env : []);
@@ -659,6 +662,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
           <Button type="button" variant="link" size="sm" className="h-auto p-0 font-bold" onClick={(e) => { e.stopPropagation(); openDetail(row); }}
             data-testid={`po-open-${row.id}`}>{v}</Button>
           <BizBadge type={row.business_type} size="xs" />
+          {row.label === 'sampel_rnd' && (
+            <LabelBadge status="sampel_rnd" tone="info" label="Sampel R&D" testId={`po-label-sampel-${row.id}`} />
+          )}
         </div>
         <div className="text-xs text-muted-foreground mt-0.5">
           {row.vendor_name || 'CMT belum dipilih'}{' · '}{fmtDate(row.po_date || row.created_at)}
@@ -815,10 +821,12 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
             if (cari.trim()) q.set('search', cari.trim());
             if (filterStatus) q.set('status', filterStatus);
             if (businessType) q.set('business_type', businessType);
+            if (filterLabel) q.set('label', filterLabel);
             return apiGet(`/production-pos?${q.toString()}`);
           })}
           kolom={[
             { label: 'No. PO', nilai: (r) => r.po_number },
+            { label: 'Label', nilai: (r) => (r.label === 'sampel_rnd' ? 'Sampel R&D' : '') },
             { label: isInternal ? 'Tujuan' : 'Klien', nilai: (r) => r.customer_name || '' },
             { label: 'Penjahit (CMT)', nilai: (r) => r.vendor_name || '' },
             { label: 'Tanggal PO', nilai: (r) => formatDateID(r.po_date || r.created_at, { fallback: '' }) },
@@ -852,6 +860,13 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
             ariaLabel="Penyaring status PO"
             options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s ? (PO_STATUS_LABEL[s] || s) : 'Semua' }))}
           />
+          {isInternal && (
+            <SmartNativeSelect value={filterLabel} onChange={(e) => setFilterLabel(e.target.value)} searchable={false}
+              className="w-full" wrapperClassName="w-44 max-w-full" aria-label="Jenis PO" data-testid="po-filter-label">
+              <option value="">Semua PO</option>
+              <option value="sampel_rnd">Hanya sampel R&amp;D</option>
+            </SmartNativeSelect>
+          )}
         </>
       )}
     >
@@ -862,7 +877,7 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
         storageKey="productionPOs"
         serverPagination={{
           fetcher: posFetcher,
-          deps: [filterStatus, refetchKey],
+          deps: [filterStatus, filterLabel, refetchKey],
           itemLabel: 'PO',
           initialSort: { key: 'created_at', dir: 'desc' },
           virtualize: true,
