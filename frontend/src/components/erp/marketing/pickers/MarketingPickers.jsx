@@ -277,10 +277,12 @@ export function catalogItemLabel(i) {
   return [i.sku, name, already ? '' : variant].filter(Boolean).join(' · ');
 }
 
-export function CatalogItemSelect({
-  token, accountId, value, onChange, label = 'Produk (dari katalog toko)',
-  required = true, testId = 'catalog-item-select', className = '',
-}) {
+/**
+ * Semua item katalog satu toko (semua katalognya), dimuat SEKALI per toko. Dipakai `CatalogItemSelect` dan
+ * formulir yang memilih banyak produk sekaligus (Kirim Sample, 14 Nov 2026) supaya enam baris produk tidak
+ * memuat katalog yang sama enam kali.
+ */
+export function useCatalogItems(token, accountId) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -315,6 +317,14 @@ export function CatalogItemSelect({
     return () => { alive = false; };
   }, [token, accountId]);
 
+  return { items, loading };
+}
+
+export function CatalogItemSelect({
+  token, accountId, value, onChange, label = 'Produk (dari katalog toko)',
+  required = true, testId = 'catalog-item-select', className = '',
+}) {
+  const { items, loading } = useCatalogItems(token, accountId);
   const selected = items.find((i) => i.id === value);
 
   return (

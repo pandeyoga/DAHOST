@@ -216,7 +216,9 @@ export default function PODetailPanel({
   const closed = CLOSED.includes(po?.status);
   const title = po ? `PO ${po.po_number}` : 'Rincian PO';
   const description = po
-    ? [po.customer_name, po.vendor_name ? `CMT ${po.vendor_name}` : 'CMT belum dipilih', PO_STATUS_LABEL[po.status] || po.status].filter(Boolean).join(' · ')
+    ? [po.customer_name, po.vendor_name ? `CMT ${po.vendor_name}` : 'CMT belum dipilih', PO_STATUS_LABEL[po.status] || po.status,
+      po.label === 'sampel_rnd' && po.sumber?.nomor ? `Sampel dari ${po.sumber.jenis === 'sample_request' ? 'Sample request' : 'Kirim sample'} ${po.sumber.nomor}` : '']
+      .filter(Boolean).join(' · ')
     : 'Memuat…';
 
   return (
@@ -227,6 +229,10 @@ export default function PODetailPanel({
       testId="po-detail-panel"
       actions={po && (
         <>
+          {/* 14 Nov 2026: draf PO otomatis dari Kirim Sample / Sample Request (core.po_sampel) */}
+          {po.label === 'sampel_rnd' && (
+            <StatusBadge status="sampel_rnd" tone="info" label="Sampel R&D" testId="po-detail-label-sampel" />
+          )}
           {!closed && detail?.sample_flag?.warning && (
             <StatusBadge status="warning" tone="warning" label="Sampel belum disetujui" testId="po-detail-sample-badge" className="hidden sm:inline-flex" />
           )}
