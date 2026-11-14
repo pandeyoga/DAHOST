@@ -1,0 +1,1208 @@
+{
+ "accessories-dashboard": {
+  "label": "Dashboard Aksesoris",
+  "portal": [
+   "accessories"
+  ]
+ },
+ "accessories-inbox": {
+  "label": "Inbox Persetujuan",
+  "portal": [
+   "accessories"
+  ]
+ },
+ "accessories-internal-request": {
+  "label": "Request Internal",
+  "portal": [
+   "accessories"
+  ]
+ },
+ "accessories-master-stock": {
+  "label": "Master Aksesoris",
+  "portal": [
+   "accessories"
+  ]
+ },
+ "accessories-opname": {
+  "label": "Stok Opname",
+  "portal": [
+   "accessories"
+  ]
+ },
+ "accessories-reports": {
+  "label": "Laporan",
+  "portal": [
+   "accessories"
+  ]
+ },
+ "ai-usage-monitor": {
+  "label": "Monitor AI",
+  "portal": [
+   "management"
+  ]
+ },
+ "approval-multilevel": {
+  "label": "Persetujuan Bertingkat",
+  "portal": [
+   "hr"
+  ]
+ },
+ "asisten-ai": {
+  "label": "Asisten AI",
+  "portal": [
+   "management"
+  ]
+ },
+ "asisten-ai-ingatan": {
+  "label": "Ingatan AI",
+  "portal": [
+   "management"
+  ]
+ },
+ "asisten-ai-tindakan": {
+  "label": "Tindakan AI",
+  "portal": [
+   "management"
+  ]
+ },
+ "asset-management": {
+  "label": "Manajemen Aset",
+  "portal": [
+   "assets"
+  ]
+ },
+ "aturan-kewajiban": {
+  "label": "Aturan Kewajiban",
+  "portal": [
+   "management"
+  ]
+ },
+ "audit-findings": {
+  "label": "Papan Temuan Audit",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "bahan-produksi": {
+  "label": "Bahan",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "cmt-override-portal": {
+  "label": "Input atas nama CMT",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "cmt-permak": {
+  "label": "Perbaikan",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "collab-workspace": {
+  "label": "Spreadsheet",
+  "portal": [
+   "collaboration"
+  ]
+ },
+ "collaboration": {
+  "label": "Portal Kolaborasi",
+  "portal": [
+   "collaboration"
+  ]
+ },
+ "cutting-dashboard": {
+  "label": "Dashboard Cutting",
+  "portal": [
+   "cutting"
+  ]
+ },
+ "cutting-orders": {
+  "label": "Order Cutting",
+  "portal": [
+   "cutting"
+  ]
+ },
+ "cutting-panels": {
+  "label": "Master Potongan",
+  "portal": [
+   "cutting"
+  ]
+ },
+ "da-cmt-receive": {
+  "label": "Terima & QC",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "fin-acctg-adjust-hub": {
+  "label": "Akrual & Tutup Buku",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-antar-cv": {
+  "label": "Transaksi antar CV",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-ap-hub": {
+  "label": "Hutang",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-approval": {
+  "label": "Persetujuan Perubahan Faktur",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-ar-hub": {
+  "label": "Piutang",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-bank-recon": {
+  "label": "Rekonsiliasi Bank",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-bank-transfer": {
+  "label": "Transfer Antar Rekening",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-bs": {
+  "label": "Neraca",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-budget": {
+  "label": "Anggaran",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-cash": {
+  "label": "Rekening & Mutasi",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-cashflow": {
+  "label": "Arus Kas",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-debit-notes": {
+  "label": "Nota Debit (Retur)",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-executive-report": {
+  "label": "Laporan Eksekutif",
+  "portal": [
+   "management"
+  ]
+ },
+ "fin-expenses": {
+  "label": "Pengeluaran & Klaim",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-fg-valuation": {
+  "label": "Nilai Persediaan",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-fixed-assets": {
+  "label": "Aset Tetap",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-gl": {
+  "label": "Buku Besar",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-hpp": {
+  "label": "HPP",
+  "portal": [
+   "finance",
+   "maklon",
+   "production"
+  ]
+ },
+ "fin-journal-hub": {
+  "label": "Jurnal",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-kasbon": {
+  "label": "Kasbon & Uang Muka",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-marketplace-settlement": {
+  "label": "Marketplace",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-pnl": {
+  "label": "Laba Rugi",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-saldo-antar-cv": {
+  "label": "Saldo antar CV",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-settings-hub": {
+  "label": "Pengaturan Keuangan",
+  "portal": [
+   "finance"
+  ]
+ },
+ "fin-settlement-queue": {
+  "label": "Perjalanan Dinas",
+  "portal": [
+   "finance"
+  ]
+ },
+ "finance-dashboard": {
+  "label": "Beranda Keuangan",
+  "portal": [
+   "finance"
+  ]
+ },
+ "hr-admin": {
+  "label": "Pengaturan SDM",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-ai-hub": {
+  "label": "AI SDM",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-announcements": {
+  "label": "Papan Pengumuman",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-assets": {
+  "label": "Aset Karyawan",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-attendance-hub": {
+  "label": "Absensi",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-attendance-sessions": {
+  "label": "Istirahat & Izin",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-dashboard": {
+  "label": "Dashboard SDM",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-employees": {
+  "label": "Data Karyawan",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-expense-hub": {
+  "label": "Klaim Dinas",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-holiday-calendar": {
+  "label": "Kalender Libur",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-inbox": {
+  "label": "Inbox SDM",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-job-board": {
+  "label": "Job Board",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-kasbon": {
+  "label": "Kasbon",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-leave-hub": {
+  "label": "Cuti & Lembur",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-lms": {
+  "label": "Pembelajaran",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-onboarding": {
+  "label": "Onboarding",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-org-chart": {
+  "label": "Struktur Organisasi",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-payroll-hub": {
+  "label": "Penggajian",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-performance-hub": {
+  "label": "Manajemen Kinerja",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-recruitment": {
+  "label": "Rekrutmen & ATS",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-reports": {
+  "label": "Laporan SDM",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-resume-screening": {
+  "label": "Screening CV",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-shift-hub": {
+  "label": "Shift",
+  "portal": [
+   "hr"
+  ]
+ },
+ "hr-work-locations": {
+  "label": "Lokasi Kerja",
+  "portal": [
+   "hr"
+  ]
+ },
+ "kpi-portal": {
+  "label": "KPI",
+  "portal": [
+   "self"
+  ]
+ },
+ "laporan-selisih": {
+  "label": "Laporan Selisih",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "maklon-billing": {
+  "label": "Piutang Klien",
+  "portal": [
+   "maklon"
+  ]
+ },
+ "maklon-config": {
+  "label": "Konfigurasi Maklon",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "maklon-dashboard": {
+  "label": "Dashboard Maklon",
+  "portal": [
+   "maklon"
+  ]
+ },
+ "maklon-klien-katalog": {
+  "label": "Klien & Katalog Buyer",
+  "portal": [
+   "maklon"
+  ]
+ },
+ "maklon-notifications": {
+  "label": "Notifikasi",
+  "portal": [
+   "sysadmin",
+   "toko"
+  ]
+ },
+ "maklon-pos-engine": {
+  "label": "PO Maklon",
+  "portal": [
+   "maklon"
+  ]
+ },
+ "management-dashboard": {
+  "label": "Dashboard Eksekutif",
+  "portal": [
+   "management"
+  ]
+ },
+ "marketing-account-review": {
+  "label": "Koreksi Data Toko",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-accounts": {
+  "label": "Kelola Akun",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-after-sales": {
+  "label": "Komplain & Retur",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-ai-hub": {
+  "label": "AI Marketing",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-catalog": {
+  "label": "Manajemen Katalog",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-change-log": {
+  "label": "Jejak Marketing",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-content-calendar": {
+  "label": "Kalender Konten",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-discounts": {
+  "label": "Kampanye Diskon",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-fulfillment": {
+  "label": "Monitoring Kirim",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-health": {
+  "label": "Kesehatan Akun",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-impor-paket": {
+  "label": "Impor Banyak Berkas",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-import": {
+  "label": "Impor Data",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-integration-settings": {
+  "label": "Integrasi API",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-kol-hub": {
+  "label": "KOL & Kreator",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-laporan-ai": {
+  "label": "Laporan AI",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-live-hub": {
+  "label": "Live Selling",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-orders": {
+  "label": "Order Terpadu",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-product-launches": {
+  "label": "Peluncuran Produk",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-reports": {
+  "label": "Laporan Marketing",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-reviews": {
+  "label": "Rating & Ulasan",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-sales": {
+  "label": "Input Sales",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-samples": {
+  "label": "Kirim Sample",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-scheduler": {
+  "label": "Penjadwal Otomasi",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-targets": {
+  "label": "Target & Anggaran",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-task-hub": {
+  "label": "Manajemen Tugas",
+  "portal": [
+   "toko"
+  ]
+ },
+ "marketing-webhooks": {
+  "label": "Monitor Webhook",
+  "portal": [
+   "toko"
+  ]
+ },
+ "mgmt-access-hub": {
+  "label": "Kontrol Akses",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "mgmt-activity": {
+  "label": "Log Aktivitas",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "mgmt-backup-restore": {
+  "label": "Backup Data",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "mgmt-help": {
+  "label": "Panduan Sistem",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "mgmt-marketing-change-log": {
+  "label": "Jejak Marketing",
+  "portal": [
+   "management"
+  ]
+ },
+ "mgmt-marketing-cycle": {
+  "label": "Target & Anggaran",
+  "portal": [
+   "management"
+  ]
+ },
+ "mgmt-merchandiser": {
+  "label": "Analisa Merchandiser",
+  "portal": [
+   "management"
+  ]
+ },
+ "mgmt-okr": {
+  "label": "OKR Tracker",
+  "portal": [
+   "management"
+  ]
+ },
+ "mgmt-overview": {
+  "label": "Ringkasan Bisnis",
+  "portal": [
+   "management"
+  ]
+ },
+ "mgmt-reports": {
+  "label": "Laporan Umum",
+  "portal": [
+   "management"
+  ]
+ },
+ "mgmt-system-hub": {
+  "label": "Pengaturan Sistem",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "mgmt-tools": {
+  "label": "Digest Mingguan",
+  "portal": [
+   "management"
+  ]
+ },
+ "pantau-produksi": {
+  "label": "Pantau Produksi",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "pantau-staf": {
+  "label": "Pemantauan Staf",
+  "portal": [
+   "management"
+  ]
+ },
+ "phase7-reports": {
+  "label": "Laporan Maklon",
+  "portal": [
+   "management"
+  ]
+ },
+ "po-closure": {
+  "label": "Tutup PO",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "portal-absen": {
+  "label": "Absen Saya",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-annual-review": {
+  "label": "Tinjauan Tahunan",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-asisten": {
+  "label": "Tanya Asisten",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-career-coach": {
+  "label": "Pendamping Karier",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-cuti": {
+  "label": "Cuti & Lembur",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-dashboard": {
+  "label": "Dashboard",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-documents": {
+  "label": "Dokumen",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-kasbon": {
+  "label": "Kasbon",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-notifikasi": {
+  "label": "Notifikasi",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-payslip": {
+  "label": "Slip Gaji",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-peer-feedback": {
+  "label": "Umpan Balik Rekan",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-profile": {
+  "label": "Profil",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-shift": {
+  "label": "Jadwal Shift",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-training": {
+  "label": "Training",
+  "portal": [
+   "self"
+  ]
+ },
+ "portal-workspace": {
+  "label": "Ruang Kerja",
+  "portal": [
+   "self"
+  ]
+ },
+ "proc-3way-match": {
+  "label": "Rekonsiliasi PO",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-accessory-pr": {
+  "label": "Request Aksesoris",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-analytics": {
+  "label": "Analisis Belanja",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-ap-invoices": {
+  "label": "Faktur Supplier",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-dashboard": {
+  "label": "Dashboard Pengadaan",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-purchase-orders": {
+  "label": "Purchase Order",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-purchase-returns": {
+  "label": "Retur Pembelian",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-requests": {
+  "label": "Permintaan Pengadaan",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-scorecard": {
+  "label": "Penilaian Supplier",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "proc-suppliers": {
+  "label": "Master Supplier",
+  "portal": [
+   "procurement"
+  ]
+ },
+ "prod-cmt-billing": {
+  "label": "Tagihan CMT",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "prod-master-product-hub": {
+  "label": "Master Produk",
+  "portal": [
+   "production"
+  ]
+ },
+ "prod-material-returns": {
+  "label": "Retur Material",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "prod-pos-internal": {
+  "label": "PO Internal",
+  "portal": [
+   "production"
+  ]
+ },
+ "prod-shipments-buyer": {
+  "label": "Kirim hasil",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "prod-shipments-vendor": {
+  "label": "Kirim ke CMT",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "production-dashboard": {
+  "label": "Dashboard Produksi",
+  "portal": [
+   "production"
+  ]
+ },
+ "reports-hub": {
+  "label": "Pusat Laporan",
+  "portal": [
+   "management"
+  ]
+ },
+ "rnd-accessory-requests": {
+  "label": "Request Aksesoris",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-analytics": {
+  "label": "RnD Analytics",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-costing-hub": {
+  "label": "Costing & HPP",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-dashboard": {
+  "label": "Dashboard RnD",
+  "portal": [
+   "management",
+   "rnd"
+  ]
+ },
+ "rnd-design-hub": {
+  "label": "Style & Desain",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-kreator-requests": {
+  "label": "Persetujuan Kreator",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-master-product-hub": {
+  "label": "Master Produk",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-materials": {
+  "label": "Riset Material",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-product-viewer": {
+  "label": "Produk Final",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "rnd-samples": {
+  "label": "Sample Request",
+  "portal": [
+   "rnd"
+  ]
+ },
+ "sales-customers": {
+  "label": "Master Pelanggan",
+  "portal": [
+   "sales"
+  ]
+ },
+ "sales-dashboard": {
+  "label": "Dashboard Penjualan",
+  "portal": [
+   "sales"
+  ]
+ },
+ "sales-direct": {
+  "label": "Nota Penjualan",
+  "portal": [
+   "sales"
+  ]
+ },
+ "sales-report": {
+  "label": "Laporan Penjualan",
+  "portal": [
+   "sales"
+  ]
+ },
+ "sku-bridge": {
+  "label": "Jembatan SKU",
+  "portal": [
+   "toko",
+   "warehouse"
+  ]
+ },
+ "sync-audit": {
+  "label": "Sinkronisasi Data",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "sys-doc-numbering": {
+  "label": "Penomoran Dokumen",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "sys-finance-maintenance": {
+  "label": "Perawatan Data Keuangan",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "sys-notif-config": {
+  "label": "Aturan Notifikasi",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "sys-rbac-audit": {
+  "label": "Audit Persetujuan & Notifikasi",
+  "portal": [
+   "sysadmin"
+  ]
+ },
+ "toko-dashboard": {
+  "label": "Dashboard Marketing",
+  "portal": [
+   "toko"
+  ]
+ },
+ "unified-approval-hub": {
+  "label": "Pusat Persetujuan",
+  "portal": [
+   "hr",
+   "management"
+  ]
+ },
+ "vendor-admin": {
+  "label": "Vendor CMT",
+  "portal": [
+   "maklon",
+   "production"
+  ]
+ },
+ "warehouse-dashboard": {
+  "label": "Dashboard Gudang",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "warehouse-smart": {
+  "label": "Alert & Reorder",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-audit": {
+  "label": "Audit Trail",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-barcode": {
+  "label": "Buat Barcode",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-cost-history": {
+  "label": "Riwayat Harga",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-master": {
+  "label": "Master Item",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-material-issue": {
+  "label": "Pengeluaran Material",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-putaway": {
+  "label": "Penyimpanan",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-quarantine": {
+  "label": "Karantina QC",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-receiving": {
+  "label": "Penerimaan Barang",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-returns": {
+  "label": "Retur Fisik",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-scan-out": {
+  "label": "Scan Keluar Penjualan",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-shopping-list": {
+  "label": "Belanja Mingguan",
+  "portal": [
+   "procurement",
+   "warehouse"
+  ]
+ },
+ "wh-structure": {
+  "label": "Struktur Gudang",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wh-units": {
+  "label": "Satuan & Konversi",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wms-delivery-notes": {
+  "label": "Surat Jalan",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wms-fabric-rolls": {
+  "label": "Roll Kain",
+  "portal": [
+   "warehouse"
+  ]
+ },
+ "wms-stock-hub": {
+  "label": "Stok & Akurasi",
+  "portal": [
+   "warehouse"
+  ]
+ }
+}

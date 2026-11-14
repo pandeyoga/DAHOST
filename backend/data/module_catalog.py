@@ -21,7 +21,13 @@ MODEL PENEGAKAN (13 Nov 2026, owner: "bisa semuanya, jangan setengah-setengah"):
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
+from functools import lru_cache
+
+logger = logging.getLogger(__name__)
 
 # 8 Nov 2026 (owner: satu layar = satu nama di menu, judul, Kontrol Akses, panduan & Asisten AI): label aksi =
 # kata tombol di layar (Setujui, Unduh) dan label modul = nama menunya. Kunci izin `mod.<id>.<aksi>` TIDAK berubah.
@@ -698,6 +704,7 @@ _ENDPOINT_RULES_RX = [(m.upper(), re.compile(p + r"/?"), MODULE_BY_ID[mid], act)
 assert all(act in MODULE_BY_ID[mid]["actions"] for _, _, mid, act in ENDPOINT_RULES), "ENDPOINT_RULES: aksi tidak ada"
 
 
+@lru_cache(maxsize=8192)
 def resolve(method: str, path: str):
     """(modul, aksi) yang mengatur satu permintaan — SATU aturan untuk gerbang modul dan penjaga di kode.
 
@@ -750,13 +757,206 @@ MODUL_SETARA: tuple[tuple[str, str], ...] = (
 _MODUL_SETARA_RX = [(re.compile(p + r"/?"), MODULE_BY_ID[mid]) for p, mid in MODUL_SETARA]
 
 
-def modul_setara(method: str, path: str) -> list[dict]:
-    """Modul lain yang centang aksinya (aksi sama dengan `resolve`) juga meloloskan permintaan ini."""
+# ── 14 Nov 2026 — LAYANAN IKUT TERBUKA OTOMATIS (owner: "saya tidak ingin ada seperti ini dimanapun di setiap role …
+# apa yang harus di ceklis di portal lain ikut juga"). Kasus: Kelola Akun › kolom Saldo platform memanggil layanan
+# Keuangan `fin_marketplace`; Master Produk RnD › Buat varian memanggil `prod_master_product`; Dashboard Marketing
+# memanggil siklus `mgmt_marketing_cycle`. Peta menu → layanan dibaca STATIS dari kode layar
+# (`scripts/akses/peta_menu_layanan.py` → `peta_menu_layanan.json`, dijaga `--check` di CI). Untuk tiap menu milik
+# modul M yang layarnya memanggil layanan E milik modul N (N bukan pemilik menu itu), centang aksi YANG SAMA di M
+# (aksi = `resolve(E)`, harus ada di M.actions) juga meloloskan E. `MODUL_SETARA` manual di atas tetap berlaku.
+#
+# Tidak ikut terbuka otomatis (kotak centang sendiri, keputusan owner): layanan ENDPOINT_RULES (mis. uang keluar K25,
+# keputusan QC), modul tanpa menu (Pembayaran & Pencairan, Opname Stok Gudang), dan daftar `TANPA_IKUT_OTOMATIS`.
+_PETA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "peta_menu_layanan.json")
+
+# (metode, regex path penuh, modul pemilik menu atau None = semua, alasan untuk layar Kontrol Akses)
+TANPA_IKUT_OTOMATIS: tuple[tuple[str, str, str | None, str], ...] = (
+    # 14 Nov 2026 (owner, kasus R&D): "Ubah/hapus MODEL tetap hanya mengikuti modul Produksi" — layar Master Produk
+    # RnD (dan Order Cutting) memakai layanan model yang sama, tetapi menulis data model tetap butuh centang
+    # Master Produk (Produksi).
+    ("POST|PUT|PATCH|DELETE", r"/api/rahaza/models(/[^/]+)?", None,
+     "Tambah, ubah, atau hapus model tetap mengikuti centang modul Produksi (keputusan owner)."),
+)
+_TANPA_OTOMATIS_RX = [(set(m.split("|")), re.compile(p + r"/?"), mid, alasan) for m, p, mid, alasan in TANPA_IKUT_OTOMATIS]
+# Modul yang layanannya TIDAK PERNAH ikut terbuka dari centang modul lain (data rahasia / berdampak uang).
+MODUL_TANPA_IKUT_OTOMATIS: dict[str, str] = {
+    # Gaji & struktur gaji: sama alasannya dengan K33 (Laporan Eksekutif dipisah karena memuat total gaji).
+    "hr_payroll": "Data gaji hanya terbuka lewat centang 'Penggajian & Struktur Gaji' sendiri.",
+    "fin_exec_report": "Laporan Eksekutif memuat total gaji, jadi dicentang sendiri (keputusan owner K33).",
+    # 14 Nov 2026 (tahap 2): "Input atas nama CMT" berdampak langsung ke tagihan CMT — kotak centang sendiri.
+    "prod_cmt_override": "Input atas nama Vendor CMT berdampak ke tagihan CMT, jadi dicentang sendiri.",
+}
+assert all(m in MODULE_BY_ID for m in MODUL_TANPA_IKUT_OTOMATIS), "MODUL_TANPA_IKUT_OTOMATIS: modul tidak ada"
+
+MENU_PEMILIK: dict[str, list[dict]] = {}
+for _mod in MODULES:
+    for _menu in _mod["menus"]:
+        MENU_PEMILIK.setdefault(_menu, []).append(_mod)
+
+_PETA: dict[str, list[tuple[str, str]]] = {}
+_OTOMATIS_INDEKS: dict[tuple, list[tuple[tuple, str]]] = {}     # (metode, n segmen, modul N, aksi) → [(pola, M)]
+PASANGAN_OTOMATIS: list[tuple[str, str, str, str, str, str]] = []  # (menu, metode, path, modul N, aksi, modul M)
+_LAYANAN_MENU: dict[str, list[tuple[str, tuple[str, ...]]]] = {}  # menu → [(aksi, kunci yang meloloskan)]
+
+
+def _aturan_endpoint(method: str, path: str):
+    method = (method or "GET").upper()
+    for m, rx, mod, act in _ENDPOINT_RULES_RX:
+        if m == method and rx.fullmatch(path or ""):
+            return mod, act
+    return None
+
+
+def sebab_terpisah(method: str, path: str, pemilik_menu: str | None = None) -> str | None:
+    """Alasan layanan ini TIDAK ikut terbuka otomatis dari centang modul pemilik menu (None = boleh ikut)."""
+    method = (method or "GET").upper()
+    if _aturan_endpoint(method, path):
+        return "Layanan ini punya kotak centang sendiri (aturan khusus per layanan)."
+    mod, _ = resolve(method, path)
+    if mod and mod["id"] in MODUL_TANPA_IKUT_OTOMATIS:
+        return MODUL_TANPA_IKUT_OTOMATIS[mod["id"]]
+    if mod and not mod["menus"]:
+        return f"Modul '{mod['label']}' sengaja dipisah dan wajib dicentang sendiri."
+    for metode, rx, mid, alasan in _TANPA_OTOMATIS_RX:
+        if method in metode and (mid is None or mid == pemilik_menu) and rx.fullmatch(path or ""):
+            return alasan
+    return None
+
+
+def _segmen(path: str) -> tuple[str, ...]:
+    return tuple(s for s in (path or "").split("/") if s)
+
+
+def _muat_peta() -> dict:
+    """Baca `peta_menu_layanan.json` dengan aman: berkas hilang/rusak → tanpa layanan ikut otomatis (dicatat di log)."""
+    try:
+        with open(_PETA_PATH, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        logger.warning("[module-catalog] %s tidak ada — layanan tidak ikut terbuka otomatis", _PETA_PATH)
+        return {}
+    except Exception:  # noqa: BLE001 — berkas rusak tidak boleh menjatuhkan server
+        logger.exception("[module-catalog] %s rusak — layanan tidak ikut terbuka otomatis", _PETA_PATH)
+        return {}
+    if not isinstance(raw, dict):
+        logger.error("[module-catalog] %s bukan objek — diabaikan", _PETA_PATH)
+        return {}
+    peta = {}
+    for menu, daftar in raw.items():
+        if isinstance(menu, str) and isinstance(daftar, list):
+            peta[menu] = [(str(x[0]).upper(), str(x[1])) for x in daftar
+                          if isinstance(x, (list, tuple)) and len(x) == 2 and str(x[1]).startswith("/api/")]
+    return peta
+
+
+def pasang_peta(peta: dict | None) -> None:
+    """Bangun indeks layanan ikut-otomatis (sekali saat impor; uji boleh memasang peta tiruan)."""
+    global _PETA
+    _PETA = {m: [(str(a).upper(), str(b)) for a, b in v] for m, v in (peta or {}).items()}
+    _OTOMATIS_INDEKS.clear()
+    PASANGAN_OTOMATIS.clear()
+    _LAYANAN_MENU.clear()
+    for menu, layanan in sorted(_PETA.items()):
+        pemilik = MENU_PEMILIK.get(menu) or []
+        pemilik_id = {m["id"] for m in pemilik}
+        for method, path in layanan:
+            n, act = resolve(method, path)
+            if not n or n["id"] in pemilik_id or is_self_service(method, path):
+                continue
+            if act == "view" and n["lookup"]:
+                continue
+            for m in pemilik:
+                if act not in m["actions"] or sebab_terpisah(method, path, m["id"]):
+                    continue
+                kunci = (method, len(_segmen(path)), n["id"], act)
+                _OTOMATIS_INDEKS.setdefault(kunci, []).append((_segmen(path), m["id"]))
+                PASANGAN_OTOMATIS.append((menu, method, path, n["id"], act, m["id"]))
+    # Arah balik (menu_access): aksi layanan yang dipanggil layar menu → kunci centang yang meloloskannya.
+    for menu, layanan in _PETA.items():
+        out = set()
+        for method, path in layanan:
+            if is_self_service(method, path):
+                continue
+            mod, act, kunci = kunci_lolos(method, path)
+            if mod:
+                out.add((act, tuple(kunci)))
+        if out:
+            _LAYANAN_MENU[menu] = sorted(out)
+
+
+def layanan_menu(menu: str) -> list[tuple[str, str]]:
+    """[(METODE, path)] yang dipanggil layar menu ini menurut peta (path generik: segmen `x`)."""
+    return list(_PETA.get(menu) or [])
+
+
+def _modul_otomatis(method: str, path: str, mod: dict, act: str) -> list[str]:
+    segs = _segmen(path)
+    out = []
+    for pola, mid in _OTOMATIS_INDEKS.get((method, len(segs), mod["id"], act), ()):
+        if mid not in out and all(p == "x" or p == q for p, q in zip(pola, segs)):
+            out.append(mid)
+    return out
+
+
+def modul_setara(method: str, path: str, otomatis: bool = True) -> list[dict]:
+    """Modul lain yang centang aksinya (aksi sama dengan `resolve`) juga meloloskan permintaan ini.
+
+    = `MODUL_SETARA` manual + (bila `otomatis`) modul pemilik menu yang layarnya memanggil layanan ini (peta).
+    """
     mod, act = resolve(method, path)
     if not mod:
         return []
-    return [alt for rx, alt in _MODUL_SETARA_RX
-            if alt["id"] != mod["id"] and act in alt["actions"] and rx.fullmatch(path or "")]
+    out = [alt for rx, alt in _MODUL_SETARA_RX
+           if alt["id"] != mod["id"] and act in alt["actions"] and rx.fullmatch(path or "")]
+    if otomatis and not _aturan_endpoint(method, path):
+        for mid in _modul_otomatis((method or "GET").upper(), (path or "").rstrip("/"), mod, act):
+            alt = MODULE_BY_ID[mid]
+            if alt["id"] != mod["id"] and alt not in out and act in alt["actions"]:
+                out.append(alt)
+    return out
+
+
+def kunci_lolos(method: str, path: str, otomatis: bool = True) -> tuple[dict | None, str | None, list[str]]:
+    """(modul, aksi, kunci centang yang meloloskan permintaan ini): kunci modulnya + kunci modul setara/otomatis."""
+    mod, act = resolve(method, path)
+    if not mod:
+        return None, None, []
+    return mod, act, [perm_key(mod["id"], act)] + [perm_key(alt["id"], act)
+                                                   for alt in modul_setara(method, path, otomatis)]
+
+
+def putuskan(method: str, path: str, perms, portal_diizinkan=None, otomatis: bool = True):
+    """SATU fungsi inti keputusan gerbang modul, tanpa DB (middleware `module_permission_gate.evaluate` dan
+    pemeriksa akses `core.cek_akses`). None = lolos; selain itu (modul, aksi, 'portal'|'perm').
+
+    `perms` = kunci centang peran + orang (sudah termasuk izin tersirat); `portal_diizinkan` = portal efektif peran
+    (`routes.shared.effective_portals`) atau None bila portal peran belum diatur (tanpa cek portal). Peran super,
+    peran eksternal, dan token kosong ditangani pemanggil.
+    """
+    mod, action = resolve(method, path)
+    if not mod or is_self_service(method, path):
+        return None
+    perms = perms if isinstance(perms, (set, frozenset)) else set(perms or ())
+    if "*" in perms:
+        return None
+    if action == "view" and mod["lookup"]:
+        return None
+    setara = modul_setara(method, path, otomatis)
+    # 1) Akses PORTAL (khusus aksi tulis/approve/export; baca lintas-portal tetap untuk layar pintasan):
+    #    10 Nov 2026: portal dicentang = FINAL (bawaan kode tidak lagi ditambahkan) — routes.shared.effective_portals.
+    if portal_diizinkan is not None and action != "view":
+        allowed = set(portal_diizinkan) | granular_portals(perms)
+        portal_modul = {mod["portal"], *mod["also_portals"]}
+        manual = modul_setara(method, path, otomatis=False) if otomatis else setara
+        for alt in setara:
+            # modul ikut-otomatis: hanya portal modul itu sendiri (layar menunya), bukan pintasan lintas-portalnya
+            portal_modul |= {alt["portal"], *alt["also_portals"]} if alt in manual else {alt["portal"]}
+        if not (portal_modul & allowed):
+            return mod, action, "portal"
+    # 2) Izin per modul: wajib dicentang (tanpa aturan lama per portal sejak 13 Nov 2026).
+    if perm_key(mod["id"], action) in perms or any(perm_key(alt["id"], action) in perms for alt in setara):
+        return None
+    return mod, action, "perm"
 
 
 def request_keys_setara(method: str, path: str) -> list[str]:
@@ -838,6 +1038,16 @@ def menu_access(keys, is_super: bool = False) -> tuple[list, dict]:
         if "view" in acts:
             access[menu] = sorted(set(acts) | (set(ACTIONS) - dimiliki.get(menu, set())))
     hidden = sorted(m for m, acts in access.items() if "view" not in acts)
+    # 14 Nov 2026 (arah balik, owner: tombol "Input biaya iklan" di Laporan Marketing tidak tampil walau server
+    # meloloskannya): aksi efektif menu = centang modul pemilik menu DITAMBAH aksi layanan yang dipanggil layar menu
+    # itu (peta menu → layanan) bila peran memegang kunci yang meloloskannya di gerbang (`kunci_lolos`). Hanya untuk
+    # menu yang sudah terlihat — terlihat/tersembunyi tetap mengikuti centang Lihat modul pemiliknya.
+    for menu, acts in access.items():
+        if "view" not in acts:
+            continue
+        tambah = {a for a, kunci in _LAYANAN_MENU.get(menu, ()) if any(k in keys for k in kunci)}
+        if tambah - set(acts):
+            access[menu] = sorted(set(acts) | tambah)
     # Menu pintasan modul portal lain (ALSO_PORTALS) di portal yang sudah granular: tanpa izin Lihat
     # modul pemiliknya → disembunyikan HANYA di portal pintasan itu (format "<portal>::<menu>").
     for mod in MODULES:
@@ -912,3 +1122,7 @@ def suggest_from_legacy(keys, portal: str, has_portal_access: bool, strict: bool
             granted.append("view")
         out += [perm_key(mod["id"], a) for a in granted]
     return out
+
+
+# Indeks layanan ikut-otomatis dibangun sekali saat impor (lihat `pasang_peta`).
+pasang_peta(_muat_peta())

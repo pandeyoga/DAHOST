@@ -308,7 +308,9 @@ def test_migrasi_opname_salin_hak_lama_kecuali_keputusan_owner():
 def test_target_anggaran_dua_portal_setara(gerbang, method, path, perm):
     portal = ["toko"] if perm.startswith("mod.mkt_") else ["management"]
     assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, [perm]))) is None
-    assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, ["mod.mkt_dashboard.view"])))
+    # 14 Nov 2026: layanan yang dipanggil layar Dashboard Marketing ikut terbuka bagi centang Dashboard (uji
+    # test_cek_akses.py); modul yang layarnya TIDAK memakai layanan ini tetap ditolak.
+    assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, ["mod.mkt_samples.view"])))
 
 
 def test_marketing_target_periode_pemegang_ikut_centang():

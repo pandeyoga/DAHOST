@@ -526,6 +526,43 @@ async def granular_suggestion(request: Request):
             all_keys += sug
     return {'portals': result, 'keys': all_keys}
 
+
+# ─── Pemeriksaan akses otomatis lintas lapisan (14 Nov 2026) ─────────────────
+# Owner: "otomatis cek lapisan yang lain untuk semua akses role". Fungsi murni `core.cek_akses` memakai fungsi inti
+# gerbang (`module_catalog.putuskan`) + peta menu → layanan. Penjaga: peran super atau pemegang "Kelola peran & hak
+# akses" (`roles.manage`, modul Pengguna & Peran di katalog Administrasi Sistem) — tidak menyimpan apa pun.
+def _boleh_cek_akses(user) -> bool:
+    return check_role(user, ['admin', 'owner'], 'roles.manage')
+
+
+@router.post("/roles/cek-akses")
+async def cek_akses_peran(request: Request):
+    """Pratinjau pemeriksaan untuk centang yang sedang diubah di form Atur peran (tidak menyimpan)."""
+    user = await require_auth(request)
+    if not _boleh_cek_akses(user):
+        raise HTTPException(403, 'Forbidden')
+    from core.cek_akses import periksa
+    body = await request.json()
+    return periksa(validate_keys(body.get('permissions')), [str(p) for p in (body.get('portals') or [])],
+                   str(body.get('role_name') or ''), [str(m) for m in (body.get('hidden_modules') or [])])
+
+
+@router.get("/roles/cek-akses/ringkasan")
+async def cek_akses_ringkasan(request: Request):
+    """Jumlah temuan per peran dari centang TERSIMPAN (penanda "Perlu dicek" di tabel peran)."""
+    user = await require_auth(request)
+    if not _boleh_cek_akses(user):
+        raise HTTPException(403, 'Forbidden')
+    from core.cek_akses import ringkasan
+    db = get_db()
+    roles = await db.roles.find({}, {'_id': 0, 'id': 1, 'name': 1, 'portals': 1, 'hidden_modules': 1}).to_list(500)
+    perms = await db.role_permissions.find({}, {'_id': 0, 'role_id': 1, 'permission_key': 1}).to_list(20000)
+    by_role: dict = {}
+    for p in perms:
+        if p.get('permission_key'):
+            by_role.setdefault(p.get('role_id'), []).append(p['permission_key'])
+    return {'items': ringkasan([{**r, 'permission_keys': by_role.get(r.get('id'), [])} for r in roles])}
+
 # ─── Audit convenience: RBAC change history ─────────────────────────────────
 @router.get("/roles/audit")
 async def get_rbac_audit(request: Request):

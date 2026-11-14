@@ -125,6 +125,14 @@ class PetaLayar:
             m = re.match(r"(?:withProps|makeModuleWithTab)\(\s*(\w+)", rhs) or re.match(r"(\w+)", rhs)
             if m and m.group(1) in comp:
                 self.mod_file[mid] = comp[m.group(1)]
+                continue
+            # 14 Nov 2026 (peta menu → layanan): entri langsung `'id': lazyRetry(() => import('./x/Y'))`.
+            m = re.search(r"import\(\s*['\"]([^'\"]+)['\"]", rhs)
+            r = resolve(reg_f, m.group(1)) if m else None
+            if r:
+                self.mod_file[mid] = r
+        self.redir = dict(redir)
+        self.resolve_impor = resolve
         nav = _baca(os.path.join(erp, "portal-shell", "portalNav.js"))
         self.mod_portal = collections.defaultdict(set)
         self.mod_label = {}
