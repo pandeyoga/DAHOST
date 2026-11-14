@@ -910,10 +910,6 @@
   ],
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/auth/users"
   ]
  ],
@@ -1221,10 +1217,6 @@
   [
    "POST",
    "/api/assets/x/upload-photo"
-  ],
-  [
-   "GET",
-   "/api/auth/me"
   ],
   [
    "GET",
@@ -3234,10 +3226,6 @@
   ],
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/auth/users"
   ],
   [
@@ -3305,10 +3293,6 @@
   [
    "GET",
    "/api/announcements/active"
-  ],
-  [
-   "GET",
-   "/api/auth/me"
   ]
  ],
  "hr-assets": [
@@ -5204,10 +5188,6 @@
  "marketing-accounts": [
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/auth/users"
   ],
   [
@@ -5382,10 +5362,6 @@
   ]
  ],
  "marketing-ai-hub": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -5620,10 +5596,6 @@
  "marketing-change-log": [
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/marketing/accounts"
   ],
   [
@@ -5652,10 +5624,6 @@
   ]
  ],
  "marketing-content-calendar": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -5738,10 +5706,6 @@
   ]
  ],
  "marketing-discounts": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -5838,10 +5802,6 @@
   ]
  ],
  "marketing-import": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -5992,10 +5952,6 @@
  "marketing-kol-hub": [
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/dewi/kreator-requests"
   ],
   [
@@ -6138,10 +6094,6 @@
  "marketing-live-hub": [
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/marketing/accounts"
   ],
   [
@@ -6276,10 +6228,6 @@
  "marketing-orders": [
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/marketing/accounts"
   ],
   [
@@ -6320,10 +6268,6 @@
   ]
  ],
  "marketing-product-launches": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -6374,10 +6318,6 @@
   ]
  ],
  "marketing-reports": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -6498,10 +6438,6 @@
  "marketing-reviews": [
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/marketing/accounts"
   ],
   [
@@ -6580,10 +6516,6 @@
   ]
  ],
  "marketing-samples": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -6820,10 +6752,6 @@
   ],
   [
    "GET",
-   "/api/auth/me"
-  ],
-  [
-   "GET",
    "/api/buyers"
   ],
   [
@@ -6964,10 +6892,6 @@
   ]
  ],
  "mgmt-marketing-change-log": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/marketing/accounts"
@@ -7523,10 +7447,6 @@
   [
    "POST",
    "/api/asisten-ai/tindakan/x/putuskan-kedua"
-  ],
-  [
-   "GET",
-   "/api/auth/me"
   ],
   [
    "GET",
@@ -9278,10 +9198,6 @@
   ]
  ],
  "rnd-kreator-requests": [
-  [
-   "GET",
-   "/api/auth/me"
-  ],
   [
    "GET",
    "/api/dewi/kreator-requests"
