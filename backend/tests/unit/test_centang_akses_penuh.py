@@ -193,6 +193,37 @@ def test_kasus_4_rnd_master_produk_lewat_centang(gerbang):
                                                ["mod.prod_master_product.edit"]))) is None
 
 
+@pytest.mark.parametrize("method,path,aksi", [
+    ("POST", "/api/rahaza/models/m1/variants/generate", "create"),
+    ("POST", "/api/rahaza/variants", "create"),
+    ("PUT", "/api/rahaza/variants/v1", "edit"),
+    ("DELETE", "/api/rahaza/variants/v1", "delete"),
+    ("POST", "/api/rahaza/boms/relink-materials", "approve"),
+])
+def test_rnd_varian_lewat_centang_master_produk_rnd(gerbang, method, path, aksi):
+    """14 Nov 2026 (owner, R&D ditolak "Buat varian"): centang 'Master Produk RnD (Kategori, Varian, …)' meloloskan
+    layanan varian; centang modul Produksi tetap berlaku; tanpa centang aksi yang sama tetap ditolak."""
+    rnd = ["rnd"]
+    assert run(gate.evaluate(method, path, gerbang("research_development", rnd, [f"mod.rnd_master_product.{aksi}"]))) is None
+    assert run(gate.evaluate(method, path, gerbang("research_development", rnd,
+                                                   [f"mod.prod_master_product.{aksi}"]))) is None
+    lain = "view" if aksi != "view" else "edit"
+    assert run(gate.evaluate(method, path, gerbang("research_development", rnd, [f"mod.rnd_master_product.{lain}"])))
+    # penjaga di kode (lolos_centang) memakai kunci setara yang sama
+    u = U("research_development", f"mod.rnd_master_product.{aksi}", method=method, path=path)
+    assert not lolos_centang(u)
+    from data.module_catalog import request_keys_setara
+    u["_aksi_setara"] = request_keys_setara(method, path)
+    assert lolos_centang(u)
+
+
+def test_rnd_model_tetap_modul_produksi():
+    from data.module_catalog import modul_setara
+    assert modul_setara("PUT", "/api/rahaza/models/m1") == []           # ubah model: hanya modul Produksi
+    assert modul_setara("POST", "/api/rahaza/models") == []
+    assert [m["id"] for m in modul_setara("POST", "/api/rahaza/models/m1/variants/generate")] == ["rnd_master_product"]
+
+
 def test_kasus_5_pic_toko_cutting_dan_nota(masuk):
     import routes.cutting as cut
     import routes.sales_direct as sd

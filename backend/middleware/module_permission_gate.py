@@ -16,7 +16,7 @@ import logging
 from auth import _load_live_user, _load_portal_config, _load_rbac, verify_download_token, verify_token_str
 from core.authz import EXTERNAL_ROLES
 from data.module_catalog import (
-    ACTION_LABELS, PORTAL_LABELS, granular_portals, is_self_service, perm_key, resolve,
+    ACTION_LABELS, PORTAL_LABELS, granular_portals, is_self_service, modul_setara, perm_key, resolve,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,13 +66,17 @@ async def evaluate(method: str, path: str, payload: dict | None):
     #    10 Nov 2026: portal dicentang = FINAL (bawaan kode tidak lagi ditambahkan) — routes.shared.effective_portals.
     role_portals, extra_portals = (await _load_portal_config(role, payload.get("id"))
                                    if action != "view" else ([], []))
+    setara = modul_setara(method, path)    # 14 Nov 2026: modul setara (MODUL_SETARA di katalog)
     if role_portals or extra_portals:
         from routes.shared import effective_portals
         allowed = set(effective_portals(role, role_portals, extra_portals)) | granular_portals(perms)
-        if not ({mod["portal"], *mod["also_portals"]} & allowed):
+        portal_modul = {mod["portal"], *mod["also_portals"]}
+        for alt in setara:
+            portal_modul |= {alt["portal"], *alt["also_portals"]}
+        if not (portal_modul & allowed):
             return mod, action, "portal"
     # 2) Izin per modul: wajib dicentang (tanpa aturan lama per portal sejak 13 Nov 2026).
-    if perm_key(mod["id"], action) in perms:
+    if perm_key(mod["id"], action) in perms or any(perm_key(alt["id"], action) in perms for alt in setara):
         return None
     return mod, action, "perm"
 
@@ -124,13 +128,18 @@ class ModulePermissionGateMiddleware:
             return await self._teruskan(scope, receive, send, payload)
         mod, action, reason = denied
         portal_label = PORTAL_LABELS.get(mod['portal'], mod['portal'])
+        # 14 Nov 2026: pesan tanpa kunci program; sebut tempat centangnya (AGENTS.md aturan teks No.5).
+        tempat = "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses"
         if reason == "portal":
             detail = (f"Akses ditolak: peran Anda tidak diberi akses Portal {portal_label} "
-                      f"(modul '{mod['label']}'). Hubungi admin untuk mencentang portal ini di Peran & Hak Akses.")
+                      f"(modul '{mod['label']}'). Minta owner mencentang portal ini di {tempat}.")
         else:
+            pilihan = [f"'{mod['label']}' (Portal {portal_label})"] + [
+                f"'{alt['label']}' (Portal {PORTAL_LABELS.get(alt['portal'], alt['portal'])})"
+                for alt in modul_setara(scope.get("method", "GET"), scope["path"])]
             detail = (f"Akses ditolak: peran Anda tidak punya izin '{ACTION_LABELS[action]}' pada modul "
-                      f"'{mod['label']}' (Portal {portal_label}). "
-                      f"Hubungi admin untuk menambahkan izin {perm_key(mod['id'], action)}.")
+                      f"{' atau '.join(pilihan)}. Minta owner mencentang '{ACTION_LABELS[action]}' pada modul itu "
+                      f"di {tempat}.")
         body = json.dumps({"detail": detail, "code": "RBAC_PORTAL_DENIED" if reason == "portal" else "RBAC_MODULE_DENIED",
                            "module": mod["id"], "action": action}).encode()
         await send({"type": "http.response.start", "status": 403, "headers": [
