@@ -319,3 +319,52 @@ def test_tidak_ada_lagi_manajemen_role_di_teks_staf():
             if "Manajemen Role" in t and not t.startswith(("//", "*", "/*")):
                 temuan.append(p.relative_to(REPO).as_posix())
     assert not temuan, temuan
+
+
+# ── 14 Nov 2026: dua celah katalog yang ditemukan saat memperbaiki temuan ─────────────────────────────────
+def test_selisih_tagihan_cmt_butuh_setujui_bukan_lihat():
+    from data.module_catalog import request_key, resolve
+    mod, act = resolve("POST", "/api/dewi/maklon/finance/cmt-payments/b1/resolve-variance")
+    assert (mod["id"], act) == ("mak_billing", "approve")
+    assert request_key("POST", "/api/dewi/maklon/finance/cmt-payments/b1/resolve-variance") == "mod.mak_billing.approve"
+
+
+def _gerbang(monkeypatch, role, portals, perms):
+    import middleware.module_permission_gate as g
+
+    async def live(uid):
+        return {"id": uid, "role": role}
+
+    async def rbac(_role, _uid):
+        return list(perms), []
+
+    async def cfg(_role, _uid):
+        return list(portals), []
+    monkeypatch.setattr(g, "_load_live_user", live)
+    monkeypatch.setattr(g, "_load_rbac", rbac)
+    monkeypatch.setattr(g, "_load_portal_config", cfg)
+    return g, {"id": f"u-{role}", "role": role}
+
+
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/wms/opname3/sessions"), ("POST", "/api/wms/opname3/scan"), ("POST", "/api/wms/opname3/count"),
+    ("POST", "/api/wms/opname3/submit"), ("POST", "/api/wms/opname3/approve"),
+])
+def test_opname_aksesoris_lewat_centang_aksesoris(monkeypatch, method, path):
+    """Staf aksesoris (Portal Aksesoris saja) bisa membuat/menghitung/mengajukan opname aksesoris dengan centang
+    Stok Opname Aksesoris; persetujuan sesi tetap dipisah per jenis di routes.wms_opname3.assert_can_approve."""
+    from data.module_catalog import resolve
+    _, act = resolve(method, path)
+    g, p = _gerbang(monkeypatch, "admin_aksesoris", ["accessories"], [f"mod.acc_opname.{act}"])
+    assert asyncio.run(g.evaluate(method, path, p)) is None
+    g, p = _gerbang(monkeypatch, "admin_aksesoris", ["accessories"], ["mod.acc_opname.view"] if act != "view" else [])
+    assert asyncio.run(g.evaluate(method, path, p))
+
+
+def test_centang_aksesoris_tidak_menyetujui_sesi_gudang():
+    from routes.wms_opname3 import assert_can_approve
+    u = {"id": "u1", "role": "admin_aksesoris", "_permissions": ["mod.acc_opname.approve"], "_role_perms": ["x"],
+         "_aksi_request": "mod.wh_opname.approve", "_aksi_setara": ["mod.acc_opname.approve"]}
+    assert_can_approve(u, sess={"source": "aksesoris"})
+    with pytest.raises(HTTPException):
+        assert_can_approve(u, sess={"source": "gudang"})
