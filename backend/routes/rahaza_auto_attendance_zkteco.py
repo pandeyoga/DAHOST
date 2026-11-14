@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File, Form
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from dotenv import load_dotenv
 from utils.waktu import today_wib
 
@@ -274,7 +275,7 @@ _AUTO = {
 def _require_fp(user: dict) -> None:
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, FP_ROLES, FP_PERM) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, FP_ROLES, FP_PERM) or lolos_centang(user)):
         raise HTTPException(403, "Hanya admin/HR.")
 
 

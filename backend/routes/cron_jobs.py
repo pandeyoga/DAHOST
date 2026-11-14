@@ -39,11 +39,12 @@ async def _require_fin(request: Request):
     from routes.shared import lolos_centang
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    role = (user.get("role") or "").lower()
-    perms = user.get("_permissions") or []
-    if role in FIN_ROLES or "*" in perms or "finance.manage" in perms:
+    # 14 Nov 2026: /api/cron di luar katalog modul — izin Keuangan (finance.manage, tersirat dari centang modul
+    # Keuangan mis. Jurnal › Tambah/Ubah); FIN_ROLES hanya selama owner belum mengatur centang peran itu.
+    from core.authz import izin_atau_peran_lama, pesan_centang
+    if izin_atau_peran_lama(user, FIN_ROLES, "finance.manage"):
         return user
-    raise HTTPException(403, "Forbidden: butuh permission finance.")
+    raise HTTPException(403, pesan_centang(user, "mod.fin_journal.edit"))
 
 
 async def _start_run(db, job: str, run_id: str, trigger: str) -> Optional[dict]:

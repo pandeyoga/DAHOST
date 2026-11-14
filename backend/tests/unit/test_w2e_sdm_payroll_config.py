@@ -574,8 +574,10 @@ class TestBatalRunFinal:
 
     def test_pengaju_tidak_boleh_menyetujui_sendiri(self, env):
         _run_with_kasbon(env)
-        # manager_keuangan ber-izin payroll.manage = boleh mengajukan (HR) DAN menyetujui (Keuangan)
-        env.actor["user"] = {"id": "u-mk", "role": "manager_keuangan", "name": "MK", "_permissions": ["payroll.manage"]}
+        # manager_keuangan ber-izin payroll.manage + izin Keuangan = boleh mengajukan (HR) DAN menyetujui (Keuangan).
+        # 14 Nov 2026: peran yang centangnya sudah diatur butuh izin Keuangan (kode peran Keuangan saja tidak cukup).
+        env.actor["user"] = {"id": "u-mk", "role": "manager_keuangan", "name": "MK",
+                             "_permissions": ["payroll.manage", "finance.approve"]}
         run(runs.cancel_run("rc", FakeRequest({"action": "request", "reason": "x"})))
         e = _err(runs.cancel_run("rc", FakeRequest({"action": "approve"})))
         assert e.status_code == 403 and "Pemisahan tugas" in e.detail

@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.waktu import now_wib
 
 router = APIRouter(prefix="/api/rahaza/360-feedback", tags=["rahaza-360-feedback"])
@@ -156,7 +157,7 @@ async def close_cycle(cycle_id: str, request: Request):
     """HR closes cycle, compute aggregate scores."""
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `hr.manage` (modul Manajemen Kinerja).
-    if not (check_role(user, ("superadmin", "admin", "owner", "hr", "manager"), "hr.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ("superadmin", "admin", "owner", "hr", "manager"), "hr.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR yang dapat tutup cycle.")
     db = get_db()
 

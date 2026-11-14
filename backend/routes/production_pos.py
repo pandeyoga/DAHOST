@@ -7,13 +7,13 @@ identical to the original definitions in server.py. This is the most central
 entity in the ERP (HIGH risk phase per the plan) — every line below is an
 exact cut-paste from server.py, no logic was altered.
 """
-from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from datetime import datetime
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
-from routes.production_rbac import (PROD_ADMIN_ROLES, assert_po_action, deny_klien, po_action_flags,
+from auth import require_auth, log_activity, serialize_doc
+from core.authz import wajib_centang
+from routes.production_rbac import (assert_po_action, assert_prod_admin, deny_klien, po_action_flags,
                                     resolve_vendor_doc, resolve_buyer_name)
 from cascade_delete import alasan_tolak_hapus_po, cascade_delete_po
 from core import sewing_rate as sr
@@ -585,8 +585,7 @@ async def po_accessory_create_request(po_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Hanya admin/supervisor produksi yang boleh mengajukan pembelian aksesoris')
+    assert_prod_admin(user)
     db = get_db()
     po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
     if not po:
@@ -616,7 +615,7 @@ async def po_accessory_create_request(po_id: str, request: Request):
 async def close_po(po_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     po = await db.production_pos.find_one({'id': po_id})
@@ -726,8 +725,7 @@ async def close_po_short(po_id: str, request: Request):
     else shrink the draft AR invoice to qty_received)."""
     user = await require_auth(request)
     deny_klien(user)
-    if not (check_role(user, PROD_ADMIN_ROLES) or lolos_centang(user)):
-        raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     reason = (body.get('closed_reason') or '').strip()
@@ -1215,7 +1213,7 @@ async def get_po_items_produced(request: Request):
 async def update_po_item(item_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     body.pop('_id', None); body.pop('id', None)
@@ -1249,7 +1247,7 @@ async def update_po_item(item_id: str, request: Request):
 async def delete_po_item(item_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if (user.get('role') or '').lower() != 'superadmin': raise HTTPException(403, 'Forbidden')
+    wajib_centang(user, apa='menghapus data ini')   # 14 Nov 2026: centang Hapus modulnya (dulu khusus superadmin)
     db = get_db()
     await db.po_items.delete_one({'id': item_id})
     return {'success': True}
@@ -1271,7 +1269,7 @@ async def quick_complete_po(po_id: str, request: Request):
     """
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     # 2026-11-06 (pola P9): PO DIKUNCI (kunci yang sama dengan "Buat Job") — dulu klik ganda menjalankan
@@ -1555,7 +1553,7 @@ async def transition_po_status(po_id: str, request: Request):
     """Transition PO through staged statuses."""
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     new_status = body.get('status')
@@ -1792,7 +1790,7 @@ async def add_po_accessory(request: Request):
     """Add accessory to a PO."""
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     body = await request.json()
     po_id = body.get('po_id')
@@ -1817,7 +1815,7 @@ async def add_po_accessory(request: Request):
 async def remove_po_accessory(acc_id: str, request: Request):
     user = await require_auth(request)
     deny_klien(user)
-    if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
     db = get_db()
     _acc = await db.po_accessories.find_one({'id': acc_id}, {'_id': 0, 'po_id': 1})
     from core.po_lock import assert_po_open

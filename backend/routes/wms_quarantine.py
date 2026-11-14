@@ -28,7 +28,8 @@ import uuid
 import logging
 
 from database import get_db
-from auth import require_auth, check_role, log_activity, serialize_doc
+from auth import require_auth, log_activity, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import quarantine, location_resolver
 from utils.reject_reasons import normalize_reject_reasons  # FASE 19: SSOT bentuk alasan reject
 from routes.rahaza_posting import post_inventory_adjust
@@ -153,7 +154,7 @@ async def retry_block_item(item_id: str, request: Request):
     bisa memperbaiki — kegagalan blokir harus dibetulkan lewat database.
     """
     user = await require_auth(request)
-    if not (check_role(user, DISPOSE_ROLES) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, DISPOSE_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Hanya staf gudang/supervisor yang boleh memblokir ulang stok karantina")
     db = get_db()
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
@@ -240,7 +241,7 @@ async def release_item(item_id: str, request: Request):
     potongan diketik Keuangan), HPP rata-rata diperbarui, qty bisa ditagih lewat Tagihan dari GR,
     dan qty diterima PO bertambah. Dulu Dr persediaan / Cr beban pada HPP master (uji T1)."""
     user = await require_auth(request)
-    if not check_role(user, DISPOSE_ROLES) and not pr.is_finance(user) and not lolos_centang(user):
+    if not izin_atau_peran_lama(user, DISPOSE_ROLES) and not pr.is_finance(user) and not lolos_centang(user):
         raise HTTPException(403, "Hanya staf gudang/supervisor yang boleh melepas barang karantina")
     db = get_db()
     body = await request.json() if await request.body() else {}
@@ -349,7 +350,7 @@ def legacy_return_qty(item: dict) -> float:
 async def scrap_item(item_id: str, request: Request):
     """Buang barang karantina (write-off). Body: {qty?, notes?}"""
     user = await require_auth(request)
-    if not (check_role(user, SCRAP_ROLES) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, SCRAP_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Scrap = write-off nilai persediaan. Hanya Admin Gudang, Supervisor, "
                                  "Keuangan, atau Owner yang boleh melakukannya. Silakan ajukan ke atasan Anda.")
     db = get_db()
@@ -402,7 +403,7 @@ async def manual_quarantine(request: Request):
     """Pindahkan stok yang SUDAH ada di lokasi storage ke KARANTINA.
     Body: {material_id, qty, from_location_id, reason_code?, notes?}"""
     user = await require_auth(request)
-    if not (check_role(user, DISPOSE_ROLES) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, DISPOSE_ROLES) or lolos_centang(user)):
         raise HTTPException(403, "Hanya staf gudang/supervisor yang boleh mengarantina stok")
     db = get_db()
     body = await request.json()

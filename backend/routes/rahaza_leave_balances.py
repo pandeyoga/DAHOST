@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.waktu import today_wib, wib_year
 
 router = APIRouter(prefix="/api/rahaza/leave-balances", tags=["rahaza-leave-balances"])
@@ -47,7 +48,7 @@ async def _require_admin(request: Request):
     user = await require_auth(request)
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, LEAVE_BALANCE_ROLES, LEAVE_BALANCE_PERMS) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, LEAVE_BALANCE_ROLES, LEAVE_BALANCE_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR/Manager yang dapat mengelola saldo cuti.")
     return user
 

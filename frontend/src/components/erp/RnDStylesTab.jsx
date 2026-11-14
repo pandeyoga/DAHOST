@@ -31,6 +31,7 @@ import { formatDateID } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice } from './moduleAtoms';
+import { checkPerm } from '@/lib/rbac';
 import RnDStyleDetailPage, { STATUS_STYLE, StyleStatusBadge } from './RnDStyleDetailPage';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -82,8 +83,10 @@ export default function RnDStylesTab({ token, user }) {
   const [pendingPhotos, setPendingPhotos] = useState([]); // dipilih saat mode Tambah
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
-  // Detect if current user is owner/superadmin
-  const isOwner = user && (user.role === 'superadmin' || user.role === 'owner' || user.role === 'admin');
+  // 14 Nov 2026: tinjau keputusan owner = aturan server owner-approve (izin management.manage / rnd.approve atau
+  // centang Style & Desain › Setujui); kode peran owner/admin hanya selama centang peran belum diatur.
+  const isOwner = Boolean(user) && checkPerm({ user, roles: ['superadmin', 'owner', 'admin'],
+    keys: ['management.manage', 'rnd.approve', 'mod.rnd_design.approve'] });
 
   useEffect(() => {
     fetchStyles();

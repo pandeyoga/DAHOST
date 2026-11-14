@@ -35,7 +35,8 @@ Versioning Rules:
 """
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
 from core import bom_uom          # 2026-08-02: konversi satuan baris BOM → satuan dasar
 import uuid
@@ -284,7 +285,7 @@ async def _require_bom_repair(request: Request):
     from routes.shared import lolos_centang
     if lolos_centang(user):  # 13 Nov 2026: centang owner (katalog) dihormati — routes.shared.lolos_centang
         return user
-    if not check_role(user, BOM_REPAIR_ROLES):
+    if not izin_atau_peran_lama(user, BOM_REPAIR_ROLES):
         raise HTTPException(
             403,
             "Perbaikan massal kopling BOM hanya untuk Admin/Owner atau tim Produksi & RnD "

@@ -9,7 +9,8 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, check_role
+from auth import require_auth, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 _log = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ PRICE_FORBIDDEN_MSG = (
 
 def can_set_receive_price(user: dict) -> bool:
     """2026-11-06 (Tahap 2): aturan owner "hanya Finance yang menetapkan harga" (peran Keuangan)."""
-    return check_role(user, list(FINANCE_ROLES), "finance.manage")
+    return izin_atau_peran_lama(user, list(FINANCE_ROLES), "finance.manage")
 
 async def _log_movement(db, user: dict, *, material_id: str, mv_type: str, qty: float,
                         notes: str = "", related_ref: str = "", related_type: str = "",
@@ -461,7 +462,7 @@ async def scrap_stock(request: Request):
     boleh melakukan write-off.
     """
     user = await require_auth(request)
-    if not (check_role(user, SCRAP_ROLES, "inv.stock.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, SCRAP_ROLES, "inv.stock.manage") or lolos_centang(user)):
         raise HTTPException(403, SCRAP_FORBIDDEN_MSG)
     db = get_db()
     body = await request.json()

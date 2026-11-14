@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import doc_lock
 import logging
 import uuid
@@ -60,16 +61,16 @@ from core.roles import (  # T-08: satu konstanta
 # 2026-11-08: kode peran lama ATAU izin (lihat `core.roles`) — peran buatan owner dulu hanya melihat klaimnya
 # sendiri dan 403 saat menyetujui/mencairkan. Cermin layar: EmployeeExpenseModule.jsx (isApprover/isFinance).
 def can_view_all_claims(user: dict) -> bool:
-    return check_role(user, APPROVER_ROLES, EXPENSE_VIEW_ALL_PERMS)
+    return izin_atau_peran_lama(user, APPROVER_ROLES, EXPENSE_VIEW_ALL_PERMS)
 
 
 def is_claim_approver(user: dict) -> bool:
-    return check_role(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS)
+    return izin_atau_peran_lama(user, APPROVER_ROLES, EXPENSE_APPROVE_PERMS)
 
 
 def is_claim_payer(user: dict) -> bool:
     """Pencairan = uang keluar → Keuangan saja (K25), atau izin bayar yang tidak tersirat dari modul SDM."""
-    return check_role(user, FINANCE_ROLES, FINANCE_PAY_PERMS)
+    return izin_atau_peran_lama(user, FINANCE_ROLES, FINANCE_PAY_PERMS)
 from utils.employee_identity import job_title_of
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5) · K25 pemisahan tugas
     ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,

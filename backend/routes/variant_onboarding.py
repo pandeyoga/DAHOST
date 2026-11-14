@@ -32,7 +32,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from auth import check_role, log_activity, require_auth
+from auth import log_activity, require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import variant_identity as vi
 from database import get_db
 
@@ -42,7 +43,7 @@ router = APIRouter(prefix='/api/variant-onboarding', tags=['variant-onboarding']
 def _admin(user: dict, perm: str):
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, ['admin'], perm) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ['admin'], perm) or lolos_centang(user)):
         raise HTTPException(status_code=403,
                             detail='Hanya System Admin yang boleh melakukan ini.')
 

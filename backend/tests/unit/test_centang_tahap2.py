@@ -82,7 +82,9 @@ def test_1_helper_aset_sdm_ikut_centang(masuk):
 def test_2_kirim_cmt_setujui_permintaan_ikut_centang():
     import routes.kirim_cmt_routes as k
     src = inspect.getsource(k.kirim_request_approve)
-    assert "lolos_centang(user)" in src                       # pemeriksaan kode peran ikut menerima centang
+    # pemeriksaan kode peran ikut menerima centang (14 Nov 2026: `core.authz.wajib_centang` = centang aksi endpoint,
+    # kode peran lama hanya selama centang peran belum diatur)
+    assert "lolos_centang(user)" in src or "wajib_centang(user" in src
     assert request_key("POST", "/api/kirim-cmt/requests/acc/r1/approve") == "mod.prod_vendor_shipment.approve"
     assert request_key("GET", "/api/kirim-cmt/nota-aksesoris-berlaku") == "mod.acc_requests.view"
     assert request_key("POST", "/api/kirim-cmt/nota-aksesoris/n1/potong") == "mod.prod_cmt_billing.approve"
@@ -92,7 +94,8 @@ def test_2_kirim_cmt_setujui_permintaan_ikut_centang():
 def test_3_kondisi_gabungan_lepas_karantina_tetap_benar():
     import routes.wms_quarantine as wq
     src = inspect.getsource(wq.release_item)
-    assert ("if not check_role(user, DISPOSE_ROLES) and not pr.is_finance(user) and not lolos_centang(user):"
+    # 14 Nov 2026: kode peran pembuang = `izin_atau_peran_lama` (hanya selama centang peran belum diatur)
+    assert ("if not izin_atau_peran_lama(user, DISPOSE_ROLES) and not pr.is_finance(user) and not lolos_centang(user):"
             in src)
 
 

@@ -8,6 +8,7 @@ Refactored: Session #11.19 Final - CAREFUL APPROACH
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity, check_role
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from routes.dewi_kpi_shared import (
     _uid, _now, _s, _grade,
     _require_hr, _get_linked_employee,
@@ -270,7 +271,7 @@ async def list_goals(request: Request, period_id: str = None, employee_id: str =
         q["employee_id"] = employee_id
     # Non-HR only sees their own goals
     # 2026-11-08: kode peran lama ATAU izin `hr.manage` (peran buatan owner).
-    if not check_role(user, ("superadmin", "admin", "owner", "hr", "manager"), KPI_HR_PERM):
+    if not izin_atau_peran_lama(user, ("superadmin", "admin", "owner", "hr", "manager"), KPI_HR_PERM):
         emp = await db.rahaza_employees.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1})
         if emp:
             q["employee_id"] = emp["id"]

@@ -27,7 +27,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama, pesan_centang  # 14 Nov 2026: centang owner = penentu
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
 
@@ -45,7 +46,7 @@ OKR_OBJECTIVE_WRITER_PERM = "management.manage"
 
 def can_write_objective(user: dict) -> bool:
     """Boleh membuat / mengarsipkan objektif OKR — dipakai endpoint dan alat Asisten AI `buat_objektif_okr`."""
-    return check_role(user or {}, OKR_OBJECTIVE_WRITER_ROLES, OKR_OBJECTIVE_WRITER_PERM)
+    return izin_atau_peran_lama(user or {}, OKR_OBJECTIVE_WRITER_ROLES, OKR_OBJECTIVE_WRITER_PERM)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -200,7 +201,7 @@ async def create_objective(request: Request, payload: ObjectiveIn):
     db = get_db()
     user = request.state.user
     if not can_write_objective(user):
-        raise HTTPException(403, "Unauthorized")
+        raise HTTPException(403, pesan_centang(user, apa="mengelola objektif OKR"))
 
     obj = payload.dict(exclude={"key_results"})
     obj["id"] = str(uuid.uuid4())
@@ -266,7 +267,7 @@ async def delete_objective(request: Request, obj_id: str):
     db = get_db()
     user = request.state.user
     if not can_write_objective(user):
-        raise HTTPException(403, "Unauthorized")
+        raise HTTPException(403, pesan_centang(user, apa="mengelola objektif OKR"))
     res = await db[OBJ_COL].update_one(
         {"id": obj_id}, {"$set": {"status": "archived", "updated_at": _now()}}
     )

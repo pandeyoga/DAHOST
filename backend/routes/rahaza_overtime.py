@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 
 router = APIRouter(prefix="/api/rahaza/overtime", tags=["rahaza-overtime"])
 
@@ -41,7 +42,7 @@ OT_APPROVER_PERM = "hr.approve"
 
 
 def is_ot_approver(user: dict) -> bool:
-    return check_role(user, OT_APPROVER_ROLES, OT_APPROVER_PERM)
+    return izin_atau_peran_lama(user, OT_APPROVER_ROLES, OT_APPROVER_PERM)
 
 
 async def _require_approver(request: Request):

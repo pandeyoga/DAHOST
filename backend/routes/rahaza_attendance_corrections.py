@@ -30,7 +30,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from auth import check_role, log_activity, require_auth, serialize_doc
+from auth import log_activity, require_auth, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.attendance_rules import (ATTENDANCE_STATUSES, attendance_lock, ensure_not_locked,
                                    write_attendance_audit)
 from core.roles import HR_ROLES
@@ -51,7 +52,7 @@ def _now() -> datetime:
 def _require_hr(user: dict) -> None:
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, HR_CORRECTION_ROLES, "hr.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, HR_CORRECTION_ROLES, "hr.manage") or lolos_centang(user)):
         raise HTTPException(403, MSG_HR_ONLY)
 
 

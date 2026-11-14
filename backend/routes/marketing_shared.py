@@ -5,6 +5,7 @@ Extracted from marketing.py (1757 LOC monolith)
 
 Refactored: Session #11.19 Phase 3.2 Batch #3
 """
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 import uuid
 import html
 from datetime import datetime, timezone, timedelta
@@ -202,29 +203,31 @@ def health_grade_of(score):
     return 1, "Kritis"
 
 
-def _is_pic_role(user) -> bool:
+def _is_pic_role(user, *kunci) -> bool:
+    """Hak SPV/PIC Marketing untuk alur persetujuan (setuju tugas, ganti angka turunan, hitung ulang rekap).
+
+    Izin `toko.approve` atau centang yang disebut pemanggil (`kunci`, mis. Manajemen Tugas Marketing › Setujui).
+    14 Nov 2026 (owner: centang = penentu): kode peran lama (manager_*, pic_marketing, pic_toko) hanya berlaku
+    selama owner belum mengatur centang peran itu — dulu kode peran meloloskan walau tidak dicentang.
     """
-    Check if user has PIC Marketing-level role for approval workflow.
-    Allowed roles: admin, owner, superadmin, manager_* (manager_marketing, manager_keuangan, dll), pic_marketing, pic_toko.
-    2026-11-08: ATAU izin `toko.approve` ("Setujui diskon, retur & komplain") — peran buatan owner (SPV marketing
-    dengan nama sendiri) dulu 403 saat menyetujui tugas / mengganti angka turunan.
-    """
+    user = user or {}
     role = (user.get("role") or "").lower()
     if role in {"admin", "owner", "superadmin"}:
         return True
-    if role.startswith("manager_") or role.startswith("manager-"):
+    from routes.shared import has_perm, perms_configured
+    if has_perm(user, "toko.approve", *kunci):
         return True
-    if role in {"pic_marketing", "pic_toko"}:
-        return True
-    from auth import check_role
-    return check_role(user, [], "toko.approve")
+    if perms_configured(user):
+        return False
+    return role.startswith(("manager_", "manager-")) or role in {"pic_marketing", "pic_toko"}
 
 
 # 2026-11-08 (Asisten AI Tahap B, celah izin — keputusan owner no. 11). Docstring POST /tasks sejak
 # awal berkata "Only PIC Marketing can create tasks", tetapi tidak pernah dicek: siapa pun yang login
 # (termasuk staf gudang/produksi) bisa membuat tugas marketing dan menugaskannya ke siapa saja.
-TASK_CREATE_DENIED = ("Hanya PIC Marketing, PIC toko itu, SPV/Manager Marketing, atau owner yang boleh "
-                      "membuat tugas marketing. Minta SPV Marketing membuatkan tugasnya.")
+TASK_CREATE_DENIED = ("Peran Anda belum dicentang \"Tambah\" pada modul \"Manajemen Tugas Marketing\" (Portal "
+                      "Marketing / Toko) dan Anda bukan PIC toko ini. Minta owner mencentangnya di Administrasi "
+                      "Sistem › Kontrol Akses › Peran & Hak Akses, atau minta SPV Marketing membuatkan tugasnya.")
 
 
 def can_create_task(user, account: Optional[dict] = None) -> bool:
@@ -240,7 +243,7 @@ def can_create_task(user, account: Optional[dict] = None) -> bool:
     from core import marketing_account_scope as _scope
     from routes.shared import has_perm
     user = user or {}
-    if _is_pic_role(user) or _scope.can_write_target(user) or has_perm(user, "toko.manage"):
+    if _is_pic_role(user, "mod.mkt_tasks.create") or _scope.can_write_target(user) or has_perm(user, "toko.manage"):
         return True
     uid = user.get("id")
     return bool(uid and account and account.get("pic_user_id") == uid)

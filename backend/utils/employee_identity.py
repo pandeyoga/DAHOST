@@ -65,12 +65,13 @@ def job_title_of(emp: dict | None) -> str:
 
 
 def is_hr(user: dict) -> bool:
-    """True bila user boleh bertindak atas nama karyawan lain."""
-    role = (user.get("role") or "").lower()
-    if role in HR_ROLES:
-        return True
-    perms = user.get("_permissions") or []
-    return "*" in perms or "hr.manage" in perms
+    """True bila user boleh bertindak atas nama karyawan lain.
+
+    14 Nov 2026 (owner: centang = penentu): izin SDM (hr.manage, atau Tambah/Ubah/Hapus Data Karyawan / Absensi yang
+    menyiratkan hr.employee.manage / hr.attendance.manage); kode peran HR_ROLES hanya selama owner belum mengatur
+    centang peran itu."""
+    from core.authz import izin_atau_peran_lama
+    return izin_atau_peran_lama(user or {}, HR_ROLES, ("hr.manage", "hr.employee.manage", "hr.attendance.manage"))
 
 
 def can_view_all_employees(user: dict) -> bool:
@@ -82,8 +83,9 @@ def can_view_all_employees(user: dict) -> bool:
     hanya data milik sendiri — pola yang sama dengan daftar lembur, kasbon, dan izin keluar."""
     if is_hr(user):
         return True
+    from core.authz import izin_atau_peran_lama
     from core.roles import HR_ROLES as CORE_HR_ROLES
-    if (user.get("role") or "").lower() in CORE_HR_ROLES:
+    if izin_atau_peran_lama(user, CORE_HR_ROLES):   # kode peran SDM: hanya selama centang peran belum diatur
         return True
     from routes.shared import check_portal_access
     return bool(check_portal_access(user, "hr"))

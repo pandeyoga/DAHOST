@@ -31,7 +31,8 @@ import logging
 
 from fastapi import APIRouter, Request
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.notif_unified import SOURCE_RULES, alert_roles_for_portal, rule_open_filter
 
 router = APIRouter(prefix="/api/approval-inbox", tags=["approval-badge"])
@@ -88,7 +89,6 @@ async def approval_groups(db, user: dict, *, exclude=frozenset(), with_keys: boo
 
     `with_keys=True` (Monitoring Staf, 10 Nov 2026) menambah `keys` = [[koleksi, id], ...] per grup — SATU sumber
     "menunggu siapa" untuk kewajiban persetujuan (`core.pantau_staf.katalog`), tidak dihitung ulang di sana."""
-    role = (user.get("role") or "").lower()
     uid = user.get("id")
     groups = []
     # 2026-11-02 — ajuan MILIK SENDIRI bukan pekerjaan "Perlu Tindakan" (sama dengan notifikasinya,
@@ -109,17 +109,18 @@ async def approval_groups(db, user: dict, *, exclude=frozenset(), with_keys: boo
                 pr_keys.append((coll, it["id"]))
     except Exception:  # noqa: BLE001 — lencana tidak boleh mematikan TopBar
         logger.debug("[approval-badge] pending_for_user gagal", exc_info=True)
-    if pr_keys or role in _PROCUREMENT_ROLES:
+    # 14 Nov 2026 (owner: centang = penentu): grup tampil menurut centang; kode peran hanya selama centang belum diatur.
+    if pr_keys or izin_atau_peran_lama(user, _PROCUREMENT_ROLES, "mod.proc_requests.approve"):
         groups.append(_group("pr", "Pembelian menunggu persetujuan Anda", "proc-requests",
                              "shopping-cart", pr_keys, exclude, with_keys=with_keys))
 
-    if role in _FINANCE_ROLES:
+    if izin_atau_peran_lama(user, _FINANCE_ROLES, ("mod.fin_ap.view", "mod.fin_pencairan.approve")):
         groups.append(_group("ap", "AP Invoice belum dibayar", "fin-ap-aging", "hourglass",
                              await _open_keys(db, "ap_invoice"), exclude, with_keys=with_keys))
 
     # 2026-11-08: kode peran lama ATAU izin yang sama dengan gerbang HR Inbox (`hr.approve` / `hr.manage`),
     # supaya peran buatan owner yang bisa menyetujui juga melihat hitungannya.
-    if role in _HR_ROLES or check_role(user, [], ("hr.approve", "hr.manage")):
+    if izin_atau_peran_lama(user, _HR_ROLES, ("hr.approve", "hr.manage")):
         hr_keys = []
         for key in ("leave_manager", "leave_hr", "overtime", "salary_manager", "salary_hr"):
             hr_keys += await _open_keys(db, key, extra=not_mine_uid if key == "overtime" else None)
@@ -132,7 +133,7 @@ async def approval_groups(db, user: dict, *, exclude=frozenset(), with_keys: boo
 
     # 2026-11-08: ATAU izin bayar yang sama dengan gerbang pencairan klaim/kasbon (`core.roles.FINANCE_PAY_PERMS`).
     from core.roles import FINANCE_PAY_PERMS
-    if role in _FINANCE_ROLES or check_role(user, [], FINANCE_PAY_PERMS):
+    if izin_atau_peran_lama(user, _FINANCE_ROLES, FINANCE_PAY_PERMS):
         # K37 — klaim karyawan yang sudah disetujui menunggu pencairan di Pengeluaran Keuangan.
         exp = await _open_keys(db, "expense_disburse")
         if exp:
@@ -154,7 +155,7 @@ async def approval_groups(db, user: dict, *, exclude=frozenset(), with_keys: boo
                                  "alert-triangle", var, exclude, with_keys=with_keys))
 
     # K1 — retur menunggu keputusan gudang.
-    if role in _warehouse_roles():
+    if izin_atau_peran_lama(user, _warehouse_roles(), ("mod.wh_returns.approve",)):
         rt = await _open_keys(db, "wh_return")
         if rt:
             groups.append(_group("wh_return", "Retur menunggu keputusan gudang", "wh-returns",

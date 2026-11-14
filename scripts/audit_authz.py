@@ -31,6 +31,8 @@ GATE_RX = re.compile(
     r"|vendor_identity|\bscope|assert_\w+\(|_require_\w+\(|require_admin|require_role|ensure_role"
     r"|PROD_ADMIN_ROLES|PROD_VENDOR_ROLES|forbid_|only_roles|allowed_roles|\.get\(['\"]role['\"]\)"
     r"|_admin\w*\(|resolve_my_employee|_my_employee_id"
+    # 14 Nov 2026: penjaga centang di kode (core.authz) — pengganti daftar kode peran
+    r"|izin_atau_peran_lama\(|boleh_centang\(|wajib_centang\(|lolos_centang\(|prod_admin_ok\(|assert_prod_admin\("
     # kepemilikan: dokumen difilter user/karyawan yang login (self-service)
     r"|user_id['\"]\s*:\s*user(\[|\.get)|_get_linked_employee|employee_id['\"]\s*:\s*emp\["
     r"|\[['\"](owner_id|created_by)['\"]\]\s*!=\s*(user\[|uid)|_get_access_level\(")

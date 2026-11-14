@@ -7,8 +7,8 @@ melihat semua (opsional filter ?buyer_id=).
 """
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role, serialize_doc
-from routes.production_rbac import PROD_ADMIN_ROLES
+from auth import require_auth, serialize_doc
+from routes.production_rbac import prod_admin_ok
 from services.maklon_progress import compute_po_progress, compute_pos_batch
 
 router = APIRouter(prefix="/api/maklon-client", tags=["maklon-client-tracking"])
@@ -22,9 +22,10 @@ def _resolve_scope(user: dict, request: Request):
         if not buyer_id:
             raise HTTPException(403, 'Akun klien belum terhubung ke master klien. Hubungi admin.')
         return buyer_id
-    if check_role(user, PROD_ADMIN_ROLES):
+    if prod_admin_ok(user):   # 14 Nov 2026: centang Dashboard & Tracking Maklon › Lihat (dulu kode peran saja)
         return request.query_params.get('buyer_id') or None
-    raise HTTPException(403, 'Forbidden')
+    from core.authz import pesan_centang
+    raise HTTPException(403, pesan_centang(user, apa="melihat tracking klien maklon"))
 
 
 async def _po_aggregates(db, po_ids):

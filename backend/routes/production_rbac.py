@@ -48,9 +48,13 @@ def po_perm_key(business_type, action: str) -> str:
 
 
 def can_po_action(user: dict, action: str, business_type) -> bool:
-    """Boleh membuat/mengubah/menghapus PO jenis ini? (peran bawaan ATAU izin granular modulnya)."""
-    from auth import check_role
-    return check_role(user, PO_ROLE_DEFAULTS[action], po_perm_key(business_type, action))
+    """Boleh membuat/mengubah/menghapus PO jenis ini? Centang modulnya (`mod.prod_po.*` / `mod.mak_po.*`).
+
+    14 Nov 2026: peran bawaan (`PO_ROLE_DEFAULTS`) hanya berlaku selama owner belum mengatur centang peran itu —
+    dulu kode peran meloloskan walau owner tidak mencentang (centang kalah oleh daftar di kode).
+    """
+    from routes.shared import can_act
+    return can_act(user, po_perm_key(business_type, action), legacy_roles=PO_ROLE_DEFAULTS[action])
 
 
 def assert_po_action(user: dict, action: str, business_type) -> None:
@@ -121,14 +125,27 @@ def deny_klien(user: dict):
         raise HTTPException(403, 'Akses klien maklon hanya melalui endpoint tracking (/api/maklon-client/*)')
 
 
-def require_write_actor(user, check_role_fn):
+def prod_admin_ok(user: dict) -> bool:
+    """Penjaga staf produksi (dulu `check_role(user, PROD_ADMIN_ROLES)`): centang aksi endpoint ini, atau
+    `PROD_ADMIN_ROLES` selama owner belum mengatur centang peran itu (14 Nov 2026: centang = penentu)."""
+    from core.authz import boleh_centang
+    return boleh_centang(user, peran_lama=PROD_ADMIN_ROLES)
+
+
+def assert_prod_admin(user: dict, apa: str | None = None) -> dict:
+    """:func:`prod_admin_ok` atau 403 yang menyebut centang yang dibutuhkan dan letaknya."""
+    from core.authz import pesan_centang
+    if not prod_admin_ok(user):
+        raise HTTPException(403, pesan_centang(user, apa=apa))
+    return user
+
+
+def require_write_actor(user, check_role_fn=None):
     """Guard for endpoints that were open to any authenticated user in
-    SOMMERVILLE (vendor OR admin submit paths)."""
+    SOMMERVILLE (vendor OR admin submit paths). Staf DA: :func:`prod_admin_ok` (centang)."""
     if is_vendor(user):
         return
-    if check_role_fn(user, PROD_ADMIN_ROLES):
-        return
-    raise HTTPException(403, 'Forbidden')
+    assert_prod_admin(user)
 
 
 async def resolve_vendor_doc(db, vendor_id):

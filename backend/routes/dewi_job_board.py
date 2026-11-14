@@ -16,7 +16,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
 
@@ -33,7 +34,7 @@ JOB_BOARD_PERM = "hr.manage"
 def _require_job_board_hr(user: dict, message: str) -> None:
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    if not (check_role(user, JOB_BOARD_ROLES, JOB_BOARD_PERM) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, JOB_BOARD_ROLES, JOB_BOARD_PERM) or lolos_centang(user)):
         raise HTTPException(403, message)
 
 # ============================================================================

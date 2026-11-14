@@ -35,7 +35,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, date, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 import logging
 import uuid
 import csv
@@ -70,16 +71,16 @@ from routes.rahaza_payroll_shared import (  # 2026-11-02 (K25): pemisahan tugas
 # 2026-11-08: kode peran lama ATAU izin (lihat `core.roles`) — peran buatan owner ("Accounting & Finance",
 # "HR Generalist", …) dulu 403 / hanya melihat miliknya. Cermin layar: EmployeeTravelSettlementModule.jsx.
 def can_view_all_settlements(user: dict) -> bool:
-    return check_role(user, APPROVER_ROLES, SETTLEMENT_VIEW_ALL_PERMS)
+    return izin_atau_peran_lama(user, APPROVER_ROLES, SETTLEMENT_VIEW_ALL_PERMS)
 
 
 def is_settlement_approver(user: dict) -> bool:
-    return check_role(user, APPROVER_ROLES, SETTLEMENT_APPROVE_PERMS)
+    return izin_atau_peran_lama(user, APPROVER_ROLES, SETTLEMENT_APPROVE_PERMS)
 
 
 def is_settlement_poster(user: dict) -> bool:
     """Posting jurnal penyelesaian (uang keluar/masuk) — Keuangan saja (K25), atau izin `finance.manage`."""
-    return check_role(user, FINANCE_ROLES, FINANCE_BOOK_PERMS)
+    return izin_atau_peran_lama(user, FINANCE_ROLES, FINANCE_BOOK_PERMS)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

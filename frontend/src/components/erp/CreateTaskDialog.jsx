@@ -32,13 +32,9 @@ const PRIORITIES = [
   { value: 'low', label: 'Rendah' },
 ];
 
-// Roles yang relevan untuk Marketing portal (untuk filter staff dropdown)
-const MARKETING_ROLES = [
-  'admin', 'owner', 'superadmin',
-  'manager_marketing', 'manager_toko',
-  'pic_marketing', 'pic_toko',
-  'staff_marketing', 'marketing_kol', 'cs_staff',
-];
+// 14 Nov 2026 (owner: centang = penentu): pilihan petugas = pengguna yang bisa membuka Portal Marketing / Toko menurut
+// akses efektif (portal dicentang owner, per orang, atau centang Lihat modul Marketing) — `GET /api/auth/users?portal=toko`.
+// Dulu daftar kode peran tetap, sehingga peran buatan owner (mis. "Content Creator") tidak bisa ditugasi.
 
 const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
 
@@ -73,7 +69,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
     setStaffLoading(true);
     try {
       const params = new URLSearchParams();
-      params.append('role', MARKETING_ROLES.join(','));
+      params.append('portal', 'toko');
       params.append('status', 'active');
       const res = await fetch(`${API}/api/auth/users?${params.toString()}`, { headers });
       if (res.ok) {

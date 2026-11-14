@@ -70,9 +70,11 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
   const actor = currentUser || user;
   // 2026-11-08: + izin rnd.approve / rnd.manage (sama dengan server `assert_can_act` di dewi_kreator_requests.py),
   // supaya peran buatan owner yang diberi izin RnD juga melihat tombol setujui/tolak.
-  const roleIsRnd = (actor?.role || '').toLowerCase().includes('rnd')
-    || ['superadmin', 'admin', 'manager', 'owner'].includes((actor?.role || '').toLowerCase())
-    || checkPerm({ user: actor, roles: [], keys: ['rnd.approve', 'rnd.manage'] });
+  // 14 Nov 2026: izin/centang dulu (Persetujuan Kreator › Setujui); kode peran RnD/manager hanya selama centang
+  // peran itu belum diatur (cermin routes.shared.can_act di server).
+  const peranRnd = (actor?.role || '').toLowerCase().includes('rnd') ? [actor.role] : [];
+  const roleIsRnd = checkPerm({ user: actor, roles: ['manager', ...peranRnd],
+    keys: ['rnd.approve', 'rnd.manage', 'mod.rnd_kreator.approve'] });
   // Aksi approve/tolak RnD tampil pada scope RnD (portal sudah role-guarded) atau untuk role RnD-capable.
   const isRnd = isRndScope || roleIsRnd;
 

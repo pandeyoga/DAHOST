@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/resignation", tags=["rahaza-resignation"])
@@ -53,7 +54,7 @@ RESIGN_HR_PERMS = ("hr.employee.manage", "hr.manage")
 
 
 def is_resign_hr(user: dict) -> bool:
-    return check_role(user, RESIGN_HR_ROLES, RESIGN_HR_PERMS)
+    return izin_atau_peran_lama(user, RESIGN_HR_ROLES, RESIGN_HR_PERMS)
 
 
 async def _require_hr(request: Request):

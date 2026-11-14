@@ -29,6 +29,7 @@ from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner 
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.variant_ssot import ensure_fg_material
 from core.cut_panel_master import ensure_panel_for_variant, ensure_bom_for_variant  # 2026-09-24: potongan + BOM otomatis per varian
 from core import product_master as pm  # K-9a: varian dihentikan ⇒ item katalog nonaktif
@@ -94,8 +95,7 @@ def izinkan_hapus_permanen(user: dict) -> None:
     """403 bila `user` tidak boleh menghapus permanen master produk (model, varian, warna, ukuran, kategori, BOM)."""
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
-    from auth import check_role
-    if not (check_role(user, list(PRODUK_HAPUS_ROLES), PRODUK_HAPUS_PERMS) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, list(PRODUK_HAPUS_ROLES), PRODUK_HAPUS_PERMS) or lolos_centang(user)):
         raise HTTPException(403, "Akses ditolak: hapus permanen data master produk hanya untuk tim produksi, R&D, "
                                  "atau manajemen. Nonaktifkan saja, atau minta atasan menghapusnya.")
 

@@ -517,7 +517,7 @@ class TestBacaanLain:
         monkeypatch.setattr(so, "retry_queue", empty)
         monkeypatch.setattr(so, "langkah2_status", l2)
         monkeypatch.setattr(so, "today_str", lambda: "2026-11-06")
-        monkeypatch.setattr(wso, "check_role", lambda *a, **k: True)
+        monkeypatch.setattr(wso, "izin_atau_peran_lama", lambda *a, **k: True)
         for i in range(2300):
             db[so.LINES].docs.append({"id": f"l{i}", "date": "2026-11-06", "location_id": "loc", "status": "active",
                                       "qty": 1, "material_id": f"m{i % 10}", "scanned_at": f"{i:05d}"})

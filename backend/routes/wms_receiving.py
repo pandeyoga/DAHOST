@@ -915,7 +915,9 @@ async def reset_all_stock(request: Request):
     if role not in ("superadmin", "admin", "owner") and not (
         "*" in perms or "inventory.manage" in perms or "warehouse.manage" in perms
     ):
-        raise HTTPException(403, "Forbidden: reset stok hanya untuk admin/owner (butuh permission inventory/warehouse).")
+        raise HTTPException(403, "Reset stok hanya untuk owner/admin atau peran yang dicentang \"Ubah\" pada modul "
+                                 "\"Pengeluaran Material (MI)\" atau \"Pemenuhan Pesanan & Daftar Ambil\" (Portal Gudang). Minta owner "
+                                 "mencentangnya di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
 
     # Zero-out LENGKAP: qty + semua alias + available + reserved (hindari sisa Schema C 'terlihat ada').
     reset_fields = {**set_all_qty(0), "available_quantity": 0.0, "reserved_quantity": 0.0, "reserved": 0.0, "updated_at": _now()}

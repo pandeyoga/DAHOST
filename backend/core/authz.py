@@ -61,9 +61,12 @@ async def _portal_diberikan_owner(payload: dict, role: str, path: str) -> bool:
         return False  # peran sudah diganti: penjaga lain (require_auth dsb.) yang memutuskan
     role_portals, extra_portals = await _auth._load_portal_config(role, uid)
     role_perms, extra_perms = await _auth._load_rbac(role, uid)
+    perms = set(role_perms) | set(extra_perms)
+    # 14 Nov 2026: centang apa pun pada modul ini (mis. Order Cutting › Tambah tanpa Lihat) = diberikan owner.
+    if any(str(k).startswith(f"mod.{mod['id']}.") for k in perms):
+        return True
     from routes.shared import ALL_ROLE_PORTALS
-    granted = (set(role_portals) | set(extra_portals) | view_portals(set(role_perms) | set(extra_perms))) \
-        - set(ALL_ROLE_PORTALS)
+    granted = (set(role_portals) | set(extra_portals) | view_portals(perms)) - set(ALL_ROLE_PORTALS)
     return bool({mod["portal"], *mod["also_portals"]} & granted)
 
 
@@ -116,42 +119,98 @@ def deny_roles(*roles: str):
 
 
 def require_roles(*roles: str, perm=None):
-    """Kode peran (dari JWT, tanpa query DB) ATAU — bila `perm` diisi — izin peran yang dibaca LIVE.
+    """Gerbang endpoint: centang owner, lalu — hanya bila centang peran itu BELUM diatur — kode peran lama.
 
     2026-11-08: peran buatan owner ("HR Generalist", "Koordinator Packing", …) tidak ada di daftar kode
-    peran. `perm` (satu kunci atau tuple, salah satu cukup) = izin yang mengatur area endpoint itu; aturannya
-    sama dengan `auth.check_role` (superadmin, kode peran di daftar, izin "*", atau izin yang diminta).
+    peran. `perm` (satu kunci atau tuple, salah satu cukup) = izin yang mengatur area endpoint itu.
     13 Nov 2026: centang owner untuk aksi endpoint (katalog) juga meloloskan (`routes.shared.lolos_centang`).
+    14 Nov 2026 (owner: "terakhir kalinya saya tidak ingin ada masalah lagi"): kode peran di daftar TIDAK lagi
+    meloloskan peran yang centangnya sudah diatur owner (pola `routes.shared.can_act` legacy_roles) — dulu daftar
+    di kode mengalahkan centang untuk endpoint di luar katalog modul. Peran super selalu boleh.
     """
-    allowed = {r.lower() for r in roles} | {"superadmin", "admin"}
+    allowed = {r.lower() for r in roles} | {"superadmin", "admin", "owner"}   # peran super selalu boleh
     keys = (perm,) if isinstance(perm, str) else tuple(perm or ())
 
     async def _dep(request: Request):
         role = _role_of(request)
-        if role in allowed:
+        if role in _SUPER:
             return
-        from data.module_catalog import request_key
         try:
-            kunci_aksi = request_key(request.method, request.url.path)
-        except AttributeError:  # request palsu tanpa method/url
-            kunci_aksi = None
-        user = None
-        if keys or kunci_aksi:  # tanpa izin & di luar katalog: cukup kode peran (tanpa query DB, seperti dulu)
-            try:
-                user = await _auth.require_auth(request)
-            except HTTPException:
-                user = None
-        if user and keys and _auth.check_role(user, sorted(allowed), keys):
+            user = await _auth.require_auth(request)
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001 — basis data tidak terjangkau / request palsu: perilaku lama (kode peran JWT)
+            user = None
+        if user is None:
+            if role in allowed:
+                return
+            raise HTTPException(403, pesan_centang(None, *keys))
+        from routes.shared import can_act, lolos_centang
+        if lolos_centang(user) or can_act(user, *keys, legacy_roles=sorted(allowed)):
             return
-        # 13 Nov 2026: centang owner untuk aksi endpoint ini (katalog) juga meloloskan — daftar peran di kode tidak
-        # boleh mengalahkan centang (routes.shared.lolos_centang).
-        from routes.shared import lolos_centang
-        if user and lolos_centang(user):
-            return
-        raise HTTPException(403, "Akses ditolak: peran Anda belum dicentang untuk aksi ini. Minta owner mencentangnya di "
-                                 "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
+        raise HTTPException(403, pesan_centang(user, *keys))
     _dep.__name__ = f"require_roles[{','.join(sorted(allowed))}{'|' + ','.join(keys) if keys else ''}]"
     return _dep
+
+
+_SUPER = ("superadmin", "admin", "owner")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14 Nov 2026 (owner: "terakhir kalinya saya tidak ingin ada masalah lagi"): penjaga di dalam handler yang dulu
+# berupa daftar kode peran memakai SATU pola: centang aksi endpoint (`routes.shared.lolos_centang`) ATAU kunci
+# centang yang disebut (`can_act`; daftar peran lama hanya berlaku selama owner belum mengatur centang peran itu).
+# ─────────────────────────────────────────────────────────────────────────────
+TEMPAT_CENTANG = "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses"
+
+
+def pesan_centang(user=None, *kunci, apa=None) -> str:
+    """Pesan tolak untuk staf: aksi + modul yang perlu dicentang dan letak centangnya, tanpa kunci program.
+
+    Modul & aksi diambil dari kunci `mod.<modul>.<aksi>` pertama di `kunci`, lalu dari aksi endpoint yang sedang
+    diproses (`user["_aksi_request"]`). `apa` (mis. "menyetujui retur") dipakai bila tidak ada kunci katalog.
+    """
+    from data.module_catalog import ACTION_LABELS, MODULE_BY_ID, PORTAL_LABELS
+    for k in (*kunci, (user or {}).get("_aksi_request")):
+        parts = str(k or "").split(".")
+        if len(parts) == 3 and parts[0] == "mod" and parts[1] in MODULE_BY_ID and parts[2] in ACTION_LABELS:
+            mod = MODULE_BY_ID[parts[1]]
+            portal = PORTAL_LABELS.get(mod["portal"], mod["portal"])
+            return (f"Akses ditolak: peran Anda belum dicentang \"{ACTION_LABELS[parts[2]]}\" pada modul "
+                    f"\"{mod['label']}\" (Portal {portal}). Minta owner mencentangnya di {TEMPAT_CENTANG}.")
+    hal = f" untuk {apa}" if apa else " untuk aksi ini"
+    return f"Akses ditolak: peran Anda belum dicentang{hal}. Minta owner mencentangnya di {TEMPAT_CENTANG}."
+
+
+def boleh_centang(user, *kunci, peran_lama=(), legacy_any=False) -> bool:
+    """True bila peran super, dicentang untuk aksi endpoint ini, atau memegang salah satu `kunci`.
+
+    `peran_lama` = daftar kode peran yang dulu dipakai penjaga ini — hanya berlaku selama owner BELUM mengatur
+    centang peran tersebut (pola `routes.shared.can_act`). Aturan bisnis (pemohon sendiri, status, saldo)
+    tetap diperiksa pemanggil.
+    """
+    from routes.shared import can_act, lolos_centang
+    user = user or {}
+    return lolos_centang(user) or can_act(user, *kunci, legacy_roles=peran_lama, legacy_any=legacy_any)
+
+
+def izin_atau_peran_lama(user, peran, izin=None) -> bool:
+    """Pengganti `auth.check_role(user, peran, izin)` yang tidak mengalahkan centang owner.
+
+    Izin (`izin`: satu kunci atau beberapa; kunci lama tersirat dari centang `mod.*`) memutuskan; kode peran di
+    `peran` hanya berlaku selama owner belum mengatur centang peran itu. Tanpa kunci aksi endpoint — dipakai untuk
+    hak lintas-aksi seperti "melihat data semua karyawan" (aturan bisnis yang ikut centang Setujui/Bayar).
+    """
+    from routes.shared import can_act
+    keys = (izin,) if isinstance(izin, str) else tuple(izin or ())
+    return can_act(user or {}, *keys, legacy_roles=tuple(peran or ()))
+
+
+def wajib_centang(user, *kunci, peran_lama=(), apa=None):
+    """`boleh_centang` atau HTTP 403 dengan :func:`pesan_centang`. Mengembalikan `user`."""
+    if not boleh_centang(user, *kunci, peran_lama=peran_lama):
+        raise HTTPException(403, pesan_centang(user, *kunci, apa=apa))
+    return user
 
 
 def only(*roles: str, perm=None) -> list:

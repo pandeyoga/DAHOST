@@ -21,7 +21,8 @@ Endpoints:
 from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner dihormati
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, check_role
+from auth import require_auth
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from datetime import datetime, timezone
 import uuid
 import logging
@@ -43,7 +44,7 @@ async def _require_admin(request: Request):
     if lolos_centang(user):  # 14 Nov 2026 (tahap 2): centang owner dihormati
         return user
     # 2026-11-08: kode peran lama ATAU izin `prod.master.manage` (modul Master Proses, Line & Mesin — memuat SOP).
-    if not (check_role(user, ("admin", "superadmin", "owner", "manager_production"), "prod.master.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ("admin", "superadmin", "owner", "manager_production"), "prod.master.manage") or lolos_centang(user)):
         raise HTTPException(403, "Butuh role Admin / Manager Produksi untuk mengelola SOP")
     return user
 

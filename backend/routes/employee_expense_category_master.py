@@ -25,7 +25,8 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 import logging
 import uuid
 
@@ -38,7 +39,7 @@ from core.roles import FINANCE_ROLES as ADMIN_ROLES, FINANCE_BOOK_PERMS  # T-08
 def _is_category_admin(user: dict) -> bool:
     """2026-11-08: master kategori klaim (beserta akun GL-nya) → kode peran Keuangan ATAU izin `finance.manage`.
     Cermin layar: EmployeeExpenseCategoryMasterModule.jsx (canEdit)."""
-    return check_role(user, ADMIN_ROLES, FINANCE_BOOK_PERMS)
+    return izin_atau_peran_lama(user, ADMIN_ROLES, FINANCE_BOOK_PERMS)
 
 # Default categories yang di-seed saat collection kosong
 DEFAULT_CATEGORIES = [

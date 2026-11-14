@@ -409,14 +409,16 @@ def test_pengingat_vendor_izin_peran_produksi():
     staf = Ctx(U("u1", "pic_toko"), {})
     with pytest.raises(AlatError) as e:
         run(kls.siapkan(staf, dict(args)))
-    assert e.value.status == 403 and "admin produksi" in e.value.pesan and not staf.calls
+    # 14 Nov 2026: pesan menyebut centang yang dibutuhkan (Produksi › Vendor CMT › Tambah), bukan daftar kode peran
+    assert e.value.status == 403 and "Vendor CMT" in e.value.pesan and "Peran & Hak Akses" in e.value.pesan
+    assert not staf.calls
     rute = {("GET", "/api/garments"): VENDOR,
             ("POST", "/api/reminders"): lambda p, j: {"id": "vr1", **j},
             ("DELETE", "/api/reminders/vr1"): {"success": True}}
     prod = Ctx(U("u2", "admin_produksi"), rute)
     r = run(kls.siapkan(prod, dict(args)))
     _cek_rencana(r)
-    assert not prod.tulis and "password" not in json.dumps(r) and any("ditarik admin" in c for c in r["catatan"])
+    assert not prod.tulis and "password" not in json.dumps(r) and any("Hapus" in c and "Vendor CMT" in c for c in r["catatan"])
     out = run(kls.jalankan(prod, dict(args), r))
     assert prod.tulis[0][3]["vendor_id"] == "v1" and prod.tulis[0][3]["priority"] == "normal"
     assert prod.tulis[0][3]["message"] == ("Mohon setor\nMohon ditindaklanjuti sebelum Senin, 9 November 2026 "
@@ -457,7 +459,7 @@ def test_buat_objektif_okr_izin_dan_alur():
                             {"judul": "Omzet toko baru", "jenis": "rupiah", "target": 50_000_000}]}
     with pytest.raises(AlatError) as e:
         run(kls.siapkan(Ctx(U("u1", "hr"), {}), dict(args)))
-    assert e.value.status == 403 and "owner, manajer" in e.value.pesan
+    assert e.value.status == 403 and "OKR Tracker" in e.value.pesan and "Peran & Hak Akses" in e.value.pesan
     ctx = Ctx(U("u2", "manager"), {
         ("GET", "/api/management/okr/objectives"): {"data": [{"id": "ox", "title": "Perluas toko"}]},
         ("POST", "/api/management/okr/objectives"): lambda p, j: {"data": {"id": "o9", "key_results": [

@@ -11,7 +11,8 @@ from typing import Iterable
 
 from fastapi import HTTPException
 
-from auth import check_role, log_activity
+from auth import log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core.roles import APPROVER_ROLES, EXPENSE_APPROVE_PERMS
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,9 @@ async def bulk_approve(db, user: dict, ids: Iterable[str], *, collection: str, n
                        allowed_perms=EXPENSE_APPROVE_PERMS,
                        allowed_from_status=("submitted",)) -> dict:
     # 2026-11-08: kode peran ATAU izin approve (sama dengan tombol setujui satu per satu) — peran buatan owner.
-    if not check_role(user, allowed_roles, allowed_perms):
-        raise HTTPException(403, "Tidak punya hak approve")
+    if not izin_atau_peran_lama(user, allowed_roles, allowed_perms):
+        from core.authz import pesan_centang
+        raise HTTPException(403, pesan_centang(user, apa="menyetujui"))
     ids = list(ids)
     results = {"success": [], "failed": []}
     coll = db[collection]

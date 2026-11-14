@@ -138,12 +138,13 @@ async def _require_hr_or_finance(request: Request):
     """PPh21: diubah HR ATAU Keuangan (keputusan owner Tahap 2). Gerbang konfigurasi payroll lain tetap
     PAYROLL_HR_ROLES."""
     from auth import require_auth
+    from core.authz import boleh_centang, pesan_centang
     user = await require_auth(request)
-    role = (user.get("role") or "").lower()
-    perms = user.get("_permissions") or []
-    if role in PAYROLL_HR_ROLES or role in FINANCE_ROLES or "*" in perms or "payroll.manage" in perms:
+    # 14 Nov 2026: centang aksi endpoint (Penggajian & Struktur Gaji) atau izin payroll.manage; daftar peran HR/Keuangan
+    # hanya selama owner belum mengatur centang peran itu.
+    if boleh_centang(user, "payroll.manage", peran_lama=tuple(PAYROLL_HR_ROLES) + tuple(FINANCE_ROLES)):
         return user
-    raise HTTPException(403, "Forbidden: pengaturan PPh21 hanya untuk HR atau Keuangan.")
+    raise HTTPException(403, pesan_centang(user, apa="mengubah pengaturan PPh21"))
 
 VALID_LATE_MODES = ("per_minute", "tiered", "per_occurrence")
 

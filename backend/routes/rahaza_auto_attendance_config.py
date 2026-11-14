@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, serialize_doc, check_role
+from auth import require_auth, serialize_doc
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from dotenv import load_dotenv
 from utils.waktu import today_wib
 
@@ -212,7 +213,7 @@ async def update_auto_config(request: Request):
     """Update konfigurasi absen otomatis (menerima nama lama maupun kanonik)."""
     user = await require_auth(request)
     # 2026-11-08: kode peran lama ATAU izin `hr.attendance.manage` ("Kelola absensi, shift & izin").
-    if not (check_role(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage") or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ("superadmin", "admin", "owner", "hr"), "hr.attendance.manage") or lolos_centang(user)):
         raise HTTPException(403, "Hanya HR/Admin.")
     db = get_db()
     body = await request.json()

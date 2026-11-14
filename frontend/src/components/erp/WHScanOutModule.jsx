@@ -39,6 +39,11 @@ import { Input } from '@/components/ui/input';
 import { GlassCard } from '@/components/ui/glass';
 import { formatRupiah, formatNumber } from '@/lib/format';
 import { todayWIB, daysAgoWIB } from '@/lib/waktu';
+import { checkPerm } from '@/lib/rbac';
+
+// Cermin core/scan_out.SUPERVISE_ROLES (DISPOSE_ROLES tanpa tim_packing/admin_aksesoris) — jalan lama sebelum centang diatur.
+const SUPERVISE_ROLES = ['admin_gudang', 'spv_packing', 'supervisor', 'supervisor_produksi', 'owner', 'admin',
+  'gudang', 'staff_gudang', 'warehouse', 'warehouse_manager', 'manajer', 'manager'];
 import UniversalScanner from './scanner/UniversalScanner';
 import { scanFeedback } from './scanner/scanCode';
 import { toScanResult } from './scanner/ScanResult';
@@ -951,8 +956,9 @@ function ControlTab({ token, canSupervise }) {
 
 export default function WHScanOutModule({ token, user, initialTab }) {
   const [tab, setTab] = useState(['scan', 'report', 'control'].includes(initialTab) ? initialTab : 'scan');
-  const role = (user?.role || '').toLowerCase();
-  const canSupervise = !['tim_packing', 'admin_aksesoris'].includes(role);
+  // 14 Nov 2026: cermin server wh_scan_out._can_supervise — izin Setujui gudang (centang Scan Keluar › Setujui
+  // menyiratkannya); kode peran SPV gudang hanya selama peran itu belum diatur centangnya.
+  const canSupervise = checkPerm({ user, roles: SUPERVISE_ROLES, keys: ['warehouse.approve', 'mod.wh_scan_out.approve'] });
   const tabs = useMemo(() => [
     { key: 'scan', label: 'Scan', Component: ScanTab },
     { key: 'report', label: 'Laporan', Component: ReportTab },

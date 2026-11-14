@@ -15,7 +15,8 @@ from routes.shared import lolos_centang  # 14 Nov 2026 (tahap 2): centang owner 
 import logging
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
-from auth import require_auth, log_activity, check_role
+from auth import require_auth, log_activity
+from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from utils.pdf_common import (
     SUPPORTED_PDF_DOCS, get_doc_settings, doc_types_catalog, _now,
 )
@@ -45,7 +46,7 @@ async def get_settings(doc_type: str, request: Request):
 @router.put("/{doc_type}")
 async def save_settings(doc_type: str, request: Request):
     user = await require_auth(request)
-    if not (check_role(user, ['admin']) or lolos_centang(user)):
+    if not (izin_atau_peran_lama(user, ['admin']) or lolos_centang(user)):
         raise HTTPException(403, 'Hanya admin yang dapat mengubah pengaturan PDF.')
     if doc_type not in SUPPORTED_PDF_DOCS:
         raise HTTPException(404, f"Jenis dokumen '{doc_type}' tidak dikenal.")

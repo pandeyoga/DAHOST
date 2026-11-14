@@ -104,7 +104,7 @@ def test_ubah_satu_baris_kode_dipakai_po_lain_ditolak(db, monkeypatch):
         return None
     monkeypatch.setattr(pp, "require_auth", _auth)
     monkeypatch.setattr(pp, "get_db", lambda: db)
-    monkeypatch.setattr(pp, "check_role", lambda *a, **k: True)
+    monkeypatch.setattr(pp, "assert_prod_admin", lambda *a, **k: None)   # 14 Nov 2026: penjaga staf produksi
     monkeypatch.setattr(pl, "assert_po_open", _nop)
     db.po_items.docs.append({"id": "b1", "po_id": "po-baru", "po_number": "PO-INT-0017", "serial_number": "",
                              "sku": "DA-2204-DST", "qty": 52})
