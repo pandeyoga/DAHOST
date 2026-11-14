@@ -323,3 +323,14 @@ def test_marketing_target_periode_pemegang_ikut_centang():
     assert can_write_target({"role": "x", "_permissions": ["mod.mgmt_marketing_cycle.edit"]})
     # peran buatan owner bernama "Content Creator" dikenali sebagai content_creator (melihat semua toko)
     assert sees_all_accounts({"role": "Content Creator", "_permissions": []})
+
+
+def test_tombol_aksi_yang_tidak_dimiliki_modul_menu_tidak_disembunyikan():
+    """14 Nov 2026: Laporan Marketing (modul hanya Lihat/Unduh) — tombol Input biaya iklan milik modul iklan tidak
+    boleh disembunyikan layar; aksi yang DIMILIKI modul menu tetap mengikuti centang."""
+    from data.module_catalog import menu_access
+    _, akses = menu_access(["mod.mkt_dashboard.view", "mod.mkt_targets.view"])
+    assert "create" in akses["marketing-reports"] and "edit" in akses["marketing-reports"]
+    assert "create" not in akses["marketing-targets"]            # Target & Anggaran punya aksi Tambah → ikut centang
+    _, tanpa = menu_access(["mod.mkt_targets.view"])
+    assert "view" not in tanpa.get("marketing-reports", [])        # tanpa Lihat tetap tersembunyi

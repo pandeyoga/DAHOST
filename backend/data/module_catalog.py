@@ -826,6 +826,17 @@ def menu_access(keys, is_super: bool = False) -> tuple[list, dict]:
         for menu in mod["menus"]:
             prev = set(access.get(menu, []))
             access[menu] = sorted(prev | set(acts))
+    # 14 Nov 2026 (owner: tombol "Input biaya iklan" hilang di Laporan Marketing): aksi yang TIDAK DIMILIKI modul
+    # pemilik menu (mis. "Dashboard & Laporan Marketing" hanya Lihat/Unduh) memang tidak bisa dicentang di modul itu —
+    # tombolnya milik modul lain (Input biaya iklan → modul iklan). Layar tidak menyembunyikannya; gerbang server dan
+    # centang modul pemilik layanan yang memutuskan.
+    dimiliki: dict = {}
+    for mod in MODULES:
+        for menu in mod["menus"]:
+            dimiliki.setdefault(menu, set()).update(mod["actions"])
+    for menu, acts in list(access.items()):
+        if "view" in acts:
+            access[menu] = sorted(set(acts) | (set(ACTIONS) - dimiliki.get(menu, set())))
     hidden = sorted(m for m, acts in access.items() if "view" not in acts)
     # Menu pintasan modul portal lain (ALSO_PORTALS) di portal yang sudah granular: tanpa izin Lihat
     # modul pemiliknya → disembunyikan HANYA di portal pintasan itu (format "<portal>::<menu>").
