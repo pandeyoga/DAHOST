@@ -47,8 +47,8 @@ def run(coro):
 
 HARI = date(2026, 11, 8)
 OWNER = {"id": "u-owner", "role": "owner", "name": "Pemilik Uji", "email": "owner@uji"}
-MGR = {"id": "u-mgr", "role": "manager_marketing", "name": "Manajer Uji", "email": "mgr@uji", "_role_perms": []}
-SPV = {"id": "u-spv", "role": "spv_marketing", "name": "SPV Uji", "email": "spv@uji", "_role_perms": []}
+MGR = {"id": "u-mgr", "role": "manager_marketing", "name": "Manajer Uji", "email": "mgr@uji", "_role_perms": [], "_permissions": ["mod.mkt_targets.edit", "mod.mkt_targets.approve", "mod.mkt_accounts.edit"]}
+SPV = {"id": "u-spv", "role": "spv_marketing", "name": "SPV Uji", "email": "spv@uji", "_role_perms": [], "_permissions": ["mod.mkt_targets.edit", "mod.mkt_targets.approve", "mod.mkt_accounts.edit"]}
 STAF = {"id": "u-staf", "role": "staff_marketing", "name": "Staf Uji", "email": "staf@uji", "_role_perms": []}
 CS = {"id": "u-cs", "role": "cs_staff", "name": "CS Uji", "email": "cs@uji", "_role_perms": []}
 PROD = {"id": "u-prod", "role": "admin_produksi", "name": "Produksi Uji", "email": "prod@uji", "_role_perms": [],
@@ -880,7 +880,7 @@ def test_tutup_bulan_semua_toko_cv_lalu_batalkan(env):
 
 def test_buka_tutup_bulan_penolakan_dan_peringatan(env):
     db = env["db"]
-    assert "SPV/Manager Marketing" in _galat(TM.TutupBukaBulanMarketing.siapkan(Ctx(env, user=STAF), {
+    assert "Target & Anggaran" in _galat(TM.TutupBukaBulanMarketing.siapkan(Ctx(env, user=STAF), {
         "aksi": "tutup", "bulan": "2026-10", "alasan": ALASAN}), 403)
     assert "belum berjalan" in _galat(TM.TutupBukaBulanMarketing.siapkan(Ctx(env, user=SPV), {
         "aksi": "tutup", "bulan": "2026-12", "alasan": ALASAN}), 400)

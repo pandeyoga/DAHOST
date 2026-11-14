@@ -47,8 +47,8 @@ def run(coro):
 # Perlengkapan
 # ══════════════════════════════════════════════════════════════════════════════
 OWNER = {"id": "u-owner", "role": "owner", "name": "Pemilik Uji", "email": "owner@uji"}
-MGR = {"id": "u-mgr", "role": "manager_marketing", "name": "Manajer Uji", "email": "mgr@uji", "_role_perms": []}
-SPV = {"id": "u-spv", "role": "spv_marketing", "name": "SPV Uji", "email": "spv@uji", "_role_perms": []}
+MGR = {"id": "u-mgr", "role": "manager_marketing", "name": "Manajer Uji", "email": "mgr@uji", "_role_perms": [], "_permissions": ["mod.mkt_targets.edit", "mod.mkt_targets.approve", "mod.mkt_accounts.edit"]}
+SPV = {"id": "u-spv", "role": "spv_marketing", "name": "SPV Uji", "email": "spv@uji", "_role_perms": [], "_permissions": ["mod.mkt_targets.edit", "mod.mkt_targets.approve", "mod.mkt_accounts.edit"]}
 STAF = {"id": "u-staf", "role": "staff_marketing", "name": "Staf Uji", "email": "staf@uji", "_role_perms": []}
 STAF2 = {"id": "u-staf2", "role": "staff_marketing", "name": "Staf Dua", "email": "staf2@uji", "_role_perms": []}
 PIC = {"id": "u-pic", "role": "pic_toko", "name": "Pic Uji", "email": "pic@uji", "_role_perms": []}
@@ -583,7 +583,7 @@ def test_pasang_target_penolakan_ramah(env):
     db = env["db"]
     with pytest.raises(AlatError) as ei:                                   # staf toko: bukan penulis target
         run(TP.PasangTargetToko.siapkan(Ctx(env, user=STAF), _target_args()))
-    assert ei.value.status == 403 and "SPV/Manager Marketing" in ei.value.pesan
+    assert ei.value.status == 403 and "Target & Anggaran" in ei.value.pesan
     with pytest.raises(AlatError) as ei:                                   # toko CV lain
         run(TP.PasangTargetToko.siapkan(Ctx(env), {"bulan": "2026-12", "toko": [{"toko_id": "A3", "target_omzet": 1e6}]}))
     assert ei.value.status == 403 and "A3" in ei.value.pesan and "CV DA" in ei.value.pesan

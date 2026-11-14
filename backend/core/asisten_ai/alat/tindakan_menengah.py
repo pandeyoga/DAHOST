@@ -1405,8 +1405,8 @@ async def _rencana_periode(ctx, args: dict) -> Tuple[dict, List[dict]]:
     TP._cek_cv_tulis(ctx)
     _alasan(args)
     if not can_manage_period(ctx.user):
-        raise AlatError(403, "Hanya SPV/Manager Marketing, akunting, atau owner yang boleh menutup dan membuka periode "
-                             "marketing (aturan layar Target & Anggaran).")
+        raise AlatError(403, "Peran Anda belum dicentang 'Setujui' pada modul 'Target & Anggaran', jadi belum boleh "
+                             "menutup dan membuka periode marketing (aturan layar Target & Anggaran).")
     aksi, bulan = args["aksi"], args["bulan"]
     label = U.label_bulan(bulan)
     kini = B.bulan_ini(ctx)

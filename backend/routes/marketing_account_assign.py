@@ -62,11 +62,11 @@ def _user(request: Request) -> dict:
 
 
 async def _assert_can_assign(user: dict) -> None:
-    if scope.can_write_target(user):
+    if scope.can_assign_holders(user):
         return
     raise HTTPException(
-        403, "Hanya SPV/Manager Marketing (atau owner/admin) yang boleh mengubah "
-             "pemegang toko. Staf melihat toko yang di-assign kepadanya.")
+        403, "Peran Anda belum dicentang 'Ubah' pada modul 'Kelola Akun', jadi belum boleh mengubah pemegang "
+             "toko. Minta owner mencentangnya di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
 
 
 async def _staff_index(db) -> Dict[str, dict]:
@@ -117,7 +117,7 @@ async def staff_options(request: Request):
     return serialize_doc({
         "success": True,
         "options": out,
-        "can_edit": scope.can_write_target(user),
+        "can_edit": scope.can_assign_holders(user),
         "scoped_roles": list(scope.SCOPED_ROLES),
         "all_access_roles": list(scope.ALL_ACCOUNTS_ROLES),
         "note": ("Peran seperti SPV/Manager/Accounting sudah melihat SEMUA toko, "
@@ -195,7 +195,7 @@ async def overview(request: Request, include_inactive: bool = Query(True)):
                      + (" …" if len(stale) > 5 else ""))
     return serialize_doc({
         "success": True, "rows": rows, "total": len(rows),
-        "can_edit": scope.can_write_target(user),
+        "can_edit": scope.can_assign_holders(user),
         "unassigned_count": len(unassigned),
         "stale_count": len(stale),
         "data_notes": notes,
@@ -241,7 +241,7 @@ async def by_staff(request: Request):
                      if sid not in idx})
     return serialize_doc({
         "success": True, "rows": rows, "total": len(rows),
-        "can_edit": scope.can_write_target(user),
+        "can_edit": scope.can_assign_holders(user),
         "without_account": [r["name"] for r in rows if r["accounts_count"] == 0],
         "ghost_staff_ids": ghosts,
         "data_notes": [

@@ -309,3 +309,17 @@ def test_target_anggaran_dua_portal_setara(gerbang, method, path, perm):
     portal = ["toko"] if perm.startswith("mod.mkt_") else ["management"]
     assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, [perm]))) is None
     assert run(gate.evaluate(method, path, gerbang("pic_toko", portal, ["mod.mkt_dashboard.view"])))
+
+
+def test_marketing_target_periode_pemegang_ikut_centang():
+    """14 Nov 2026 (owner: "Ya, ikuti centang"): bukan kode peran SPV/Manager lagi."""
+    from core.marketing_account_scope import can_assign_holders, can_write_target, sees_all_accounts
+    from core.marketing_cycle import can_manage_period
+    pic = {"role": "pic_toko", "_permissions": ["mod.mkt_targets.edit", "mod.mkt_targets.approve", "mod.mkt_accounts.edit"]}
+    assert can_write_target(pic) and can_manage_period(pic) and can_assign_holders(pic)
+    spv_tanpa = {"role": "spv_marketing", "_permissions": ["mod.mkt_targets.view"]}
+    assert not can_write_target(spv_tanpa) and not can_manage_period(spv_tanpa) and not can_assign_holders(spv_tanpa)
+    assert can_write_target({"role": "Owner", "_permissions": []})
+    assert can_write_target({"role": "x", "_permissions": ["mod.mgmt_marketing_cycle.edit"]})
+    # peran buatan owner bernama "Content Creator" dikenali sebagai content_creator (melihat semua toko)
+    assert sees_all_accounts({"role": "Content Creator", "_permissions": []})

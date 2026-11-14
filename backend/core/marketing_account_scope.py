@@ -395,16 +395,30 @@ ALL_ACCOUNTS_ROLES = ("owner", "admin", "superadmin", "spv_marketing",
                       "manager_marketing", "accounting", "content_creator",
                       "marketing_kol")
 SCOPED_ROLES = ("staff_marketing", "pic_toko", "host_live", "cs_staff")
-# Peran yang boleh MENETAPKAN target/anggaran & menutup periode (F6.3).
-TARGET_WRITER_ROLES = ("owner", "admin", "superadmin", "spv_marketing",
-                       "manager_marketing")
+# 14 Nov 2026 (owner: "Ya, ikuti centang"): menetapkan target/anggaran, tutup/buka periode, dan mengubah pemegang
+# toko TIDAK lagi ditentukan kode peran SPV/Manager — hanya peran super + CENTANG owner:
+#   target & rencana anggaran = Target & Anggaran › Ubah (Portal Marketing atau Manajemen);
+#   pemegang toko             = Kelola Akun › Ubah;
+#   tutup/buka periode        = Target & Anggaran › Setujui (core.marketing_cycle.can_manage_period).
+SUPER_ROLES = ("owner", "admin", "superadmin")
+TARGET_WRITER_ROLES = SUPER_ROLES       # nama lama dipertahankan untuk pemanggil lama
+KUNCI_TARGET = ("mod.mkt_targets.edit", "mod.mgmt_marketing_cycle.edit", "marketing.target.set")
+KUNCI_PEMEGANG = ("mod.mkt_accounts.edit",)
+LETAK_CENTANG = "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses"
 
-NO_ACCOUNT_HINT = ("Belum ada toko yang di-assign ke Anda. Minta SPV Marketing "
-                   "meng-assign toko Anda di layar Manajemen Akun.")
+NO_ACCOUNT_HINT = ("Belum ada toko yang di-assign ke Anda. Minta pemegang hak Kelola Akun "
+                   "meng-assign toko Anda di Kelola Akun › Pemegang per toko.")
 
 
 def _role(user: Optional[dict]) -> str:
-    return str((user or {}).get("role") or "").lower()
+    """Kode peran ternormalisasi. Peran buatan owner di layar peran bisa bernama "Content Creator" / "Host Live";
+    disamakan dengan kode `content_creator` / `host_live` supaya aturan toko mengenalinya (14 Nov 2026)."""
+    return re.sub(r"[\s\-]+", "_", str((user or {}).get("role") or "").strip().lower())
+
+
+def _punya(user: Optional[dict], keys) -> bool:
+    perms = (user or {}).get("_permissions") or []
+    return "*" in perms or any(k in perms for k in keys)
 
 
 def sees_all_accounts(user: Optional[dict]) -> bool:
@@ -415,11 +429,13 @@ def sees_all_accounts(user: Optional[dict]) -> bool:
 
 
 def can_write_target(user: Optional[dict]) -> bool:
-    """Boleh set target/anggaran? (staf toko TIDAK — itu keputusan SPV)."""
-    if _role(user) in TARGET_WRITER_ROLES:
-        return True
-    perms = (user or {}).get("_permissions") or []
-    return "*" in perms or "marketing.target.set" in perms
+    """Boleh menetapkan target / rencana anggaran? Peran super atau centang Target & Anggaran › Ubah."""
+    return _role(user) in SUPER_ROLES or _punya(user, KUNCI_TARGET)
+
+
+def can_assign_holders(user: Optional[dict]) -> bool:
+    """Boleh mengubah pemegang toko (PIC & staf per toko)? Peran super atau centang Kelola Akun › Ubah."""
+    return _role(user) in SUPER_ROLES or _punya(user, KUNCI_PEMEGANG)
 
 
 async def visible_account_ids(db, user: Optional[dict]) -> Optional[List[str]]:
@@ -497,6 +513,5 @@ async def assert_can_write_target(user: Optional[dict], what: str = "target") ->
     if can_write_target(user):
         return
     raise HTTPException(
-        403, f"Hanya SPV/Manager Marketing (atau owner) yang boleh menetapkan {what}. "
-             "Staf toko mengisi data harian; angka {what} adalah keputusan SPV.".replace(
-                 "{what}", what))
+        403, f"Peran Anda belum dicentang 'Ubah' pada modul 'Target & Anggaran', jadi belum boleh menetapkan "
+             f"{what}. Minta owner mencentangnya di {LETAK_CENTANG}.")

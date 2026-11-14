@@ -795,12 +795,14 @@ async def set_lock(db, *, account_id: str, period: str, action: str, reason: str
 
 
 def can_manage_period(user: dict) -> bool:
-    role = (user or {}).get('role') or ''
-    if role in PERIOD_MANAGER_ROLES:
+    """14 Nov 2026 (owner: "Ya, ikuti centang"): peran super atau centang Target & Anggaran › Setujui (izin lama
+    marketing.period.close/reopen tetap dihormati). Kode peran SPV/Manager/accounting tidak lagi menentukan."""
+    from core.marketing_account_scope import SUPER_ROLES, _role
+    if _role(user) in SUPER_ROLES:
         return True
     perms = (user or {}).get('_permissions') or []
-    return ('*' in perms or 'marketing.period.close' in perms
-            or 'marketing.period.reopen' in perms)
+    return ('*' in perms or 'mod.mkt_targets.approve' in perms
+            or 'marketing.period.close' in perms or 'marketing.period.reopen' in perms)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
