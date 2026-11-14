@@ -628,10 +628,14 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
   };
 
   // Standar UI/UX v2: konfirmasi hapus lewat dialog aplikasi (confirmDialog), bukan popup buatan.
+  // 14 Nov 2026: server menolak hapus PO yang sudah berjalan (job, progres, Terima & QC, kiriman hasil, bahan sudah
+  // keluar gudang) — tombol tetap tampil supaya daftar PO tidak perlu memeriksa semua itu; pesan server menjelaskannya.
   const handleDelete = async (row) => {
     const ok = await confirmDialog({
       title: 'Hapus PO produksi?',
-      body: `PO "${row.po_number}" beserta semua work order dan progres akan dihapus permanen.`,
+      body: `PO "${row.po_number}" beserta barang, aksesoris, dan surat jalan yang bahannya belum keluar gudang dihapus `
+        + 'permanen. PO yang sudah berjalan (ada job produksi, progres, penerimaan di Terima & QC, kiriman hasil, atau '
+        + 'bahan sudah keluar gudang) tidak bisa dihapus — selesaikan lewat Tutup PO.',
       confirmLabel: 'Hapus', danger: true,
     });
     if (!ok) return;

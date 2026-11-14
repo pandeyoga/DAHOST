@@ -100,7 +100,8 @@ const mockHutang = () => apiGet.mockImplementation(async (url) => {
 
 test('Keuangan › Hutang: satu daftar tanpa tab, terjadwal tanpa tombol Bayar, umur seperti Excel, penyaring jenis', async () => {
   mockHutang();
-  act(() => { root.render(<HutangModule token="t" />); });
+  // 14 Nov 2026: tombol Bayar mengikuti centang Pembayaran & Pencairan Uang › Setujui (hasPerm dari App).
+  act(() => { root.render(<HutangModule token="t" hasPerm={(k) => k === 'mod.fin_pencairan.approve'} />); });
   await tunggu(() => q('hutang-baris-jadwal-sch-1'));
   expect(document.querySelector('[role="tablist"]')).toBeNull();
   expect(q('hutang-baris-ap-f1')).not.toBeNull();
@@ -135,6 +136,22 @@ test('Keuangan › Hutang: satu daftar tanpa tab, terjadwal tanpa tombol Bayar, 
   klik(q('hutang-rincian-jadwal-perkiraan-po2-vp1'));
   await tunggu(() => q('hutang-rincian-jadwal-barang'));
   expect(q('hutang-rincian-jadwal-barang').textContent).toContain('Kemeja uji · Hitam');
+});
+
+test('14 Nov 2026: tombol Bayar mengikuti centang, bukan kode peran keuangan', async () => {
+  mockHutang();
+  // kode peran keuangan TANPA centang Pembayaran & Pencairan Uang › Setujui → tidak ada tombol Bayar (server menolak)
+  act(() => { root.render(<HutangModule token="t" hasPerm={() => false} />); });
+  await tunggu(() => q('hutang-baris-ap-f1'));
+  expect(q('hutang-bayar-ap-f1')).toBeNull();
+  expect(q('hutang-bayar-cmt-c1')).toBeNull();
+  act(() => root.unmount());
+  // peran buatan owner yang dicentang (dibaca dari sesi tersimpan bila hasPerm tidak dikirim) → tombol tampil
+  localStorage.setItem('erp_user', JSON.stringify({ role: 'Finance & Purchase', permissions: ['mod.fin_pencairan.approve'] }));
+  root = createRoot(container);
+  act(() => { root.render(<HutangModule token="t" />); });
+  await tunggu(() => q('hutang-bayar-ap-f1'));
+  expect(q('hutang-bayar-cmt-c1')).not.toBeNull();
 });
 
 test('tautan lama ke tab "Hutang CMT terjadwal" membuka daftar Hutang dengan pil Terjadwal', async () => {

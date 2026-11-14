@@ -5,8 +5,8 @@
  * mereka isi. Layar ini memberi staf DA jalan resmi untuk mengisi 11 modul Portal Vendor ATAS NAMA vendor —
  * tanpa akun bayangan, dan jejak "diinput staf DA" tetap tercatat & terlihat (badge di pantau/tagihan).
  *
- * KEPUTUSAN OWNER (2026-08-08): 1a semua 11 modul di-mirror · 2b hanya admin · superadmin · admin_produksi ·
- * supervisor_produksi · ppic · 3a jejak tercatat + kelihatan · 4a daftar = vendor aktif di master CMT ·
+ * KEPUTUSAN OWNER (2026-08-08): 1a semua 11 modul di-mirror · 2b (14 Nov 2026: centang modul Input atas nama Vendor CMT,
+ * bukan kode peran) · 3a jejak tercatat + kelihatan · 4a daftar = vendor aktif di master CMT ·
  * 5a vendor yang punya akun portal aktif tetap boleh diisi, dengan peringatan dobel input.
  *
  * Tahap 9 (7 Nov 2026, "menu & tampilan dua portal identik"):
@@ -32,6 +32,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatDateTimeID } from '@/lib/format';
 import { apiGet, setCmtOverrideVendor, clearCmtOverrideVendor } from '../../lib/api';
+import { punyaCentang } from '../../lib/rbac';
 import PageLayout from './layout/PageLayout';
 import { PageLayoutSatuBaris } from './engine/DataTable';
 import HubTabs from './hubs/HubTabs';
@@ -50,8 +51,12 @@ import VendorVarianceReport from './engine/VendorVarianceReport';
 import VendorReminderInbox from './engine/VendorReminderInbox';
 import CMTOverrideRecapPanel from './cmt-override/CMTOverrideRecapPanel';
 
-// Role yang berwenang (harus sama dengan core/cmt_override.OVERRIDE_ROLES).
-const ALLOWED_ROLES = ['admin', 'superadmin', 'admin_produksi', 'supervisor_produksi', 'ppic'];
+// 14 Nov 2026: hak = centang modul Produksi › Input atas nama Vendor CMT (server: core/cmt_override.boleh_atas_nama),
+// bukan daftar kode peran. Peran super selalu boleh (hasPerm dari App).
+const CENTANG = 'mod.prod_cmt_override';
+const AKSI_ISI = ['create', 'edit', 'delete'];
+const LETAK_CENTANG = 'Administrasi Sistem › Kontrol Akses › Peran & Hak Akses';
+// Label peran untuk jejak "diinput oleh" (tampilan saja).
 const ROLE_LABEL = {
   admin: 'Admin', superadmin: 'Superadmin', admin_produksi: 'Admin produksi',
   supervisor_produksi: 'Supervisor produksi', ppic: 'PPIC',
@@ -107,13 +112,13 @@ function ModuleGroup({ group, activeModule, setActiveModule, token, user, vendor
 const fmtDT = (v) => (v ? formatDateTimeID(v) : '—');
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 
-function AccessDenied({ role }) {
+function AccessDenied() {
   return (
     <PageLayoutSatuBaris testId="cmt-override-denied" title="Input atas nama CMT"
       subtitle="Mengisi data atas nama vendor CMT berpengaruh langsung ke tagihan CMT.">
       <GlassCard>
         <EmptyState icon={ShieldCheck} title="Tidak berwenang"
-          description={`Layar ini hanya untuk: ${ALLOWED_ROLES.map((r) => ROLE_LABEL[r]).join(', ')}. Peran Anda: ${ROLE_LABEL[role] || role || '—'}.`} />
+          description={`Layar ini untuk yang dicentang Lihat pada modul Input atas nama Vendor CMT. Minta owner mencentangnya di ${LETAK_CENTANG}.`} />
       </GlassCard>
     </PageLayoutSatuBaris>
   );
@@ -284,9 +289,12 @@ function AuditPanel({ vendorName }) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-export default function CMTOverridePortalModule({ user, token }) {
+export default function CMTOverridePortalModule({ user, token, hasPerm }) {
   const role = (user?.role || '').toLowerCase();
-  const allowed = ALLOWED_ROLES.includes(role);
+  // 14 Nov 2026: centang modul "Input atas nama Vendor CMT" = satu-satunya penentu (sama dengan server
+  // core/cmt_override.boleh_atas_nama): Lihat membuka layar; Tambah/Ubah/Hapus = mengisi atas nama vendor.
+  const bolehIsi = punyaCentang(hasPerm, AKSI_ISI.map((a) => `${CENTANG}.${a}`));
+  const allowed = bolehIsi || punyaCentang(hasPerm, `${CENTANG}.view`);
 
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -365,7 +373,7 @@ export default function CMTOverridePortalModule({ user, token }) {
     { key: 'rekap', label: 'Rekap pengisian', Component: CMTOverrideRecapPanel, props: { onOpenVendor: pickFromRecap } },
   ], [vendors, loading, err, pickVendor, loadVendors, pickFromRecap]);
 
-  if (!allowed) return <AccessDenied role={role} />;
+  if (!allowed) return <AccessDenied />;
 
   // ── LAYAR 1: pilih vendor / rekap ───────────────────────────────────────
   if (!selected) {
@@ -385,6 +393,12 @@ export default function CMTOverridePortalModule({ user, token }) {
             {selected.code ? ` · ${selected.code}` : ''} — diinput oleh{' '}
             <span data-testid="cmt-override-staff-name" className="font-semibold">{user?.name || '—'}</span>{` (${ROLE_LABEL[role] || role})`}</span>
         </p>
+        {!bolehIsi && (
+          <Notice tone="info" icon={ShieldCheck} title="Hanya melihat" testId="cmt-override-view-only">
+            Anda bisa membuka data vendor ini, tetapi belum bisa mengisi atas namanya. Untuk mengisi, minta owner mencentang
+            Tambah/Ubah pada modul Input atas nama Vendor CMT di {LETAK_CENTANG}.
+          </Notice>
+        )}
         {/* Peringatan dobel input (keputusan 5a) — memberi tahu, TIDAK memblokir. */}
         {selected.has_active_portal_account && warnOpen && (
           <Notice tone="warning" icon={AlertTriangle} title="Hati-hati dobel input" testId="cmt-override-double-warning"

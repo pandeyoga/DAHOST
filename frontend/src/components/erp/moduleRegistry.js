@@ -1164,8 +1164,8 @@ export const MODULE_REGISTRY = {
   'vendor-portal':      VendorCMTEnginePortal,      // DEPRECATED alias → portal vendor SSOT
   'vendor-admin':       VendorAccountsAdminModule,  // Admin: kelola vendor partners + accounts + jobs
   // Pintu "Input Vendor CMT" — mengisi portal vendor ATAS NAMA vendor CMT yang
-  // tidak memakai sistem. RBAC pintu dijaga komponennya sendiri (ALLOWED_ROLES)
-  // DAN backend (core/cmt_override.OVERRIDE_ROLES) — dua lapis, bukan satu.
+  // tidak memakai sistem. Hak = centang modul Input atas nama Vendor CMT, dibaca komponennya (hasPerm)
+  // DAN backend (core/cmt_override.boleh_atas_nama) — dua lapis, satu aturan.
   'cmt-override-portal': CMTOverridePortalModule,
 
   // ─── Portal Marketing (eks-Toko Online — Rebrand in-place) ────────────────

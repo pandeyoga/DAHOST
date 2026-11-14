@@ -134,7 +134,8 @@ async def _wajib_gerbang(ctx, method: str, path: str) -> None:
     modul = await _gerbang_tulis(ctx, method, path)
     if modul:
         raise AlatError(403, f"Akun ini tidak diberi hak menulis di {modul}. Minta admin mencentang izinnya di "
-                             "Peran & Hak Akses, atau lakukan lewat akun yang berhak.")
+                             "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses, atau lakukan lewat akun yang "
+                             "berhak.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════

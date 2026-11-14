@@ -461,7 +461,7 @@ async def get_vendor_dashboard(request: Request):
     ── Portal CMT Override (2026-08-08) ─────────────────────────────────────
     Dulu endpoint ini melempar 403 KERAS untuk semua non-vendor, sehingga staf
     DA yang mengisi atas nama vendor "tidak pakai sistem" mentok di pintu
-    pertama. Sekarang staf berhak (lihat core/cmt_override.OVERRIDE_ROLES) boleh
+    pertama. Sekarang staf berhak (centang, lihat core/cmt_override.boleh_atas_nama) boleh
     membacanya dengan header `X-CMT-Override-Vendor`, dan HANYA untuk vendor itu.
 
     `recentProgress` & `alerts` dulu dikembalikan KOSONG PERMANEN (list hard-code)

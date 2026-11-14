@@ -195,7 +195,7 @@ export function pesanGagal(status, modul, detail) {
   if (status === 403) {
     return typeof detail === 'string' && detail
       ? detail
-      : `Anda belum diberi izin melihat data ini. Minta owner mencentang "Lihat" pada ${modul} di Kontrol Akses.`;
+      : `Anda belum diberi izin melihat data ini. Minta owner mencentang "Lihat" pada ${modul} di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.`;
   }
   return `Data tidak bisa dimuat${status ? ` (kode ${status})` : ''}. Coba muat ulang.`;
 }

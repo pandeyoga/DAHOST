@@ -39,14 +39,15 @@ import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { PageLayoutSatuBaris } from './engine/DataTable';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatDateID } from '@/lib/format';
-import { checkPerm } from '@/lib/rbac';
+import { checkPerm, punyaCentang } from '@/lib/rbac';
+import { CENTANG_BAYAR, CENTANG_JURNAL_CMT } from '@/lib/financeRoles';
 
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const fmtDate = (d) => (d ? formatDateID(d) : '—');
 const FIN_ROLES = ['superadmin', 'admin', 'owner', 'accounting', 'staff_keuangan', 'manager_keuangan'];
 
-export default function ProductionCMTBillingModule({ portalId, userRole, user }) {
+export default function ProductionCMTBillingModule({ portalId, userRole, user, hasPerm }) {
   const businessType = portalId === 'maklon' ? 'maklon' : portalId === 'production' ? 'internal' : null;
   const [view, setView] = useState('bills');           // bills | schedules
   const [rows, setRows] = useState([]);
@@ -62,6 +63,10 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
   const [posting, setPosting] = useState('');
   // 2026-11-08: + izin finance.manage (sama dengan server: selisih tagihan CMT `FINANCE_BOOK_PERMS`).
   const canPost = checkPerm({ user, role: userRole, roles: FIN_ROLES, keys: ['finance.manage'] });
+  // 14 Nov 2026: Bayar / batal bayar / Jurnalkan mengikuti CENTANG yang diminta server untuk tombolnya (bukan kode
+  // peran keuangan): Keuangan › Pembayaran & Pencairan Uang › Setujui; Jurnalkan = Maklon › Piutang Klien › Setujui.
+  const bolehBayar = punyaCentang(hasPerm, CENTANG_BAYAR);
+  const bolehJurnal = punyaCentang(hasPerm, CENTANG_JURNAL_CMT);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -204,7 +209,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
         )}
       </>}
       detail={detail && (
-        <BillDetail detail={detail} canPost={canPost} posting={posting} onClose={() => setDetail(null)}
+        <BillDetail detail={detail} canPost={canPost} bolehBayar={bolehBayar} bolehJurnal={bolehJurnal} posting={posting} onClose={() => setDetail(null)}
           onPost={postToGl} onChanged={async () => { await load(); await openDetail(detail.bill?.id || detail.id); }} />
       )}
       footer={view === 'bills' && rows.length > pageSize && (
@@ -288,7 +293,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
                       : <span className="text-[hsl(var(--warning-text))]">Belum dijurnal</span>}
                   </TableCell>
                   <TableCell className="text-right">
-                    {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost ? (
+                    {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && bolehJurnal ? (
                       <Button type="button" size="sm" variant="outline" disabled={posting === r.id} onClick={() => postToGl(r.id)} data-testid={`cmt-billing-post-${r.payment_code}`}>
                         <Landmark className="w-3.5 h-3.5" />Jurnalkan
                       </Button>
@@ -306,7 +311,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole, user })
   );
 }
 
-function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
+function BillDetail({ detail, canPost, bolehBayar, bolehJurnal, posting, onClose, onPost, onChanged }) {
   const bill = detail.bill || {};
   const [cashAccounts, setCashAccounts] = useState([]);
   const [disbursements, setDisbursements] = useState([]);
@@ -395,7 +400,7 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
     <DetailPanel testId="cmt-billing-detail-dialog" closeTestId="cmt-billing-detail-close" onClose={onClose}
       title={`${bill.payment_code || 'Tagihan'} · ${bill.cmt_name || '—'}`}
       description={`PO ${bill.po_number || '—'} · ${fmtNum(bill.total_pcs)} pcs lolos QC · ditolak ${fmtNum(bill.total_rejected)} · nilai ${fmtRp(bill.amount)}`}
-      actions={!bill.gl_posted && canPost && (bill.status || '').toLowerCase() !== 'cancelled' && (
+      actions={!bill.gl_posted && bolehJurnal && (bill.status || '').toLowerCase() !== 'cancelled' && (
         <Button type="button" variant="outline" onClick={() => onPost(bill.id)} disabled={posting === bill.id} data-testid="cmt-billing-detail-post">
           <Landmark className="w-4 h-4" />Jurnalkan
         </Button>
@@ -477,12 +482,12 @@ function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
           {disbursements.map((d) => (
             <div key={d.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`cmt-disb-${d.id}`}>
               <span>{fmtDate(d.payment_date)} · {d.cash_account_name} · <span className="tabular-nums">{fmtRp(d.amount)}</span>{d.gl_je_number ? ` · ${d.gl_je_number}` : ''}</span>
-              {canPost && <Button type="button" size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
+              {bolehBayar && <Button type="button" size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
             </div>
           ))}
         </div>
       )}
-      {canPost && (bill.status || '').toLowerCase() !== 'cancelled' && payable > 0 && (
+      {bolehBayar && (bill.status || '').toLowerCase() !== 'cancelled' && payable > 0 && (
         <div className="flex flex-wrap items-end gap-2" data-testid="cmt-pay-panel">
           <SmartNativeSelect value={payForm.cash_account_id} onChange={(e) => setPayForm((f) => ({ ...f, cash_account_id: e.target.value }))}
             className="h-9 w-64" aria-label="Rekening" data-testid="cmt-pay-cash-account">

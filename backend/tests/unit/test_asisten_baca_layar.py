@@ -31,7 +31,12 @@ from core.asisten_ai.alat import baca_layar as bl  # noqa: E402
 from core.asisten_ai.katalog_aksi import aturan  # noqa: E402
 
 ADMIN = {"id": "u-admin", "name": "Admin", "email": "a@contoh.test", "role": "admin"}
-PPIC = {"id": "u-ppic", "name": "PPIC", "email": "p@contoh.test", "role": "ppic"}
+# 14 Nov 2026: atas nama vendor CMT = centang Input atas nama Vendor CMT (migrasi tahap 2 memberi PPIC semua aksi),
+# bukan kode peran — admin produksi tanpa centang itu ditolak.
+PPIC = {"id": "u-ppic", "name": "PPIC", "email": "p@contoh.test", "role": "ppic",
+        "_permissions": [f"mod.prod_cmt_override.{a}" for a in ("view", "create", "edit", "delete", "export")]}
+ADMIN_PRODUKSI_TANPA_CENTANG = {"id": "u-ap", "name": "Admin Produksi", "email": "ap@contoh.test",
+                                "role": "admin_produksi", "_permissions": ["mod.prod_po.view"]}
 STAF = {"id": "u-staf", "name": "Staf", "email": "s@contoh.test", "role": "finance_staff"}
 BACAAN = kat.semua_bacaan()
 
@@ -196,6 +201,9 @@ def test_baca_layar_atas_nama_vendor(env):
     with pytest.raises(ab.AlatError) as e:
         run(baca(Ctx(user=STAF), {"alamat": bv["jalur"], "atas_nama_vendor": "ven-1"}))
     assert e.value.status == 403
+    with pytest.raises(ab.AlatError) as e:
+        run(baca(Ctx(user=ADMIN_PRODUKSI_TANPA_CENTANG), {"alamat": bv["jalur"], "atas_nama_vendor": "ven-1"}))
+    assert e.value.status == 403 and "Peran & Hak Akses" in e.value.pesan and "admin_produksi" not in e.value.pesan
     tanpa = next(b for b in BACAAN if not b.get("atas_nama_vendor") and not b["parameter_jalur"])
     with pytest.raises(ab.AlatError) as e:
         run(baca(Ctx(user=PPIC), {"alamat": tanpa["jalur"], "atas_nama_vendor": "ven-1"}))

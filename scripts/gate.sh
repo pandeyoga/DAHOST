@@ -139,7 +139,7 @@ if [ $AUTH_READY -eq 1 ]; then
   # yang tidak memakai sistem — termasuk PROGRESS PRODUKSI, dasar tagihan CMT.
   # Tiga kelas kerusakan yang dijaga (semuanya pernah nyata saat dibangun):
   #   · KEWENANGAN — header `X-CMT-Override-Vendor` hanya boleh dihormati untuk
-  #     role di core/cmt_override.OVERRIDE_ROLES, dan role lain harus DITOLAK 403
+  #     yang dicentang (core/cmt_override.boleh_atas_nama), dan yang lain harus DITOLAK 403
   #     (bukan "diabaikan diam-diam", karena kesalahan itu tak akan pernah terlihat);
   #     akun vendor pun tidak boleh memakainya (mustahil menyamar jadi vendor lain).
   #   · SCOPING — baca & tulis wajib terkurung ke vendor yang diwakili. Salah

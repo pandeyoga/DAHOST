@@ -182,7 +182,8 @@ def cash_code_change_blocked(current: Optional[str], incoming: Optional[str]) ->
 
 
 PIC_NEEDS_TOKO_MSG = ("PIC toko harus pengguna yang punya akses Portal Toko. Beri dulu aksesnya di "
-                      "Manajemen Role / Pengguna, atau pilih pengguna lain.")
+                      "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses (atau tab Pengguna), "
+                      "atau pilih pengguna lain.")
 
 
 async def _resolve_pic(db, pic_user_id, current: Optional[str] = None):
@@ -205,7 +206,8 @@ async def _resolve_pic(db, pic_user_id, current: Optional[str] = None):
     return pid, (user.get("name") or user.get("email"))
 
 
-STORE_MANAGE_DENIED = ("Peran Anda belum dicentang \"Kelola Akun\" (Tambah, Ubah, atau Hapus) di Manajemen Role. "
+STORE_MANAGE_DENIED = ("Peran Anda belum dicentang \"Kelola Akun\" (Tambah, Ubah, atau Hapus) di "
+                       "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses. "
                        "Bila ada data toko yang salah, minta owner atau SPV Marketing memperbaikinya.")
 
 
@@ -816,7 +818,8 @@ async def delete_platform_account_permanently(account_id: str, request: Request)
     user = await require_auth(request)
     from routes.shared import lolos_centang
     if not lolos_centang(user):  # 13 Nov 2026: centang Kelola Akun › Hapus (dulu khusus super admin)
-        raise HTTPException(403, "Peran Anda belum dicentang \"Kelola Akun › Hapus\" di Manajemen Role. "
+        raise HTTPException(403, "Peran Anda belum dicentang \"Kelola Akun › Hapus\" di "
+                                 "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses. "
                                  "Gunakan Arsipkan untuk menonaktifkan toko.")
     db = get_db()
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})

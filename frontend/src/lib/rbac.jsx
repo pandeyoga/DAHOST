@@ -54,6 +54,23 @@ export function checkPerm({ user, role, hasPerm, perm, keys, roles }) {
 }
 
 /**
+ * Pemakai punya salah satu centang owner `keys` (`mod.<modul>.<aksi>`)? 14 Nov 2026 — untuk tombol yang endpoint-nya
+ * dijaga CENTANG (gerbang modul server), bukan kode peran. `hasPerm` = fungsi dari App (izin dari server: peran super
+ * & izin "*" selalu lolos); tanpa itu dibaca dari sesi tersimpan (`erp_user`, diperbarui `/auth/me`). Beda dengan
+ * `checkPerm`: izin kosong = TIDAK boleh (tidak permisif).
+ */
+export function punyaCentang(hasPerm, ...keys) {
+  const wanted = keys.flat().filter(Boolean);
+  if (typeof hasPerm === 'function') return wanted.some((k) => Boolean(hasPerm(k)));
+  try {
+    const u = JSON.parse(localStorage.getItem('erp_user') || 'null') || {};
+    if (SUPER_ROLES.includes(String(u.role || '').toLowerCase())) return true;
+    const owned = Array.isArray(u.permissions) ? u.permissions : [];
+    return owned.includes('*') || wanted.some((k) => owned.includes(k));
+  } catch { return false; }
+}
+
+/**
  * RequirePerm — render children hanya bila izin dimiliki.
  */
 export function RequirePerm({ perm, keys, user, hasPerm, role, children, fallback = null }) {

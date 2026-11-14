@@ -28,10 +28,28 @@ CNT = eng.CNT
 APPROVE_ROLES = eng.APPROVE_ROLES
 
 
-def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname", sess: Optional[dict] = None):
-    """Gerbang supervisor bersama (gudang & aksesoris): izin `wh.opname.approve` (fallback role lama).
+def jenis_sesi(sess: Optional[dict]) -> str:
+    """'aksesoris' = sesi dari Portal Aksesoris › Stok Opname (layar yang sama dengan `kind="aksesoris"` →
+    `source="aksesoris"`; juga `/api/acc/opname`), selain itu 'gudang'. Penentu modul centang penyetujunya."""
+    return "aksesoris" if str((sess or {}).get("source") or "").lower() == "aksesoris" else "gudang"
 
-    2026-11-09: sesi OPNAME STOK AWAL (nilainya masuk ekuitas saldo awal) hanya Keuangan/owner."""
+
+# Modul centang penyetuju per jenis sesi + izin lama yang tetap dihormati (hanya milik modul itu sendiri).
+_SETUJU_PER_JENIS = {
+    "gudang": ("wh_opname", ("mod.wh_opname.approve", "wh.opname.approve")),
+    "aksesoris": ("acc_opname", ("mod.acc_opname.approve",)),
+}
+LETAK_CENTANG = "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses"
+
+
+def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname", sess: Optional[dict] = None):
+    """Gerbang supervisor opname (gudang & aksesoris, mesin sama).
+
+    2026-11-09: sesi OPNAME STOK AWAL (nilainya masuk ekuitas saldo awal) hanya Keuangan/owner.
+    13 Nov 2026: HANYA centang "Setujui" modul opname (dulu "Setujui" Stok, wh.opname.manage, warehouse.approve ikut).
+    14 Nov 2026 (temuan owner): DIPISAH per jenis sesi — sesi aksesoris = Aksesoris › Stok Opname Aksesoris › Setujui;
+    sesi gudang (kain/bahan/barang jadi) = Gudang › Opname Stok Gudang › Setujui (atau izin lama wh.opname.approve).
+    Dulu centang salah satunya meloloskan kedua jenis."""
     if eng.is_opening(sess):
         from auth import check_role
         from core.roles import FINANCE_ROLES
@@ -39,14 +57,15 @@ def assert_can_approve(user: dict, what: str = "menyetujui/menolak opname", sess
             raise HTTPException(403, f"Opname stok awal: hanya Keuangan/owner yang boleh {what} (nilai stok "
                                      "awal dibukukan ke ekuitas saldo awal).")
         return
-    from routes.shared import can_act, user_permissions
-    # 13 Nov 2026: HANYA centang "Setujui" modul opname (Gudang › Opname Stok Gudang; Aksesoris › Stok Opname
-    # Aksesoris) atau izin lama wh.opname.approve. Dulu "Setujui" Stok, wh.opname.manage dan warehouse.approve ikut
-    # meloloskan, sehingga owner tidak bisa memisahkan siapa yang boleh menyetujui hasil opname.
-    centang = {"mod.wh_opname.approve", "mod.acc_opname.approve"} & user_permissions(user)
-    if not (centang or can_act(user, "wh.opname.approve", legacy_roles=APPROVE_ROLES)):
-        raise HTTPException(403, f"Peran Anda belum dicentang \"Setujui\" pada Opname Stok di Manajemen Role "
-                                 f"(diperlukan untuk {what}).")
+    from data.module_catalog import MODULE_BY_ID, PORTAL_LABELS
+    from routes.shared import can_act
+    modul_id, kunci = _SETUJU_PER_JENIS[jenis_sesi(sess)]
+    if can_act(user, *kunci, legacy_roles=APPROVE_ROLES):
+        return
+    mod = MODULE_BY_ID[modul_id]
+    raise HTTPException(403, f"Peran Anda belum dicentang \"Setujui\" pada modul \"{mod['label']}\" (Portal "
+                             f"{PORTAL_LABELS.get(mod['portal'], mod['portal'])}), padahal itu diperlukan untuk {what}. "
+                             f"Minta owner mencentangnya di {LETAK_CENTANG}.")
 
 
 # ── kompat uji/pemanggil lama (resolusi lewat SSOT core.scan_resolver) ──────────
@@ -248,7 +267,7 @@ async def approve_session(data: SessionRefIn, request: Request):
     user = await require_auth(request)
     db = get_db()
     sess = await eng.get_session(db, data.session_id, for_write=True)
-    assert_can_approve(user, "approve opname", sess)
+    assert_can_approve(user, "menyetujui opname", sess)
     sess = await eng.approve(db, user, sess)
     await log_activity(user.get("id", ""), user.get("name", ""), "opname_approve", SESS,
                        f"Opname {sess.get('session_no')} disetujui — {sess.get('summary')}")

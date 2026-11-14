@@ -152,12 +152,15 @@ async def approve_opname(session_id: str, request: Request):
     user = await require_auth(request)
     db = get_db()
     sess = await eng.get_session(db, session_id, for_write=True)
-    assert_can_approve(user, "approve opname aksesoris", sess)   # 2026-11-09: stok awal = Keuangan/owner
+    assert_can_approve(user, "menyetujui opname aksesoris", sess)   # 2026-11-09: stok awal = Keuangan/owner
     sess = await eng.approve(db, user, sess)
     summ = sess.get("summary") or {}
+    # 14 Nov 2026: + `summary` (ringkasan sesi sama dengan /api/wms/opname3/approve) — layar Sesi Opname di Portal
+    # Aksesoris menyetujui sesi aksesoris lewat pintu ini (centang Stok Opname Aksesoris › Setujui).
     return {"ok": True, "status": "approved", "adjustments_made": summ.get("stock_writes", 0),
             "je_posted": summ.get("je_posted", 0), "je_number": summ.get("je_number"),
-            "je_error": summ.get("je_error"), "total_variance_value": summ.get("total_variance_value", 0)}
+            "je_error": summ.get("je_error"), "total_variance_value": summ.get("total_variance_value", 0),
+            "summary": summ}
 
 
 @router.post("/opname/{session_id}/reject")

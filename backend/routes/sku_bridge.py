@@ -17,6 +17,11 @@ Endpoint (prefix ``/api/sku-bridge``):
   POST   /usulan/setujui         — setujui satu usulan (satu klik → semua pesanan kombinasi itu tertaut)
   POST   /usulan/setujui-pasti   — setujui semua usulan pasti sekaligus
   POST   /usulan/ai              — minta Asisten AI mengusulkan varian (≤ 20 kombinasi per permintaan)
+
+14 Nov 2026 (owner: varian/master produk dibuat R&D): **Buat varian / Buat master** (`/create-master`, serta aksi
+`create_variant`/`create_master` di `/bulk-resolve`) hanya untuk yang dicentang "Tambah" pada Master Produk (Model &
+Varian) atau Master Produk RnD; peran super selalu boleh. Menautkan ke varian yang SUDAH ada tetap untuk semua yang
+berhak membuka Jembatan SKU. Layar membaca haknya dari `/health` (`boleh_buat_master`) — aturan yang sama.
 """
 from typing import Optional
 
@@ -29,8 +34,24 @@ from core import sku_usulan as usulan
 from database import get_db
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES, WAREHOUSE_ROLES  # T-01 2.3
+from routes.shared import has_perm
 
 router = APIRouter(prefix='/api/sku-bridge', tags=['sku-bridge'])
+
+# 14 Nov 2026 — membuat varian/master produk = pekerjaan R&D: centang "Tambah" salah satu modul master produk.
+CENTANG_BUAT_MASTER = ('mod.prod_master_product.create', 'mod.rnd_master_product.create')
+AKSI_BUAT_MASTER = frozenset({'create_variant', 'create_master'})
+PESAN_BUAT_MASTER = 'Varian baru dibuat R&D di Master Produk. Minta R&D membuatnya, lalu tautkan di sini.'
+
+
+def boleh_buat_master(user: dict) -> bool:
+    """Boleh membuat varian/master dari Jembatan SKU? Peran super, izin "*", atau centang Tambah master produk."""
+    return has_perm(user or {}, *CENTANG_BUAT_MASTER)
+
+
+def wajib_boleh_buat_master(user: dict) -> None:
+    if not boleh_buat_master(user):
+        raise HTTPException(403, PESAN_BUAT_MASTER)
 
 
 class MapIn(BaseModel):
@@ -53,9 +74,12 @@ class AutoMapIn(BaseModel):
 
 @router.get('/health')
 async def bridge_health(account_id: Optional[str] = None, user: dict = Depends(require_auth)):
-    """KPI kesehatan tautan — angka yang menjawab "apakah gudang bisa bekerja?"."""
+    """KPI kesehatan tautan — angka yang menjawab "apakah gudang bisa bekerja?".
+
+    `boleh_buat_master`: hak pemakai ini memakai tombol Buat varian / Buat master (:func:`boleh_buat_master`)."""
     db = get_db()
-    return await bridge.health(db, account_id=account_id)
+    res = await bridge.health(db, account_id=account_id)
+    return {**res, 'boleh_buat_master': boleh_buat_master(user)}
 
 
 @router.get('/unmapped')
@@ -152,8 +176,11 @@ async def bulk_resolve(body: BulkResolveIn, user: dict = Depends(require_auth)):
     """Selesaikan banyak SKU sekaligus mengikuti aksi yang disarankan mesin.
 
     Bawaan **pratinjau** dan hanya aksi yang aman (`map` + `create_variant`).
-    `create_master` harus dipilih sadar karena ia menambah master produk baru.
+    `create_master` harus dipilih sadar karena ia menambah master produk baru. `create_variant`/`create_master`
+    (pratinjau maupun terapkan) hanya untuk yang boleh membuat master (:func:`boleh_buat_master`).
     """
+    if AKSI_BUAT_MASTER & set(body.actions or ()):
+        wajib_boleh_buat_master(user)
     db = get_db()
     res = await bridge.bulk_resolve(db, actions=tuple(body.actions or ()), limit=body.limit,
                                    account_id=body.account_id, user=user,
@@ -251,8 +278,10 @@ async def create_master(body: CreateMasterIn, user: dict = Depends(require_auth)
     model → varian (warna×ukuran) → master FG → item katalog toko → pemetaan SKU
     → seluruh pesanan lama ikut tertaut.
 
-    Bawaan **pratinjau**: kirim `apply: true` untuk benar-benar membuat.
+    Bawaan **pratinjau**: kirim `apply: true` untuk benar-benar membuat. Pratinjau pun hanya untuk yang boleh
+    membuat master (:func:`boleh_buat_master`); yang lain menautkan ke varian yang sudah dibuat R&D.
     """
+    wajib_boleh_buat_master(user)
     db = get_db()
     res = await bridge.create_master_and_map(
         db, body.platform_sku_id, product_name=body.product_name, variation=body.variation,

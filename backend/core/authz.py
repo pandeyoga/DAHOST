@@ -148,8 +148,8 @@ def require_roles(*roles: str, perm=None):
         from routes.shared import lolos_centang
         if user and lolos_centang(user):
             return
-        raise HTTPException(403, f"Akses ditolak: butuh peran {', '.join(sorted(roles))} atau centang aksi ini "
-                                 "di Manajemen Role.")
+        raise HTTPException(403, "Akses ditolak: peran Anda belum dicentang untuk aksi ini. Minta owner mencentangnya di "
+                                 "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
     _dep.__name__ = f"require_roles[{','.join(sorted(allowed))}{'|' + ','.join(keys) if keys else ''}]"
     return _dep
 

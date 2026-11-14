@@ -26,6 +26,10 @@
  *
  * 14 Nov 2026 — bagian "Usulan AI" (`SkuUsulanPanel.jsx`): usulan varian master + keyakinan + alasan untuk baris yang
  * belum tertaut / baru tertaut model; staf menyetujui satu klik per kombinasi SKU + variasi.
+ *
+ * 14 Nov 2026 (owner: varian/master produk dibuat R&D): tombol Buat varian / Buat master dan pilihan buat di
+ * Selesaikan massal hanya tampil bila server menjawab `boleh_buat_master` di `/sku-bridge/health` (centang Tambah
+ * Master Produk atau Master Produk RnD). Yang lain tetap bisa Tautkan / Pilih manual ke varian yang sudah ada.
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -56,9 +60,12 @@ const rp = (v) => `Rp ${fmt(Math.round(Number(v || 0)))}`;
 
 const ACTION_META = {
   map: { label: 'Tautkan', tone: 'success', icon: Link2, hint: 'Varian sudah ada di master — cukup ditautkan' },
-  create_variant: { label: 'Buat varian', tone: 'primary', icon: Plus, hint: 'Model sudah ada, warna/ukuran ini belum' },
-  create_master: { label: 'Buat master', tone: 'warning', icon: Sparkles, hint: 'Belum ada master yang mirip — buat model + varian baru' },
+  create_variant: { label: 'Buat varian', labelTunggu: 'Varian belum ada', tone: 'primary', icon: Plus, hint: 'Model sudah ada, warna/ukuran ini belum' },
+  create_master: { label: 'Buat master', labelTunggu: 'Master belum ada', tone: 'warning', icon: Sparkles, hint: 'Belum ada master yang mirip — buat model + varian baru' },
 };
+const AKSI_BUAT = ['create_variant', 'create_master'];
+// Sama dengan backend routes/sku_bridge.PESAN_BUAT_MASTER (yang tidak berhak membuat varian/master).
+const PESAN_MINTA_RND = 'Varian baru dibuat R&D di Master Produk. Minta R&D membuatnya, lalu tautkan di sini.';
 const METHOD_LABEL = {
   manual: 'Manual', auto: 'Otomatis', create_master: 'Buat master', product_onboarding: 'Produk baru (per produk)',
   kode_model: 'Kode model (otomatis)', usulan_pasti: 'Usulan pasti (disetujui)', usulan_ai: 'Usulan AI (disetujui)',
@@ -84,7 +91,7 @@ function KotakCari({ value, onChange, placeholder, testId }) {
 }
 
 /* ─── Popup: pilih sasaran manual (daftar pilihan, satu klik = tautkan) ───── */
-function ManualPickDialog({ row, onClose, onDone }) {
+function ManualPickDialog({ row, onClose, onDone, bolehBuat }) {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -139,7 +146,9 @@ function ManualPickDialog({ row, onClose, onDone }) {
         <p className="py-6 text-center text-sm text-muted-foreground">Mencari…</p>
       ) : (
         <TabelData kolom={kolom} baris={rows} kunci={(c) => `${c.kind}-${c.target_id}`} testId="manual-pick-table"
-          kosong={<EmptyState title="Tidak ada master yang cocok" description='Ubah kata pencarian, atau pakai tombol "Buat master" di daftar utama.' />} />
+          kosong={<EmptyState title="Tidak ada master yang cocok" description={bolehBuat
+            ? 'Ubah kata pencarian, atau pakai tombol "Buat master" di daftar utama.'
+            : `Ubah kata pencarian. ${PESAN_MINTA_RND}`} />} />
       )}
     </DetailPopup>
   );
@@ -241,13 +250,14 @@ function CreateMasterDialog({ row, onClose, onDone }) {
 }
 
 /* ─── Bagian: penyelesaian massal ──────────────────────────────────────────── */
-function BulkPanel({ onDone }) {
+function BulkPanel({ onDone, bolehBuat }) {
   const [actions, setActions] = useState({ map: true, create_variant: true, create_master: false });
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const run = async (apply) => {
-    const chosen = Object.entries(actions).filter(([, v]) => v).map(([k]) => k);
+    // Pilihan buat varian/master hanya dikirim bila server menyatakan boleh (`boleh_buat_master`).
+    const chosen = Object.entries(actions).filter(([k, v]) => v && (bolehBuat || !AKSI_BUAT.includes(k))).map(([k]) => k);
     if (!chosen.length) { toast.error('Pilih minimal satu jenis aksi.'); return; }
     setBusy(true);
     try {
@@ -261,7 +271,7 @@ function BulkPanel({ onDone }) {
     { key: 'map', title: 'Tautkan yang sudah ada', desc: 'Varian model+warna+ukuran sudah ada di master. Paling aman.' },
     { key: 'create_variant', title: 'Buat varian di model yang cocok', desc: 'Model dikenali, hanya warna/ukuran ini yang belum ada.' },
     { key: 'create_master', title: 'Buat model produk BARU', desc: 'Menambah master produk baru. Pilih sadar — periksa pratinjaunya.' },
-  ];
+  ].filter((b) => bolehBuat || !AKSI_BUAT.includes(b.key));
   const hasil = res ? [
     ...(res.applied || []).map((a) => ({ ...a, _kelompok: 'Akan dikerjakan' })),
     ...(res.skipped || []).map((s) => ({ ...s, _kelompok: 'Disisakan untuk Anda' })),
@@ -282,6 +292,7 @@ function BulkPanel({ onDone }) {
         Mesin memeriksa setiap SKU yang belum dikenal lalu mengerjakan aksi yang sesuai keadaan masternya. Yang keyakinannya
         kurang tidak dikerjakan otomatis — dikembalikan ke daftar supaya Anda yang memutuskan. Jalankan <b>Pratinjau</b> dulu:
         pratinjau tidak menulis apa pun.
+        {!bolehBuat && ` Di sini Anda hanya menautkan ke varian yang sudah ada. ${PESAN_MINTA_RND}`}
       </p>
       <fieldset className="space-y-2">
         <legend className="sr-only">Jenis aksi yang dikerjakan</legend>
@@ -456,10 +467,15 @@ export default function SkuBridgeModule({ onNavigate }) {
   }, [loadUnmapped, tab, reloadKey]);
 
   const refreshAll = () => setReloadKey((k) => k + 1);
+  // Hak membuat varian/master dari server (centang Tambah Master Produk / Master Produk RnD), bukan kode peran.
+  const bolehBuat = health?.boleh_buat_master === true;
 
   const quickAction = async (row) => {
     const act = row.recommended_action;
-    if (act === 'create_master' || act === 'create_variant') { setCreateRow(row); return; }
+    if (AKSI_BUAT.includes(act)) {
+      if (bolehBuat) setCreateRow(row); else toast.error(PESAN_MINTA_RND);
+      return;
+    }
     const mm = row.model_match || {};
     if (!mm.variant_id) { setManualRow(row); return; }
     setBusyRow(row.platform_sku_id);
@@ -497,21 +513,27 @@ export default function SkuBridgeModule({ onNavigate }) {
     { kunci: 'nilai', label: 'Nilai', hp: false, rata: 'kanan', isi: (r) => <span className="tabular-nums">{rp(r.value)}</span> },
     { kunci: 'keadaan', label: 'Keadaan master', isi: (r) => {
       const meta = ACTION_META[r.recommended_action] || ACTION_META.create_master;
+      const tunggu = !bolehBuat && meta.labelTunggu;
       return (
         <div className="md:max-w-[18rem]">
-          <StatusBadge tone={meta.tone} label={meta.label} />
+          <StatusBadge tone={meta.tone} label={tunggu || meta.label} />
           <p className="mt-1 text-xs text-muted-foreground">{r.action_reason || meta.hint}</p>
+          {tunggu && <p className="mt-1 text-xs text-muted-foreground" data-testid={`minta-rnd-${r.platform_sku_id}`}>{PESAN_MINTA_RND}</p>}
         </div>
       );
     } },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => {
       const meta = ACTION_META[r.recommended_action] || ACTION_META.create_master;
       const Icon = meta.icon;
+      // Buat varian / Buat master hanya untuk yang berhak (server); yang lain cukup Pilih manual varian yang ada.
+      const tampilAksi = bolehBuat || !meta.labelTunggu;
       return (
         <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-          <Button size="sm" onClick={() => quickAction(r)} disabled={busyRow === r.platform_sku_id} data-testid={`act-${r.platform_sku_id}`}>
-            {busyRow === r.platform_sku_id ? <Loader2 className="animate-spin" /> : <Icon />}{meta.label}
-          </Button>
+          {tampilAksi && (
+            <Button size="sm" onClick={() => quickAction(r)} disabled={busyRow === r.platform_sku_id} data-testid={`act-${r.platform_sku_id}`}>
+              {busyRow === r.platform_sku_id ? <Loader2 className="animate-spin" /> : <Icon />}{meta.label}
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={() => setManualRow(r)} data-testid={`manual-${r.platform_sku_id}`}>
             Pilih manual
           </Button>
@@ -632,15 +654,15 @@ export default function SkuBridgeModule({ onNavigate }) {
       {tab === 'usulan' && (
         <SkuUsulanPanel reloadKey={reloadKey} onChanged={refreshAll} onPilihManual={setManualRow} />
       )}
-      {tab === 'bulk' && <BulkPanel onDone={refreshAll} />}
+      {tab === 'bulk' && <BulkPanel onDone={refreshAll} bolehBuat={bolehBuat} />}
       {tab === 'onboarding' && <ProductOnboardingTab onDone={refreshAll} />}
       {tab === 'options' && <VariantOptionsTab />}
 
       {manualRow && (
-        <ManualPickDialog row={manualRow} onClose={() => setManualRow(null)}
+        <ManualPickDialog row={manualRow} onClose={() => setManualRow(null)} bolehBuat={bolehBuat}
           onDone={() => { setManualRow(null); refreshAll(); }} />
       )}
-      {createRow && (
+      {createRow && bolehBuat && (
         <CreateMasterDialog row={createRow} onClose={() => setCreateRow(null)}
           onDone={() => { setCreateRow(null); refreshAll(); }} />
       )}

@@ -21,7 +21,8 @@ di sini hanya tiga hal yang TIDAK punya padanan di portal vendor:
    (bukan perhitungan kedua) ⇒ tab Mingguan mustahil berbeda dari tab Harian.
 8. ``GET /api/cmt-override/weekly-recap/export`` — rekap mingguan dalam Excel/PDF.
 
-Kebijakan akses: hanya role di ``core.cmt_override.OVERRIDE_ROLES``.
+Kebijakan akses (14 Nov 2026): centang modul Produksi › Input atas nama Vendor CMT (`core.cmt_override.boleh_atas_nama`),
+bukan kode peran; peran super selalu boleh.
 """
 import io
 import logging
@@ -31,7 +32,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from auth import log_activity, require_auth, serialize_doc
 from database import get_db
-from core.cmt_override import (OVERRIDE_HEADER, OVERRIDE_ROLES, is_override_role,
+from core.cmt_override import (OVERRIDE_HEADER, is_override_role, pesan_tolak,
                                resolve_override)
 from core.cmt_daily_recap import (MAX_WEEK_DAYS, WEEK_DAYS,
                                   build_recap, build_week, build_week_comparison,
@@ -48,10 +49,7 @@ def _guard(user: dict):
     if is_vendor(user):
         raise HTTPException(403, 'Akun vendor tidak boleh membuka Portal CMT Override.')
     if not is_override_role(user):
-        raise HTTPException(
-            403,
-            'Anda tidak berhak membuka Portal CMT Override. '
-            f"Role yang diizinkan: {', '.join(sorted(OVERRIDE_ROLES))}.")
+        raise HTTPException(403, pesan_tolak('GET'))
 
 
 # ── Koleksi yang membawa stempel override (SSOT satu tempat) ────────────────

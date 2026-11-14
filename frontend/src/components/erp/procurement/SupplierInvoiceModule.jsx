@@ -31,8 +31,8 @@ import { toast } from 'sonner';
 import { EP, apiGet, apiPost, fmtDate, fmtNum, fmtRp } from './procApi';
 import { PaymentHistoryList } from '../PaymentHistoryModal';
 import CashAccountSelect, { usePaymentCashAccounts } from '../SdmCashAccountSelect';
-import { currentRole } from '../portalAccess';
-import { isFinanceRole } from '../../../lib/financeRoles';
+import { CENTANG_BAYAR } from '../../../lib/financeRoles';
+import { punyaCentang } from '../../../lib/rbac';
 import { useTaxProfile } from '../../../lib/taxProfile';
 import { todayWIB } from '../../../lib/waktu';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
@@ -544,7 +544,7 @@ export const cmtToRow = (p) => ({
  * 11 Nov 2026 (owner "tagihan tidak usah beda tab"): mode Keuangan (`financeMode`: tab Tagihan berisi faktur pemasok +
  * tagihan CMT) pindah ke SATU daftar Keuangan › Hutang (`finance/HutangModule`) yang memakai panel-panel di atas.
  */
-export default function SupplierInvoiceModule({ token }) {
+export default function SupplierInvoiceModule({ token, hasPerm }) {
   const [tab, setTab] = useState('pending');
   const [grs, setGrs] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -556,8 +556,9 @@ export default function SupplierInvoiceModule({ token }) {
   const [detail, setDetail] = useState(null);
   const [paying, setPaying] = useState(null);
   const [sending, setSending] = useState(false);
-  // Faktur Supplier juga dibuka dari portal Pengadaan; tombol bayar hanya untuk peran keuangan (FIN-02).
-  const finance = isFinanceRole(currentRole());
+  // Faktur Supplier juga dibuka dari portal Pengadaan; tombol Bayar hanya untuk yang dicentang Keuangan ›
+  // Pembayaran & Pencairan Uang › Setujui (14 Nov 2026: centang, bukan kode peran keuangan — sama dengan server).
+  const bolehBayar = punyaCentang(hasPerm, CENTANG_BAYAR);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -678,7 +679,7 @@ export default function SupplierInvoiceModule({ token }) {
                             onCreated={() => { load(); setTab('invoices'); }} />
       ) : detail && (
         <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token}
-                       onPay={finance ? (inv) => { setDetail(null); setPaying(inv); } : null} />
+                       onPay={bolehBayar ? (inv) => { setDetail(null); setPaying(inv); } : null} />
       )}
     >
       {loading ? (
@@ -767,7 +768,7 @@ export default function SupplierInvoiceModule({ token }) {
                       <td className="text-right tabular-nums">{fmtRp(i.balance ?? i.total)}</td>
                       <td><ApBadge status={i.status} /></td>
                       <td className="text-right whitespace-nowrap">
-                        {finance && canPay(i) && (
+                        {bolehBayar && canPay(i) && (
                           <Button size="sm" variant="success" onClick={() => setPaying(i)}
                                   data-testid={`ap-pay-${i.id}`}>
                             Bayar

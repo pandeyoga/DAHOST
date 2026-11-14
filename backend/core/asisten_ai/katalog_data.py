@@ -1032,7 +1032,8 @@ def alasan_ditolak(ds: Dataset, ak: AksesPengguna) -> str:
     teks = f"Akun ini tidak punya akses ke data '{ds.label}'"
     if portal:
         teks += f" (butuh akses Portal {portal} atau izin modulnya)"
-    return teks + ". Minta admin menambahkan aksesnya di Peran & Hak Akses bila memang perlu."
+    return teks + (". Minta admin menambahkan aksesnya di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses "
+                   "bila memang perlu.")
 
 
 def cv_aktif(ctx) -> str:

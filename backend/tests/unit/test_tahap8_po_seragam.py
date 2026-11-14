@@ -361,7 +361,9 @@ def test_server_menolak_buat_po_tanpa_hak(monkeypatch):
     monkeypatch.setattr(pp, "require_auth", auth)
     with pytest.raises(HTTPException) as e:
         run(pp.create_po(FakeRequest(_po_body(9000))))
-    assert e.value.status_code == 403 and "mod.prod_po.create" in e.value.detail
+    # 14 Nov 2026: pesan menyebut kotak centang & letaknya, tanpa kunci izin program (mod.prod_po.create)
+    assert e.value.status_code == 403 and "\"Tambah\" pada modul \"PO Internal & Tutup PO\"" in e.value.detail
+    assert "Kontrol Akses › Peran & Hak Akses" in e.value.detail and "mod." not in e.value.detail
     assert db.production_pos.docs == []
 
     async def auth2(_req):
