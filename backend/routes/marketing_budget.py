@@ -732,8 +732,9 @@ async def set_period_lock(data: PeriodLockIn, request: Request):
     _valid_period(data.period)
     if not _cycle.can_manage_period(user):
         raise HTTPException(
-            403, 'Hanya SPV/Manager Marketing (atau owner) yang boleh menutup & membuka '
-                 'periode. Minta SPV Marketing melakukannya dari layar Target & Anggaran.')
+            403, "Peran Anda belum dicentang 'Setujui' pada modul 'Target & Anggaran', jadi belum boleh "
+                 'menutup/membuka periode. Minta owner mencentangnya di Administrasi Sistem › Kontrol Akses › '
+                 'Peran & Hak Akses.')
     db = get_db()
     acc = await db.marketing_platform_accounts.find_one({'id': data.account_id}, {'_id': 0})
     if not acc:

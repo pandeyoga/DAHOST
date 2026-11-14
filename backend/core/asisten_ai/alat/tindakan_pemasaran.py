@@ -115,8 +115,8 @@ def _cek_penulis_target(ctx, apa: str) -> None:
     """Pra-cek ramah (aturan yang SAMA dengan endpoint; endpoint tetap penjaga sebenarnya)."""
     from core.marketing_account_scope import can_write_target
     if not can_write_target(ctx.user):
-        raise AlatError(403, f"Akun Anda tidak boleh menetapkan {apa}: itu keputusan SPV/Manager Marketing atau "
-                             "owner. Asisten AI hanya bisa melakukan apa yang bisa Anda lakukan di layar.")
+        raise AlatError(403, f"Akun Anda belum boleh menetapkan {apa}: peran Anda belum dicentang 'Ubah' pada modul "
+                             "'Target & Anggaran'. Asisten AI hanya bisa melakukan apa yang bisa Anda lakukan di layar.")
 
 
 async def _toko_cv(ctx, bulan: Optional[str] = None) -> Dict[str, dict]:
