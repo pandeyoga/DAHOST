@@ -508,6 +508,103 @@ async def assert_account_visible(db, user: Optional[dict], account_id: Optional[
              + NO_ACCOUNT_HINT)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 14 Nov 2026 — FILTER TOKO MENYELURUH (owner: "penerapan filtering berdasarkan toko di
+# marketing belum sepenuhnya"). Kasus nyata: PIC Mar'atus membuat kreator FATMALA FASHION
+# yang ditautkan ke tokonya DAN ke toko Rina, sehingga kreator itu muncul di akun Rina;
+# daftar kreator sendiri tidak disaring sama sekali. Penjaga rekaman per id ada di
+# `core.marketing_record_scope` (satu tabel, dipakai middleware); helper di bawah dipakai
+# handler DAFTAR dan TULIS supaya aturannya tetap satu.
+# ══════════════════════════════════════════════════════════════════════════════
+CATATAN_TANPA_TOKO = ("Data ini belum tercatat per toko, jadi hanya ditampilkan untuk peran yang melihat "
+                      "semua toko (owner, SPV, atau manajer Marketing).")
+
+
+def berlingkup_toko(user: Optional[dict]) -> bool:
+    """Pemakai ini dibatasi per toko: peran `SCOPED_ROLES` (setelah normalisasi) tanpa izin semua toko.
+    SATU definisi — sama dengan yang dijaga `middleware.marketing_scope_guard`."""
+    return _role(user) in SCOPED_ROLES and not sees_all_accounts(user)
+
+
+async def toko_lingkup(db, user: Optional[dict]) -> Optional[List[str]]:
+    """Toko pemakai berlingkup toko; ``None`` (tanpa saring) untuk peran lain.
+
+    Beda dengan :func:`visible_account_ids` (yang memberi ``[]`` untuk peran di luar Marketing):
+    dipakai daftar/tulis yang DULU tidak disaring sama sekali, supaya peran lain yang memang memakai
+    layar itu (RnD menyetujui permintaan kreator, manajer umum, keuangan) tidak tiba-tiba kehilangan
+    datanya. Aturan owner 14 Nov 2026 menyasar PIC/staf toko; peran lain tetap seperti sebelumnya."""
+    if not berlingkup_toko(user):
+        return None
+    return await visible_account_ids(db, user)
+
+
+async def saring_lingkup(db, user: Optional[dict], base: Optional[dict] = None,
+                         field: str = "account_id") -> dict:
+    """:func:`scope_filter` versi :func:`toko_lingkup` — hanya pemakai berlingkup toko yang disaring."""
+    q = dict(base or {})
+    ids = await toko_lingkup(db, user)
+    if ids is None:
+        return q
+    existing = q.get(field)
+    if isinstance(existing, str):
+        q[field] = existing if existing in ids else "__tidak_boleh_dilihat__"
+        return q
+    q[field] = {"$in": ids}
+    return q
+
+
+async def scope_filter_umum(db, user: Optional[dict], base: Optional[dict] = None,
+                            field: str = "account_id") -> dict:
+    """Seperti :func:`saring_lingkup`, tetapi baris TANPA toko (milik bersama — mis. skrip live global,
+    templat tugas umum) tetap tampil untuk pemakai berlingkup toko."""
+    q = dict(base or {})
+    ids = await toko_lingkup(db, user)
+    if ids is None:
+        return q
+    cond = {"$or": [{field: {"$in": ids}}, {field: None}, {field: ""}]}
+    return {"$and": [q, cond]} if q else cond
+
+
+def saring_toko_terlihat(ids: Any, visible: Optional[List[str]]) -> List[str]:
+    """Daftar toko pada satu rekaman (mis. `assigned_account_ids` kreator) yang boleh DITAMPILKAN.
+
+    Pemakai berlingkup toko tidak perlu tahu toko rekan kerja yang juga memakai kreator/host yang
+    sama; tautan itu tetap tersimpan (lihat :func:`gabung_toko_terlihat`)."""
+    out = [str(x) for x in (ids or []) if x]
+    return out if visible is None else [x for x in out if x in visible]
+
+
+async def gabung_toko_terlihat(db, user: Optional[dict], diminta: Any,
+                               lama: Any = None, *, apa: str = "data ini") -> List[str]:
+    """Daftar toko baru untuk rekaman milik BEBERAPA toko (kreator, host, sasaran peluncuran).
+
+    Aturan owner (14 Nov 2026) untuk pemakai berlingkup toko:
+      * hanya boleh MENAMBAH atau MELEPAS toko yang ia pegang;
+      * tautan ke toko yang TIDAK ia pegang dipertahankan apa adanya — dua PIC bisa berbagi satu
+        kreator, masing-masing mengurus tautan tokonya sendiri;
+      * menautkan toko yang tidak ia pegang → 403 dengan nama tokonya.
+    Peran yang tidak berlingkup toko (:func:`toko_lingkup` = None): daftar yang diminta dipakai apa
+    adanya (perilaku lama).
+    """
+    req = list(dict.fromkeys(str(x).strip() for x in (diminta or []) if x and str(x).strip()))
+    ids = await toko_lingkup(db, user)
+    if ids is None:
+        return req
+    lama_l = list(dict.fromkeys(str(x) for x in (lama or []) if x))
+    asing = [a for a in req if a not in ids and a not in lama_l]
+    if asing:
+        ada = await db[ACCOUNTS].find({"id": {"$in": asing}}, {"_id": 0, "id": 1, "account_name": 1}).to_list(50)
+        ada_ids = {d.get("id") for d in ada}
+        tak_dikenal = [a for a in asing if a not in ada_ids]
+        if tak_dikenal:
+            raise HTTPException(400, f"Toko '{tak_dikenal[0]}' tidak ditemukan di Kelola Akun.")
+        names = ", ".join(sorted(d.get("account_name") or d["id"] for d in ada))
+        raise HTTPException(403, f"Toko berikut tidak di-assign ke Anda, jadi tidak bisa ditautkan ke {apa}: "
+                                 f"{names}. " + NO_ACCOUNT_HINT)
+    tetap = [a for a in lama_l if a not in ids]            # tautan toko rekan kerja: tidak disentuh
+    return list(dict.fromkeys(tetap + [a for a in req if a in ids]))
+
+
 async def assert_can_write_target(user: Optional[dict], what: str = "target") -> None:
     from fastapi import HTTPException
     if can_write_target(user):

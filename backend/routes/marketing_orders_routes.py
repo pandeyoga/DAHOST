@@ -1303,10 +1303,12 @@ async def bulk_update_status(body: BulkStatusBody, request: Request):
         raise HTTPException(400, f"Invalid status: {body.status}")
 
     updated, failed, released_total = [], [], 0.0
+    # 14 Nov 2026 (filter toko) — pesanan toko yang tidak dipegang diperlakukan sama dengan tidak ada.
+    _vis = await _scope.toko_lingkup(db, user)
     for oid in (body.order_ids or []):
         order = await db.marketing_orders.find_one({"id": oid}, {"_id": 0})
-        if not order:
-            failed.append({"order_id": oid, "reason": "Order tidak ditemukan."})
+        if not order or (_vis is not None and order.get("account_id") not in _vis):
+            failed.append({"order_id": oid, "reason": "Order tidak ditemukan atau milik toko lain."})
             continue
         why = cancel_after_ship_block(order, body.status, body.note)
         if why:

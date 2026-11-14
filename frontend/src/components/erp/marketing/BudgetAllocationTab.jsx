@@ -36,11 +36,13 @@ const CATS = [
   { key: 'komisi',   label: 'Komisi kreator', hint: 'Otomatis: % dari omzet' },
   // sesi #34 — host live digaji BULANAN lewat payroll HR (upah per-sesi dihapus)
   { key: 'livehost', label: 'Host live',      hint: 'Otomatis: gaji bulanan SDM' },
-  { key: 'sample',   label: 'Sampel',         hint: 'Isi manual' },
+  // 14 Nov 2026 (owner): HPP + ongkir Kirim Sample otomatis; catatan manual (sampel di luar Kirim Sample) ditambahkan
+  { key: 'sample',   label: 'Sampel',         hint: 'Otomatis: HPP + ongkir Kirim Sample, + catatan manual' },
   { key: 'diskon',   label: 'Diskon / promo', hint: 'Otomatis: dari pesanan' },
 ];
 // 14 Nov 2026 — belanja manual bawaannya Sampel: kategori lain sudah terisi otomatis dari data sumbernya,
-// mencatatnya lagi di sini membuat biaya terhitung dua kali.
+// mencatatnya lagi di sini membuat biaya terhitung dua kali. Sampel kini juga otomatis dari Kirim Sample, tetapi
+// catatan manual tetap dijumlahkan (untuk sampel yang tidak dicatat di Kirim Sample) — peringatan dobel tidak dipakai.
 const KATEGORI_MANUAL = 'sample';
 const KATEGORI_OTOMATIS = new Set(CATS.filter((c) => c.key !== KATEGORI_MANUAL).map((c) => c.key));
 const FEE_TYPES = [
@@ -353,8 +355,8 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
           <div className="min-w-0">
             <p className="text-base font-semibold text-foreground">Realisasi manual</p>
             <p className="text-sm text-muted-foreground" data-testid="spend-manual-note">
-              Hanya untuk biaya yang tidak terbaca sistem (mis. sampel). Kategori otomatis (diskon, iklan, komisi, KOL, host live) sudah dihitung
-              dari data sumbernya — mencatatnya lagi di sini membuat biaya yang sama dihitung dua kali.
+              Hanya untuk biaya yang tidak terbaca sistem (mis. sampel yang tidak dicatat di Kirim Sample). Kategori otomatis (diskon, iklan, komisi,
+              KOL, host live, sampel Kirim Sample) sudah dihitung dari data sumbernya — mencatatnya lagi di sini membuat biaya yang sama dihitung dua kali.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

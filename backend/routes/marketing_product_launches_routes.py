@@ -408,6 +408,11 @@ async def create_launch(body: LaunchIn, request: Request):
 
     from core import marketing_account_scope as _scope
     account = await _scope.require_account(db, body.account_id)
+    # 14 Nov 2026 (filter toko) — toko pemilik & toko sasaran harus dipegang pemakai berlingkup toko.
+    if await _scope.toko_lingkup(db, user) is not None:
+        await _scope.assert_account_visible(db, user, account["id"])
+    targets = await _scope.gabung_toko_terlihat(db, user, body.target_account_ids or [], [],
+                                                apa="peluncuran ini")
 
     # F14b — identitas produk DITULIS SERVER dari master; apa pun yang dikirim
     # browser untuk `product_name`/`model`/`material` diabaikan. Satu penulis.
@@ -431,7 +436,7 @@ async def create_launch(body: LaunchIn, request: Request):
         # ── RnD & Account linkage ──
         "style_id":         body.style_id,
         "style_code":       body.style_code or "",
-        "target_account_ids": body.target_account_ids or [],
+        "target_account_ids": targets,
         "fg_material_id":   None,  # populated when launch reaches 'launched' status
         "created_by":       user.get("email", "unknown"),
         "created_at":       _now(),
@@ -446,13 +451,18 @@ async def create_launch(body: LaunchIn, request: Request):
 
 @router.put("/{launch_id}")
 async def update_launch(launch_id: str, body: LaunchUpdate, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     existing = await db.marketing_product_launches.find_one({"id": launch_id}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Launch not found")
 
     upd = {k: v for k, v in body.dict().items() if v is not None}
+    # 14 Nov 2026 (filter toko) — toko sasaran: hanya toko yang dipegang yang boleh ditambah/dilepas,
+    # sasaran toko lain dipertahankan (toko pemilik rekaman dijaga core.marketing_record_scope).
+    if "target_account_ids" in upd:
+        upd["target_account_ids"] = await _scope.gabung_toko_terlihat(
+            db, user, upd["target_account_ids"], existing.get("target_account_ids"), apa="peluncuran ini")
 
     # F14b — field turunan master TIDAK boleh ditulis browser. Kalau dibiarkan,
     # staf bisa memilih produk A lalu menimpa namanya dengan teks apa pun, dan

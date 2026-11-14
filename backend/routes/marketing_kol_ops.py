@@ -10,6 +10,7 @@ from routes.marketing_kol_shared import (
     router, _uid, _now, _get_user, SessionCreate,
 )
 from core import stock_service
+from core import marketing_account_scope as _scope
 from utils.waktu import fmt_wib
 
 
@@ -61,13 +62,14 @@ async def list_sessions(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     query = {}
     if creator_id:
         query['creator_id'] = creator_id
     if account_id:
         query['account_id'] = account_id
+    query = await _scope.saring_lingkup(db, user, query)   # 14 Nov 2026: hanya sesi toko yang dipegang
     if date_from or date_to:
         query['date'] = {}
         if date_from:
@@ -109,7 +111,7 @@ async def list_requests(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     query = {}
     if status:
@@ -118,6 +120,7 @@ async def list_requests(
         query['creator_id'] = creator_id
     if account_id:
         query['account_id'] = account_id
+    query = await _scope.saring_lingkup(db, user, query)   # 14 Nov 2026: hanya permintaan toko yang dipegang
     total = await db.marketing_creator_item_requests.count_documents(query)
     skip = (page - 1) * limit
     requests = await db.marketing_creator_item_requests.find(
@@ -201,7 +204,7 @@ KOL_CATALOG_ONE_DOOR = ('Katalog kreator sekarang memakai katalog toko. Tambah a
 @router.get('/kol/catalog')
 async def list_catalog(request: Request, account_id: Optional[str] = Query(None), is_active: Optional[bool] = Query(None)):
     """Baca-saja: produk katalog toko seperti yang dilihat kreator (tanpa HPP)."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     from routes.marketing_kol_portal import CREATOR_CATALOG_FIELDS, shape_creator_catalog
     query = {}
@@ -209,6 +212,7 @@ async def list_catalog(request: Request, account_id: Optional[str] = Query(None)
         query['account_id'] = account_id
     if is_active is not None:
         query['is_active'] = is_active
+    query = await _scope.saring_lingkup(db, user, query)   # 14 Nov 2026: hanya katalog toko yang dipegang
     # 2026-11-06 (pola P7): semua item (dulu to_list(2000); katalog VPS kini 2.010 item)
     items = [i async for i in db.marketing_catalog_items.find(query, CREATOR_CATALOG_FIELDS).sort('name', 1)]
     return serialize_doc(await shape_creator_catalog(db, items))
@@ -251,7 +255,7 @@ async def list_fg_products(request: Request, search: Optional[str] = Query(None)
 
 @router.get('/kol/leaderboard')
 async def get_leaderboard(request: Request, month: Optional[str] = Query(None, description="YYYY-MM")):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     from core import bulan_marketing as _bulan
     if not month:
@@ -262,11 +266,16 @@ async def get_leaderboard(request: Request, month: Optional[str] = Query(None, d
     year, mon = q_period(month, name='month')
     month = f'{year:04d}-{mon:02d}'
     date_from, date_to = _bulan.rentang(year, mon)
-    creators = await db.marketing_kol_creators.find({'status': 'active'}, {'_id': 0, 'login_password_hash': 0}).to_list(500)
+    # 14 Nov 2026 — lingkup toko: kreator yang bertugas di toko pemakai, angka dari sesi toko itu saja.
+    creators = await db.marketing_kol_creators.find(
+        await _scope.saring_lingkup(db, user, {'status': 'active'}, field='assigned_account_ids'),
+        {'_id': 0, 'login_password_hash': 0}).to_list(500)
     leaderboard = []
     for creator in creators:
         sessions = await db.marketing_creator_sessions.find(
-            {'creator_id': creator['id'], 'date': {'$gte': date_from, '$lte': date_to}}, {'_id': 0}
+            await _scope.saring_lingkup(db, user, {'creator_id': creator['id'],
+                                                 'date': {'$gte': date_from, '$lte': date_to}}),
+            {'_id': 0}
         ).to_list(500)
         total_revenue = round(sum(s.get('revenue', 0) for s in sessions))
         total_viewers = sum(s.get('viewers', 0) for s in sessions)

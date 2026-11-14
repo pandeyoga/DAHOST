@@ -34,8 +34,11 @@ router = APIRouter(prefix='/api/marketing/livehost', tags=['Marketing-LiveHost-H
 @router.post('')
 async def create_livehost(data: LiveHostCreate, request: Request):
     """Admin creates a new LiveHost"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 14 Nov 2026 — pemakai berlingkup toko hanya boleh menugaskan host ke toko yang ia pegang.
+    assigned = await _scope.gabung_toko_terlihat(db, user, data.assigned_account_ids or [], [],
+                                                 apa='host live ini')
     
     # Check duplicate email
     if await db.marketing_livehosts.find_one({'email': data.email.lower().strip()}):
@@ -55,7 +58,7 @@ async def create_livehost(data: LiveHostCreate, request: Request):
         'shift_preferences': data.shift_preferences or [],
         'language_skills': data.language_skills or [],
         'product_expertise': data.product_expertise or [],
-        'assigned_account_ids': data.assigned_account_ids or [],
+        'assigned_account_ids': assigned,
         'status': 'active',
         'notes': data.notes or '',
         'training_completed': [],
@@ -114,6 +117,10 @@ async def list_livehosts(
         query, {'_id': 0, 'password_hash': 0}
     ).sort('name', 1).to_list(500)
     
+    # 14 Nov 2026 — tautan ke toko rekan kerja tidak ditampilkan (tetap tersimpan)
+    if _vis is not None:
+        for host in hosts:
+            host['assigned_account_ids'] = _scope.saring_toko_terlihat(host.get('assigned_account_ids'), _vis)
     # Enrich dengan assigned account names
     if hosts:
         account_ids = list(set(aid for h in hosts for aid in h.get('assigned_account_ids', [])))

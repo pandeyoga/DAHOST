@@ -388,7 +388,11 @@ async def get_history(
     request: Request,
     limit: int = Query(default=20, ge=1, le=100)
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 14 Nov 2026 (filter toko) — riwayat jalannya peringatan = ringkasan SEMUA toko, tidak tercatat per toko.
+    from core import marketing_account_scope as _scope
+    if _scope.berlingkup_toko(user):
+        return {"success": True, "data": [], "catatan_lingkup": _scope.CATATAN_TANPA_TOKO}
     runs = await db.marketing_alert_runs.find({}, {"_id": 0}).sort("ran_at", -1).limit(limit).to_list(limit)
     return {"success": True, "data": serialize(runs)}

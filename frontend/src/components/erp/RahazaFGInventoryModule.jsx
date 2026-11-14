@@ -18,6 +18,11 @@
  * lokasi asal & jumlahnya. Satu formulir = SATU nomor pengeluaran; server memproses tiap baris lewat jalur yang sama
  * dengan pengeluaran satu produk (POST /api/rahaza/fg-issue/batch — potong stok, riwayat, jurnal HPP WAC). Semua
  * baris diperiksa dulu: satu saja stoknya kurang ⇒ tidak ada yang dikeluarkan (aturan lama "stok harus cukup" tetap).
+ *
+ * 2026-11-14 (owner: "stok ada → gudang mengeluarkan manual"): tampilan "Sampel menunggu" = baris Marketing › Kirim
+ * Sample yang belum keluar gudang (GET /api/rahaza/fg-issue/sampel-menunggu). Alasan "Sampel / contoh" di formulir
+ * memunculkan pemilih "Kiriman sampel" yang mengisi produk & jumlah; server memeriksa produk sama dan jumlah ≤ sisa
+ * baris, lalu baris kiriman ditandai "Sudah keluar gudang". Jurnal tetap Biaya Pemasaran / Persediaan FG.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MinusCircle, RefreshCw, Search, X } from 'lucide-react';
@@ -70,9 +75,13 @@ const galatBaris = (b) => {
   const n = Number(b.qty);
   if (!Number.isInteger(n) || n <= 0) return 'Jumlah harus angka bulat lebih dari 0';
   if (n > stokDi(b)) return `Melebihi stok tersedia (${stokDi(b)} pcs)`;
-  return null;
+  return galatSampel(b);
 };
 const pcs = (n) => Number(n || 0).toLocaleString('id-ID');
+// Kiriman sampel Marketing yang menunggu gudang → label pilihan & tautan baris pengeluaran.
+const labelSampel = (r) => `${r.sample_code} · ${r.kreator || r.account_name || '—'} · ${r.sku || r.product} · sisa ${pcs(r.sisa)} pcs`;
+const galatSampel = (b) => (b.sampel && Number(b.qty) > Number(b.sampel.sisa)
+  ? `Melebihi sisa kiriman sampel (${pcs(b.sampel.sisa)} pcs)` : null);
 
 export default function RahazaFGInventoryModule({ token }) {
   const { toast } = useToast();
@@ -92,6 +101,8 @@ export default function RahazaFGInventoryModule({ token }) {
                                        localStorage.getItem('erp_token'));
   const [issueNo, setIssueNo] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // 14 Nov 2026: baris Kirim Sample yang menunggu dikeluarkan gudang
+  const [antrean, setAntrean] = useState([]);
 
   const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -105,13 +116,15 @@ export default function RahazaFGInventoryModule({ token }) {
     try {
       const params = new URLSearchParams({ type: 'fg' });
       if (search) params.set('search', search);
-      const [matR, stockR, movR, issR, custR] = await Promise.all([
+      const [matR, stockR, movR, issR, custR, smpR] = await Promise.all([
         fetch(`/api/rahaza/materials?${params}`, { headers: h }),
         fetch('/api/rahaza/material-stock', { headers: h }),
         fetch('/api/rahaza/fg-movements?limit=100', { headers: h }),
         fetch('/api/rahaza/fg-issues?limit=50', { headers: h }),
         fetch('/api/rahaza/customers?limit=200', { headers: h }),
+        fetch('/api/rahaza/fg-issue/sampel-menunggu', { headers: h }),
       ]);
+      if (smpR.ok) setAntrean((await smpR.json()).items || []);
       if (matR.ok)  setItems(await matR.json());
       if (movR.ok)  setMovements(await movR.json());
       if (issR.ok)  setIssues(await issR.json());
@@ -154,6 +167,43 @@ export default function RahazaFGInventoryModule({ token }) {
 
   const tutupForm = () => { setShowIssueForm(false); setForm(EMPTY_FORM); setBaris([]); setGalatSimpan(''); };
 
+  // Pilih kiriman sampel → produk itu masuk daftar dengan jumlah = sisa baris kiriman (≤ stok lokasi bawaan).
+  // `formBaru` = formulir baru saja dibuka (daftar produk masih kosong; `baris` di penutupan ini bisa basi).
+  const pilihSampel = async (lineId, { formBaru = false } = {}) => {
+    const r = antrean.find((x) => `${x.sample_id}:${x.line_id}` === lineId);
+    if (!r) return;
+    const sampel = { marketing_sample_id: r.sample_id, sample_line_id: r.line_id, sisa: r.sisa, label: labelSampel(r) };
+    if (!r.fg_material_id) {
+      toast({ title: `${r.sku || r.product}: produk katalog belum tertaut ke barang jadi`, description: 'Tautkan item katalognya ke barang jadi di Manajemen Katalog.', variant: 'destructive' });
+      return;
+    }
+    const ada = formBaru ? null : baris.find((b) => b.item.id === r.fg_material_id);
+    if (ada) {
+      if (ada.sampel) {
+        toast({ title: `${ada.item.code} sudah dipilih untuk kiriman lain`, description: 'Simpan pengeluaran ini dulu, lalu keluarkan kiriman berikutnya.', variant: 'destructive' });
+        return;
+      }
+      ubahBaris(ada.item.id, { sampel, qty: String(Math.min(r.sisa, stokDi(ada)) || '') });
+      return;
+    }
+    try {
+      const res = await apiFetch(`/api/rahaza/fg-pick?ada_stok=true&q=${encodeURIComponent(r.fg_code || r.sku)}`);
+      const d = res.ok ? await res.json() : {};
+      const it = (d.items || []).find((x) => x.id === r.fg_material_id);
+      if (!it) {
+        toast({ title: `Stok ${r.fg_code || r.sku} kosong`, description: r.po_number ? `Menunggu produksi ${r.po_number}.` : 'Belum ada stok yang bisa dikeluarkan.', variant: 'destructive' });
+        return;
+      }
+      const b = barisBaru(it);
+      setBaris((bs) => [...bs, { ...b, sampel, qty: String(Math.min(r.sisa, stokDi(b)) || '') }]);
+    } catch (_) { /* produk tetap bisa dicari manual */ }
+  };
+  const ubahAlasan = (reason) => {
+    setForm((f) => ({ ...f, reason }));
+    if (reason !== 'sample') setBaris((bs) => bs.map((b) => ({ ...b, sampel: undefined })));
+  };
+  const sampelTerpilih = new Set(baris.filter((b) => b.sampel).map((b) => `${b.sampel.marketing_sample_id}:${b.sampel.sample_line_id}`));
+
   const handleSubmitIssue = async () => {
     if (!baris.length) return toast({ title: 'Pilih produk jadi terlebih dahulu', variant: 'destructive' });
     if (barisSalah) return toast({ title: `${barisSalah.item.code}: ${galatBaris(barisSalah)}`, variant: 'destructive' });
@@ -164,7 +214,8 @@ export default function RahazaFGInventoryModule({ token }) {
         method: 'POST',
         body: JSON.stringify({
           ...form, client_batch_id: batchId.current,
-          items: baris.map((b) => ({ material_id: b.item.id, location_id: b.location_id, qty: Number(b.qty), code: b.item.code })),
+          items: baris.map((b) => ({ material_id: b.item.id, location_id: b.location_id, qty: Number(b.qty), code: b.item.code,
+            ...(form.reason === 'sample' && b.sampel ? { marketing_sample_id: b.sampel.marketing_sample_id, sample_line_id: b.sampel.sample_line_id } : {}) })),
           ...docNumberPayload(numPolicy, 'issue_number', issueNo),
         }),
       });
@@ -189,6 +240,17 @@ export default function RahazaFGInventoryModule({ token }) {
     } finally { setSubmitting(false); }
   };
 
+  // Tombol "Keluarkan" di tampilan Sampel menunggu: formulir beralasan Sampel + kiriman itu terpilih.
+  const bukaFormSampel = (r) => {
+    setForm({ ...EMPTY_FORM, reason: 'sample', reference_number: r.sample_code || '' });
+    setBaris([]);
+    setGalatSimpan('');
+    setIssueNo('');
+    batchId.current = idBaru();
+    setShowIssueForm(true);
+    pilihSampel(`${r.sample_id}:${r.line_id}`, { formBaru: true });
+  };
+
   // Tombol "Keluarkan" di baris tabel / matriks: produk itu langsung masuk daftar (data lokasi dari server).
   const bukaForm = async (materialId, kodeCadangan) => {
     setForm(EMPTY_FORM);
@@ -209,9 +271,11 @@ export default function RahazaFGInventoryModule({ token }) {
 
   // RC-UI-03: client-side pagination (25/halaman) untuk 3 tabel (hook di tingkat atas)
   const itemsPg     = useClientPagination(items, 25);
+  const sampelPg    = useClientPagination(antrean, 25);
   const issuesPg    = useClientPagination(issues, 25);
   const movementsPg = useClientPagination(movements, 25);
-  const pgAktif = activeTab === 'stock' ? itemsPg : activeTab === 'issues' ? issuesPg : activeTab === 'movements' ? movementsPg : null;
+  const pgAktif = activeTab === 'stock' ? itemsPg : activeTab === 'issues' ? issuesPg : activeTab === 'movements' ? movementsPg
+    : activeTab === 'sampel' ? sampelPg : null;
 
   const statusStok = (qty) => (qty > 0 ? <StatusBadge status="ada" label="Ada stok" tone="success" />
     : qty < 0 ? <StatusBadge status="minus" label="Minus" tone="danger" />
@@ -239,6 +303,24 @@ export default function RahazaFGInventoryModule({ token }) {
     { kunci: 'ref', label: 'Referensi', hp: false, isi: (i) => i.reference_number || '—' },
     { kunci: 'by', label: 'Diproses oleh', hp: false, isi: (i) => i.issued_by || '—' },
     { kunci: 'tgl', label: 'Tanggal', isi: (i) => <span className="whitespace-nowrap">{formatDateID(i.issued_at)}</span> },
+  ];
+  const kolomSampel = [
+    { kunci: 'kode', label: 'Kiriman', hp: 'judul', isi: (r) => (
+      <div className="min-w-0"><div className="tabular-nums text-xs text-muted-foreground">{r.sample_code} · {formatDateID(r.date)}</div>
+        <div className="truncate">{r.kreator || '—'}<span className="text-muted-foreground"> · {r.account_name || '—'}</span></div></div>) },
+    { kunci: 'produk', label: 'Produk', hp: 'keterangan', isi: (r) => (
+      <div className="min-w-0"><div className="tabular-nums text-xs text-muted-foreground">{r.fg_code || r.sku}</div>
+        <div className="truncate">{r.product}{(r.size || r.color) ? ` · ${[r.size, r.color].filter(Boolean).join(' ')}` : ''}</div></div>) },
+    { kunci: 'sisa', label: 'Belum keluar (pcs)', rata: 'kanan', isi: (r) => <span className="tabular-nums font-medium">{pcs(r.sisa)}</span> },
+    { kunci: 'stok', label: 'Stok jual (pcs)', rata: 'kanan', hp: false, isi: (r) => (
+      <span className={`tabular-nums ${r.stok_tersedia < r.sisa ? 'text-[hsl(var(--warning-text))]' : ''}`}>{pcs(r.stok_tersedia)}</span>) },
+    { kunci: 'status', label: 'Status', hp: false, isi: (r) => (
+      <StatusBadge status={r.status_gudang} label={r.status_gudang_label} tone={r.status_gudang === 'diproduksi' ? 'info' : 'warning'} />) },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.stok_tersedia > 0 && r.fg_material_id ? (
+      <Button size="sm" variant="outline" onClick={() => bukaFormSampel(r)} data-testid={`fg-sample-issue-${r.line_id}`}>
+        <MinusCircle />Keluarkan
+      </Button>
+    ) : null) },
   ];
   const kolomRiwayat = [
     { kunci: 'waktu', label: 'Waktu', hp: false, isi: (mv) => <span className="whitespace-nowrap">{formatDateTimeID(mv.timestamp)}</span> },
@@ -273,6 +355,19 @@ export default function RahazaFGInventoryModule({ token }) {
         { label: 'Diproses oleh', nilai: (i) => i.issued_by || '' },
         { label: 'Tanggal', nilai: (i) => formatDateID(i.issued_at, { fallback: '' }) },
       ]} />
+  ) : activeTab === 'sampel' ? (
+    <TombolUnduh namaBerkas="sampel-menunggu-gudang" namaLembar="Sampel menunggu" baris={antrean} testId="fg-unduh-sampel"
+      kolom={[
+        { label: 'Kode kiriman', nilai: (r) => r.sample_code },
+        { label: 'Tanggal', nilai: (r) => formatDateID(r.date, { fallback: '' }) },
+        { label: 'Toko', nilai: (r) => r.account_name || '' },
+        { label: 'Kreator', nilai: (r) => r.kreator || '' },
+        { label: 'Kode produk', nilai: (r) => r.fg_code || r.sku || '' },
+        { label: 'Produk', nilai: (r) => r.product || '' },
+        { label: 'Belum keluar (pcs)', nilai: (r) => Number(r.sisa || 0) },
+        { label: 'Stok jual (pcs)', nilai: (r) => Number(r.stok_tersedia || 0) },
+        { label: 'Status', nilai: (r) => r.status_gudang_label || '' },
+      ]} />
   ) : activeTab === 'movements' ? (
     <TombolUnduh namaBerkas="riwayat-produk-jadi" namaLembar="Riwayat" baris={movements} testId="fg-unduh-riwayat"
       kolom={[
@@ -296,6 +391,7 @@ export default function RahazaFGInventoryModule({ token }) {
               { key: 'stock', label: 'Stok' },
               { key: 'matrix', label: 'Matriks ukuran × warna' },
               { key: 'issues', label: 'Pengeluaran' },
+              { key: 'sampel', label: 'Sampel menunggu', count: antrean.length },
               { key: 'movements', label: 'Riwayat' },
             ]} />
           {activeTab === 'stock' && (
@@ -354,6 +450,14 @@ export default function RahazaFGInventoryModule({ token }) {
               action={<Button variant="outline" onClick={() => bukaForm()}><MinusCircle />Keluarkan stok</Button>} />} />
         </div>)}
 
+        {/* ── SAMPEL MENUNGGU (Marketing › Kirim Sample, 14 Nov 2026) ── */}
+        {activeTab === 'sampel' && (<div className="space-y-2">
+          {antrean.length > 0 && <p className="text-xs text-muted-foreground">Kiriman sampel Marketing yang belum keluar gudang, tertua dulu. Keluarkan dengan alasan Sampel / contoh.</p>}
+          <TabelData kolom={kolomSampel} baris={sampelPg.paged} kunci={(r) => `${r.sample_id}:${r.line_id}`} testId="fg-sample-queue"
+            kosong={<EmptyState title="Tidak ada sampel yang menunggu gudang"
+              description="Kiriman sampel baru dari Marketing muncul di sini sampai barangnya dikeluarkan." />} />
+        </div>)}
+
         {/* ── RIWAYAT ── */}
         {activeTab === 'movements' && (<div className="space-y-2">
           {movements.length > 0 && <p className="text-xs text-muted-foreground">Menampilkan 100 pergerakan terakhir.</p>}
@@ -369,6 +473,17 @@ export default function RahazaFGInventoryModule({ token }) {
           labelSimpan={baris.length ? `Keluarkan ${baris.length} produk · ${pcs(totalPcs)} pcs` : 'Keluarkan stok'}
           galat={galatSimpan /* galat per baris tampil di barisnya sendiri; kaki popup hanya galat server */}
           bisaSimpan={baris.length > 0 && !barisSalah}>
+          {form.reason === 'sample' && (
+            <Isian label="Kiriman sampel" petunjuk={antrean.length ? 'Opsional — mengisi produk dan jumlah dari kiriman Marketing yang menunggu gudang.' : 'Tidak ada kiriman sampel yang menunggu gudang.'}>
+              <SmartNativeSelect value="" searchable={true} className="w-full" data-testid="fg-issue-sample-pick"
+                disabled={!antrean.length} onChange={(e) => pilihSampel(e.target.value)}>
+                <option value="">{antrean.length ? 'Pilih kiriman sampel' : 'Tidak ada kiriman menunggu'}</option>
+                {antrean.filter((r) => !sampelTerpilih.has(`${r.sample_id}:${r.line_id}`)).map((r) => (
+                  <option key={`${r.sample_id}:${r.line_id}`} value={`${r.sample_id}:${r.line_id}`}>{labelSampel(r)}</option>
+                ))}
+              </SmartNativeSelect>
+            </Isian>
+          )}
           <Isian label="Cari produk jadi" wajib>
             {showIssueForm && (
               <PilihProdukJadi adaStok terpilih={terpilihMap} onUbah={ubahPilihan} testId="fg-issue-cari" />
@@ -382,6 +497,9 @@ export default function RahazaFGInventoryModule({ token }) {
               kosong={<EmptyState title="Belum ada produk dipilih" description="Centang produk dari hasil cari di atas." />}
               kolom={[
                 ...kolomBarang((b) => b.item),
+                ...(form.reason === 'sample' && baris.some((b) => b.sampel) ? [{ kunci: 'sampel', label: 'Kiriman sampel', hp: false, isi: (b) => (b.sampel
+                  ? <span className="block max-w-[12rem] whitespace-normal text-xs" data-testid={`fg-issue-sample-${b.item.code}`}>{b.sampel.label}</span>
+                  : <span className="text-xs text-muted-foreground">—</span>) }] : []),
                 { kunci: 'lokasi', label: 'Lokasi asal', isi: (b) => (
                   <SmartNativeSelect value={b.location_id} className="w-full" wrapperClassName="w-full sm:w-52"
                     aria-label={`Lokasi asal ${b.item.code}`} data-testid={`fg-issue-location-${b.item.code}`}
@@ -417,7 +535,7 @@ export default function RahazaFGInventoryModule({ token }) {
           <div className="grid gap-4 sm:grid-cols-2">
             <Isian label="Alasan pengeluaran" wajib>
               <SmartNativeSelect value={form.reason} searchable={false} className="w-full" data-testid="fg-issue-reason"
-                onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}>
+                onChange={e => ubahAlasan(e.target.value)}>
                 {REASON_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </SmartNativeSelect>
             </Isian>

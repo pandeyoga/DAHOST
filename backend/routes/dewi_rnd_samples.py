@@ -1,4 +1,11 @@
-"""dewi_rnd — Sample Requests + Revisions."""
+"""dewi_rnd — Sample Requests + Revisions.
+
+14 Nov 2026 (keputusan owner): sample R&D = style baru. Bila style sudah dijadikan model (`promoted_to_model_id`),
+request boleh memilih varian/ukuran (`rahaza_variant_id`). Saat DISETUJUI dan variannya diketahui ⇒ draf PO
+produksi "Sampel R&D" dibuat otomatis (qty = jumlah request, `core.po_sampel`) supaya kain & aksesorisnya keluar
+lewat alur produksi biasa. Style belum ber-model ⇒ tidak ada PO; request menampilkan catatan dan aksi
+"Buat draf PO sampel" (POST /sample-requests/{id}/po-sampel, aman diulang).
+"""
 from fastapi import Depends, HTTPException, Query
 from database import get_db
 from auth import require_auth
@@ -45,6 +52,75 @@ async def resolve_sample_pic(db, body: dict, before: dict = None) -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 14 Nov 2026 — varian sample & draf PO "Sampel R&D"
+# ──────────────────────────────────────────────────────────────────────────────
+CATATAN_TANPA_MODEL = 'Style belum dijadikan model — PO sampel dibuat setelah model ada'
+CATATAN_TANPA_VARIAN = 'Pilih varian/ukuran lalu buat draf PO sampel'
+JENIS_PO = 'sample_request'
+
+
+async def model_style(db, style_id: str):
+    """Model Master Produk milik style ini (tautan `promoted_to_model_id`, cadangan `model.rnd_style_id`)."""
+    style = await db.dewi_rnd_styles.find_one({'id': style_id}, {'_id': 0, 'id': 1, 'promoted_to_model_id': 1}) or {}
+    mid = style.get('promoted_to_model_id')
+    model = await db.rahaza_models.find_one({'id': mid, 'active': {'$ne': False}}, {'_id': 0}) if mid else None
+    if not model and style_id:
+        model = await db.rahaza_models.find_one({'rnd_style_id': style_id, 'active': {'$ne': False}}, {'_id': 0})
+    return model
+
+
+async def varian_style(db, style_id: str, variant_id: str) -> dict:
+    """Varian yang dipilih HARUS varian aktif model style itu. → field tersimpan (kosong bila tidak dipilih)."""
+    if not variant_id:
+        return {'rahaza_variant_id': '', 'variant_sku': '', 'variant_label': ''}
+    model = await model_style(db, style_id)
+    if not model:
+        raise HTTPException(400, CATATAN_TANPA_MODEL + '.')
+    v = await db.rahaza_model_variants.find_one(
+        {'id': variant_id, 'model_id': model['id'], 'active': {'$ne': False}}, {'_id': 0})
+    if not v:
+        raise HTTPException(400, 'Varian ini bukan varian aktif model style tersebut — pilih dari daftar.')
+    label = ' · '.join(str(x) for x in (v.get('color_name'), v.get('size_code')) if x)
+    return {'rahaza_variant_id': v['id'], 'variant_sku': v.get('sku') or '', 'variant_label': label}
+
+
+async def buat_po_sampel(db, req: dict, user: dict, variant_id: str = '') -> dict:
+    """Draf PO "Sampel R&D" untuk satu request (sekali saja). → {po_id, po_number, …} atau {po_catatan}."""
+    from core import po_sampel
+    if req.get('po_id') and await db.production_pos.find_one({'id': req['po_id']}, {'_id': 0, 'id': 1}):
+        return {'po_id': req['po_id'], 'po_number': req.get('po_number')}
+    vid = variant_id or req.get('rahaza_variant_id') or ''
+    model = await model_style(db, req.get('style_id'))
+    if not model:
+        return {'po_catatan': CATATAN_TANPA_MODEL}
+    if not vid:
+        return {'po_catatan': CATATAN_TANPA_VARIAN}
+    try:
+        v = await varian_style(db, req.get('style_id'), vid)
+    except HTTPException as e:   # varian lama sudah dinonaktifkan / pindah model: catatan, bukan galat persetujuan
+        return {'po_catatan': e.detail}
+    hasil = await po_sampel.buat_draf(
+        db, jenis=JENIS_PO, sumber_id=req['id'], nomor=req.get('sample_code') or req['id'],
+        qty=int(float(req.get('quantity') or 0)), user=user, variant_id=v['rahaza_variant_id'],
+        catatan=f"Sample request {req.get('style_code') or ''} {req.get('style_name') or ''}".strip() + '.')
+    return {**v, **{k: hv for k, hv in hasil.items() if k in ('po_id', 'po_number', 'po_catatan')}}
+
+
+async def _with_po_info(db, rows: list) -> list:
+    """Request disetujui tanpa PO sampel → catatan TERKINI (style bisa saja dijadikan model sesudahnya)."""
+    for r in rows:
+        if r.get('status') != 'approved' or r.get('po_id'):
+            continue
+        if not await model_style(db, r.get('style_id')):
+            r['po_sampel_catatan'], r['po_sampel_bisa_buat'] = CATATAN_TANPA_MODEL, False
+        else:
+            catatan = r.get('po_catatan')
+            r['po_sampel_catatan'] = catatan if catatan and catatan != CATATAN_TANPA_MODEL else CATATAN_TANPA_VARIAN
+            r['po_sampel_bisa_buat'] = True
+    return rows
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SAMPLE REQUESTS
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -64,7 +140,23 @@ async def list_sample_requests(
         q['status'] = status
 
     items = await db.dewi_rnd_sample_requests.find(q).sort('created_at', -1).limit(limit).to_list(length=limit)
-    return await _with_accessory_status(db, [serialize(it) for it in items])
+    return await _with_po_info(db, await _with_accessory_status(db, [serialize(it) for it in items]))
+
+
+@router.get('/sample-requests/pilihan-varian')
+async def sample_variant_options(style_id: str = Query(...), user: dict = Depends(require_auth)):
+    """Varian/ukuran yang bisa dipilih untuk sample style ini (kosong + catatan bila style belum ber-model).
+    Didaftarkan SEBELUM `/sample-requests/{request_id}` supaya 'pilihan-varian' tidak terbaca sebagai id."""
+    db = get_db()
+    model = await model_style(db, style_id)
+    if not model:
+        return {'style_id': style_id, 'model_id': None, 'variants': [], 'catatan': CATATAN_TANPA_MODEL}
+    vs = await db.rahaza_model_variants.find(
+        {'model_id': model['id'], 'active': {'$ne': False}}, {'_id': 0}).sort('sku', 1).to_list(500)
+    return {'style_id': style_id, 'model_id': model['id'], 'model_code': model.get('code') or '',
+            'model_name': model.get('name') or '', 'catatan': '' if vs else 'Model ini belum punya varian aktif.',
+            'variants': [{'id': v.get('id'), 'sku': v.get('sku') or '', 'color_name': v.get('color_name') or '',
+                          'size_code': v.get('size_code') or ''} for v in vs]}
 
 
 async def _with_accessory_status(db, rows: list) -> list:
@@ -89,6 +181,7 @@ async def create_sample_request(body: dict, user: dict = Depends(require_auth)):
     if not style:
         raise HTTPException(404, 'Style tidak ditemukan')
     pic = await resolve_sample_pic(db, {k: body.get(k) for k in PIC_KEYS})
+    varian = await varian_style(db, style_id, str(body.get('rahaza_variant_id') or '').strip())
 
     doc = {
         'id': sid(),
@@ -100,6 +193,7 @@ async def create_sample_request(body: dict, user: dict = Depends(require_auth)):
         'priority': body.get('priority', 'normal'),
         # PIC / pembuat sample (2026-08-07) — Tahap 6 (HR4): karyawan (id + nama) atau penjahit luar (nama + penanda)
         **pic,
+        **varian,      # 14 Nov 2026: varian/ukuran (opsional; hanya bila style sudah dijadikan model)
         'due_date': body.get('due_date'),
         'notes': body.get('notes', ''),
         'status': 'draft',
@@ -123,14 +217,16 @@ async def get_sample_request(request_id: str, user: dict = Depends(require_auth)
     req = await db.dewi_rnd_sample_requests.find_one({'id': request_id})
     if not req:
         raise HTTPException(404, 'Sample request tidak ditemukan')
-    return (await _with_accessory_status(db, [serialize(req)]))[0]
+    return (await _with_po_info(db, await _with_accessory_status(db, [serialize(req)])))[0]
 
 
 # 2026-11-10 (keputusan owner "tutup penuh"): status & data persetujuan hanya berubah lewat
 # /submit, /approve, /reject (gerbang izin `rnd.approve`). Dulu PUT menerima `status: approved`
 # dari siapa pun yang boleh mengubah data R&D — persetujuan bisa dilewati.
 SAMPLE_WORKFLOW_FIELDS = ('status', 'approval_status', 'approved_by', 'approved_by_name', 'approved_at',
-                          'approval_notes', 'created_by', 'created_by_name')
+                          'approval_notes', 'created_by', 'created_by_name',
+                          # 14 Nov 2026: PO sampel hanya lewat persetujuan / tombol "Buat draf PO sampel"
+                          'po_id', 'po_number', 'po_catatan', 'variant_sku', 'variant_label')
 # Sample yang sudah diputuskan tidak bisa diubah isinya lagi.
 SAMPLE_LOCKED_STATUSES = ('approved', 'rejected')
 
@@ -154,6 +250,9 @@ async def update_sample_request(request_id: str, body: dict, user: dict = Depend
     # Tahap 6 (HR4): PIC sample hanya karyawan dari master atau penjahit luar bertanda
     if any(k in body for k in PIC_KEYS):
         body.update(await resolve_sample_pic(db, body, before))
+    if 'rahaza_variant_id' in body or ('style_id' in body and body.get('style_id') != before.get('style_id')):
+        vid = body.get('rahaza_variant_id', before.get('rahaza_variant_id'))
+        body.update(await varian_style(db, body.get('style_id') or before.get('style_id'), str(vid or '').strip()))
     body['updated_at'] = now_utc()
 
     res = await db.dewi_rnd_sample_requests.update_one({'id': request_id}, {'$set': body})
@@ -204,6 +303,33 @@ async def approve_sample_request(request_id: str, body: dict, user: dict = Depen
             'updated_at': now_utc(),
         }},
     )
+    # 14 Nov 2026: varian diketahui ⇒ draf PO "Sampel R&D" otomatis. Gagal apa pun tidak membatalkan persetujuan.
+    hasil = await buat_po_sampel(db, {**req, 'status': 'approved'}, user)
+    await db.dewi_rnd_sample_requests.update_one(
+        {'id': request_id}, {'$set': {k: hasil.get(k) for k in ('po_id', 'po_number', 'po_catatan')}})
+    updated = await db.dewi_rnd_sample_requests.find_one({'id': request_id})
+    return (await _with_po_info(db, [serialize(updated)]))[0]
+
+
+@router.post('/sample-requests/{request_id}/po-sampel')
+async def create_sample_request_po(request_id: str, body: dict, user: dict = Depends(require_auth)):
+    """'Buat draf PO sampel' untuk request yang SUDAH disetujui (mis. style baru dijadikan model sesudahnya).
+    Aman diulang: PO yang sudah ada dikembalikan, tidak dibuat dua kali."""
+    assert_can_act(user, 'rnd.approve', 'rnd.manage', portal='rnd', legacy_roles=RND_APPROVER_ROLES,
+                   what='membuat draf PO sampel R&D')
+    db = get_db()
+    req = await db.dewi_rnd_sample_requests.find_one({'id': request_id}, {'_id': 0})
+    if not req:
+        raise HTTPException(404, 'Sample request tidak ditemukan')
+    if req.get('status') != 'approved':
+        raise HTTPException(400, 'Draf PO sampel dibuat setelah sample disetujui.')
+    hasil = await buat_po_sampel(db, req, user, variant_id=str((body or {}).get('rahaza_variant_id') or '').strip())
+    if not hasil.get('po_id'):
+        raise HTTPException(400, hasil.get('po_catatan') or 'Draf PO sampel belum bisa dibuat.')
+    upd = {k: hasil[k] for k in ('po_id', 'po_number', 'rahaza_variant_id', 'variant_sku', 'variant_label')
+           if hasil.get(k) is not None}
+    await db.dewi_rnd_sample_requests.update_one({'id': request_id},
+                                                 {'$set': {**upd, 'po_catatan': None, 'updated_at': now_utc()}})
     updated = await db.dewi_rnd_sample_requests.find_one({'id': request_id})
     return serialize(updated)
 

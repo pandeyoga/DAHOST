@@ -53,6 +53,11 @@ async def toko_overview(user: dict = Depends(require_auth)) -> Dict[str, Any]:
     # ── Products (marketing_catalog_items, filter _legacy_toko)
     items_coll = db.marketing_catalog_items
     legacy_filter = {"_legacy_toko": True}
+    # 14 Nov 2026 (filter toko) — staf berlingkup toko hanya melihat toko yang dipegangnya:
+    # item katalog & riwayat sinkron menurut `account_id`, kartu kanal menurut `id` toko.
+    from core import marketing_account_scope as _scope
+    acc_filter = await _scope.saring_lingkup(db, user, legacy_filter, field="id")
+    legacy_filter = await _scope.saring_lingkup(db, user, legacy_filter)
 
     total_products = await items_coll.count_documents(legacy_filter)
     active_products = await items_coll.count_documents({**legacy_filter, "status": "active"})
@@ -77,7 +82,7 @@ async def toko_overview(user: dict = Depends(require_auth)) -> Dict[str, Any]:
 
     # ── Channels (marketing_platform_accounts, filter _legacy_toko)
     channels_coll = db.marketing_platform_accounts
-    channels_cursor = channels_coll.find(legacy_filter).sort("code", 1)
+    channels_cursor = channels_coll.find(acc_filter).sort("code", 1)
     channels: List[Dict[str, Any]] = await channels_cursor.to_list(length=50)
 
     enabled_channels = 0

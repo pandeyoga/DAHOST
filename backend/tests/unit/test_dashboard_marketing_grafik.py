@@ -159,7 +159,8 @@ def test_siklus_total_anggaran_per_kategori_sama_dengan_jumlah_toko(db):
     assert round(_jumlah(tot.values(), "plan"), 2) == ov["totals"]["total_plan"]
     assert round(_jumlah(tot.values(), "spend"), 2) == ov["totals"]["total_spend"]
     assert tot["ads"]["plan"] == 350_000 and tot["ads"]["mode"] == "auto"
-    assert tot["sample"]["spend"] == 75_000 and tot["sample"]["mode"] == "manual"
+    # 14 Nov 2026 (owner): sampel otomatis dari Kirim Sample (di sini tidak ada kiriman) + catatan manual tetap dijumlah
+    assert tot["sample"]["spend"] == 75_000 and tot["sample"]["mode"] == "auto"
     # iklan 26 Jul–25 Agt: CPC 25/31 × 310.000 + 100.000 + 40.000
     assert round(tot["ads"]["spend"]) == round(310_000 * 25 / 31 + 140_000)
 

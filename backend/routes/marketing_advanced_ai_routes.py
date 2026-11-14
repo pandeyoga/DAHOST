@@ -338,13 +338,22 @@ async def list_pricing_suggestions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20)
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     filt = {}
     if status:
         filt["status"] = status
     if direction:
         filt["direction"] = direction
+    # 14 Nov 2026 (filter toko) — usulan harga menempel pada item katalog (`catalog_item_ids`); staf
+    # berlingkup toko hanya melihat usulan yang menyentuh item tokonya. Setuju/tolak/terapkan dijaga
+    # core.marketing_record_scope (terapkan butuh SEMUA item milik tokonya).
+    from core import marketing_account_scope as _scope
+    _vis = await _scope.toko_lingkup(db, user)
+    if _vis is not None:
+        _items = await db.marketing_catalog_items.find(
+            {"account_id": {"$in": _vis}}, {"_id": 0, "id": 1}).to_list(20000)
+        filt["catalog_item_ids"] = {"$in": [i["id"] for i in _items if i.get("id")]}
     total = await db.marketing_dynamic_pricing_suggestions.count_documents(filt)
     skip = (page - 1) * page_size
     docs = await db.marketing_dynamic_pricing_suggestions.find(filt).sort("created_at", -1).skip(skip).limit(page_size).to_list(page_size)
@@ -544,8 +553,12 @@ async def list_pricing_events(
     page: int = Query(1, ge=1),
     page_size: int = Query(30)
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 14 Nov 2026 (filter toko) — log jalannya mesin harga tidak tercatat per toko.
+    from core import marketing_account_scope as _scope
+    if _scope.berlingkup_toko(user):
+        return ok(data={"events": []}, meta={"total": 0, "catatan_lingkup": _scope.CATATAN_TANPA_TOKO})
     total = await db.marketing_dynamic_pricing_events.count_documents({})
     skip = (page - 1) * page_size
     docs = await db.marketing_dynamic_pricing_events.find({}).sort("created_at", -1).skip(skip).limit(page_size).to_list(page_size)
@@ -744,8 +757,13 @@ async def get_churn_scores(
     page: int = Query(1, ge=1),
     page_size: int = Query(30)
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 14 Nov 2026 (filter toko) — skor churn disimpan per pelanggan, gabungan semua toko (tanpa toko).
+    from core import marketing_account_scope as _scope
+    if _scope.berlingkup_toko(user):
+        return ok(data={"customers": []}, meta={"total": 0, "page": page,
+                                                "catatan_lingkup": _scope.CATATAN_TANPA_TOKO})
     filt = {}
     if risk:
         filt["churn_risk"] = risk

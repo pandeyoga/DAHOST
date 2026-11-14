@@ -6557,16 +6557,8 @@
    "/api/marketing/samples/x"
   ],
   [
-   "POST",
-   "/api/marketing/samples/x/deliver"
-  ],
-  [
-   "POST",
-   "/api/marketing/samples/x/ship"
-  ],
-  [
-   "POST",
-   "/api/marketing/samples/x/update-progress"
+   "PUT",
+   "/api/marketing/samples/x/status"
   ]
  ],
  "marketing-scheduler": [
@@ -9519,8 +9511,16 @@
    "/api/dewi/rnd/sample-requests"
   ],
   [
+   "GET",
+   "/api/dewi/rnd/sample-requests/pilihan-varian"
+  ],
+  [
    "DELETE",
    "/api/dewi/rnd/sample-requests/x"
+  ],
+  [
+   "POST",
+   "/api/dewi/rnd/sample-requests/x/po-sampel"
   ],
   [
    "POST",
@@ -10199,6 +10199,10 @@
   [
    "GET",
    "/api/rahaza/fg-issue/batch"
+  ],
+  [
+   "GET",
+   "/api/rahaza/fg-issue/sampel-menunggu"
   ],
   [
    "GET",

@@ -4,6 +4,11 @@
   GET  /api/rahaza/fg-pick           cari barang jadi + stok per lokasi (pemilih tanpa scan, `core.fg_pick`)
   POST /api/rahaza/fg-issue/batch    keluarkan BANYAK produk sekaligus — satu nomor, jalur yang sama dengan
                                      pengeluaran satu produk (`_check_issue_line` + `_post_issue_line`)
+
+2026-11-14 (owner: "stok ada → gudang mengeluarkan manual"): kiriman sampel Marketing (Kirim Sample) menunggu di
+  GET  /api/rahaza/fg-issue/sampel-menunggu   antrean baris kiriman yang belum keluar gudang (`core.kirim_sampel`)
+  Pengeluaran beralasan Sampel boleh membawa `marketing_sample_id` + `sample_line_id` per produk: diperiksa (produk
+  sama, jumlah ≤ sisa baris) SEBELUM stok dipotong, lalu baris kiriman ditandai "Sudah keluar gudang".
 """
 # ruff: noqa: E741
 from fastapi import Request, HTTPException
@@ -61,6 +66,27 @@ async def fg_pick(request: Request, q: Optional[str] = None, location_id: Option
                                          only_in_stock=ada_stok, limit=limit))
 
 
+@router.get("/fg-issue/sampel-menunggu")
+async def fg_issue_sample_queue(request: Request, limit: int = 300):
+    """Baris Kirim Sample yang menunggu dikeluarkan gudang (tertua dulu) + stok jual saat ini. Hanya membaca."""
+    await require_auth(request)
+    from core import kirim_sampel as ks
+    return serialize_doc({"items": await ks.antrean_gudang(get_db(), limit=limit)})
+
+
+def _sample_link(it: dict) -> dict:
+    """Tautan opsional satu baris pengeluaran ke baris kiriman sampel."""
+    sid = str((it or {}).get("marketing_sample_id") or "").strip()
+    lid = str((it or {}).get("sample_line_id") or "").strip()
+    return {"marketing_sample_id": sid, "sample_line_id": lid} if (sid or lid) else {}
+
+
+async def _mark_sample_issued(db, user, issue_doc: dict) -> None:
+    if issue_doc.get("marketing_sample_id") and issue_doc.get("sample_line_id"):
+        from core import kirim_sampel as ks
+        await ks.catat_keluar(db, issue_doc["marketing_sample_id"], issue_doc["sample_line_id"], issue_doc, user)
+
+
 async def _check_issue_line(db, material_id, location_id, qty) -> tuple:
     """Periksa satu baris pengeluaran (master FG, lokasi wajib, stok cukup) → (mat, loc_id, tersedia).
     SATU aturan untuk pengeluaran satu produk dan banyak produk."""
@@ -93,7 +119,7 @@ async def _check_issue_line(db, material_id, location_id, qty) -> tuple:
 
 async def _post_issue_line(db, user, *, mat: dict, loc_id: str, qty: int, available: float, reason: str,
                            customer_id, customer_name, ref_no: str, notes: str, issue_number: str,
-                           batch: Optional[dict] = None) -> dict:
+                           batch: Optional[dict] = None, sample_link: Optional[dict] = None) -> dict:
     """Satu baris pengeluaran: potong stok → dokumen → riwayat → jurnal HPP (WAC). Dipakai
     pengeluaran satu produk DAN banyak produk (jalur stok & jurnal yang sama)."""
     from core import stock_service
@@ -127,6 +153,8 @@ async def _post_issue_line(db, user, *, mat: dict, loc_id: str, qty: int, availa
     }
     if batch:   # 2026-11-10: satu formulir banyak produk → satu nomor, baris berurutan
         issue_doc.update({"batch_id": batch["id"], "line_no": batch["line_no"], "batch_lines": batch["lines"]})
+    if sample_link:   # 2026-11-14: pengeluaran untuk satu baris Kirim Sample
+        issue_doc.update(sample_link)
     await db.rahaza_fg_issues.insert_one(issue_doc)
     issue_doc.pop("_id", None)
     await db.rahaza_fg_movements.insert_one({
@@ -160,6 +188,7 @@ async def _post_issue_line(db, user, *, mat: dict, loc_id: str, qty: int, availa
     await log_activity(user["id"], user.get("name", ""), "fg_issue_created", "rahaza.fg_issue",
                       f"{issue_number}: {mat.get('code')} qty={qty} reason={reason}"
                       + (f" je={gl.get('je_number')}" if gl.get("ok") else " (jurnal gagal)"))
+    await _mark_sample_issued(db, user, issue_doc)
     return issue_doc
 
 
@@ -190,6 +219,11 @@ async def create_fg_issue(request: Request):
     if reason not in FG_ISSUE_REASONS:
         raise HTTPException(400, f"reason harus salah satu: {list(FG_ISSUE_REASONS.keys())}")
     mat, loc_id, available = await _check_issue_line(db, material_id, body.get("location_id"), qty)
+    link = _sample_link(body)
+    if link:
+        from core import kirim_sampel as ks
+        await ks.periksa_keluar(db, reason, [{**link, "material_id": material_id, "qty": qty,
+                                              "code": mat.get("code")}])
     customer_name = await _customer_name(db, customer_id)
 
     # SESI #27 — SATU PINTU kebijakan penomoran (Otomatis/Manual). Fungsi penomoran diimpor
@@ -201,7 +235,7 @@ async def create_fg_issue(request: Request):
 
     issue_doc = await _post_issue_line(db, user, mat=mat, loc_id=loc_id, qty=qty, available=available,
                                        reason=reason, customer_id=customer_id, customer_name=customer_name,
-                                       ref_no=ref_no, notes=notes, issue_number=issue_number)
+                                       ref_no=ref_no, notes=notes, issue_number=issue_number, sample_link=link)
     return serialize_doc({**issue_doc, "ok": True})
 
 
@@ -236,7 +270,7 @@ def parse_batch_lines(items) -> list:
             errs.append(f"{label}: produk dan lokasi yang sama dipilih dua kali — gabungkan jumlahnya.")
         else:
             seen.add((mid, loc))
-            out.append({"material_id": mid, "location_id": loc, "qty": qty, "code": label})
+            out.append({"material_id": mid, "location_id": loc, "qty": qty, "code": label, **_sample_link(it)})
     if errs:
         raise HTTPException(400, " ".join(errs))
     return out
@@ -271,6 +305,8 @@ async def create_fg_issue_batch(request: Request):
             errs.append(f"{r['code']}: {e.detail}")
     if errs:
         raise HTTPException(400, "Belum ada yang dikeluarkan. " + " ".join(errs))
+    from core import kirim_sampel as ks   # 2026-11-14: tautan Kirim Sample diperiksa SEBELUM stok dipotong
+    await ks.periksa_keluar(db, reason, rows)
     customer_id = body.get("customer_id")
     customer_name = await _customer_name(db, customer_id)
     from core.doc_number_policy import issue_number as _issue_doc_number
@@ -284,7 +320,8 @@ async def create_fg_issue_batch(request: Request):
                 db, user, mat=mat, loc_id=loc_id, qty=r["qty"], available=available, reason=reason,
                 customer_id=customer_id, customer_name=customer_name,
                 ref_no=body.get("reference_number", ""), notes=body.get("notes", ""),
-                issue_number=issue_number, batch={"id": batch_id, "line_no": n, "lines": len(checked)}))
+                issue_number=issue_number, batch={"id": batch_id, "line_no": n, "lines": len(checked)},
+                sample_link={k: r[k] for k in ("marketing_sample_id", "sample_line_id") if r.get(k)} or None))
         except HTTPException as e:   # stok berubah di antara pemeriksaan dan pemotongan (perangkat lain)
             failed.append({"material_id": r["material_id"], "code": r["code"], "qty": r["qty"], "error": e.detail})
     return serialize_doc({"ok": not failed, "duplicate": False, "issue_number": issue_number,
