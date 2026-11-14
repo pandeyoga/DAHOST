@@ -725,6 +725,35 @@ def request_key(method: str, path: str) -> str | None:
     return perm_key(mod["id"], act)
 
 
+# 14 Nov 2026 (owner: R&D ditolak "Buat varian" walau "Master Produk RnD (Kategori, Varian, BOM, Ukuran, Warna)"
+# sudah dicentang penuh). Satu master produk dibuka dari dua portal: tab Varian / SKU di Master Produk RnD memanggil
+# layanan varian yang tercatat di modul Produksi `prod_master_product`. Untuk layanan di bawah ini, centang aksi YANG
+# SAMA pada modul setara juga meloloskan permintaan. Ubah/hapus MODEL tetap hanya mengikuti modul Produksi.
+MODUL_SETARA: tuple[tuple[str, str], ...] = (
+    (r"/api/rahaza/variants(/.*)?", "rnd_master_product"),
+    (r"/api/rahaza/models/[^/]+/variants(/.*)?", "rnd_master_product"),
+    (r"/api/rahaza/boms/relink-materials", "rnd_master_product"),
+)
+_MODUL_SETARA_RX = [(re.compile(p + r"/?"), MODULE_BY_ID[mid]) for p, mid in MODUL_SETARA]
+
+
+def modul_setara(method: str, path: str) -> list[dict]:
+    """Modul lain yang centang aksinya (aksi sama dengan `resolve`) juga meloloskan permintaan ini."""
+    mod, act = resolve(method, path)
+    if not mod:
+        return []
+    return [alt for rx, alt in _MODUL_SETARA_RX
+            if alt["id"] != mod["id"] and act in alt["actions"] and rx.fullmatch(path or "")]
+
+
+def request_keys_setara(method: str, path: str) -> list[str]:
+    """Kunci centang setara untuk PENJAGA DI KODE (lihat `MODUL_SETARA`); kosong bila `request_key` kosong."""
+    if not request_key(method, path):
+        return []
+    _, act = resolve(method, path)
+    return [perm_key(alt["id"], act) for alt in modul_setara(method, path)]
+
+
 def _parse(key: str):
     parts = key.split(".")
     if len(parts) == 3 and parts[0] == "mod" and parts[1] in MODULE_BY_ID:

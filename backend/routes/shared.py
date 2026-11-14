@@ -361,7 +361,11 @@ def lolos_centang(user) -> bool:
     if role in SUPER_ROLES:
         return True
     key = user.get("_aksi_request")
-    return bool(key) and key in user_permissions(user)
+    if not key:
+        return False
+    perms = user_permissions(user)
+    # 14 Nov 2026: centang modul setara (module_catalog.MODUL_SETARA) juga meloloskan, mis. Master Produk RnD › varian.
+    return key in perms or any(k in perms for k in user.get("_aksi_setara") or ())
 
 
 def can_act(user, *keys, legacy_roles=(), legacy_any=False) -> bool:

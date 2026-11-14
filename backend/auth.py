@@ -157,10 +157,12 @@ async def require_auth(request: Request):
         user['_portals'] = role_portals + [p for p in extra_portals if p not in role_portals]
     # 13 Nov 2026: kunci centang aksi endpoint ini (katalog) — dipakai routes.shared.lolos_centang oleh penjaga di kode.
     try:
-        from data.module_catalog import request_key
+        from data.module_catalog import request_key, request_keys_setara
         user['_aksi_request'] = request_key(request.method, request.url.path)
+        user['_aksi_setara'] = request_keys_setara(request.method, request.url.path)   # 14 Nov 2026
     except Exception:  # noqa: BLE001 — request palsu di uji / tanpa url
         user['_aksi_request'] = None
+        user['_aksi_setara'] = []
     # Set user on request.state for routes that access it
     request.state.user = user
     return user
