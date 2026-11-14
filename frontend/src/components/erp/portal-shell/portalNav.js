@@ -240,7 +240,7 @@ export const PORTAL_NAV = {
           { id: 'bahan-produksi',        label: 'Bahan',        icon: ClipboardPen },
           { id: 'prod-shipments-vendor', label: 'Kirim ke CMT', icon: Scissors },
           // Kewenangan LEBIH SEMPIT daripada portalnya (keputusan owner 2b): mengisi atas nama vendor CMT
-          // berdampak langsung ke TAGIHAN CMT. Daftar role WAJIB sama dengan backend core/cmt_override.OVERRIDE_ROLES.
+          // berdampak langsung ke TAGIHAN CMT. Hak = centang modulnya (menu disembunyikan tanpa Lihat), sama dengan server.
           { id: 'cmt-override-portal',   label: 'Input atas nama CMT', icon: UserCog },
           { id: 'da-cmt-receive',        label: 'Terima & QC',  icon: Truck },
           { id: 'cmt-permak',            label: 'Perbaikan',    icon: Wrench },

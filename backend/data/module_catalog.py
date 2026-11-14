@@ -533,6 +533,9 @@ ENDPOINT_RULES: list[tuple[str, str, str, str]] = [
     ("POST", r"/api/rahaza/ap-invoices/[^/]+/payment", "fin_pencairan", "approve"),
     ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/pay", "fin_pencairan", "approve"),
     ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/disbursements/[^/]+/void", "fin_pencairan", "approve"),
+    # 14 Nov 2026 (riset buku panduan): keputusan selisih tagihan CMT (Potong dari tagihan / Bayar penuh) dulu
+    # terbaca "Lihat" karena kata "resolve" — cukup centang Lihat untuk memutus uang. Sama dengan jurnal tagihan CMT.
+    ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/resolve-variance", "mak_billing", "approve"),
     ("POST", r"/api/finance/bank-transfers/[^/]+/void", "fin_pencairan", "approve"),
     # Bayar gaji/BPJS/PPh21 = keputusan penggajian ("Setujui"), bukan "Tambah".
     ("POST", r"/api/rahaza/payroll-runs/[^/]+/pay(-bpjs|-pph21)?", "hr_payroll", "approve"),
@@ -733,6 +736,10 @@ MODUL_SETARA: tuple[tuple[str, str], ...] = (
     (r"/api/rahaza/variants(/.*)?", "rnd_master_product"),
     (r"/api/rahaza/models/[^/]+/variants(/.*)?", "rnd_master_product"),
     (r"/api/rahaza/boms/relink-materials", "rnd_master_product"),
+    # Portal Aksesoris › Stok Opname memakai layar & layanan opname yang sama dengan Gudang (`/api/wms/opname3`).
+    # Centang "Stok Opname Aksesoris" juga meloloskan buat/hitung/ajukan; PERSETUJUAN tetap dipisah per asal sesi
+    # di routes/wms_opname3 (sesi aksesoris = centang aksesoris, sesi gudang = centang Opname Stok Gudang).
+    (r"/api/wms/opname3(/.*)?", "acc_opname"),
 )
 _MODUL_SETARA_RX = [(re.compile(p + r"/?"), MODULE_BY_ID[mid]) for p, mid in MODUL_SETARA]
 

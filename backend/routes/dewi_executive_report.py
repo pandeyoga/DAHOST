@@ -67,9 +67,8 @@ async def require_exec_report(request: Request) -> dict:
     ok, _why = await exec_report_access(get_db(), user)
     if not ok:
         raise HTTPException(
-            403, "Akses ditolak: peran Anda tidak diberi izin 'Lihat — Laporan Eksekutif' "
-                 f"(mod.{EXEC_REPORT_MODULE}.view). Owner dapat mengaturnya di Administrasi Sistem › "
-                 "Manajemen Role (Izin per modul › Portal Keuangan).")
+            403, "Akses ditolak: peran Anda belum dicentang \"Lihat\" pada modul \"Laporan Eksekutif\" (Portal "
+                 "Keuangan). Minta owner mencentangnya di Administrasi Sistem › Kontrol Akses › Peran & Hak Akses.")
     return user
 
 

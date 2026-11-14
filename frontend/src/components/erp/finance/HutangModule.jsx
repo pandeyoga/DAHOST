@@ -36,8 +36,8 @@ import {
 } from '../procurement/SupplierInvoiceModule';
 import { JadwalBarisBarang, sisaJadwal } from '../engine/JadwalHutangCmtTabel';
 import { apiGet, apiPost } from '../../../lib/api';
-import { currentRole } from '../portalAccess';
-import { isFinanceRole } from '../../../lib/financeRoles';
+import { CENTANG_BAYAR, CENTANG_JURNAL_CMT } from '../../../lib/financeRoles';
+import { punyaCentang } from '../../../lib/rbac';
 import { CV_ALL, ownerLabel, useCvOr } from '@/lib/entitas';
 import { formatDateID, formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
@@ -192,15 +192,15 @@ function RincianTerjadwal({ row, onClose }) {
   );
 }
 
-function RincianTagihanCmt({ row, finance, onClose, onPay, onPost }) {
+function RincianTagihanCmt({ row, bolehBayar, bolehJurnal, onClose, onPay, onPost }) {
   const r = row.raw;
   const bisaBayar = cmtPayable(r);
   return (
     <DetailPanel testId="hutang-rincian-cmt" onClose={onClose} title={`Tagihan CMT ${r.invoice_number}`}
       description={`${row.pihak} · ${ownerLabel(r.entity)}`}
-      actions={finance && <>
-        {row.belumDijurnal && <Button variant="outline" onClick={() => onPost(row)} data-testid="hutang-rincian-cmt-jurnal">Jurnal</Button>}
-        {CMT_PAYABLE.includes(r.status) && row.sisa > 0 && (
+      actions={(bolehBayar || bolehJurnal) && <>
+        {bolehJurnal && row.belumDijurnal && <Button variant="outline" onClick={() => onPost(row)} data-testid="hutang-rincian-cmt-jurnal">Jurnal</Button>}
+        {bolehBayar && CMT_PAYABLE.includes(r.status) && row.sisa > 0 && (
           <Button variant="success" onClick={() => onPay(row)} data-testid="hutang-rincian-cmt-bayar"><HandCoins className="w-4 h-4" />Bayar</Button>
         )}
       </>}>
@@ -222,10 +222,12 @@ function RincianTagihanCmt({ row, finance, onClose, onPay, onPost }) {
 }
 
 // ─── Layar ─────────────────────────────────────────────────────────────────────
-export default function HutangModule({ token, initialStatus }) {
+export default function HutangModule({ token, initialStatus, hasPerm }) {
   const cv = useCvOr();
   const gabungan = cv === CV_ALL;
-  const finance = isFinanceRole(currentRole());
+  // 14 Nov 2026: Bayar / Jurnal mengikuti centang (server: gerbang modul), bukan kode peran keuangan.
+  const bolehBayar = punyaCentang(hasPerm, CENTANG_BAYAR);
+  const bolehJurnal = punyaCentang(hasPerm, CENTANG_JURNAL_CMT);
   const [data, setData] = useState({ faktur: [], cmt: [], jadwal: [], penerimaan: [] });
   const [loading, setLoading] = useState(true);
   const [gagal, setGagal] = useState([]);
@@ -302,7 +304,7 @@ export default function HutangModule({ token, initialStatus }) {
       await load();
     } catch (e) { toast.error(e.message); }
   };
-  const bisaBayar = (r) => finance && (r.src === 'cmt'
+  const bisaBayar = (r) => bolehBayar && (r.src === 'cmt'
     // tombol ada selama masih bersisa; dialog menjelaskan bila semuanya tertahan (bisa dibayar 0)
     ? CMT_PAYABLE.includes(r.raw.status) && r.sisa > 0
     : r.src === 'ap' && canPay(r.raw));
@@ -312,9 +314,9 @@ export default function HutangModule({ token, initialStatus }) {
   const detail = rincian && (
     rincian.src === 'ap' ? (
       <InvoiceDetail inv={rincian.raw} token={token} onClose={() => setRincian(null)} onSend={setujui} sending={menyetujui}
-        onPay={finance ? (inv) => { setRincian(null); setBayar(inv); } : null} />
+        onPay={bolehBayar ? (inv) => { setRincian(null); setBayar(inv); } : null} />
     ) : rincian.src === 'cmt' ? (
-      <RincianTagihanCmt row={rincian} finance={finance} onClose={() => setRincian(null)} onPost={jurnalCmt}
+      <RincianTagihanCmt row={rincian} bolehBayar={bolehBayar} bolehJurnal={bolehJurnal} onClose={() => setRincian(null)} onPost={jurnalCmt}
         onPay={(r) => { setRincian(null); setBayar(r.raw); }} />
     ) : <RincianTerjadwal row={rincian} onClose={() => setRincian(null)} />
   );
@@ -464,7 +466,7 @@ export default function HutangModule({ token, initialStatus }) {
                       {r.src === 'ap' && r.status === 'draf' && (
                         <Button size="sm" variant="outline" onClick={() => setRincian(r)} data-testid={`hutang-setujui-${r.key}`}>Setujui</Button>
                       )}
-                      {finance && r.belumDijurnal && (
+                      {bolehJurnal && r.belumDijurnal && (
                         <Button size="sm" variant="outline" onClick={() => jurnalCmt(r)} title="Catat tagihan CMT ini ke buku besar"
                           data-testid={`hutang-jurnal-${r.key}`}>Jurnal</Button>
                       )}

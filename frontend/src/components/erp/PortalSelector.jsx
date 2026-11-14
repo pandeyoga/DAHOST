@@ -255,7 +255,7 @@ export default function PortalSelector({ user, onSelectPortal, onLogout, deniedN
                 Peran <span className="font-medium capitalize">{userRole || '-'}</span> belum punya akses
                 ke portal itu{deniedNotice.moduleId ? ` (menu: ${deniedNotice.moduleId})` : ''}. Silakan pilih
                 portal yang tersedia di bawah, atau minta pemilik sistem menambahkan akses lewat
-                Administrasi Sistem → Manajemen Role.
+                Administrasi Sistem › Kontrol Akses › Peran &amp; Hak Akses.
               </div>
             </div>
             {onDismissDenied && (

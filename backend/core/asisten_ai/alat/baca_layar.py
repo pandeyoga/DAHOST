@@ -12,7 +12,7 @@ Pengaman:
   * hasil disamarkan `ctx.mask` (data pribadi pembeli/kontak; gaji per orang hanya untuk peran gaji);
   * daftar panjang dipangkas (paling banyak MAKS_BARIS baris per daftar) dengan catatan cara menyaring/halaman berikut;
   * mode atas nama vendor CMT (header `X-CMT-Override-Vendor`) hanya untuk bacaan yang memang mendukungnya dan peran
-    yang diizinkan `core.cmt_override.OVERRIDE_ROLES` — server tetap memeriksa ulang;
+    yang dicentang modul Input atas nama Vendor CMT (`core.cmt_override.boleh_atas_nama`) — server tetap memeriksa ulang;
   * ruang AI SDM / Tanya Asisten hanya membaca bacaan portal ruangnya.
 """
 from __future__ import annotations
@@ -71,11 +71,11 @@ def _pangkas(r: Any, catatan: list, maks: int = MAKS_BARIS, batas: int = BATAS_K
     return {**r, wadah: daftar[:n]}
 
 
-def periksa_vendor(ctx, vendor_id: str) -> None:
-    from core.cmt_override import OVERRIDE_ROLES
-    if ctx.peran not in OVERRIDE_ROLES:
-        raise AlatError(403, "Akun ini tidak berhak mengisi atau membaca data atas nama vendor CMT (layar Input atas "
-                             "nama CMT hanya untuk admin, admin produksi, supervisor produksi, dan PPIC).")
+def periksa_vendor(ctx, vendor_id: str, method: str = "GET") -> None:
+    """14 Nov 2026: aturan yang sama dengan header di server (centang Input atas nama Vendor CMT, bukan kode peran)."""
+    from core.cmt_override import boleh_atas_nama, pesan_tolak
+    if not boleh_atas_nama(ctx.user, method):
+        raise AlatError(403, pesan_tolak(method))
     if not vendor_id or len(str(vendor_id)) > 80:
         raise AlatError(400, "Id vendor CMT tidak sah.")
 

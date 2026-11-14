@@ -851,7 +851,8 @@ async def _izin_po(ctx, bt: str, aksi: str) -> dict:
     if not izin.get(f"can_{aksi}"):
         kata = {"create": "membuat", "edit": "mengubah", "delete": "menghapus"}[aksi]
         raise AlatError(403, f"Akun Anda tidak boleh {kata} {JENIS_PO.get(bt, 'PO')} (aturan yang sama dengan tombol di "
-                             "layar PO). Minta owner mencentang izinnya di Peran & Hak Akses bila memang perlu.")
+                             "layar PO). Minta owner mencentang izinnya di Administrasi Sistem › Kontrol Akses › "
+                             "Peran & Hak Akses bila memang perlu.")
     return izin
 
 

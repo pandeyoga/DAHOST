@@ -57,8 +57,12 @@ def assert_po_action(user: dict, action: str, business_type) -> None:
     if not can_po_action(user, action, business_type):
         jenis = 'maklon' if (business_type or '') == 'maklon' else 'produksi internal'
         verb = {'create': 'membuat', 'edit': 'mengubah', 'delete': 'menghapus'}[action]
-        raise HTTPException(403, f"Akses ditolak: peran Anda tidak boleh {verb} PO {jenis}. Minta owner "
-                                 f"mencentang izin di Peran & Hak Akses ({po_perm_key(business_type, action)}).")
+        # 14 Nov 2026: sebut kotak centang & letaknya, tanpa kunci izin program.
+        from data.module_catalog import ACTION_LABELS, MODULE_BY_ID
+        modul = MODULE_BY_ID[po_module_id(business_type)]['label']
+        raise HTTPException(403, f"Akses ditolak: peran Anda tidak boleh {verb} PO {jenis}. Minta owner mencentang "
+                                 f"\"{ACTION_LABELS[action]}\" pada modul \"{modul}\" di Administrasi Sistem › Kontrol "
+                                 "Akses › Peran & Hak Akses.")
 
 
 async def po_action_flags(user: dict, business_type) -> dict:

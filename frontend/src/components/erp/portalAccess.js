@@ -170,7 +170,7 @@ export function currentRole() {
  *
  * Item nav TANPA field `roles` = terbuka untuk semua yang bisa membuka portalnya
  * (perilaku lama, tidak berubah). Ini HANYA soal tampilan; penjaga sungguhan
- * tetap di backend (`core/cmt_override.OVERRIDE_ROLES`).
+ * tetap di backend (gerbang modul + penjaga di kode).
  */
 export function navItemAllowed(item, role) {
   const r = (role || currentRole() || '').toLowerCase();

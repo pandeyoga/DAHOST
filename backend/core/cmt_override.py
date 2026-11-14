@@ -44,8 +44,10 @@ Dengan header ``X-CMT-Override-Vendor``:
 ═══════════════════════════════════════════════════════════════════════════════
 INVARIAN KEAMANAN (dijaga gate INV-CMTOV / scripts/verify_cmt_override.py)
 ═══════════════════════════════════════════════════════════════════════════════
-OV-1  Header override HANYA dihormati untuk role di :data:`OVERRIDE_ROLES`.
-      Role lain yang mengirim header ⇒ **403 eksplisit**, bukan diabaikan diam-diam
+OV-1  Header override HANYA dihormati untuk yang DICENTANG modul Produksi › Input atas nama Vendor CMT
+      (`mod.prod_cmt_override.<aksi>`, aksi menurut metode: baca = Lihat, POST = Tambah, PUT/PATCH = Ubah,
+      DELETE = Hapus; :func:`boleh_atas_nama`) — 14 Nov 2026, dulu kode peran :data:`OVERRIDE_ROLES`.
+      Yang lain mengirim header ⇒ **403 eksplisit**, bukan diabaikan diam-diam
       (kalau diabaikan, staf tak berhak akan melihat data SELURUH vendor dan
       menyangka dirinya sedang ter-scope — persis kesalahan yang paling mahal).
 OV-2  Akun vendor TIDAK BOLEH memakai header ini (mustahil vendor A menyamar
@@ -66,8 +68,8 @@ from core.helpers import now
 # pernah tertukar dengan filter biasa dan mudah dicari di seluruh repo.
 OVERRIDE_HEADER = 'X-CMT-Override-Vendor'
 
-# Keputusan owner 2b. `superadmin` tetap masuk daftar walau umumnya bypass —
-# supaya modul ini tidak bergantung pada perilaku check_role().
+# Keputusan owner 2b (2026-08-08). 14 Nov 2026: BUKAN lagi penentu hak — hanya acuan migrasi
+# 2026_11_14_centang_tahap2 (peran yang dulu boleh sudah dicentangkan). Penentu = :func:`boleh_atas_nama`.
 OVERRIDE_ROLES = frozenset({
     'admin',
     'superadmin',
@@ -90,15 +92,49 @@ def header_value(request: Request) -> str:
         return ''
 
 
-def is_override_role(user: dict) -> bool:
-    """Boleh "Input atas nama CMT"? 14 Nov 2026 (tahap 2): centang Produksi › Input atas nama Vendor CMT
-    (`mod.prod_cmt_override.create`/`edit`), bukan kode peran. `OVERRIDE_ROLES` tinggal acuan migrasi
-    2026_11_14_centang_tahap2 (peran yang dulu boleh sudah dicentangkan)."""
+# 14 Nov 2026 — centang modul "Input atas nama Vendor CMT" = SATU-SATUNYA penentu (layar & header), peran super
+# selalu boleh. Aksi menurut metode HTTP permintaan yang membawa header (sama dengan detect_action katalog).
+MODUL_CENTANG = 'prod_cmt_override'
+_AKSI_METODE = {'GET': 'view', 'HEAD': 'view', 'OPTIONS': 'view', 'POST': 'create', 'PUT': 'edit',
+                'PATCH': 'edit', 'DELETE': 'delete'}
+_AKSI_ISI = ('create', 'edit', 'delete')
+_KERJA = {'view': 'membuka data', 'create': 'mengisi data', 'edit': 'mengubah data', 'delete': 'menghapus data'}
+LETAK_CENTANG = 'Administrasi Sistem › Kontrol Akses › Peran & Hak Akses'
+
+
+def aksi_metode(method: str | None) -> str:
+    return _AKSI_METODE.get(str(method or 'GET').upper(), 'edit')
+
+
+def boleh_atas_nama(user: dict, method: str | None = 'GET') -> bool:
+    """Boleh bekerja atas nama vendor CMT dengan metode ini? Peran super / izin "*" / centang aksi yang sesuai pada
+    modul Input atas nama Vendor CMT. Membaca juga boleh bagi yang dicentang salah satu aksi isian (Tambah/Ubah/Hapus)."""
     from routes.shared import SUPER_ROLES, user_permissions
     if (user.get('role') or '').strip().lower() in SUPER_ROLES:
         return True
     perms = user_permissions(user)
-    return "*" in perms or bool({"mod.prod_cmt_override.create", "mod.prod_cmt_override.edit"} & perms)
+    if '*' in perms:
+        return True
+    aksi = aksi_metode(method)
+    kunci = {f'mod.{MODUL_CENTANG}.{aksi}'}
+    if aksi == 'view':
+        kunci |= {f'mod.{MODUL_CENTANG}.{a}' for a in _AKSI_ISI}
+    return bool(kunci & perms)
+
+
+def pesan_tolak(method: str | None = 'GET') -> str:
+    """Pesan 403 untuk staf: aksi apa yang belum dicentang dan di mana mencentangnya (tanpa istilah program)."""
+    from data.module_catalog import ACTION_LABELS, MODULE_BY_ID
+    aksi = aksi_metode(method)
+    modul = MODULE_BY_ID[MODUL_CENTANG]['label']
+    return (f'Anda tidak berhak {_KERJA.get(aksi, "mengisi data")} atas nama vendor CMT. Minta owner mencentang '
+            f'"{ACTION_LABELS[aksi]}" pada modul "{modul}" (Portal Produksi) di {LETAK_CENTANG}.')
+
+
+def is_override_role(user: dict) -> bool:
+    """Boleh membuka layar "Input atas nama CMT"? = :func:`boleh_atas_nama` untuk baca (centang Lihat, atau salah satu
+    aksi isian). Aksi tulisnya dijaga per permintaan (gerbang modul + :func:`resolve_override`)."""
+    return boleh_atas_nama(user, 'GET')
 
 
 async def resolve_override(request: Request, user: dict, db) -> dict | None:
@@ -130,13 +166,10 @@ async def resolve_override(request: Request, user: dict, db) -> dict | None:
             'Header override hanya untuk staf DA.',
         )
 
-    # OV-1 — role tak berhak DITOLAK, bukan diabaikan.
-    if role not in OVERRIDE_ROLES:
-        raise HTTPException(
-            403,
-            'Anda tidak berhak mengisi data atas nama vendor CMT. '
-            f"Role yang diizinkan: {', '.join(sorted(OVERRIDE_ROLES))}.",
-        )
+    # OV-1 — yang tidak dicentang DITOLAK, bukan diabaikan (14 Nov 2026: centang, bukan kode peran).
+    method = getattr(request, 'method', None) or 'GET'
+    if not boleh_atas_nama(user, method):
+        raise HTTPException(403, pesan_tolak(method))
 
     # OV-3 — vendor tujuan harus ada & aktif di master CMT.
     partner = await db.vendor_partners.find_one({'id': vid}, {'_id': 0})

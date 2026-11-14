@@ -158,10 +158,16 @@ def test_kasus_2_koordinator_packing_opname_dan_penyesuaian(masuk):
 
 def test_kasus_3_setuju_opname_hanya_bila_dicentang():
     from routes.wms_opname3 import assert_can_approve
+    # 14 Nov 2026: sesi aksesoris (Portal Aksesoris › Stok Opname) disetujui dengan centang Stok Opname Aksesoris.
+    sesi_aksesoris = {"mode": "cycle", "source": "aksesoris", "kinds": ["aksesoris"]}
     with pytest.raises(HTTPException) as e:
-        assert_can_approve({"role": "Admin Aksesoris", "_permissions": ["mod.acc_opname.create"], "_role_perms": ["x"]})
-    assert "Setujui" in e.value.detail
-    assert_can_approve({"role": "Admin Aksesoris", "_permissions": ["mod.acc_opname.approve"], "_role_perms": ["x"]})
+        assert_can_approve({"role": "Admin Aksesoris", "_permissions": ["mod.acc_opname.create"], "_role_perms": ["x"]},
+                           "menyetujui opname aksesoris", sesi_aksesoris)
+    assert "Setujui" in e.value.detail and "Stok Opname Aksesoris" in e.value.detail
+    assert "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses" in e.value.detail
+    assert "Manajemen Role" not in e.value.detail
+    assert_can_approve({"role": "Admin Aksesoris", "_permissions": ["mod.acc_opname.approve"], "_role_perms": ["x"]},
+                       "menyetujui opname aksesoris", sesi_aksesoris)
 
 
 @pytest.fixture

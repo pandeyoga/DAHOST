@@ -594,7 +594,9 @@ def test_k33_penjaga_router_403_untuk_operator(rbac_db, monkeypatch):
     monkeypatch.setattr(ex, "require_auth", as_op)
     with pytest.raises(HTTPException) as e:
         run(ex.require_exec_report(fm.FakeRequest()))
-    assert e.value.status_code == 403 and "mod.fin_exec_report.view" in e.value.detail
+    # 14 Nov 2026: pesan tanpa kunci izin program; sebut modul & letak centangnya
+    assert e.value.status_code == 403 and "\"Laporan Eksekutif\"" in e.value.detail and "mod." not in e.value.detail
+    assert "Administrasi Sistem › Kontrol Akses › Peran & Hak Akses" in e.value.detail
     # SEMUA endpoint router (summary, ai-narrative, kpi-comparison, *-snapshot, trend) memanggil penjaga
     from fastapi.routing import APIRoute
     routes = [r for r in ex.router.routes if isinstance(r, APIRoute)]

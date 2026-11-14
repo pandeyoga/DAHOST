@@ -376,7 +376,7 @@ async def _vendor(ctx, a: dict, args: dict) -> Optional[dict]:
         return None
     if not a.get("atas_nama_vendor"):
         raise AlatError(400, "Aksi ini tidak punya mode atas nama vendor CMT.")
-    periksa_vendor(ctx, vid)
+    periksa_vendor(ctx, vid, a.get("metode") or "POST")
     nama = vid
     try:
         r = await ctx.api("GET", "/api/vendor-portal/partners")

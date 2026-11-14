@@ -344,6 +344,11 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     const d = await r.json().catch(() => ({}));
     return [r, d];
   };
+  const postAcc = async (path, payload) => {
+    const r = await fetch(`${API}/api/acc/opname/${path}`, { method: 'POST', headers: jsonH, body: JSON.stringify(payload) });
+    const d = await r.json().catch(() => ({}));
+    return [r, d];
+  };
 
   const doScan = async (raw) => {
     const code = (raw || '').trim(); if (!code) return;
@@ -388,11 +393,17 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     }
     setBusy(true);
     try {
-      const [r, d] = await post(action, { session_id: sess.id, notes, ...extra });
+      // 14 Nov 2026: sesi dari Portal Aksesoris disetujui/ditolak lewat pintu opname aksesoris (centang Stok Opname
+      // Aksesoris › Setujui); sesi gudang lewat pintu Sesi Opname (centang Opname Stok Gudang › Setujui). Sama dengan
+      // server routes/wms_opname3.jenis_sesi.
+      const pintuAksesoris = (action === 'approve' || action === 'reject') && sess.source === 'aksesoris';
+      const [r, d] = pintuAksesoris
+        ? await postAcc(`${sess.id}/${action}`, { notes, ...extra })
+        : await post(action, { session_id: sess.id, notes, ...extra });
       if (r.ok) {
         setZeroList(null); setProblems(null);
         if (action === 'approve') {
-          const s = d.session?.summary || {};
+          const s = d.session?.summary || d.summary || {};
           flash('success', `Opname disetujui. ${s.stock_writes || 0} baris stok ditimpa, ${s.positions_updated || 0} bin diperbarui`
             + (s.je_number ? `, jurnal ${s.je_number}.` : s.je_error ? `. Jurnal GAGAL: ${s.je_error}` : '.'));
         } else if (action === 'submit') flash('success', 'Diajukan. Selisih kini terlihat oleh supervisor.');

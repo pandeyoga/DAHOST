@@ -15,7 +15,7 @@ from database import get_db
 from auth import require_auth, check_role, log_activity, serialize_doc
 from routes.production_rbac import (PROD_ADMIN_ROLES, assert_po_action, deny_klien, po_action_flags,
                                     resolve_vendor_doc, resolve_buyer_name)
-from cascade_delete import cascade_delete_po
+from cascade_delete import alasan_tolak_hapus_po, cascade_delete_po
 from core import sewing_rate as sr
 from core.helpers import new_id, now, parse_date
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
@@ -1110,6 +1110,13 @@ async def delete_po(po_id: str, request: Request):
     # 2026-11-07 (Tahap 8): dulu hanya superadmin (layar menampilkan tombolnya juga untuk admin → 403).
     # Sekarang satu aturan dengan tombol Hapus: superadmin/admin/owner atau izin Hapus modul PO.
     assert_po_action(user, 'delete', doc.get('business_type') or 'internal')
+    # 14 Nov 2026 (temuan owner): PO yang SUDAH berjalan tidak boleh dihapus — hapus ikut membuang kiriman CMT, job,
+    # progres, penerimaan, dst. TANPA mengembalikan stok. Diperiksa sebelum jadwal maklon di-void (tidak setengah jalan).
+    alasan = await alasan_tolak_hapus_po(db, po_id)
+    if alasan:
+        raise HTTPException(409, f"PO {doc.get('po_number') or po_id} tidak bisa dihapus karena sudah berjalan: "
+                                 f"{'; '.join(alasan)}. Data itu dan stoknya tidak boleh hilang bersama PO. "
+                                 "Selesaikan PO ini lewat Tutup PO.")
     # 2026-11-06 (Tahap 2): membatalkan PO maklon yang sudah dikonfirmasi — sebelum ada jurnal,
     # jadwal piutang & hutang CMT di-VOID (dokumen tetap sebagai jejak); sudah ada pendapatan /
     # pembayaran / tagihan CMT ⇒ ditolak (pakai tutup kurang).

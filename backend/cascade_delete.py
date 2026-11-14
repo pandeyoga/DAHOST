@@ -1,5 +1,57 @@
 from database import get_db
 
+
+async def _shipment_ids_po(db, po_id: str, po_item_ids: list) -> list:
+    """Surat jalan Kirim ke CMT milik PO (langsung `po_id`, atau lewat barisnya) — sama dengan cakupan hapus di bawah."""
+    ids = {s['id'] for s in await db.vendor_shipments.find({'po_id': po_id}, {'_id': 0, 'id': 1}).to_list(None)}
+    q = [{'po_id': po_id}] + ([{'po_item_id': {'$in': po_item_ids}}] if po_item_ids else [])
+    for it in await db.vendor_shipment_items.find({'$or': q}, {'_id': 0, 'shipment_id': 1}).to_list(None):
+        if it.get('shipment_id'):
+            ids.add(it['shipment_id'])
+    return sorted(ids)
+
+
+async def alasan_tolak_hapus_po(db, po_id: str) -> list:
+    """Alasan PO TIDAK boleh dihapus (kosong = boleh). 14 Nov 2026 (temuan owner): dulu Hapus PO internal tanpa batas
+    status ikut menghapus kiriman CMT, job, progres, dll. TANPA mengembalikan stok — bahan yang sudah keluar gudang
+    hilang jejaknya. PO yang sudah berjalan ditutup lewat Tutup PO, bukan dihapus.
+
+    Ditolak bila PO sudah punya: job produksi, progres, penerimaan dari CMT (Terima & QC, selain yang dibatalkan),
+    kiriman hasil ke buyer, atau surat jalan Kirim ke CMT yang bahannya sudah keluar gudang (Material Issue keluar dan
+    belum diretur penuh — `routes.vendor_shipment.shipment_issued_mis`). PO Draf yang hanya punya surat jalan TANPA
+    bahan keluar dan tanpa job tetap boleh dihapus."""
+    from core.cmt_receipt_status import ST_CANCELLED, canon_status
+    from routes.vendor_shipment import shipment_issued_mis
+    alasan = []
+    po_item_ids = [i['id'] for i in await db.po_items.find({'po_id': po_id}, {'_id': 0, 'id': 1}).to_list(None)]
+    ship_ids = await _shipment_ids_po(db, po_id, po_item_ids)
+    jobs = await db.production_jobs.find(
+        {'$or': [{'po_id': po_id}] + ([{'vendor_shipment_id': {'$in': ship_ids}}] if ship_ids else [])},
+        {'_id': 0, 'id': 1}).to_list(None)
+    if jobs:
+        alasan.append(f'{len(jobs)} job produksi')
+    job_ids = [j['id'] for j in jobs]
+    wo_ids = [w['id'] for w in await db.work_orders.find({'po_id': po_id}, {'_id': 0, 'id': 1}).to_list(None)]
+    q_prog = ([{'job_id': {'$in': job_ids}}] if job_ids else []) + ([{'work_order_id': {'$in': wo_ids}}] if wo_ids else [])
+    if q_prog and await db.production_progress.count_documents({'$or': q_prog}):
+        alasan.append('progres produksi')
+    terima = [r for r in await db.cmt_receipts.find({'po_id': po_id}, {'_id': 0, 'status': 1}).to_list(None)
+              if canon_status(r.get('status')) != ST_CANCELLED]
+    if terima:
+        alasan.append(f'{len(terima)} penerimaan dari CMT (Terima & QC)')
+    kirim_hasil = await db.buyer_shipments.count_documents({'po_id': po_id})
+    if kirim_hasil:
+        alasan.append(f'{kirim_hasil} kiriman hasil')
+    mi = []
+    for sid in ship_ids:
+        mi += [m.get('mi_number') or m.get('id') for m in await shipment_issued_mis(db, sid)]
+    if mi:
+        mi = sorted(set(mi))
+        alasan.append(f"bahan sudah keluar gudang untuk Kirim ke CMT (Material Issue {', '.join(mi[:5])}"
+                      f"{' …' if len(mi) > 5 else ''})")
+    return alasan
+
+
 async def cascade_delete_po(po_id: str):
     db = get_db()
     # 1. Get PO items
