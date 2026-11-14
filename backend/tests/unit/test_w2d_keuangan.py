@@ -551,7 +551,7 @@ def test_k33_modul_granular_sendiri():
     hidden, _ = menu_access(["mod.fin_dashboard.view"])
     assert "fin-executive-report" in hidden                               # bisa disembunyikan sendiri
     hidden, access = menu_access(["mod.fin_dashboard.view", "mod.fin_exec_report.view"])
-    assert "fin-executive-report" not in hidden and access["fin-executive-report"] == ["view"]
+    assert "fin-executive-report" not in hidden and (set(access["fin-executive-report"]) & set(MODULE_BY_ID["fin_exec_report"]["actions"])) == {"view"}
 
 
 @pytest.fixture

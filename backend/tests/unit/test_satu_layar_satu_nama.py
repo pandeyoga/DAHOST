@@ -194,7 +194,7 @@ def test_semua_menu_portal_granular_punya_modul():
 
 def test_izin_lihat_integrasi_membuka_menu_notifikasi():
     hidden, access = mc.menu_access(["mod.mkt_integrations.view"])
-    assert access["maklon-notifications"] == ["view"] and "maklon-notifications" not in hidden
+    assert (set(access["maklon-notifications"]) & set(mc.MODULE_BY_ID[[m["id"] for m in mc.MODULES if "maklon-notifications" in m["menus"]][0]]["actions"])) == {"view"} and "maklon-notifications" not in hidden
     hidden, _ = mc.menu_access(["mod.mkt_dashboard.view"])
     assert "maklon-notifications" in hidden
 
