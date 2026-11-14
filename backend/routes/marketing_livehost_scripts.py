@@ -70,7 +70,7 @@ async def list_scripts(
     search: Optional[str] = Query(None),
 ):
     """Admin lists all scripts"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     
     query = {'is_active': True}
@@ -86,6 +86,9 @@ async def list_scripts(
             {'script_text': {'$regex': search, '$options': 'i'}},
         ]
     
+    # 14 Nov 2026 — lingkup toko: skrip toko yang dipegang + skrip global (tanpa toko, milik bersama)
+    from core import marketing_account_scope as _scope
+    query = await _scope.scope_filter_umum(db, user, query)
     scripts = await db.marketing_livehost_scripts.find(
         query, {'_id': 0}
     ).sort('created_at', -1).to_list(500)

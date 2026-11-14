@@ -8,12 +8,29 @@ from auth import hash_password, require_auth, serialize_doc, log_activity
 from routes.shared import require_perm  # T-01 2.3
 from routes.marketing_kol_shared import router, _uid, _now, _get_user, CreatorCreate, CreatorUpdate
 from collections import defaultdict as _dd
+from core import marketing_account_scope as _scope
+
+# 14 Nov 2026 (owner: filter toko menyeluruh) — kreator dipegang per toko lewat `assigned_account_ids`.
+# Pemakai berlingkup toko hanya melihat kreator yang bertugas di tokonya, hanya melihat tautan ke tokonya
+# sendiri, dan hanya boleh menautkan/melepas tokonya sendiri (tautan toko rekan kerja dipertahankan).
+TANPA_TOKO_KREATOR = ("Pilih minimal satu toko yang Anda pegang untuk kreator ini, supaya kreatornya tetap "
+                      "tampil di daftar Anda.")
+
+
+def _samarkan_toko(creator: dict, visible) -> dict:
+    """Tampilkan hanya tautan toko yang boleh dilihat pemakai (tautan lain tetap tersimpan)."""
+    if visible is not None and creator is not None:
+        creator['assigned_account_ids'] = _scope.saring_toko_terlihat(creator.get('assigned_account_ids'), visible)
+    return creator
 
 
 @router.post('/kol/creators')
 async def create_creator(data: CreatorCreate, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    assigned = await _scope.gabung_toko_terlihat(db, user, data.assigned_account_ids or [], [], apa='kreator ini')
+    if not assigned and await _scope.toko_lingkup(db, user) is not None:
+        raise HTTPException(400, TANPA_TOKO_KREATOR)
     email = (data.login_email or '').lower().strip()
     if data.creator_type not in ('new', 'kontrak', 'continue'):
         raise HTTPException(400, "creator_type harus new | kontrak | continue")
@@ -33,7 +50,7 @@ async def create_creator(data: CreatorCreate, request: Request):
         'domicile': (data.domicile or '').strip(),
         'domicile_detail': (data.domicile_detail or '').strip(),
         'phone': data.phone or '', 'platforms': data.platforms or {},
-        'assigned_account_ids': data.assigned_account_ids or [],
+        'assigned_account_ids': assigned,
         'kpi_targets': data.kpi_targets or {'monthly_revenue': 0, 'monthly_sessions': 0, 'monthly_viewers': 0},
         'notes': data.notes or '', 'status': 'active', 'last_login_at': None,
         'created_at': _now(), 'created_by': _get_user(request).get('email', 'system'), 'updated_at': _now(),
@@ -54,15 +71,20 @@ async def list_creators(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     # 2026-11-02 — dulu (F14) kreator demo dibuat di sini, dan kreator TANPA login
     # diberi kata sandi demo setiap daftar dibuka. Seeder demo tidak lagi dipanggil saat GET.
     query = {}
     if status:
         query['status'] = status
+    # 14 Nov 2026 — lingkup toko: hanya kreator yang bertugas di toko yang dipegang pemakai.
+    visible = await _scope.toko_lingkup(db, user)
+    if visible is not None:
+        query['assigned_account_ids'] = {'$in': visible}
     if account_id:
-        query['assigned_account_ids'] = account_id
+        query['assigned_account_ids'] = (account_id if visible is None or account_id in visible
+                                         else '__tidak_boleh_dilihat__')
     total = await db.marketing_kol_creators.count_documents(query)
     skip = (page - 1) * limit
     creators = await db.marketing_kol_creators.find(
@@ -72,10 +94,14 @@ async def list_creators(
     from core import bulan_marketing as _bulan
     date_from, date_to = _bulan.rentang(*_bulan.bulan_berjalan())
     creator_ids = [c['id'] for c in creators]
+    # angka "bulan ini" hanya dari sesi di toko yang boleh dilihat (kreator bisa dipakai beberapa toko)
     all_sessions = await db.marketing_creator_sessions.find(
-        {'creator_id': {'$in': creator_ids}, 'date': {'$gte': date_from, '$lte': date_to}},
+        await _scope.saring_lingkup(db, user, {'creator_id': {'$in': creator_ids},
+                                             'date': {'$gte': date_from, '$lte': date_to}}),
         {'_id': 0, 'creator_id': 1, 'revenue': 1, 'viewers': 1}
     ).to_list(500)
+    for c in creators:
+        _samarkan_toko(c, visible)
     sessions_by_creator = _dd(list)
     for s in all_sessions:
         sessions_by_creator[s['creator_id']].append(s)
@@ -98,11 +124,13 @@ async def list_creators(
 
 @router.get('/kol/creators/{creator_id}')
 async def get_creator(creator_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     creator = await db.marketing_kol_creators.find_one({'id': creator_id}, {'_id': 0, 'login_password_hash': 0})
     if not creator:
         raise HTTPException(404, 'Creator tidak ditemukan')
+    # (toko rekaman dijaga core.marketing_record_scope; di sini hanya menyembunyikan toko rekan kerja)
+    _samarkan_toko(creator, await _scope.toko_lingkup(db, user))
     assigned = await db.marketing_platform_accounts.find(
         {'id': {'$in': creator.get('assigned_account_ids', [])}}, {'_id': 0}
     ).to_list(500)
@@ -112,7 +140,7 @@ async def get_creator(creator_id: str, request: Request):
 
 @router.put('/kol/creators/{creator_id}')
 async def update_creator(creator_id: str, data: CreatorUpdate, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     creator = await db.marketing_kol_creators.find_one({'id': creator_id}, {'_id': 0})
     if not creator:
@@ -141,7 +169,9 @@ async def update_creator(creator_id: str, data: CreatorUpdate, request: Request)
     if data.platforms is not None:
         update_data['platforms'] = data.platforms
     if data.assigned_account_ids is not None:
-        update_data['assigned_account_ids'] = data.assigned_account_ids
+        # hanya toko yang dipegang pemakai yang boleh ditambah/dilepas; tautan toko lain dipertahankan
+        update_data['assigned_account_ids'] = await _scope.gabung_toko_terlihat(
+            db, user, data.assigned_account_ids, creator.get('assigned_account_ids'), apa='kreator ini')
     if data.kpi_targets is not None:
         update_data['kpi_targets'] = data.kpi_targets
     if data.notes is not None:
@@ -156,10 +186,10 @@ async def update_creator(creator_id: str, data: CreatorUpdate, request: Request)
             update_data.get('login_email') or creator.get('login_email'))
     update_data['updated_at'] = _now()
     await db.marketing_kol_creators.update_one({'id': creator_id}, {'$set': update_data})
-    user = _get_user(request)
     await log_activity(user.get('id', 'system'), user.get('name') or user.get('email', 'system'),
                        'update', 'marketing_kol_creator', f"Updated creator: {creator['name']}")
     updated = await db.marketing_kol_creators.find_one({'id': creator_id}, {'_id': 0, 'login_password_hash': 0})
+    _samarkan_toko(updated, await _scope.toko_lingkup(db, user))
     return serialize_doc({'message': 'Creator berhasil diupdate', 'creator': updated})
 
 

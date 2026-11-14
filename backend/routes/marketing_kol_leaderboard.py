@@ -157,19 +157,20 @@ async def get_kol_detail(
     """
     Detail metrics untuk KOL tertentu.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    
+
     end_date = now_wib()   # `date` sesi = tanggal kalender WIB (No.54a)
     start_date = end_date - timedelta(days=days)
-    
+
     # Get all sessions for this KOL — RC-16: SSOT marketing_creator_sessions
-    # (filter creator_id; `date` string "YYYY-MM-DD")
+    # (filter creator_id; `date` string "YYYY-MM-DD"). 14 Nov 2026: hanya sesi di toko yang dipegang
+    # pemakai — kreator bisa dipakai beberapa toko (kreatornya sendiri dijaga core.marketing_record_scope).
     sessions = await db.marketing_creator_sessions.find(
-        {
+        await _scope.saring_lingkup(db, user, {
             "creator_id": kol_id,
             "date": {"$gte": start_date.strftime("%Y-%m-%d"), "$lte": end_date.strftime("%Y-%m-%d")}
-        }
+        })
     ).sort("date", -1).to_list(length=100)
     
     if not sessions:

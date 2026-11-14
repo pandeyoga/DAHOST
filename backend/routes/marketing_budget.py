@@ -714,9 +714,12 @@ async def get_period_lock(request: Request, account_id: str = Query(...),
 
 @periods_router.get('/locks')
 async def list_period_locks(request: Request, account_id: Optional[str] = Query(None)):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     rows = await _cycle.locked_periods(db, account_id)
+    _vis = await _scope.toko_lingkup(db, user)   # 14 Nov 2026: tanpa account_id = hanya toko yang dipegang
+    if _vis is not None:
+        rows = [r for r in rows if r.get('account_id') in _vis]
     return serialize_doc({'ok': True, 'locks': rows, 'total': len(rows)})
 
 

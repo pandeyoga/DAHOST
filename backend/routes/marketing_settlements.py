@@ -477,9 +477,10 @@ async def save_import_mapping(body: ImportMappingIn, request: Request):
 
 @router.get("/import/mapping")
 async def list_import_mappings(request: Request, account_id: str = Query(default="")):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    q = {"account_id": account_id} if account_id else {}
+    # 14 Nov 2026 (filter toko) — tanpa account_id: hanya pemetaan toko yang dipegang
+    q = await _scope.saring_lingkup(db, user, {"account_id": account_id} if account_id else {})
     rows = await db[MAPS_COLL].find(q, {"_id": 0}).sort("updated_at", -1).to_list(200)
     return {"ok": True, "data": [_ser(r) for r in rows]}
 

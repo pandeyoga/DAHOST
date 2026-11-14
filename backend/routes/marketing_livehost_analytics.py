@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, Query, Path
 from fastapi.responses import StreamingResponse
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
+from core import marketing_account_scope as _scope
 from routes.marketing_livehost_shared import (
     _uid, _now, _get_user, _create_livehost_token, _decode_livehost_token,
     require_livehost_auth, LiveHostCreate, LiveHostUpdate, ShiftCreate, ShiftUpdate,
@@ -65,7 +66,7 @@ async def get_host_performance(
     host_id: Optional[str] = Query(None),
 ):
     """Admin views LiveHost performance analytics"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     
     # Default to current month if not specified
@@ -83,6 +84,7 @@ async def get_host_performance(
     if host_id:
         query['host_id'] = host_id
     
+    query = await _scope.saring_lingkup(db, user, query)   # 14 Nov 2026: hanya shift toko yang dipegang
     shifts = await db.marketing_livehost_shifts.find(query, {'_id': 0}).to_list(5000)
     
     # Aggregate by host
@@ -140,7 +142,7 @@ async def get_shift_analysis(
     month: Optional[str] = Query(None, description="YYYY-MM"),
 ):
     """Admin views shift time analysis (best performing shift times)"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     
     # Default to current month
@@ -150,11 +152,11 @@ async def get_shift_analysis(
     year, mon, date_from, date_to = _month_bounds(month)
     month = f"{year}-{mon}"
     
-    shifts = await db.marketing_livehost_shifts.find({
+    shifts = await db.marketing_livehost_shifts.find(await _scope.saring_lingkup(db, user, {
         'date': {'$gte': date_from, '$lte': date_to},
         'attendance_status': 'completed',
         'revenue': {'$gt': 0}
-    }, {'_id': 0}).to_list(5000)
+    }), {'_id': 0}).to_list(5000)
     
     # Analyze by shift type
     shift_type_stats = {}
@@ -432,7 +434,7 @@ async def get_payment_status(
     month: str = Query(..., description="YYYY-MM"),
 ):
     """Admin views payment status summary for a month"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     
     year, mon, date_from, date_to = _month_bounds(month)
@@ -440,10 +442,10 @@ async def get_payment_status(
     
     # Aggregate shifts by payment status
     pipeline = [
-        {'$match': {
+        {'$match': await _scope.saring_lingkup(db, user, {
             'date': {'$gte': date_from, '$lte': date_to},
             'attendance_status': 'completed'
-        }},
+        })},
         {'$group': {
             '_id': '$payment_status',
             'count': {'$sum': 1},

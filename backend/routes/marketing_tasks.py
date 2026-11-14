@@ -390,6 +390,17 @@ async def complete_task_action(task_id: str, payload: TaskCompleteAction, reques
         await doc_lock.release(db, "marketing_tasks", task_id, token, field="action_lock")
 
 
+async def _assert_related_visible(db, user: dict, collection: str, related_id: str, label: str) -> None:
+    """Rekaman yang dijalankan aksi tugas (retur/ulasan) harus milik toko pemakai berlingkup toko.
+    Tidak terlihat dijawab sama dengan tidak ada — keberadaannya tidak dibocorkan."""
+    vis = await _scope.toko_lingkup(db, user)
+    if vis is None:
+        return
+    doc = await db[collection].find_one({"id": related_id}, {"_id": 0, "account_id": 1})
+    if doc and doc.get("account_id") not in vis:
+        raise HTTPException(404, f"{label} tidak ditemukan atau milik toko lain.")
+
+
 async def _complete_task_action_locked(db, task_id: str, payload, user: dict):
     task = await db.marketing_tasks.find_one({"id": task_id}, {"_id": 0})
     if not task:
@@ -484,6 +495,9 @@ async def _complete_task_action_locked(db, task_id: str, payload, user: dict):
                 raise HTTPException(400, "related_entity_id wajib untuk approve_reject action")
             
             if related == "return":
+                # 14 Nov 2026 (filter toko) — rekaman yang diubah tugas ini juga harus milik toko pemakai;
+                # dulu cukup tugasnya, sehingga tugas bisa menunjuk retur toko lain.
+                await _assert_related_visible(db, user, "marketing_returns", related_id, "Return")
                 new_status = "approved" if decision == "approve" else "rejected"
                 upd = {
                     "status": new_status,
@@ -507,6 +521,7 @@ async def _complete_task_action_locked(db, task_id: str, payload, user: dict):
             if related == "review":
                 if not related_id:
                     raise HTTPException(400, "related_entity_id wajib")
+                await _assert_related_visible(db, user, "marketing_reviews", related_id, "Review")
                 result = await db.marketing_reviews.update_one(
                     {"id": related_id},
                     {"$set": {

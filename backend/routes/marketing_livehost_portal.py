@@ -27,6 +27,7 @@ import json
 import asyncio
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from core import marketing_account_scope as _scope
 from utils.waktu import fmt_wib, today_wib, now_wib
 
 _log = logging.getLogger(__name__)
@@ -542,12 +543,16 @@ async def mark_all_notifications_read(request: Request):
 @router.get('/{host_id}')
 async def get_livehost(request: Request, host_id: str = Path(..., regex=UUID_PATH_REGEX)):
     """Admin gets LiveHost detail"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     host = await db.marketing_livehosts.find_one({'id': host_id}, {'_id': 0, 'password_hash': 0})
     if not host:
         raise HTTPException(404, 'LiveHost tidak ditemukan')
+    # 14 Nov 2026 — toko rekaman dijaga core.marketing_record_scope; tautan toko rekan kerja disembunyikan
+    _vis = await _scope.toko_lingkup(db, user)
+    if _vis is not None:
+        host['assigned_account_ids'] = _scope.saring_toko_terlihat(host.get('assigned_account_ids'), _vis)
 
     # Get assigned accounts detail
     if host.get('assigned_account_ids'):
@@ -570,7 +575,7 @@ async def get_livehost(request: Request, host_id: str = Path(..., regex=UUID_PAT
 @router.patch('/{host_id}')
 async def update_livehost(request: Request, data: LiveHostUpdate, host_id: str = Path(..., regex=UUID_PATH_REGEX)):
     """Admin updates LiveHost"""
-    await require_auth(request)
+    actor = await require_auth(request)
     db = get_db()
 
     host = await db.marketing_livehosts.find_one({'id': host_id}, {'_id': 0})
@@ -601,7 +606,9 @@ async def update_livehost(request: Request, data: LiveHostUpdate, host_id: str =
     if data.product_expertise is not None:
         update_data['product_expertise'] = data.product_expertise
     if data.assigned_account_ids is not None:
-        update_data['assigned_account_ids'] = data.assigned_account_ids
+        # 14 Nov 2026 — hanya toko yang dipegang pemakai yang boleh ditambah/dilepas; tautan toko lain tetap
+        update_data['assigned_account_ids'] = await _scope.gabung_toko_terlihat(
+            db, actor, data.assigned_account_ids, host.get('assigned_account_ids'), apa='host live ini')
     if data.status is not None:
         update_data['status'] = data.status
     if data.notes is not None:
@@ -620,6 +627,10 @@ async def update_livehost(request: Request, data: LiveHostUpdate, host_id: str =
     )
 
     updated_host = await db.marketing_livehosts.find_one({'id': host_id}, {'_id': 0, 'password_hash': 0})
+    _vis = await _scope.toko_lingkup(db, actor)
+    if updated_host and _vis is not None:
+        updated_host['assigned_account_ids'] = _scope.saring_toko_terlihat(
+            updated_host.get('assigned_account_ids'), _vis)
     return serialize_doc({'message': 'LiveHost berhasil diupdate', 'host': updated_host})
 
 

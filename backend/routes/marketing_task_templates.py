@@ -101,13 +101,16 @@ async def list_task_templates(
     is_active: Optional[bool] = Query(None, description="Filter by active status")
 ):
     """List all task templates"""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     
     query = {}
     if is_active is not None:
         query["is_active"] = is_active
     
+    # 14 Nov 2026 (filter toko) — templat toko yang dipegang + templat umum (tanpa toko)
+    from core import marketing_account_scope as _scope
+    query = await _scope.scope_filter_umum(db, user, query)
     templates = await db.marketing_task_templates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     
     return serialize_doc(templates)

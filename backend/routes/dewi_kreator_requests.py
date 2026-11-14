@@ -19,6 +19,7 @@ import uuid
 import re
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from core import marketing_account_scope as _scope
 from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/kreator-requests", tags=["Marketing-Kreator-Requests"])
@@ -47,14 +48,22 @@ VALID_TYPES = {'live_streaming', 'tiktok_video'}
 VALID_STATUSES = {'draft', 'submitted', 'approved_by_rnd', 'sample_ready', 'delivered', 'rejected', 'cancelled'}
 
 
-async def _resolve_links(db, body: dict, creating: bool) -> dict:
-    """Kreator, toko, model, warna, ukuran WAJIB menunjuk master — bukan teks bebas."""
+async def _resolve_links(db, body: dict, creating: bool, user: Optional[dict] = None) -> dict:
+    """Kreator, toko, model, warna, ukuran WAJIB menunjuk master — bukan teks bebas.
+
+    14 Nov 2026 (filter toko): pemakai berlingkup toko hanya boleh memakai toko yang ia pegang dan
+    kreator yang bertugas di tokonya (`core.marketing_account_scope`)."""
     out: dict = {}
+    vis = await _scope.toko_lingkup(db, user) if user is not None else None
     if creating or 'kreator_id' in body:
         kid = (body.get('kreator_id') or '').strip()
         kol = await db.marketing_kol_creators.find_one({'id': kid}, {'_id': 0}) if kid else None
         if not kol:
             raise HTTPException(400, 'Pilih kreator dari Master KOL & Kreator.')
+        kol_toko = kol.get('assigned_account_ids') or []
+        if vis is not None and kol_toko and not set(kol_toko) & set(vis):
+            raise HTTPException(403, f"Kreator '{kol.get('name')}' tidak bertugas di toko yang Anda pegang. "
+                                     + _scope.NO_ACCOUNT_HINT)
         plats = kol.get('platforms') or {}
         out.update(kreator_id=kid, kreator_name=kol.get('name', ''), kreator_code=kol.get('creator_code', ''),
                    kreator_handle=plats.get('tiktok') or plats.get('shopee') or '')
@@ -63,6 +72,8 @@ async def _resolve_links(db, body: dict, creating: bool) -> dict:
         acc = await db.marketing_platform_accounts.find_one({'id': aid}, {'_id': 0}) if aid else None
         if not acc:
             raise HTTPException(400, 'Pilih toko dari Kelola Akun.')
+        if vis is not None:
+            await _scope.assert_account_visible(db, user, aid)
         kid = out.get('kreator_id') or body.get('kreator_id')
         kol = await db.marketing_kol_creators.find_one({'id': kid}, {'_id': 0, 'assigned_account_ids': 1, 'name': 1}) if kid else None
         assigned = (kol or {}).get('assigned_account_ids') or []
@@ -118,6 +129,7 @@ async def list_requests(
             {'product_concept':{'$regex': rx, '$options': 'i'}},
             {'style_code':     {'$regex': rx, '$options': 'i'}},
         ]
+    q = await _scope.saring_lingkup(db, user, q)   # 14 Nov 2026: hanya permintaan toko yang dipegang
     items = await db.dewi_kreator_requests.find(q).sort('created_at', -1).limit(limit).to_list(length=limit)
     return [serialize(it) for it in items]
 
@@ -137,7 +149,7 @@ async def get_request(request_id: str, user: dict = Depends(require_auth)):
 async def create_request(body: dict, user: dict = Depends(require_auth)):
     db = get_db()
 
-    links = await _resolve_links(db, body, creating=True)
+    links = await _resolve_links(db, body, creating=True, user=user)
     kreator_name = links['kreator_name']
     kreator_type = (body.get('kreator_type') or '').strip()
     if kreator_type not in VALID_TYPES:
@@ -203,7 +215,7 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
     upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'requester_id', 'request_code',
                                                      'kreator_name', 'kreator_handle', 'kreator_code', 'account_name',
                                                      'platform', 'model_code', 'model_name')}
-    upd.update(await _resolve_links(db, body, creating=False))
+    upd.update(await _resolve_links(db, body, creating=False, user=user))
     upd['updated_at'] = now_utc()
     if 'kreator_type' in upd and upd['kreator_type'] not in VALID_TYPES:
         raise HTTPException(400, 'kreator_type tidak valid')
@@ -355,11 +367,12 @@ async def delete_request(request_id: str, user: dict = Depends(require_auth)):
 @router.get('/stats/summary')
 async def stats_summary(user: dict = Depends(require_auth)):
     db = get_db()
+    _m = {'$match': await _scope.saring_lingkup(db, user, {})}   # 14 Nov 2026: angka toko yang dipegang saja
     by_status = {}
-    async for row in db.dewi_kreator_requests.aggregate([{'$group': {'_id': '$status', 'count': {'$sum': 1}}}]):
+    async for row in db.dewi_kreator_requests.aggregate([_m, {'$group': {'_id': '$status', 'count': {'$sum': 1}}}]):
         by_status[row['_id']] = row['count']
     by_type = {}
-    async for row in db.dewi_kreator_requests.aggregate([{'$group': {'_id': '$kreator_type', 'count': {'$sum': 1}}}]):
+    async for row in db.dewi_kreator_requests.aggregate([_m, {'$group': {'_id': '$kreator_type', 'count': {'$sum': 1}}}]):
         by_type[row['_id']] = row['count']
     total = sum(by_status.values())
     return {

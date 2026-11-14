@@ -419,8 +419,13 @@ async def list_events(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    # 14 Nov 2026 (filter toko) — payload webhook tidak membawa toko kita, jadi event belum bisa dipetakan
+    # ke toko: staf berlingkup toko tidak diberi daftar lintas toko (detail dijaga core.marketing_record_scope).
+    from core import marketing_account_scope as _scope
+    if _scope.berlingkup_toko(user):
+        return {"ok": True, "total": 0, "data": [], "catatan_lingkup": _scope.CATATAN_TANPA_TOKO}
     filt: dict = {}
     if platform:
         filt["platform"] = platform
@@ -469,8 +474,11 @@ async def reprocess_event(event_id: str, request: Request, background_tasks: Bac
 
 @router.get("/stats")
 async def webhook_stats(request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
+    from core import marketing_account_scope as _scope
+    if _scope.berlingkup_toko(user):     # 14 Nov 2026: event belum terpetakan ke toko (lihat list_events)
+        return {"ok": True, "data": [], "catatan_lingkup": _scope.CATATAN_TANPA_TOKO}
     pipeline = [
         {"$group": {
             "_id": "$platform",

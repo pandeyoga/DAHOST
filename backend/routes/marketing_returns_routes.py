@@ -397,9 +397,11 @@ async def list_returns(
 @router.get("/credit-notes")
 async def list_credit_notes_alias(request: Request):
     """List all credit notes — MOVED here to avoid /{return_id} conflict."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    cns = await db.rahaza_credit_notes.find({}, {"_id": 0}).sort("issue_date", -1).to_list(500)
+    # 14 Nov 2026 (filter toko) — staf berlingkup toko hanya melihat nota kredit tokonya.
+    cns = await db.rahaza_credit_notes.find(await _scope.saring_lingkup(db, user, {}),
+                                            {"_id": 0}).sort("issue_date", -1).to_list(500)
     return {"success": True, "data": serialize(cns)}
 
 
