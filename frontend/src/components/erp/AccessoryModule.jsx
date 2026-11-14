@@ -47,6 +47,9 @@ import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 // 2026-11-02 (K9): tab Stok Opname = layar Sesi Opname bersama (mesin tunggal), terfilter aksesoris
 import WMSOpnameScanModule from './WMSOpnameScanModule';
+// 14 Nov 2026: tab opname mengikuti centang modul opname (dicentang terpisah), bukan centang menu tempatnya menumpang
+import ModuleActionGuard from './portal-shell/ModuleActionGuard';
+import { aksiCentang } from '@/lib/rbac';
 // 2026-11-07 (Tahap 6 HR3): pemohon Request Internal = karyawan dari master (pemilih SDM bersama)
 import { useActiveEmployees, EmployeeSelect } from './hr/hrPickers';
 import PageLayout from './layout/PageLayout';
@@ -905,7 +908,11 @@ function RequestInternalTab({ token, items, title, subtitle }) {
 // bersama (mesin tunggal `core/opname_engine.py`) terfilter jenis aksesoris: hitung buta, per lokasi,
 // "belum dihitung" ≠ 0, satu jurnal per sesi ke 1-1402. Sesi lama tampil sebagai arsip baca-saja.
 function StokOpnameTab({ token }) {
-  return <WMSOpnameScanModule token={token} kind="aksesoris" />;
+  return (
+    <ModuleActionGuard actions={aksiCentang('wh_opname', 'acc_opname')}>
+      <WMSOpnameScanModule token={token} kind="aksesoris" />
+    </ModuleActionGuard>
+  );
 }
 
 // ─── PENUNJUK ARAH: PEMINJAMAN (tab lama dilepas di FASE 10) ─────────────────
@@ -1234,10 +1241,13 @@ export default function AccessoryModule({
     { id:'valuasi',  label:'Valuasi HPP',         Component: AccessoryValuationTab,
       props: { token, onRefreshDash: refreshAll } },
   ];
+  // 14 Nov 2026: tanpa centang Lihat modul opname, tab Stok opname tidak ditampilkan (dulu tampil lalu ditolak server).
+  const bolehOpname = aksiCentang('wh_opname', 'acc_opname').includes('view');
+  const TABS_BOLEH = ALL_TABS.filter(t => t.id !== 'opname' || bolehOpname);
   const TABS = Array.isArray(allowedTabs) && allowedTabs.length
-    ? ALL_TABS.filter(t => allowedTabs.includes(t.id))
-    : ALL_TABS;
-  const scoped = TABS.length !== ALL_TABS.length;
+    ? TABS_BOLEH.filter(t => allowedTabs.includes(t.id))
+    : TABS_BOLEH;
+  const scoped = TABS.length !== TABS_BOLEH.length;
   // "Buka Valuasi HPP" dari form Master hanya bila tab Valuasi ada di pintu ini
   const masterTab = TABS.find(t => t.id === 'master');
   if (masterTab) masterTab.props.onOpenValuation = TABS.some(t => t.id === 'valuasi') ? () => setTab('valuasi') : null;

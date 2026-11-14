@@ -274,3 +274,25 @@ def test_api_cek_akses_penjaga_dan_hasil(monkeypatch):
     pengguna["u"] = {"id": "u3", "role": "superadmin"}
     items = {r["role_id"]: r for r in run(admin.cek_akses_ringkasan(FakeRequest()))["items"]}
     assert set(items) == {"r1", "r2"} and items["r1"]["kuat"] == 0 and items["r2"]["terpisah"] >= 1
+
+
+# ═══════════════════════ tombol layar yang dijaga centang modul lain (frontend, 14 Nov 2026) ═══════════════════════
+def test_kunci_tombol_layar_sama_dengan_aturan_server():
+    """Frontend menyembunyikan tombol ini dengan `punyaCentang(null, kunci)` / `aksiCentang(modul)`; kuncinya HARUS
+    sama dengan yang diminta gerbang server, kalau tidak tombol tampil lalu ditolak (atau hilang padahal boleh)."""
+    pasang = {
+        ("POST", "/api/kirim-cmt/shipments/s1/repost-journal"): "mod.fin_journal.approve",      # KirimanDetail
+        ("POST", "/api/kirim-cmt/nota-aksesoris/n1/potong"): "mod.prod_cmt_billing.approve",    # NotaAksesorisKiriman
+        ("POST", "/api/rahaza/boms/relink-materials"): "mod.prod_master_product.approve",       # RahazaBOMModuleV2
+        ("POST", "/api/dewi/maklon/finance/cmt-payments/b1/resolve-variance"): "mod.mak_billing.approve",
+        ("POST", "/api/rahaza/models"): "mod.prod_master_product.create",                       # Tambah model
+        ("PUT", "/api/rahaza/models/m1"): "mod.prod_master_product.edit",                       # Ubah model
+        ("DELETE", "/api/rahaza/models/m1"): "mod.prod_master_product.delete",                  # Nonaktifkan/Hapus
+        ("POST", "/api/wms/opname3/sessions"): "mod.wh_opname.create",                          # tab Opname
+    }
+    for (method, path), kunci in pasang.items():
+        mod, act = mc.resolve(method, path)
+        assert mc.perm_key(mod["id"], act) == kunci, (method, path)
+    # relink BOM juga lolos lewat Master Produk RnD; opname lewat Opname Aksesoris (aksiCentang memakai keduanya)
+    assert "rnd_master_product" in [m["id"] for m in mc.modul_setara("POST", "/api/rahaza/boms/relink-materials")]
+    assert "acc_opname" in [m["id"] for m in mc.modul_setara("POST", "/api/wms/opname3/sessions")]

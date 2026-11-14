@@ -16,6 +16,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState, Notice } from './moduleAtoms';
 import { InlineMaterialPicker } from './bom/InlineMaterialPicker';
 import { VersionRail } from './bom/VersionRail';
+import { punyaCentang } from '@/lib/rbac';
 import { RequirementsPreviewCard } from './bom/RequirementsPreviewCard';
 import { BomShortcuts } from './bom/BomShortcuts';
 import { typeToCategory, categoryToStoredType, isKgLike } from '@/lib/itemTaxonomy';
@@ -100,6 +101,8 @@ export default function RahazaBOMModuleV2({ token }) {
     } catch { /* noop */ }
   }, [token]);
 
+  // 14 Nov 2026: tautkan ulang material BOM = centang Setujui di Master Produk (Produksi) atau Master Produk RnD
+  const bolehRelink = punyaCentang(null, 'mod.prod_master_product.approve', 'mod.rnd_master_product.approve');
   const runRelink = async () => {
     setRelinking(true);
     try {
@@ -437,13 +440,13 @@ export default function RahazaBOMModuleV2({ token }) {
               <> — termasuk {linkHealth.unlinked_accessory_lines} baris aksesoris</>
             )}.
           </>}
-          action={
+          action={bolehRelink && (
             <Button type="button" size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
               <Wrench className="w-3.5 h-3.5" />
               {relinking ? 'Menautkan...' : 'Perbaiki Otomatis'}
             </Button>
-          }>
+          )}>
           <p className="text-xs">
             Baris yang tidak tertaut membuat kebutuhan material tidak bisa dipotong dari stok yang benar
             (nama/kode gampang beda dengan master). Perbaikan otomatis akan menautkan baris yang
@@ -452,13 +455,13 @@ export default function RahazaBOMModuleV2({ token }) {
         </Notice>
       ) : (
         <Notice tone="success" testId="bom-link-health-banner" title="Kaitan BOM sehat"
-          action={
+          action={bolehRelink && (
             <Button type="button" size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
               <Wrench className="w-3.5 h-3.5" />
               {relinking ? 'Memeriksa…' : 'Periksa ulang'}
             </Button>
-          }>
+          )}>
           <p>
             {linkHealth.total_lines} baris material ({linkHealth.accessory_lines} aksesoris) di{' '}
             {linkHealth.total_boms} BOM sudah tertaut ke master material.

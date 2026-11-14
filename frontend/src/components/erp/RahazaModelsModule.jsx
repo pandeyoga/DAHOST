@@ -20,6 +20,7 @@ import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.
 import { MoneyInput } from '@/components/ui/money-input';
 import { apiDelete } from '../../lib/api';
 import { hapusMaster } from '../../lib/hapusMaster';
+import { punyaCentang } from '@/lib/rbac';
 
 // Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
@@ -325,6 +326,9 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
 // Tahap 9 (7 Nov 2026): `renderPage(slots, body)` — halaman pemanggil (Portal Produksi › Master Produk) memegang
 // cetakan PageLayout; modul ini hanya mengisi slotnya (penyaring, alat, tombol utama, ringkasan).
 export default function RahazaModelsModule({ token, onNavigate, embedded = false, renderPage = null }) {
+  // 14 Nov 2026 (keputusan owner, PR #74): tambah/ubah/nonaktifkan/hapus MODEL mengikuti centang Produksi ›
+  // Master Produk — juga saat layar ini tampil di Master Produk RnD. Tanpa centang itu tombolnya tidak ditampilkan.
+  const bolehModel = (aksi) => punyaCentang(null, `mod.prod_master_product.${aksi}`);
   const [rows, setRows] = useState([]);
   const [categories, setCategories] = useState([]);
   const [catFilter, setCatFilter] = useState('');
@@ -539,20 +543,24 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       key: 'actions', label: 'Aksi',
       render: (row) => (
         <div className="flex items-center gap-1">
+          {bolehModel('edit') && (
           <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); openEdit(row); }}
             title="Ubah" aria-label={`Ubah model ${row.code}`} data-testid={`model-edit-${row.code}`}>
             <Pencil className="w-3.5 h-3.5" />
           </Button>
-          {row.active !== false && (
+          )}
+          {row.active !== false && bolehModel('delete') && (
             <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
               title="Nonaktifkan" aria-label={`Nonaktifkan model ${row.code}`} data-testid={`model-deactivate-${row.code}`}>
               <Ban className="w-3.5 h-3.5" />
             </Button>
           )}
+          {bolehModel('delete') && (
           <Button type="button" variant="ghost" size="icon-sm" onClick={(e) => { e.stopPropagation(); handleHapus(row); }}
             title="Hapus" aria-label={`Hapus model ${row.code}`} data-testid={`model-delete-${row.code}`}>
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
+          )}
         </div>
       ),
     },
@@ -567,7 +575,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
     </SmartNativeSelect>
   );
   const importExport = <ImportExportToolbar collectionKey="models" label="Model Produk" onImported={fetchRows} />;
-  const createBtn = (
+  const createBtn = bolehModel('create') && (
     <Button type="button" onClick={openCreate} className="gap-1.5" data-testid="model-create-btn">
       <Plus className="w-4 h-4" /> Tambah model
     </Button>

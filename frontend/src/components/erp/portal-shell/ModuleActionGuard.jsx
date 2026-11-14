@@ -24,9 +24,11 @@ export function classifyAction(el) {
   return null;
 }
 
-export default function ModuleActionGuard({ moduleId, children }) {
+// `actions` (opsional, 14 Nov 2026): daftar aksi yang boleh, dipakai layar modul lain yang menumpang di menu ini
+// (mis. tab Opname → centang modul opname). Tanpa prop = aksi menu `moduleId` seperti dulu.
+export default function ModuleActionGuard({ moduleId, actions = null, children }) {
   const ref = useRef(null);
-  const acts = moduleActions(moduleId);
+  const acts = Array.isArray(actions) ? actions : moduleActions(moduleId);
   const key = acts ? acts.join(',') : '';
 
   useEffect(() => {

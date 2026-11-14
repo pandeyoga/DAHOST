@@ -1034,9 +1034,14 @@ def menu_access(keys, is_super: bool = False) -> tuple[list, dict]:
     for mod in MODULES:
         for menu in mod["menus"]:
             dimiliki.setdefault(menu, set()).update(mod["actions"])
+    # Diperketat 14 Nov (owner: "saya tidak ingin ada seperti ini dimanapun"): aksi tak-dimiliki yang layanannya
+    # TERPETA (peta menu → layanan) hanya muncul lewat arah balik di bawah — yaitu bila peran memang memegang kunci
+    # yang meloloskan layanan itu. Dulu semua aksi tak-dimiliki selalu tampil, sehingga mis. Host Live melihat tombol
+    # Input biaya iklan lalu ditolak. Aksi yang layanannya tidak terpeta tetap tampil seperti PR #78.
     for menu, acts in list(access.items()):
         if "view" in acts:
-            access[menu] = sorted(set(acts) | (set(ACTIONS) - dimiliki.get(menu, set())))
+            terpeta = {a for a, _ in _LAYANAN_MENU.get(menu, ())}
+            access[menu] = sorted(set(acts) | (set(ACTIONS) - dimiliki.get(menu, set()) - terpeta))
     hidden = sorted(m for m, acts in access.items() if "view" not in acts)
     # 14 Nov 2026 (arah balik, owner: tombol "Input biaya iklan" di Laporan Marketing tidak tampil walau server
     # meloloskannya): aksi efektif menu = centang modul pemilik menu DITAMBAH aksi layanan yang dipanggil layar menu

@@ -70,6 +70,18 @@ export function punyaCentang(hasPerm, ...keys) {
   } catch { return false; }
 }
 
+const AKSI_MODUL = ['view', 'create', 'edit', 'delete', 'approve', 'export'];
+
+/**
+ * 14 Nov 2026 — aksi yang dicentang owner pada SALAH SATU modul yang disebut (mis. opname gudang / opname aksesoris).
+ * Untuk layar milik modul yang dicentang terpisah tetapi tampil menumpang di menu lain (tab Opname di Stok & Akurasi
+ * dan di Aksesoris): tombolnya mengikuti centang modul itu, bukan centang menu tempatnya menumpang.
+ */
+export function aksiCentang(...modul) {
+  const ids = modul.flat().filter(Boolean);
+  return AKSI_MODUL.filter((a) => punyaCentang(null, ids.map((m) => `mod.${m}.${a}`)));
+}
+
 /**
  * RequirePerm — render children hanya bila izin dimiliki.
  */

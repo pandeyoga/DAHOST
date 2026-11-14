@@ -1,6 +1,8 @@
 import React, { lazy } from 'react';
 import { lazyRetry } from '../../../lib/lazyRetry';
 import HubTabs from './HubTabs';
+import ModuleActionGuard from '../portal-shell/ModuleActionGuard';
+import { aksiCentang } from '../../../lib/rbac';
 
 // RC-IA-warehouse-1 (Opsi A) — konsolidasi 4 modul "STOK & AKURASI" gudang → 1 hub.
 // Menghilangkan kebingungan "pintu mana yang benar" untuk stok yang sama (SSOT rahaza_material_stock / unified).
@@ -19,6 +21,17 @@ const StockSchemaHealthModule = lazyRetry(() => import('../StockSchemaHealthModu
 const NegativeStockModule = lazyRetry(() => import('../NegativeStockModule'));
 const WMSPositionsTab = lazyRetry(() => import('../WMSModule').then(m => ({ default: m.PositionsTab })));
 
+// 14 Nov 2026 (owner: "saya tidak ingin ada seperti ini dimanapun"): Opname dicentang terpisah (modul Opname Stok
+// Gudang / Opname Aksesoris). Tab ini mengikuti centang modul itu: tanpa Lihat tab tidak tampil, dan tombolnya
+// (Opname baru, Setujui, …) mengikuti aksi yang dicentang — bukan centang menu Stok & Akurasi tempatnya menumpang.
+function OpnameTab(props) {
+  return (
+    <ModuleActionGuard actions={aksiCentang('wh_opname', 'acc_opname')}>
+      <WMSOpnameScanModule {...props} />
+    </ModuleActionGuard>
+  );
+}
+
 export default function WMSStockHub(props) {
   return (
     <HubTabs
@@ -28,7 +41,8 @@ export default function WMSStockHub(props) {
       tabs={[
         { key: 'viewer', label: 'Daftar stok', Component: UnifiedInventoryModule },  // Tahap 9C: + Kepemilikan (DA / titipan klien)
         { key: 'stock', label: 'Stok & pergerakan', Component: RahazaStockModule },
-        { key: 'opname', label: 'Opname stok', Component: WMSOpnameScanModule },
+        ...(aksiCentang('wh_opname', 'acc_opname').includes('view')
+          ? [{ key: 'opname', label: 'Opname stok', Component: OpnameTab }] : []),
         { key: 'negative', label: 'Stok minus', Component: NegativeStockModule },
         { key: 'adjust', label: 'Penyesuaian', Component: InventoryScrapModule },
         { key: 'positions', label: 'Posisi & cari', Component: WMSPositionsTab },
