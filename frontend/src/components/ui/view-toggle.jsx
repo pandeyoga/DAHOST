@@ -6,6 +6,9 @@
  * sehingga terlihat seperti filter (audit 4 Nov 2026).
  *
  *   <ViewToggle value={view} onChange={setView} />
+ *
+ * `denganTeks` (16 Nov 2026): tombol memuat tulisan (`pendek` atau `label`) di samping ikon — dipakai bila pilihan
+ * tampilan berisi LAYAR LAIN (mis. Hutang: Daftar hutang | Posisi per CMT), supaya tidak tersembunyi sebagai ikon saja.
  */
 import { LayoutGrid, Table2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -16,7 +19,7 @@ export const DEFAULT_VIEWS = [
   { key: 'grid', label: 'Tampilan kartu', icon: LayoutGrid },
 ];
 
-export default function ViewToggle({ value, onChange, options = DEFAULT_VIEWS, testId = 'view-toggle' }) {
+export default function ViewToggle({ value, onChange, options = DEFAULT_VIEWS, testId = 'view-toggle', denganTeks = false }) {
   return (
     <div role="group" aria-label="Bentuk tampilan" data-testid={testId} data-view-toggle=""
       className="inline-flex items-center gap-0.5 h-9 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-0.5">
@@ -24,10 +27,11 @@ export default function ViewToggle({ value, onChange, options = DEFAULT_VIEWS, t
         const Icon = o.icon;
         const on = value === o.key;
         return (
-          <Button key={o.key} type="button" variant="ghost" size="icon-sm" aria-pressed={on} title={o.label} aria-label={o.label}
-            onClick={() => onChange(o.key)} data-testid={`${testId}-${o.key}`}
-            className={cn('h-7 w-7', on ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground')}>
+          <Button key={o.key} type="button" variant="ghost" size={denganTeks ? 'sm' : 'icon-sm'} aria-pressed={on} title={o.label}
+            aria-label={o.label} onClick={() => onChange(o.key)} data-testid={`${testId}-${o.key}`}
+            className={cn(denganTeks ? 'h-7 gap-1.5 px-2.5 text-xs' : 'h-7 w-7', on ? 'bg-foreground/10 text-foreground' : 'text-muted-foreground')}>
             <Icon className="w-4 h-4" />
+            {denganTeks && <span>{o.pendek || o.label}</span>}
           </Button>
         );
       })}

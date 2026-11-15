@@ -51,8 +51,8 @@ import PosisiKlien from './PosisiKlien';
 const fmt = formatRupiah;
 /** Bentuk tampilan Piutang: daftar semua piutang · posisi per klien maklon (16 Nov 2026). */
 export const TAMPILAN_PIUTANG = [
-  { key: 'daftar', label: 'Daftar semua piutang', icon: List },
-  { key: 'klien', label: 'Posisi per klien maklon (tagihan & pembayaran gabungan)', icon: Building2 },
+  { key: 'daftar', label: 'Daftar semua piutang', pendek: 'Daftar piutang', icon: List },
+  { key: 'klien', label: 'Posisi per klien maklon (tagihan & pembayaran gabungan)', pendek: 'Posisi per klien', icon: Building2 },
 ];
 
 export const STATUS_PIUTANG = {
@@ -387,7 +387,7 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
   const bukaBayar = (r) => { setRincian(null); setBayar(r); };
   const kolom = 8;
   const pilihTampilan = (
-    <ViewToggle value={tampilan} onChange={setTampilan} options={TAMPILAN_PIUTANG} testId="piutang-tampilan" />
+    <ViewToggle value={tampilan} onChange={setTampilan} options={TAMPILAN_PIUTANG} testId="piutang-tampilan" denganTeks />
   );
   if (tampilan === 'klien') return <PosisiKlien token={token} hasPerm={hasPerm} toggle={pilihTampilan} />;
 

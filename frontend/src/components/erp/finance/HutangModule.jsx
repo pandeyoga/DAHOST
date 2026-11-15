@@ -53,8 +53,8 @@ import PosisiCmt from './PosisiCmt';
 const fmt = formatRupiah;
 /** Bentuk tampilan Hutang: daftar semua hutang · posisi per CMT (16 Nov 2026). */
 export const TAMPILAN_HUTANG = [
-  { key: 'daftar', label: 'Daftar semua hutang', icon: List },
-  { key: 'cmt', label: 'Posisi per CMT (boleh dibayar)', icon: Users },
+  { key: 'daftar', label: 'Daftar semua hutang', pendek: 'Daftar hutang', icon: List },
+  { key: 'cmt', label: 'Posisi per CMT (boleh dibayar)', pendek: 'Posisi per CMT', icon: Users },
 ];
 
 export const STATUS_HUTANG = {
@@ -336,7 +336,7 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
     ) : <RincianTerjadwal row={rincian} onClose={() => setRincian(null)} />
   );
   const pilihTampilan = (
-    <ViewToggle value={tampilan} onChange={(k) => { setCariCmt(''); setTampilan(k); }} options={TAMPILAN_HUTANG} testId="hutang-tampilan" />
+    <ViewToggle value={tampilan} onChange={(k) => { setCariCmt(''); setTampilan(k); }} options={TAMPILAN_HUTANG} testId="hutang-tampilan" denganTeks />
   );
   if (tampilan === 'cmt') {
     return <PosisiCmt key={cariCmt} token={token} hasPerm={hasPerm} toggle={pilihTampilan} cariAwal={cariCmt} />;
