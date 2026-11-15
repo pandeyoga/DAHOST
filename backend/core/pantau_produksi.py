@@ -13,7 +13,7 @@ dan angkanya berbeda di layar yang sama:
 * Pusat Kendali, Monitoring CMT, dan Kapasitas tidak disaring per jenis PO.
 
 Modul ini menghitung angka PER BARIS PO (po_item) sekali, dari dokumen sumber, lalu semua tab
-(Ringkasan, Per vendor, Per PO, Kejar CMT, Kapasitas) dan Laporan Selisih menjumlahkannya.
+(Ringkasan, Per produk, Per vendor, Per PO, Kejar CMT, Kapasitas) dan Laporan Selisih menjumlahkannya.
 Angka hilir produksi (produksi, QC, permak, kirim) DIAMBIL dari SSOT `core.dispatch_capacity.
 po_item_quantities` — modul ini hanya menambah sisi bahan (potongan dikirim, diterima CMT) yang
 belum ada di sana. Tidak menulis apa pun.
@@ -212,6 +212,8 @@ def build_line(po: dict, item: dict, q: dict, m: dict) -> Dict[str, Any]:
         "customer_name": po.get("customer_name") or "",
         "serial_number": item.get("serial_number") or q.get("serial_number") or "",
         "sku": item.get("sku") or q.get("sku") or "", "product_name": item.get("product_name") or "",
+        # master produk baris ini (tab Per produk): internal = model, maklon = artikel katalog klien
+        "model_id": item.get("model_id") or "", "catalog_item_id": item.get("catalog_item_id") or "",
         "size": item.get("size") or "", "color": item.get("color") or "",
         "ordered": ordered,
         "not_sent": max(0, ordered - sent_cmt),
@@ -684,6 +686,174 @@ async def per_vendor(db, bt: Optional[str], *, running: Optional[bool] = True,
         })
     out.sort(key=lambda v: (-v["di_cmt"], -v["po_count"], v["vendor_name"]))
     return {"business_type": b, "count": len(out), "rows": out}
+
+
+# ─── per produk (tab Per produk — pengganti lembar Google Sheet "SISA POTONGAN") ──
+# Owner 16 Nov 2026: tinjauan yang langsung fokus pada PRODUK yang ada di CMT (bukan PO / vendor). Baris utama =
+# produk (model internal / artikel katalog klien maklon); rincian = satu baris PO (warna × ukuran × CMT × kode
+# potongan). Angka TIDAK dihitung ulang: semua dari `po_lines` (= tab Per vendor / Kejar CMT / Ringkasan):
+#   dikirim     = potongan NORMAL ke CMT (`sent_cmt`; saldo awal cutoff ikut, tanggalnya = tanggal surat jalan)
+#   setor/reject= penerimaan CMT yang SELESAI QC (`good_from_cmt` = Σ qty_actual, `reject` = Σ reject_qty)
+#   sisa di CMT = `di_cmt` = dikirim − setoran selesai QC − sedang QC (tidak pernah negatif)
+#   lebih setor = setoran + sedang QC melebihi semua potongan yang dikirim (termasuk kiriman tambahan/pengganti)
+UMUR_BUCKETS = ("0-7", "8-14", "lebih14")      # label layar: 0–7 hari · 8–14 hari · lebih dari 14 hari
+KEADAAN_PRODUK = ("di_cmt", "selesai", "semua")
+
+
+def umur_bucket(days: Optional[int]) -> str:
+    """Pita umur potongan di CMT (SOP lembar SISA POTONGAN): 0–7 hari · 8–14 hari · lebih dari 14 hari."""
+    if days is None:
+        return ""
+    if days <= 7:
+        return "0-7"
+    return "8-14" if days <= 14 else "lebih14"
+
+
+def produk_key(ln: Dict[str, Any], bt: str) -> str:
+    """Kunci kelompok produk: internal → model, maklon → artikel katalog klien; lalu yang lain; lalu nama produk."""
+    model, katalog = ln.get("model_id") or "", ln.get("catalog_item_id") or ""
+    order = (("katalog", katalog), ("model", model)) if bt == BT_MAKLON else (("model", model), ("katalog", katalog))
+    for prefix, val in order:
+        if val:
+            return f"{prefix}:{val}"
+    return "nama:" + " ".join(str(ln.get("product_name") or "").lower().split())
+
+
+def batch_key(r: Dict[str, Any]) -> str:
+    """Satu batch = satu kode potongan di satu PO (tanpa kode → baris PO itu sendiri)."""
+    return f"{r.get('po_id')}|{r.get('serial_number') or r.get('po_item_id')}"
+
+
+def produk_row(ln: Dict[str, Any], today: date) -> Dict[str, Any]:
+    """Satu baris rincian tab Per produk dari satu baris PO `build_line` (fungsi murni)."""
+    sent, extra = _i(ln.get("sent_cmt")), _i(ln.get("sent_extra"))
+    returned, in_qc = _i(ln.get("returned")), _i(ln.get("in_qc"))
+    sisa = _i(ln.get("di_cmt"))
+    d = _to_date(ln.get("first_sent"))
+    umur = (today - d).days if (d and sisa > 0) else None
+    return {
+        "po_item_id": ln.get("po_item_id"), "po_id": ln.get("po_id"), "po_number": ln.get("po_number") or "",
+        "vendor_id": ln.get("vendor_id") or "", "vendor_name": ln.get("vendor_name") or "",
+        "customer_name": ln.get("customer_name") or "",
+        "serial_number": ln.get("serial_number") or "", "sku": ln.get("sku") or "",
+        "color": ln.get("color") or "", "size": ln.get("size") or "",
+        "tanggal_kirim": d.isoformat() if d else None,
+        "dikirim": sent, "dikirim_tambahan": extra,
+        "setor": _i(ln.get("good_from_cmt")), "reject": _i(ln.get("reject")), "sedang_qc": in_qc,
+        "disetor": returned, "sisa": sisa,
+        "lebih_setor": max(0, returned + in_qc - sent - extra),
+        "klaim_belum_sampai": _i(ln.get("cmt_short_open")),
+        "umur_hari": umur, "umur": umur_bucket(umur),
+    }
+
+
+async def _produk_names(db, lines: List[dict]) -> Dict[str, Dict[str, str]]:
+    """{produk_key: {nama, kode}} dari master model (internal) dan katalog klien (maklon) — kueri ber-$in."""
+    model_ids = sorted({ln["model_id"] for ln in lines if ln.get("model_id")})
+    cat_ids = sorted({ln["catalog_item_id"] for ln in lines if ln.get("catalog_item_id")})
+    out: Dict[str, Dict[str, str]] = {}
+    if model_ids:
+        async for m in db.rahaza_models.find({"id": {"$in": model_ids}}, {"_id": 0, "id": 1, "name": 1, "code": 1}):
+            out[f"model:{m['id']}"] = {"nama": m.get("name") or "", "kode": m.get("code") or ""}
+    if cat_ids:
+        async for c in db.dewi_maklon_buyer_catalog.find({"id": {"$in": cat_ids}},
+                                                         {"_id": 0, "id": 1, "product_name": 1, "artikel_code": 1}):
+            out[f"katalog:{c['id']}"] = {"nama": c.get("product_name") or "", "kode": c.get("artikel_code") or ""}
+    return out
+
+
+def _sum_rows(rows: List[dict], fields: Iterable[str]) -> Dict[str, int]:
+    return {f: sum(_i(r.get(f)) for r in rows) for f in fields}
+
+
+PRODUK_SUM = ("sisa", "dikirim", "dikirim_tambahan", "setor", "reject", "sedang_qc", "lebih_setor")
+
+
+async def per_produk(db, bt: Optional[str], *, search: str = "", vendor_id: str = "", klien_id: str = "",
+                     umur: str = "", keadaan: str = "di_cmt", today: Optional[date] = None) -> Dict[str, Any]:
+    """Tab Per produk: produk → (warna × ukuran × CMT × kode potongan) yang masih di CMT, dari PO berjalan.
+
+    `keadaan`: di_cmt (bawaan, sisa > 0) · selesai (sisa 0) · semua. `umur`: 0-7 · 8-14 · lebih14 (hari sejak
+    kirim pertama). `klien_id` (maklon) = `buyer_id` PO, atau nama pemesan bila PO tanpa `buyer_id`. PO batal /
+    selesai / ditutup tidak ikut (`load_pos(running=True)`); baris PO yang belum pernah dikirimi potongan tidak ikut."""
+    from utils.waktu import today_wib
+    today = today or today_wib()
+    b = norm_bt(bt) or BT_INTERNAL
+    keadaan = keadaan if keadaan in KEADAAN_PRODUK else "di_cmt"
+    pos = await load_pos(db, b, running=True)
+    po_by_id = {p["id"]: p for p in pos}
+    lines = [ln for ln in await po_lines(db, pos)
+             if ln["sent_cmt"] > 0 or ln["returned"] + ln["in_qc"] > 0]
+    names = await _produk_names(db, lines)
+    base: List[Dict[str, Any]] = []
+    for ln in lines:
+        po = po_by_id.get(ln["po_id"]) or {}
+        key = produk_key(ln, b)
+        meta = names.get(key) or {}
+        r = produk_row(ln, today)
+        r.update({"produk_key": key, "produk_nama": meta.get("nama") or ln.get("product_name") or "(nama produk kosong)",
+                  "produk_kode": meta.get("kode") or "",
+                  "klien_id": po.get("buyer_id") or po.get("customer_name") or "",
+                  "klien_nama": po.get("customer_name") or ""})
+        base.append(r)
+
+    scoped = [r for r in base
+              if (not vendor_id or r["vendor_id"] == vendor_id)
+              and (not klien_id or r["klien_id"] == klien_id)
+              and _match(search, r["produk_nama"], r["produk_kode"], r["serial_number"], r["sku"], r["po_number"],
+                         r["color"], r["vendor_name"])]
+    keadaan_counts = {"di_cmt": sum(1 for r in scoped if r["sisa"] > 0),
+                      "selesai": sum(1 for r in scoped if r["sisa"] <= 0), "semua": len(scoped)}
+    shown = [r for r in scoped if keadaan == "semua" or (r["sisa"] > 0) == (keadaan == "di_cmt")]
+    umur_counts = {k: sum(1 for r in shown if r["umur"] == k) for k in UMUR_BUCKETS}
+    if umur in UMUR_BUCKETS:
+        shown = [r for r in shown if r["umur"] == umur]
+
+    groups: Dict[str, Dict[str, Any]] = {}
+    for r in shown:
+        groups.setdefault(r["produk_key"], {"produk_key": r["produk_key"], "produk_nama": r["produk_nama"],
+                                            "produk_kode": r["produk_kode"], "rows": []})["rows"].append(r)
+    produk = []
+    for g in groups.values():
+        rows = sorted(g["rows"], key=lambda r: (r["tanggal_kirim"] or "9999-99-99", r["vendor_name"],
+                                                r["serial_number"], r["color"], r["size"]))
+        di_cmt = [r for r in rows if r["sisa"] > 0]
+        umur_hari = max((r["umur_hari"] for r in di_cmt if r["umur_hari"] is not None), default=None)
+        produk.append({
+            **{k: g[k] for k in ("produk_key", "produk_nama", "produk_kode")},
+            **_sum_rows(rows, PRODUK_SUM),
+            "cmt_count": len({r["vendor_id"] or r["vendor_name"] for r in rows}),
+            "batch_count": len({batch_key(r) for r in rows}),
+            "baris_lebih_setor": sum(1 for r in rows if r["lebih_setor"] > 0),
+            "tanggal_kirim_tertua": min((r["tanggal_kirim"] for r in di_cmt if r["tanggal_kirim"]), default=None),
+            "umur_hari": umur_hari, "umur": umur_bucket(umur_hari),
+            "klien": sorted({r["klien_nama"] for r in rows if r["klien_nama"]}) if b == BT_MAKLON else [],
+            "rows": rows,
+        })
+    produk.sort(key=lambda p: (-p["sisa"], -(p["umur_hari"] if p["umur_hari"] is not None else -1),
+                               p["produk_nama"].lower()))
+    lebih = [r for r in scoped if r["lebih_setor"] > 0]
+    summary = {
+        **_sum_rows(shown, PRODUK_SUM),
+        "produk": len(produk), "baris": len(shown),
+        "cmt": len({r["vendor_id"] or r["vendor_name"] for r in shown if r["sisa"] > 0}),
+        "batch": len({batch_key(r) for r in shown}),
+        "batch_lama": len({batch_key(r) for r in shown if r["umur"] == "lebih14"}),
+        "lebih_setor_baris": len(lebih), "lebih_setor_pcs": sum(r["lebih_setor"] for r in lebih),
+    }
+    # pilihan saringan dari SEMUA baris portal ini (tidak hilang saat saringan lain dipakai)
+    vendors: Dict[str, str] = {}
+    klien: Dict[str, str] = {}
+    for r in base:
+        if r["vendor_id"]:
+            vendors.setdefault(r["vendor_id"], r["vendor_name"] or r["vendor_id"])
+        if b == BT_MAKLON and r["klien_id"]:
+            klien.setdefault(r["klien_id"], r["klien_nama"] or r["klien_id"])
+    return {"business_type": b, "as_of": today.isoformat(), "keadaan": keadaan, "umur": umur or "",
+            "count": len(produk), "rows": produk, "summary": summary,
+            "keadaan_counts": keadaan_counts, "umur_counts": umur_counts,
+            "vendors": [{"id": k, "name": v} for k, v in sorted(vendors.items(), key=lambda x: x[1].lower())],
+            "klien": [{"id": k, "name": v} for k, v in sorted(klien.items(), key=lambda x: x[1].lower())]}
 
 
 # ─── Laporan Selisih otomatis per baris PO ──────────────────────────────────

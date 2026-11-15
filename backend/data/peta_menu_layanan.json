@@ -7210,6 +7210,10 @@
   ],
   [
    "GET",
+   "/api/pantau/produk"
+  ],
+  [
+   "GET",
    "/api/pantau/ringkasan"
   ],
   [
