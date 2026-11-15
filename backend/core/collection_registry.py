@@ -754,6 +754,11 @@ _LOG += " pantau_aktivitas_harian "
 REGISTRY.update({"marketing_sku_usulan": "marketing"})
 _LOG += " marketing_sku_usulan "
 # ── akhir Usulan AI Jembatan SKU ──
+# 2026-11-16 — Keuangan › Hutang/Piutang: tagihan klien maklon GABUNGAN (dokumen, tanpa jurnal; `core.tagihan_klien`)
+# dan bukti pembayaran GABUNGAN (bayar satu CMT / terima satu klien untuk beberapa dokumen; `core.alokasi_bayar`).
+REGISTRY.update({"dewi_tagihan_klien": "maklon", "dewi_pembayaran_gabungan": "finance"})
+_TRANSAKSI += " dewi_tagihan_klien dewi_pembayaran_gabungan "
+# ── akhir tagihan & pembayaran gabungan ──
 
 
 def _kind_table() -> dict[str, str]:

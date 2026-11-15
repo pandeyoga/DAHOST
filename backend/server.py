@@ -943,6 +943,9 @@ app.include_router(rahaza_ar_360_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 # Maklon Finance Integration (Phase 4 — Fix AR/AP GL gap)
 from routes.dewi_maklon_finance import router as dewi_maklon_finance_router
 app.include_router(dewi_maklon_finance_router, dependencies=_DENY_MKT)
+# 16 Nov 2026: posisi per CMT / per klien, bayar & terima gabungan, tagihan klien gabungan (Keuangan › Hutang/Piutang)
+from routes.keuangan_gabungan import router as keuangan_gabungan_router
+app.include_router(keuangan_gabungan_router, dependencies=_DENY_MKT)
 
 # Fase 3B: Sample Management + QC Tracking
 from routes.dewi_maklon_samples import router as dewi_maklon_samples_router

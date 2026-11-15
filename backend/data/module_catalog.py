@@ -538,6 +538,8 @@ ENDPOINT_RULES: list[tuple[str, str, str, str]] = [
     ("POST", r"/api/finance/petty-cash/advances/[^/]+/settle", "fin_pencairan", "approve"),
     ("POST", r"/api/rahaza/ap-invoices/[^/]+/payment", "fin_pencairan", "approve"),
     ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/pay", "fin_pencairan", "approve"),
+    # 16 Nov 2026: bayar SATU CMT untuk beberapa tagihan sekaligus (satu bukti) = kotak centang yang sama dengan Bayar.
+    ("POST", r"/api/dewi/maklon/finance/cmt-bayar-gabungan", "fin_pencairan", "approve"),
     ("POST", r"/api/dewi/maklon/finance/cmt-payments/[^/]+/disbursements/[^/]+/void", "fin_pencairan", "approve"),
     # 14 Nov 2026 (riset buku panduan): keputusan selisih tagihan CMT (Potong dari tagihan / Bayar penuh) dulu
     # terbaca "Lihat" karena kata "resolve" — cukup centang Lihat untuk memutus uang. Sama dengan jurnal tagihan CMT.

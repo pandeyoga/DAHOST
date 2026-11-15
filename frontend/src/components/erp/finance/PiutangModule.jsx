@@ -11,9 +11,13 @@
  * Penyaring: status (Belum lunas bawaan · Terjadwal · Belum dibayar · Dibayar sebagian · Lewat jatuh tempo · Lunas ·
  * Semua), jenis, nama klien/pelanggan, cari; CV = pilihan CV Portal Keuangan di atas (Gabungan → kolom CV).
  * Rincian = popup. "Rekening koran" = tombol halaman. Hapus buku piutang macet = tombol di baris yang lewat jatuh tempo.
+ *
+ * 16 Nov 2026 (owner): tampilan kedua "Posisi per klien maklon" (pilihan bentuk tampilan di kanan toolbar, bukan tab)
+ * — komitmen, dikirim, ditagih, dibayar, boleh ditagih; tagihan klien gabungan + terima pembayaran gabungan
+ * (`./PosisiKlien`).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, Banknote, History, MoreHorizontal, RefreshCw, Search, ShieldAlert, Users } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Banknote, Building2, History, List, MoreHorizontal, RefreshCw, Search, ShieldAlert, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -21,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TombolUnduh from '@/components/ui/tombol-unduh';
+import ViewToggle from '@/components/ui/view-toggle';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import DatePicker from '@/components/ui/date-picker';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -41,8 +46,14 @@ import { formatDateID, formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
 import { ambilPetunjukTab } from '../hubs/petunjukTab';
 import { KELOMPOK_KIRIM, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
+import PosisiKlien from './PosisiKlien';
 
 const fmt = formatRupiah;
+/** Bentuk tampilan Piutang: daftar semua piutang · posisi per klien maklon (16 Nov 2026). */
+export const TAMPILAN_PIUTANG = [
+  { key: 'daftar', label: 'Daftar semua piutang', icon: List },
+  { key: 'klien', label: 'Posisi per klien maklon (tagihan & pembayaran gabungan)', icon: Building2 },
+];
 
 export const STATUS_PIUTANG = {
   terjadwal: { label: 'Terjadwal', tone: 'info' },
@@ -300,7 +311,7 @@ function RincianFaktur({ row, token, onClose, onPay }) {
 }
 
 // ─── Layar ─────────────────────────────────────────────────────────────────────
-export default function PiutangModule({ token, initialStatus, onNavigate }) {
+export default function PiutangModule({ token, initialStatus, onNavigate, hasPerm }) {
   const cv = useCvOr();
   const gabungan = cv === CV_ALL;
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -315,6 +326,7 @@ export default function PiutangModule({ token, initialStatus, onNavigate }) {
   const [bayar, setBayar] = useState(null);
   const [hapusBuku, setHapusBuku] = useState(null);
   const [rekeningKoran, setRekeningKoran] = useState(null);
+  const [tampilan, setTampilan] = useState('daftar');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -374,6 +386,10 @@ export default function PiutangModule({ token, initialStatus, onNavigate }) {
   const bisaTandaiLewat = (r) => r.src === 'ar' && r.jenis === 'reseller' && ['sent', 'issued'].includes(r.raw.status) && Number(r.terlambat) > 0;
   const bukaBayar = (r) => { setRincian(null); setBayar(r); };
   const kolom = 8;
+  const pilihTampilan = (
+    <ViewToggle value={tampilan} onChange={setTampilan} options={TAMPILAN_PIUTANG} testId="piutang-tampilan" />
+  );
+  if (tampilan === 'klien') return <PosisiKlien token={token} hasPerm={hasPerm} toggle={pilihTampilan} />;
 
   return (
     <PageLayout
@@ -401,6 +417,7 @@ export default function PiutangModule({ token, initialStatus, onNavigate }) {
           hideWhenEmpty={false} options={pilStatus} />
       </>}
       tools={<>
+        {pilihTampilan}
         <TombolUnduh namaBerkas={`piutang-${todayWIB()}`} namaLembar="Piutang" baris={rows} testId="piutang-unduh"
           kolom={[
             { label: 'Nomor', nilai: (r) => r.nomor || '' }, { label: 'Jenis', nilai: (r) => JENIS_PIUTANG[r.jenis] },

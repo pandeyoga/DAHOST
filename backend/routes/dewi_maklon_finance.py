@@ -642,12 +642,22 @@ async def pay_cmt_payment(payment_id: str, payload: CmtPayIn, user: dict = Depen
         not_found='Tagihan CMT tidak ditemukan',
         busy='Tagihan CMT ini sedang dibayar pengguna lain. Muat ulang lalu periksa sisa tagihannya.')
     try:
-        return await _pay_cmt_payment_locked(db, payment_id, payload, user)
+        return await pay_cmt_bill_locked(db, payment_id, payload, user)
     finally:
         await doc_lock.release(db, 'dewi_cmt_payments', payment_id, token, field='pay_lock')
 
 
-async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: dict):
+def _batch_fields(batch: Optional[dict]) -> dict:
+    """Penanda pembayaran gabungan (16 Nov 2026): satu bukti untuk beberapa tagihan satu CMT."""
+    if not batch:
+        return {}
+    return {'batch_id': batch.get('batch_id'), 'bukti_number': batch.get('bukti_number')}
+
+
+async def pay_cmt_bill_locked(db, payment_id: str, payload: CmtPayIn, user: dict, batch: Optional[dict] = None):
+    """SATU-SATUNYA logika bayar tagihan CMT (kunci tagihan dipegang pemanggil): bayar satu tagihan
+    (`/cmt-payments/{id}/pay`) dan bayar gabungan beberapa tagihan satu CMT (`core.posisi_cmt.bayar_gabungan`;
+    `batch` = {batch_id, bukti_number} dicap ke mutasi kas & catatan pembayaran) memakai fungsi ini."""
     payment = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0})
     if not payment:
         raise HTTPException(404, 'Tagihan CMT tidak ditemukan')
@@ -697,6 +707,9 @@ async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: 
         await log_activity(user.get('id', ''), user.get('name', ''), 'pay_cmt', 'dewi_cmt_payments',
                            f"Bayar {payment.get('payment_code')} Rp {amount:,.0f} via {acc.get('name')} (antar CV, "
                            f"pasangan {res['mirror'].get('je_number') or '-'})")
+        if batch:
+            for coll in (db.dewi_cmt_disbursements, db.rahaza_cash_movements):
+                await coll.update_one({'id': res['origin']['payment_id']}, {'$set': _batch_fields(batch)})
         d = await db.dewi_cmt_disbursements.find_one({'id': res['origin']['payment_id']}, {'_id': 0}) or {}
         fresh = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0}) or {}
         return serialize_doc({**d, 'payment_status': fresh.get('status'),
@@ -707,6 +720,7 @@ async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: 
         'category': 'ap_payment', 'ref_id': payment_id, 'ref_label': payment.get('payment_code'),
         'source_module': 'cmt_payment', 'date': pay_date, 'notes': payload.notes or '',
         'timestamp': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', ''),
+        **_batch_fields(batch),
     })
     from routes.rahaza_posting import post_ap_payment
     pseudo = {'id': payment_id, 'invoice_number': payment.get('payment_code'), 'vendor_name': payment.get('cmt_name'),
@@ -719,7 +733,8 @@ async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: 
            'amount': amount, 'payment_date': pay_date, 'cash_account_id': acc['id'], 'cash_account_name': acc.get('name'),
            'reference_no': payload.reference_no or '', 'notes': payload.notes or '', 'status': 'posted',
            'gl_je_id': gl.get('je_id'), 'gl_je_number': gl.get('je_number'), 'post_error': gl.get('error'),
-           'created_at': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', '')}
+           'created_at': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', ''),
+           **_batch_fields(batch)}
     await db.dewi_cmt_disbursements.insert_one(dict(doc))
     await db.dewi_cmt_payments.update_one({'id': payment_id}, {'$set': {
         'paid_amount': paid_after, 'outstanding_amount': round(total - paid_after, 2), 'status': status,
@@ -815,17 +830,20 @@ async def void_cmt_disbursement(payment_id: str, did: str, user: dict = Depends(
         not_found='Pembayaran tidak ditemukan',
         busy='Tagihan CMT ini sedang diproses pengguna lain. Muat ulang lalu periksa daftar pembayarannya.')
     try:
-        return await _void_cmt_disbursement_locked(db, payment_id, did, user)
+        return await void_cmt_disbursement_locked(db, payment_id, did, user)
     finally:
         await doc_lock.release(db, 'dewi_cmt_payments', payment_id, token, field='pay_lock')
 
 
-async def _void_cmt_disbursement_locked(db, payment_id: str, did: str, user: dict):
+async def void_cmt_disbursement_locked(db, payment_id: str, did: str, user: dict,
+                                       reason: str = 'Pembayaran CMT dibatalkan'):
+    """Batalkan satu pembayaran tagihan CMT (kunci tagihan dipegang pemanggil). Dipakai juga untuk menggulung balik
+    pembayaran gabungan yang gagal di tengah jalan (`core.posisi_cmt.bayar_gabungan`)."""
     d = await db.dewi_cmt_disbursements.find_one({'id': did, 'payment_id': payment_id, 'status': {'$ne': 'voided'}}, {'_id': 0})
     if not d:
         raise HTTPException(404, 'Pembayaran tidak ditemukan')
     from routes.rahaza_posting import _void_je_by_source
-    v = await _void_je_by_source(db, 'ap_payment', f"appay:{did}:{int(round(float(d['amount'])))}", user, 'Pembayaran CMT dibatalkan')
+    v = await _void_je_by_source(db, 'ap_payment', f"appay:{did}:{int(round(float(d['amount'])))}", user, reason)
     if not v.get('ok'):
         raise HTTPException(400, f"Jurnal tidak bisa di-void: {v.get('error')}")
     # Tahap 8 fase 2: pembayaran antar CV — penerimaan pasangan di buku CV Sukma ikut dibatalkan.
