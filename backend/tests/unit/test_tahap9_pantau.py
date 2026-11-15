@@ -549,8 +549,8 @@ def test_layar_pantau_memakai_cetakan_dan_tanpa_select_polos():
 def test_layar_mengirim_business_type_dari_portal():
     shared = _src("pantau", "pantauShared.jsx")
     assert "portalId === 'maklon' ? 'maklon' : 'internal'" in shared
-    for f in ("RingkasanTab.jsx", "PerVendorTab.jsx", "PerPOTab.jsx", "KejarCMTTab.jsx", "KirimanCMTTab.jsx",
-              "KapasitasCMTTab.jsx", "DashboardAlurModule.jsx"):
+    for f in ("RingkasanTab.jsx", "PerProdukTab.jsx", "PerVendorTab.jsx", "PerPOTab.jsx", "KejarCMTTab.jsx",
+              "KirimanCMTTab.jsx", "KapasitasCMTTab.jsx", "DashboardAlurModule.jsx"):
         assert "business_type=${bt}" in _src("pantau", f), f
     assert "business_type=${bt}" in _src("pantau", "selisihShared.jsx")
     assert "portalBusinessType(props)" in _src("ProductionDashboardModule.jsx")
@@ -565,6 +565,6 @@ def test_registri_modul_baru_tahap9():
                 "prod-variance", "prod-variance-report"):
         assert f"'{old}'" in reg.split("// Tahap 9 (pantau)")[0], old   # entri lama tidak diubah (wave 2)
     hub = _src("pantau", "PantauProduksiModule.jsx")
-    for key in ("ringkasan", "vendor", "po", "kejar", "kiriman", "kapasitas"):
+    for key in ("ringkasan", "produk", "vendor", "po", "kejar", "kiriman", "kapasitas"):
         assert f"key: '{key}'" in hub
     assert "key: 'recon'" not in hub and "stage-qty" not in hub

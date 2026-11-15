@@ -1445,8 +1445,8 @@ export const MODULE_REGISTRY = {
   'hr-work-locations':     lazyRetry(() => import('./hr/LokasiKerjaModule')),
   // Tahap 9 (pantau) — satu layar dua portal, disaring per portal (portalId → internal / maklon).
   //   pantau-produksi menggantikan: prod-monitoring, prod-work-orders, maklon-tracking, cmt-monitor,
-  //     prod-control-tower (+ tab Kapasitas di prod-analytics-hub). Tab: ringkasan · vendor · po · kejar ·
-  //     kiriman · kapasitas (deep link: makeRedirect('pantau-produksi', '<tab>') → hub_tab_pantau-produksi).
+  //     prod-control-tower (+ tab Kapasitas di prod-analytics-hub). Tab: ringkasan · produk · vendor · po ·
+  //     kejar · kiriman · kapasitas (deep link: makeRedirect('pantau-produksi', '<tab>') → hub_tab_pantau-produksi).
   //   laporan-selisih menggantikan: prod-variance, prod-variance-report. Tab: baris · vendor · klien.
   'pantau-produksi': lazyRetry(() => import('./pantau/PantauProduksiModule')),
   'laporan-selisih': lazyRetry(() => import('./pantau/LaporanSelisihModule')),

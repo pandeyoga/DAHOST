@@ -15,6 +15,7 @@ import HubTabs from '../hubs/HubTabs';
 import { portalBusinessType, primeHubTab } from './pantauShared';
 
 const RingkasanTab = lazyRetry(() => import('./RingkasanTab'));
+const PerProdukTab = lazyRetry(() => import('./PerProdukTab'));
 const PerVendorTab = lazyRetry(() => import('./PerVendorTab'));
 const PerPOTab = lazyRetry(() => import('./PerPOTab'));
 const KejarCMTTab = lazyRetry(() => import('./KejarCMTTab'));
@@ -23,6 +24,8 @@ const KapasitasCMTTab = lazyRetry(() => import('./KapasitasCMTTab'));
 
 const TABS = [
   { key: 'ringkasan', label: 'Ringkasan', Component: RingkasanTab },
+  // 16 Nov 2026 (owner): tinjauan langsung per PRODUK di CMT — pengganti lembar Google Sheet "SISA POTONGAN"
+  { key: 'produk', label: 'Per produk', Component: PerProdukTab },
   { key: 'vendor', label: 'Per vendor CMT', Component: PerVendorTab },
   { key: 'po', label: 'Per PO', Component: PerPOTab },
   { key: 'kejar', label: 'Kejar CMT', Component: KejarCMTTab },

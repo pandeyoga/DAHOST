@@ -5,6 +5,7 @@ Satu layar yang sama di Portal Produksi dan Portal Maklon (keputusan owner no. 7
 
 Prefix /api/pantau — setiap endpoint WAJIB menerima `business_type` (internal | maklon):
   GET /ringkasan            alur barang, keseimbangan (PO penyebab), telat, selesai, deadline ≤14 hari, seri dobel
+  GET /produk               per produk: sisa potongan di CMT → warna × ukuran × CMT × kode potongan (umur kirim)
   GET /vendor               per vendor CMT (+ job & QC per job)
   GET /po                   per PO (+ seri → SKU), cari PO/vendor/seri/SKU, saring status
   GET /kejar                papan Kejar CMT (internal & maklon)
@@ -48,6 +49,18 @@ def _scope_running(scope: str) -> Optional[bool]:
 async def get_ringkasan(request: Request, business_type: str = BT, days: int = Query(7, ge=1, le=90)):
     await _staff(request)
     return serialize_doc(await pp.ringkasan(get_db(), business_type, days=days))
+
+
+@router.get("/produk")
+async def get_per_produk(request: Request, business_type: str = BT, search: str = Query("", max_length=80),
+                         vendor_id: str = Query("", max_length=80), klien_id: str = Query("", max_length=120),
+                         umur: str = Query("", pattern="^(|0-7|8-14|lebih14)$"),
+                         keadaan: str = Query("di_cmt", pattern="^(di_cmt|selesai|semua)$")):
+    """Pengganti lembar "SISA POTONGAN": produk apa, warna/ukuran apa, di CMT mana, berapa pcs, sejak kapan."""
+    await _staff(request)
+    return serialize_doc(await pp.per_produk(get_db(), business_type, search=search, vendor_id=vendor_id,
+                                             klien_id=klien_id if business_type == "maklon" else "",
+                                             umur=umur, keadaan=keadaan))
 
 
 @router.get("/vendor")
