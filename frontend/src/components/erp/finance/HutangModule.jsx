@@ -363,7 +363,7 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
       title="Hutang"
       subtitle="Semua hutang ke pemasok dan CMT. Klik kartu angka untuk menyaring daftarnya."
       filters={<>
-        <div className="relative w-full sm:w-56">
+        <div className="relative w-full sm:w-52">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8" placeholder="Cari nama, no. PO, no. tagihan" value={cari}
             onChange={(e) => setCari(e.target.value)} data-testid="hutang-cari" />
@@ -374,13 +374,13 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
           <option value="pemasok">Pemasok</option>
           <option value="cmt">CMT</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-48"
+        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-52"
           aria-label="Nama pemasok atau CMT" data-testid="hutang-pihak">
           <option value="">Semua pemasok & CMT</option>
           {daftarPihak.map((n) => <option key={n} value={n}>{n}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false}
-          className="h-9 w-full sm:w-48" aria-label="Status hutang" data-testid="hutang-status">
+          className="h-9 w-full sm:w-52" aria-label="Status hutang" data-testid="hutang-status">
           {pilStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
         </SmartNativeSelect>
       </>}

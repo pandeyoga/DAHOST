@@ -413,7 +413,7 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
       subtitle="Semua piutang: reseller & grosir, klien maklon, saldo marketplace, dan lainnya. Klik kartu angka untuk menyaring daftarnya."
       actions={<Button variant="outline" onClick={() => setRekeningKoran({})} data-testid="piutang-buka-rekening-koran"><Users className="w-4 h-4" />Rekening koran</Button>}
       filters={<>
-        <div className="relative w-full sm:w-56">
+        <div className="relative w-full sm:w-52">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8" placeholder="Cari nama, no. PO, no. faktur" value={cari}
             onChange={(e) => setCari(e.target.value)} data-testid="piutang-cari" />
@@ -423,13 +423,13 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
           <option value="">Semua jenis</option>
           {Object.entries(JENIS_PIUTANG).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-48"
+        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-52"
           aria-label="Nama klien atau pelanggan" data-testid="piutang-pihak">
           <option value="">Semua klien & pelanggan</option>
           {daftarPihak.map((n) => <option key={n} value={n}>{n}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false}
-          className="h-9 w-full sm:w-48" aria-label="Status piutang" data-testid="piutang-status">
+          className="h-9 w-full sm:w-52" aria-label="Status piutang" data-testid="piutang-status">
           {pilStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
         </SmartNativeSelect>
       </>}
