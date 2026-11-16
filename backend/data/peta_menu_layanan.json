@@ -2071,12 +2071,28 @@
  ],
  "fin-ap-hub": [
   [
+   "GET",
+   "/api/dewi/maklon/finance/cmt-bayar-gabungan"
+  ],
+  [
+   "POST",
+   "/api/dewi/maklon/finance/cmt-bayar-gabungan"
+  ],
+  [
+   "GET",
+   "/api/dewi/maklon/finance/cmt-bayar-gabungan/x/pdf"
+  ],
+  [
    "POST",
    "/api/dewi/maklon/finance/cmt-payments/x/pay"
   ],
   [
    "POST",
    "/api/dewi/maklon/finance/cmt-payments/x/post-ap"
+  ],
+  [
+   "GET",
+   "/api/dewi/maklon/finance/cmt-posisi"
   ],
   [
    "GET",
@@ -2122,6 +2138,34 @@
   ]
  ],
  "fin-ar-hub": [
+  [
+   "GET",
+   "/api/dewi/maklon/finance/klien-posisi"
+  ],
+  [
+   "GET",
+   "/api/dewi/maklon/finance/klien-terima-gabungan"
+  ],
+  [
+   "POST",
+   "/api/dewi/maklon/finance/klien-terima-gabungan"
+  ],
+  [
+   "GET",
+   "/api/dewi/maklon/finance/klien-terima-gabungan/x/pdf"
+  ],
+  [
+   "POST",
+   "/api/dewi/maklon/finance/tagihan-klien"
+  ],
+  [
+   "POST",
+   "/api/dewi/maklon/finance/tagihan-klien/x/batal"
+  ],
+  [
+   "GET",
+   "/api/dewi/maklon/finance/tagihan-klien/x/pdf"
+  ],
   [
    "GET",
    "/api/dewi/maklon/receivables"

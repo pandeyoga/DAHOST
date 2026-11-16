@@ -191,6 +191,42 @@ def due_date_fifo(postings: list, ar_credit: float, term_days: int) -> str | Non
     return None
 
 
+def dispatch_groups(ar: dict) -> list:
+    """Murni: kiriman yang sudah ditagih (neto per surat jalan + urutan kirim), dengan alokasi bayar FIFO.
+
+    Dipakai rincian piutang PO, faktur cetak per kiriman, dan tagihan klien gabungan (`core.tagihan_klien`)."""
+    groups: dict = {}
+    for p in ar.get('revenue_postings') or []:
+        key = (p.get('shipment_id'), p.get('dispatch_seq'))
+        g = groups.setdefault(key, {'shipment_id': key[0], 'dispatch_seq': key[1],
+                                    'shipment_number': p.get('shipment_number', ''), 'date': None,
+                                    'subtotal': 0.0, 'tax': 0.0, 'total': 0.0, 'journals': [], 'lines': {}})
+        sign = -1 if p.get('reverse') else 1
+        g['subtotal'] = round(g['subtotal'] + sign * _f(p.get('subtotal')), 2)
+        g['tax'] = round(g['tax'] + sign * _f(p.get('tax')), 2)
+        g['total'] = round(g['subtotal'] + g['tax'], 2)
+        if not p.get('reverse') and (not g['date'] or str(p.get('date')) < str(g['date'])):
+            g['date'] = p.get('date')
+        g['journals'].append({'je_number': p.get('je_number'), 'reverse': bool(p.get('reverse')),
+                              'total': p.get('total'), 'date': p.get('date')})
+        for ln in p.get('lines') or []:
+            x = g['lines'].setdefault(ln.get('po_item_id'), {
+                'po_item_id': ln.get('po_item_id'), 'sku': ln.get('sku'), 'size': ln.get('size'),
+                'qty': 0, 'amount': 0.0, 'unit_price': ln.get('unit_price')})
+            x['qty'] += int(ln.get('qty') or 0)
+            x['amount'] = round(x['amount'] + _f(ln.get('amount')), 2)
+    out = sorted(groups.values(),
+                 key=lambda g: (str(g['date'] or ''), str(g['shipment_number']), g['dispatch_seq'] or 0))
+    left = _f(ar.get('ar_credit'))
+    for i, g in enumerate(out, start=1):
+        g['seq_no'] = i
+        g['lines'] = [ln for ln in g['lines'].values() if ln['qty']]
+        g['paid'] = round(min(max(left, 0.0), max(g['total'], 0.0)), 2)
+        left -= g['paid']
+        g['balance'] = round(g['total'] - g['paid'], 2)
+    return [g for g in out if g['total'] or g['lines']]
+
+
 def ar_status(*, amount_due: float, billed_total: float, scheduled_total: float, ar_credit: float,
               due_date: str | None, po_closed: bool, paid_total: float) -> str:
     """Murni: status piutang terjadwal.
@@ -478,9 +514,13 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
 
 
 async def record_client_payment(db, ar_id: str, *, amount: float, cash_account_id: str, payment_date: str | None,
-                                notes: str = '', reference_no: str = '', user: dict) -> dict:
+                                notes: str = '', reference_no: str = '', user: dict, batch: dict | None = None) -> dict:
     """Catat pembayaran klien terhadap piutang PO: tutup piutang yang sudah jatuh dulu, sisanya uang muka.
     Melempar ValueError (pesan untuk pengguna) bila ditolak.
+
+    SATU-SATUNYA logika terima pembayaran klien maklon: per PO (`/receivables/{id}/payments`) maupun pembayaran
+    gabungan beberapa PO satu klien (`core.tagihan_klien.terima_gabungan`, 16 Nov 2026) — `batch` =
+    {batch_id, bukti_number} dicap ke catatan pembayaran & mutasi kas supaya satu bukti terima bisa ditelusuri.
 
     2026-11-06 (pola P9): piutang DIKUNCI selama pembayaran dicatat. Dulu klik ganda sama-sama membaca
     sisa tagihan lama → dua pembayaran lolos batas, bagian piutang dihitung dari angka basi (piutang
@@ -494,14 +534,14 @@ async def record_client_payment(db, ar_id: str, *, amount: float, cash_account_i
     try:
         return await _record_client_payment_locked(
             db, ar_id, amount=amount, cash_account_id=cash_account_id, payment_date=payment_date,
-            notes=notes, reference_no=reference_no, user=user)
+            notes=notes, reference_no=reference_no, user=user, batch=batch)
     finally:
         await doc_lock.release(db, 'rahaza_ar_invoices', ar_id, token, field='pay_lock')
 
 
 async def _record_client_payment_locked(db, ar_id: str, *, amount: float, cash_account_id: str,
                                         payment_date: str | None, notes: str = '', reference_no: str = '',
-                                        user: dict) -> dict:
+                                        user: dict, batch: dict | None = None) -> dict:
     from routes.dewi_maklon_finance import maklon_advance_account, post_maklon_client_payment
     from routes.rahaza_posting_profiles import get_mapping
     from utils.waktu import today_wib
@@ -541,18 +581,19 @@ async def _record_client_payment_locked(db, ar_id: str, *, amount: float, cash_a
                                            source_ref=f"mklpay:{pay_id}", user=user)
     if not res.get('ok'):
         raise ValueError(f"Pembayaran tidak dicatat — jurnal gagal: {res.get('error')}")
+    tanda = {'batch_id': batch.get('batch_id'), 'bukti_number': batch.get('bukti_number')} if batch else {}
     await db.rahaza_cash_movements.insert_one({
         'id': pay_id, 'account_id': acc['id'], 'account_name': acc.get('name'), 'direction': 'in',
         'amount': round(amount), 'category': 'ar_payment', 'ref_id': ar_id, 'ref_label': ar.get('invoice_number'),
         'source_module': 'maklon_payment', 'date': pdate, 'notes': notes or memo, 'je_id': res.get('je_id'),
-        'timestamp': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', '')})
+        'timestamp': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', ''), **tanda})
     doc = {'id': pay_id, 'invoice_id': ar_id, 'invoice_number': ar.get('invoice_number'), 'source': 'maklon',
            'po_id': ar.get('linked_maklon_po_id'), 'po_number': ar.get('linked_maklon_po_number'),
            'customer_id': ar.get('customer_id'), 'amount': amount, 'date': pdate,
            'ar_portion': ar_portion, 'advance_portion': adv_portion, 'account_id': acc['id'],
            'movement_id': pay_id, 'reference_no': reference_no or '', 'notes': notes or '', 'status': 'posted',
            'gl_je_id': res.get('je_id'), 'gl_je_number': res.get('je_number'),
-           'created_at': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', '')}
+           'created_at': _now(), 'created_by': user.get('id'), 'created_by_name': user.get('name', ''), **tanda}
     await db.rahaza_ar_payments.insert_one(dict(doc))
     await sync_ar_schedule(db, ar['linked_maklon_po_id'], user)
     return doc
@@ -730,6 +771,42 @@ async def ap_schedule_rows(db, po: dict) -> list:
                'outstanding_amount': _r2(max(sched, matured) - paid),
                'bill_ids': [b['id'] for b in vb], 'status': status, 'updated_at': _now()}
         out.append({'vendor_id': vid, 'doc': doc, 'bills': vb})
+    return out
+
+
+# PO yang masih bisa menghasilkan hutang jahit (Draf belum dikonfirmasi; yang ditutup/selesai tidak lagi)
+PERKIRAAN_SKIP_STATUS = ['Draft', 'Cancelled', 'Closed', 'Closed Short', 'Completed']
+
+
+async def perkiraan_internal(db, *, po_id: str | None = None, vendor_id: str | None = None,
+                             tambahan_po_ids=()) -> list:
+    """PERKIRAAN hutang jahit PO DA (11 Nov 2026, owner): rumus jadwal hutang CMT yang sama dengan PO maklon
+    (`ap_schedule_rows`), dihitung saat dibaca — tidak disimpan, tanpa jurnal.
+
+    `tambahan_po_ids` (16 Nov 2026, Posisi per CMT): PO internal yang SUDAH ditutup tetapi tagihan CMT-nya masih
+    terbuka — ikut dihitung supaya yang boleh dibayar tidak hilang dari posisi CMT."""
+    from core.entities import DA
+    q: dict = {'business_type': {'$ne': 'maklon'}, 'status': {'$nin': PERKIRAAN_SKIP_STATUS}}
+    if po_id:
+        q['id'] = po_id
+    pos = [po async for po in db.production_pos.find(q, {'_id': 0}).sort('created_at', -1).limit(500)]
+    seen = {po['id'] for po in pos}
+    extra = [i for i in dict.fromkeys(tambahan_po_ids or ()) if i and i not in seen and (not po_id or i == po_id)]
+    if extra:
+        async for po in db.production_pos.find({'id': {'$in': extra}, 'business_type': {'$ne': 'maklon'}},
+                                               {'_id': 0}).limit(500):
+            if (po.get('status') or 'Draft') not in ('Draft', 'Cancelled'):
+                pos.append(po)
+    out = []
+    for po in pos:
+        for row in await ap_schedule_rows(db, po):
+            doc = row['doc']
+            if vendor_id and doc.get('vendor_id') != vendor_id:
+                continue
+            if float(doc.get('scheduled_amount') or 0) <= 0 and not doc.get('bill_ids'):
+                continue          # tanpa upah & tanpa tagihan → tidak ada yang diperkirakan
+            out.append({**doc, 'id': f"perkiraan-{po['id']}-{doc.get('vendor_id') or 'tanpa-vendor'}",
+                        'entity': DA, 'jenis': 'perkiraan', 'po_status': po.get('status')})
     return out
 
 

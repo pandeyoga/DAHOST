@@ -413,29 +413,11 @@ async def list_cmt_ap_schedules(request: Request):
             'entity': ent or ALL}
 
 
-# PO yang masih bisa menghasilkan hutang jahit (Draf belum dikonfirmasi; yang ditutup/selesai tidak lagi)
-_PERKIRAAN_SKIP_STATUS = ['Draft', 'Cancelled', 'Closed', 'Closed Short', 'Completed']
-
-
 async def _internal_estimates(db, *, po_id: str | None = None, vendor_id: str | None = None) -> list:
-    """PERKIRAAN hutang jahit PO DA (11 Nov 2026, owner): rumus jadwal hutang CMT yang sama dengan PO maklon
-    (`maklon_ledger.ap_schedule_rows`), dihitung saat dibaca — tidak disimpan, tanpa jurnal."""
+    """PERKIRAAN hutang jahit PO DA (11 Nov 2026, owner) — satu hitungan di `maklon_ledger.perkiraan_internal`
+    (dipakai juga Keuangan › Hutang › Posisi per CMT)."""
     from core import maklon_ledger
-    from core.entities import DA
-    q: dict = {'business_type': {'$ne': 'maklon'}, 'status': {'$nin': _PERKIRAAN_SKIP_STATUS}}
-    if po_id:
-        q['id'] = po_id
-    out = []
-    async for po in db.production_pos.find(q, {'_id': 0}).sort('created_at', -1).limit(500):
-        for row in await maklon_ledger.ap_schedule_rows(db, po):
-            doc = row['doc']
-            if vendor_id and doc.get('vendor_id') != vendor_id:
-                continue
-            if float(doc.get('scheduled_amount') or 0) <= 0 and not doc.get('bill_ids'):
-                continue          # tanpa upah & tanpa tagihan → tidak ada yang diperkirakan
-            out.append({**doc, 'id': f"perkiraan-{po['id']}-{doc.get('vendor_id') or 'tanpa-vendor'}",
-                        'entity': DA, 'jenis': 'perkiraan'})
-    return out
+    return await maklon_ledger.perkiraan_internal(db, po_id=po_id, vendor_id=vendor_id)
 
 
 @router.get("/{payment_id}")

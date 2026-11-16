@@ -891,38 +891,8 @@ async def list_receivables(request: Request, status: Optional[str] = None, clien
     return {'items': rows, 'counts': counts, 'summary': summary}
 
 
-def dispatch_groups(ar: dict) -> list:
-    """Kiriman yang sudah ditagih (neto per surat jalan + urutan kirim), dengan alokasi bayar FIFO."""
-    groups: dict = {}
-    for p in ar.get('revenue_postings') or []:
-        key = (p.get('shipment_id'), p.get('dispatch_seq'))
-        g = groups.setdefault(key, {'shipment_id': key[0], 'dispatch_seq': key[1],
-                                    'shipment_number': p.get('shipment_number', ''), 'date': None,
-                                    'subtotal': 0.0, 'tax': 0.0, 'total': 0.0, 'journals': [], 'lines': {}})
-        sign = -1 if p.get('reverse') else 1
-        g['subtotal'] = round(g['subtotal'] + sign * _num(p.get('subtotal')), 2)
-        g['tax'] = round(g['tax'] + sign * _num(p.get('tax')), 2)
-        g['total'] = round(g['subtotal'] + g['tax'], 2)
-        if not p.get('reverse') and (not g['date'] or str(p.get('date')) < str(g['date'])):
-            g['date'] = p.get('date')
-        g['journals'].append({'je_number': p.get('je_number'), 'reverse': bool(p.get('reverse')),
-                              'total': p.get('total'), 'date': p.get('date')})
-        for ln in p.get('lines') or []:
-            x = g['lines'].setdefault(ln.get('po_item_id'), {
-                'po_item_id': ln.get('po_item_id'), 'sku': ln.get('sku'), 'size': ln.get('size'),
-                'qty': 0, 'amount': 0.0, 'unit_price': ln.get('unit_price')})
-            x['qty'] += int(ln.get('qty') or 0)
-            x['amount'] = round(x['amount'] + _num(ln.get('amount')), 2)
-    out = sorted(groups.values(),
-                 key=lambda g: (str(g['date'] or ''), str(g['shipment_number']), g['dispatch_seq'] or 0))
-    left = _num(ar.get('ar_credit'))
-    for i, g in enumerate(out, start=1):
-        g['seq_no'] = i
-        g['lines'] = [ln for ln in g['lines'].values() if ln['qty']]
-        g['paid'] = round(min(max(left, 0.0), max(g['total'], 0.0)), 2)
-        left -= g['paid']
-        g['balance'] = round(g['total'] - g['paid'], 2)
-    return [g for g in out if g['total'] or g['lines']]
+# 16 Nov 2026: pindah ke core.maklon_ledger (dipakai juga tagihan klien gabungan); nama lama tetap tersedia di sini.
+from core.maklon_ledger import dispatch_groups  # noqa: E402,F401
 
 
 @router.get('/receivables/{ar_id}')

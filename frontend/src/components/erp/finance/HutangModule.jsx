@@ -16,9 +16,13 @@
  *   • penerimaan belum difakturkan (/api/rahaza/grs/available-for-invoice) — tombol Buat faktur.
  * Umur: baris terjadwal = hari sejak kirim ke CMT (hijau 0–7 · kuning 8–14 · merah > 14, seperti Excel owner);
  * tagihan = dari jatuh tempo. Ringkasan di slot `summary`; rincian dibuka sebagai popup (keputusan owner 8 Nov).
+ *
+ * 16 Nov 2026 (owner, "berapa pencairannya"): tampilan kedua "Posisi per CMT" (pilihan bentuk tampilan di kanan
+ * toolbar, bukan tab — owner 11 Nov: tanpa tab) — nilai PO sebagai komitmen, setor lolos QC, boleh dibayar, dan
+ * Bayar satu CMT untuk beberapa tagihan sekaligus (`./PosisiCmt`).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, HandCoins, Receipt, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, HandCoins, List, Receipt, RefreshCw, Search, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
@@ -26,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TombolUnduh from '@/components/ui/tombol-unduh';
+import ViewToggle from '@/components/ui/view-toggle';
 import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -43,8 +48,14 @@ import { formatDateID, formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
 import { ambilPetunjukTab } from '../hubs/petunjukTab';
 import { KELOMPOK_KIRIM, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
+import PosisiCmt from './PosisiCmt';
 
 const fmt = formatRupiah;
+/** Bentuk tampilan Hutang: daftar semua hutang · posisi per CMT (16 Nov 2026). */
+export const TAMPILAN_HUTANG = [
+  { key: 'daftar', label: 'Daftar semua hutang', pendek: 'Daftar hutang', icon: List },
+  { key: 'cmt', label: 'Posisi per CMT (boleh dibayar)', pendek: 'Posisi per CMT', icon: Users },
+];
 
 export const STATUS_HUTANG = {
   terjadwal: { label: 'Terjadwal', tone: 'info' },
@@ -192,13 +203,14 @@ function RincianTerjadwal({ row, onClose }) {
   );
 }
 
-function RincianTagihanCmt({ row, bolehBayar, bolehJurnal, onClose, onPay, onPost }) {
+function RincianTagihanCmt({ row, bolehBayar, bolehJurnal, onClose, onPay, onPost, onPosisi }) {
   const r = row.raw;
   const bisaBayar = cmtPayable(r);
   return (
     <DetailPanel testId="hutang-rincian-cmt" onClose={onClose} title={`Tagihan CMT ${r.invoice_number}`}
       description={`${row.pihak} · ${ownerLabel(r.entity)}`}
-      actions={(bolehBayar || bolehJurnal) && <>
+      actions={<>
+        <Button variant="link" onClick={() => onPosisi(row.pihak)} data-testid="hutang-rincian-cmt-posisi">Lihat posisi CMT ini</Button>
         {bolehJurnal && row.belumDijurnal && <Button variant="outline" onClick={() => onPost(row)} data-testid="hutang-rincian-cmt-jurnal">Jurnal</Button>}
         {bolehBayar && CMT_PAYABLE.includes(r.status) && row.sisa > 0 && (
           <Button variant="success" onClick={() => onPay(row)} data-testid="hutang-rincian-cmt-bayar"><HandCoins className="w-4 h-4" />Bayar</Button>
@@ -239,6 +251,8 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
   const [buatFaktur, setBuatFaktur] = useState(null);
   const [bayar, setBayar] = useState(null);
   const [menyetujui, setMenyetujui] = useState(false);
+  const [tampilan, setTampilan] = useState('daftar');
+  const [cariCmt, setCariCmt] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -317,9 +331,16 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
         onPay={bolehBayar ? (inv) => { setRincian(null); setBayar(inv); } : null} />
     ) : rincian.src === 'cmt' ? (
       <RincianTagihanCmt row={rincian} bolehBayar={bolehBayar} bolehJurnal={bolehJurnal} onClose={() => setRincian(null)} onPost={jurnalCmt}
-        onPay={(r) => { setRincian(null); setBayar(r.raw); }} />
+        onPay={(r) => { setRincian(null); setBayar(r.raw); }}
+        onPosisi={(nama) => { setRincian(null); setCariCmt(nama || ''); setTampilan('cmt'); }} />
     ) : <RincianTerjadwal row={rincian} onClose={() => setRincian(null)} />
   );
+  const pilihTampilan = (
+    <ViewToggle value={tampilan} onChange={(k) => { setCariCmt(''); setTampilan(k); }} options={TAMPILAN_HUTANG} testId="hutang-tampilan" denganTeks />
+  );
+  if (tampilan === 'cmt') {
+    return <PosisiCmt key={cariCmt} token={token} hasPerm={hasPerm} toggle={pilihTampilan} cariAwal={cariCmt} />;
+  }
 
   return (
     <PageLayout
@@ -347,6 +368,7 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
           hideWhenEmpty={false} options={pilStatus} />
       </>}
       tools={<>
+        {pilihTampilan}
         <TombolUnduh namaBerkas={`hutang-${todayWIB()}`} namaLembar="Hutang" baris={rows} testId="hutang-unduh"
           kolom={[
             { label: 'Nomor', nilai: (r) => r.nomor || '' }, { label: 'Jenis', nilai: (r) => JENIS[r.jenis] },
