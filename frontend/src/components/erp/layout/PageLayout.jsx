@@ -80,11 +80,15 @@ export function Toolbar({ filters, tools, className, testId = 'page-toolbar' }) 
   if (!hasFilters && !hasTools) return null;
   // Tanpa penyaring di dalam hub: alat pindah ke baris tab — tidak ada baris yang hanya berisi tombol.
   if (!hasFilters && compact) return <HubActions>{tools}</HubActions>;
+  // 16 Nov 2026 (owner: "uinya buruk sekali", Hutang/Piutang): penyaring tidak boleh terhimpit alat — dulu kolom
+  // penyaring menyusut sampai tiap pil turun satu baris dan alat melayang di tengah. Kini penyaring selebar minimal
+  // 26rem (atau penuh bila layar lebih sempit); bila tidak muat, alat pindah ke baris berikut (rata kanan), dan alat
+  // rata ATAS bila penyaring memang dua baris.
   return (
     <div role="toolbar" aria-label="Penyaring dan alat" data-testid={testId} data-page-toolbar=""
-      className={cn('flex flex-wrap items-center gap-2 min-h-9', className)}>
+      className={cn('flex flex-wrap items-start gap-2 min-h-9', className)}>
       {/* v2: di HP penyaring selebar baris (dulu menyusut ±80 px saat ada alat → kotak cari jadi ikon) */}
-      <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1 max-sm:basis-full">{filters}</div>
+      <div className="flex flex-wrap items-center gap-2 min-w-[min(100%,26rem)] flex-1 max-sm:basis-full">{filters}</div>
       {hasTools && <div className="flex items-center gap-2 shrink-0 ml-auto">{tools}</div>}
     </div>
   );

@@ -119,18 +119,24 @@ test('Keuangan › Hutang: satu daftar tanpa tab, terjadwal tanpa tombol Bayar, 
   expect(q('hutang-umur-jadwal-perkiraan-po2-vp1').textContent).toBe('29 hari');
   expect(q('hutang-perkiraan-jadwal-perkiraan-po2-vp1').textContent).toBe('Perkiraan');
   expect(q('hutang-sisa-jadwal-sch-1').textContent).toBe('Rp 255.000');
-  const ringkas = q('hutang-ringkasan').textContent;
-  expect(ringkas).toContain('Belum dibayar Rp 16.082.000');
-  expect(ringkas).toContain('terjadwal Rp 375.000');
-  expect(ringkas).toContain('belum difakturkan Rp 700.000');
-  expect(q('hutang-umur-kirim').textContent).toContain('0–7 hari');
-  // pil status
-  klik(q('hutang-status-terjadwal'));
+  // 16 Nov 2026: ringkasan = kartu angka (dulu satu kalimat panjang); klik kartu memilih statusnya
+  expect(q('hutang-kartu-belum_dibayar').textContent).toContain('Rp 16.082.000');
+  expect(q('hutang-kartu-terjadwal').textContent).toContain('Rp 375.000');
+  expect(q('hutang-kartu-belum_difakturkan').textContent).toContain('Rp 700.000');
+  expect(q('hutang-umur-kirim').textContent).toContain('0–7 hr');
+  klik(q('hutang-kartu-terjadwal'));
   await tunggu(() => !q('hutang-baris-ap-f1'));
   expect(q('hutang-baris-jadwal-sch-1')).not.toBeNull();
-  klik(q('hutang-status-lunas'));
+  expect(q('hutang-status-trigger').getAttribute('data-value')).toBe('terjadwal');
+  // status = satu pilihan (dulu 8 pil)
+  const pilih = async (v) => {
+    klik(q('hutang-status-trigger'));
+    await tunggu(() => q(`hutang-status-option-${v}`));
+    klik(q(`hutang-status-option-${v}`));
+  };
+  await pilih('lunas');
   await tunggu(() => q('hutang-baris-ap-f2'));
-  klik(q('hutang-status-terbuka'));
+  await pilih('terbuka');
   await tunggu(() => q('hutang-baris-ap-f1'));
   // rincian terjadwal = popup per barang
   klik(q('hutang-rincian-jadwal-perkiraan-po2-vp1'));
@@ -159,7 +165,7 @@ test('tautan lama ke tab "Hutang CMT terjadwal" membuka daftar Hutang dengan pil
   sessionStorage.setItem('hub_tab_fin-ap-hub', 'cmt-terjadwal');
   act(() => { root.render(<HutangModule token="t" />); });
   await tunggu(() => q('hutang-baris-jadwal-sch-1'));
-  expect(q('hutang-status-terjadwal').getAttribute('aria-pressed')).toBe('true');
+  expect(q('hutang-status-trigger').getAttribute('data-value')).toBe('terjadwal');
   expect(q('hutang-baris-ap-f1')).toBeNull();
 });
 
@@ -222,7 +228,7 @@ test('Keuangan › Piutang langsung membuka daftar piutang (bukan Faktur); maklo
   expect(q('piutang-baris-mp-toko1')).not.toBeNull();
   expect(q('piutang-baris-mp-toko2')).toBeNull();
   expect(q('piutang-baris-ar-m1')).toBeNull();                       // tidak dobel dengan baris maklon
-  expect(q('piutang-terjadwal').textContent).toBe('Rp 2.983.000');
+  expect(q('piutang-terjadwal').textContent).toContain('Rp 2.983.000');
   expect(q('piutang-bayar-ar-a1')).not.toBeNull();
   expect(q('piutang-bayar-maklon-m1')).not.toBeNull();                // uang muka klien boleh sebelum kirim
   // penyaring jenis
@@ -238,7 +244,7 @@ test('tautan lama "Hapus buku" membuka Piutang dengan pil Lewat jatuh tempo', as
   sessionStorage.setItem('hub_tab_fin-ar-hub', 'writeoff');
   act(() => { root.render(<PiutangModule token="t" />); });
   await tunggu(() => q('piutang-baris-ar-a1'));
-  expect(q('piutang-status-lewat').getAttribute('aria-pressed')).toBe('true');
+  expect(q('piutang-status-trigger').getAttribute('data-value')).toBe('lewat');
   expect(q('piutang-baris-maklon-m1')).toBeNull();
   klik(q('piutang-lainnya-ar-a1'));
 });
