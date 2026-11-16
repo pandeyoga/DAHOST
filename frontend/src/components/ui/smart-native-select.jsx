@@ -149,8 +149,11 @@ export default function SmartNativeSelect({
 
   // Mirror the caller's width so filter-bar selects (w-40, w-32, ...) don't stretch,
   // while form fields (w-full or none) fill their container.
-  const widthMatch = className.match(/\bw-(?:full|\d+(?:\.\d+)?|\[[^\]]+\]|px|screen|min|max|fit|auto)\b/)
-  const wrapperWidth = wrapperClassName || (widthMatch ? widthMatch[0] : "w-full")
+  // 16 Nov 2026 (owner: Hutang "uinya buruk sekali"): dulu hanya lebar PERTAMA yang diambil — "w-full sm:w-48" menjadi
+  // "w-full", jadi pilihan di toolbar selalu selebar baris dan turun sendiri. Kini semua lebar ikut, termasuk yang
+  // berawalan layar (sm:/md:/lg:); min-w-/max-w- tidak dianggap lebar.
+  const widthMatch = className.match(/(?:^|\s)(?:[a-z0-9]+:)*w-(?:full|\d+(?:\.\d+)?|\[[^\]]+\]|px|screen|min|max|fit|auto)(?=\s|$)/g)
+  const wrapperWidth = wrapperClassName || (widthMatch ? widthMatch.map((w) => w.trim()).join(" ") : "w-full")
 
   return (
     <div className={cn("relative", wrapperWidth)} data-testid={dataTestId} id={id}>
