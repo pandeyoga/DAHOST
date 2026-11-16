@@ -661,6 +661,17 @@ SELF_SERVICE = (
     ("POST", r"/api/dewi/kasbon/requests"),
     # Monitoring Staf (10 Nov 2026): Portal Saya › Dashboard "Kewajiban saya" — milik sendiri (handler: user login).
     ("GET", r"/api/pantau-staf/saya"),
+    # 16 Nov 2026 (layar owner: Portal Saya › Cuti & Lembur, "Jenis izin/cuti" kosong untuk Host Live): 11 panggilan
+    # Portal Saya / Absen ditolak gerbang untuk 16 dari 19 peran non-SDM. Handler: data referensi (jenis cuti, hari
+    # kerja, lokasi kantor) atau milik sendiri — lembur (is_ot_approver = centang), koreksi saya, status absen dan
+    # biometrik HP (resolve_employee_for: karyawan lain hanya dengan centang SDM).
+    ("GET", r"/api/rahaza/leave-types"),
+    ("GET", r"/api/rahaza/leaves/working-days"),
+    ("GET", r"/api/rahaza/overtime"),
+    ("GET", r"/api/rahaza/attendance/corrections/my"),
+    ("GET", r"/api/rahaza/attendance/my-status"),
+    ("GET", r"/api/rahaza/attendance/office-location"),
+    ("POST", r"/api/rahaza/attendance/webauthn/(auth/options|clock-in|clock-out|register/options|register/verify)"),
 )
 _SELF_SERVICE_RX = [(m, re.compile(p + r"/?")) for m, p in SELF_SERVICE]
 
