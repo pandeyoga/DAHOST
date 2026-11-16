@@ -66,3 +66,29 @@ export function jumlahPerKelompokKirim(rows, nilai) {
   });
   return out;
 }
+
+const WARNA_KELOMPOK = {
+  hijau: { pendek: '0–7 hr', titik: 'bg-[hsl(var(--success-text))]', teks: 'text-[hsl(var(--success-text))]' },
+  kuning: { pendek: '8–14 hr', titik: 'bg-[hsl(var(--warning-text))]', teks: 'text-[hsl(var(--warning-text))]' },
+  merah: { pendek: '>14 hr', titik: 'bg-[hsl(var(--danger-text))]', teks: 'text-[hsl(var(--danger-text))]' },
+};
+
+/**
+ * 16 Nov 2026 (owner: "uinya buruk sekali"): rincian terjadwal per lama di CMT sebagai satu baris pendek di bawah
+ * angka kartu ringkasan — dulu satu kalimat panjang berisi pil di bawah ringkasan. Kelompok bernilai 0 tidak tampil.
+ */
+export function RincianUmurKirim({ kirim, format, testId }) {
+  const isi = Object.entries(WARNA_KELOMPOK).filter(([k]) => Number(kirim?.[k] || 0) > 0.5);
+  if (!isi.length) return null;
+  return (
+    <span className="flex flex-wrap gap-x-3 gap-y-0.5" data-testid={testId}>
+      {isi.map(([k, m]) => (
+        <span key={k} className="inline-flex items-center gap-1 whitespace-nowrap" title={`${KELOMPOK_KIRIM[k].label} sejak kirim ke CMT`}>
+          <span className={`h-2 w-2 rounded-full ${m.titik}`} aria-hidden="true" />
+          <span>{m.pendek}</span>
+          <b className={`tabular-nums ${m.teks}`}>{format(kirim[k])}</b>
+        </span>
+      ))}
+    </span>
+  );
+}

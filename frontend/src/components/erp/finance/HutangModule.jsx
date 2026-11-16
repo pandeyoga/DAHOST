@@ -27,7 +27,6 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
-import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import ViewToggle from '@/components/ui/view-toggle';
@@ -35,7 +34,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
-import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import {
   CMT_PAYABLE, CreateInvoicePanel, InvoiceDetail, PayInvoiceModal, canPay, cmtPayable, cmtToRow,
 } from '../procurement/SupplierInvoiceModule';
@@ -44,10 +43,10 @@ import { apiGet, apiPost } from '../../../lib/api';
 import { CENTANG_BAYAR, CENTANG_JURNAL_CMT } from '../../../lib/financeRoles';
 import { punyaCentang } from '../../../lib/rbac';
 import { CV_ALL, ownerLabel, useCvOr } from '@/lib/entitas';
-import { formatDateID, formatRupiah } from '@/lib/format';
+import { formatDateID, formatRupiah, formatRupiahShort } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
 import { ambilPetunjukTab } from '../hubs/petunjukTab';
-import { KELOMPOK_KIRIM, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
+import { RincianUmurKirim, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
 import PosisiCmt from './PosisiCmt';
 
 const fmt = formatRupiah;
@@ -295,6 +294,22 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
     { key: 'lewat', label: 'Lewat jatuh tempo' }, { key: 'lunas', label: 'Lunas' }, { key: 'semua', label: 'Semua' },
   ].map((o) => ({ ...o, count: hitung(o.key) }))
     .filter((o) => o.key !== 'draf' || o.count > 0 || status === 'draf');
+  // 16 Nov 2026 (owner: "uinya buruk sekali"): dulu 8 pil status di toolbar (pecah 2–4 baris) + ringkasan satu kalimat
+  // panjang. Kini status = satu pilihan; ringkasan = kartu angka yang sekaligus memilih statusnya.
+  const kartu = [
+    { key: 'belum_dibayar', label: 'Belum dibayar', value: fmt(ringkas.belumDibayar), accent: ringkas.lewat > 0.5 ? 'danger' : 'default',
+      sub: ringkas.lewat > 0.5 ? (Math.abs(ringkas.lewat - ringkas.belumDibayar) < 1 ? 'semua lewat jatuh tempo' : `${fmt(ringkas.lewat)} lewat jatuh tempo`) : undefined,
+      subTone: 'danger', hint: 'Tagihan pemasok & CMT yang sudah jadi hutang dan bisa dibayar.' },
+    { key: 'terjadwal', label: 'Terjadwal (masih di CMT)', value: fmt(ringkas.terjadwal),
+      sub: <RincianUmurKirim kirim={ringkas.kirim} format={formatRupiahShort} testId="hutang-umur-kirim" />,
+      hint: 'Upah jahit barang yang masih di CMT; belum bisa dibayar. Jadi hutang saat barang lolos QC.' },
+    ringkas.belumDifakturkan > 0.5 && { key: 'belum_difakturkan', label: 'Belum difakturkan', value: fmt(ringkas.belumDifakturkan),
+      hint: 'Barang pemasok sudah diterima, fakturnya belum dibuat.' },
+    { key: 'terbuka', label: 'Total belum lunas', value: fmt(ringkas.totalTerbuka), accent: 'primary', testId: 'hutang-total',
+      sub: [gabungan && `CV Dewi Aditya ${formatRupiahShort(ringkas.perCv.DA)} · CV Sukma ${formatRupiahShort(ringkas.perCv.SMU)}`,
+        ringkas.draf > 0 && `termasuk faktur draf ${fmt(ringkas.draf)}`].filter(Boolean).join(' · ') || undefined,
+      hint: 'Belum dibayar + terjadwal + belum difakturkan.' },
+  ].filter(Boolean);
 
   const setujui = async (inv) => {
     setMenyetujui(true);
@@ -346,26 +361,28 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
     <PageLayout
       testId="fin-hutang"
       title="Hutang"
-      subtitle="Semua hutang ke pemasok dan CMT dalam satu daftar: terjadwal, belum difakturkan, belum dibayar, sampai lunas."
+      subtitle="Semua hutang ke pemasok dan CMT. Klik kartu angka untuk menyaring daftarnya."
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-56">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8" placeholder="Cari nama, no. PO, no. tagihan" value={cari}
             onChange={(e) => setCari(e.target.value)} data-testid="hutang-cari" />
         </div>
         <SmartNativeSelect value={jenis} onChange={(e) => { setJenis(e.target.value); setPihak(''); }} searchable={false}
-          className="h-9 w-40" aria-label="Jenis hutang" data-testid="hutang-jenis">
+          className="h-9 w-36" aria-label="Jenis hutang" data-testid="hutang-jenis">
           <option value="">Semua jenis</option>
           <option value="pemasok">Pemasok</option>
           <option value="cmt">CMT</option>
         </SmartNativeSelect>
-        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-56"
+        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-48"
           aria-label="Nama pemasok atau CMT" data-testid="hutang-pihak">
           <option value="">Semua pemasok & CMT</option>
           {daftarPihak.map((n) => <option key={n} value={n}>{n}</option>)}
         </SmartNativeSelect>
-        <FilterChips value={status} onChange={setStatus} testId="hutang-status" ariaLabel="Status hutang"
-          hideWhenEmpty={false} options={pilStatus} />
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false}
+          className="h-9 w-full sm:w-48" aria-label="Status hutang" data-testid="hutang-status">
+          {pilStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
+        </SmartNativeSelect>
       </>}
       tools={<>
         {pilihTampilan}
@@ -386,29 +403,15 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
       </>}
       summary={<>
         {gagal.length > 0 && <Notice tone="danger" icon={AlertTriangle} title="Sebagian data gagal dimuat">{gagal.join(' · ')}</Notice>}
-        {!(loading && !semua.length) && <div className="space-y-1.5 text-sm text-muted-foreground" data-testid="hutang-ringkasan">
-          <p>
-            Belum dibayar <b className="text-foreground tabular-nums">{fmt(ringkas.belumDibayar)}</b>
-            {ringkas.lewat > 0 && <> (lewat jatuh tempo <b className="text-[hsl(var(--danger-text))] tabular-nums">{fmt(ringkas.lewat)}</b>)</>}
-            {' · '}terjadwal <b className="text-foreground tabular-nums">{fmt(ringkas.terjadwal)}</b>
-            {' · '}belum difakturkan <b className="text-foreground tabular-nums">{fmt(ringkas.belumDifakturkan)}</b>
-            {ringkas.draf > 0 && <>{' · '}faktur draf <b className="text-foreground tabular-nums">{fmt(ringkas.draf)}</b></>}
-            {' · '}total belum lunas <b className="text-foreground tabular-nums" data-testid="hutang-total">{fmt(ringkas.totalTerbuka)}</b>
-            {gabungan && <> (CV Dewi Aditya {fmt(ringkas.perCv.DA)} · CV Sukma {fmt(ringkas.perCv.SMU)})</>}
-          </p>
-          {ringkas.terjadwal > 0 && (
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="hutang-umur-kirim">
-              <span>Terjadwal menurut lama di CMT:</span>
-              {Object.entries(KELOMPOK_KIRIM).map(([k, m]) => (
-                <span key={k} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <StatusBadge status={k} label={m.label} tone={m.tone} />
-                  <b className="text-foreground tabular-nums">{fmt(ringkas.kirim[k])}</b>
-                </span>
-              ))}
-            </p>
-          )}
-          <p className="text-xs">Terjadwal = upah jahit untuk barang yang masih di CMT; belum bisa dibayar. Hutang nyata lahir saat barang lolos QC.</p>
-        </div>}
+        {!(loading && !semua.length) && (
+          <div className={`grid grid-cols-2 gap-3 ${kartu.length > 3 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`} data-testid="hutang-ringkasan">
+            {kartu.map((k) => (
+              <StatTile key={k.key} label={k.label} value={k.value} accent={k.accent} sub={k.sub} subTone={k.subTone}
+                hint={k.hint} testId={k.testId || `hutang-kartu-${k.key}`} onClick={() => setStatus(k.key)}
+                className={status === k.key ? 'border-[hsl(var(--primary)/0.6)] ring-1 ring-[hsl(var(--primary)/0.35)]' : undefined} />
+            ))}
+          </div>
+        )}
         {ringkas.belumDijurnal.length > 0 && (
           <Notice tone="warning" icon={AlertTriangle} testId="hutang-belum-dijurnal">
             {ringkas.belumDijurnal.length} tagihan CMT ({fmt(ringkas.belumDijurnal.reduce((t, r) => t + r.sisa, 0))}) belum

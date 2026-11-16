@@ -22,7 +22,6 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
-import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import ViewToggle from '@/components/ui/view-toggle';
@@ -35,17 +34,17 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
-import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
 import { PaymentHistoryList } from '../PaymentHistoryModal';
 import CashAccountSelect, { usePaymentCashAccounts } from '../SdmCashAccountSelect';
 import { PaymentForm as BayarMaklon, ReceivableDetail } from '../MaklonBillingModule';
 import RekeningKoranPelanggan from './RekeningKoranPelanggan';
 import { apiGet, apiPost } from '../../../lib/api';
 import { CV_ALL, CV_DA, ownerLabel, useCvOr } from '@/lib/entitas';
-import { formatDateID, formatRupiah } from '@/lib/format';
+import { formatDateID, formatRupiah, formatRupiahShort } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
 import { ambilPetunjukTab } from '../hubs/petunjukTab';
-import { KELOMPOK_KIRIM, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
+import { RincianUmurKirim, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
 import PosisiKlien from './PosisiKlien';
 
 const fmt = formatRupiah;
@@ -367,6 +366,22 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
     { key: 'belum_dibayar', label: 'Belum dibayar' }, { key: 'sebagian', label: 'Dibayar sebagian' },
     { key: 'lewat', label: 'Lewat jatuh tempo' }, { key: 'lunas', label: 'Lunas' }, { key: 'semua', label: 'Semua' },
   ].map((o) => ({ ...o, count: hitung(o.key) })).filter((o) => o.key !== 'draf' || o.count > 0 || status === 'draf');
+  // 16 Nov 2026 (owner: "uinya buruk sekali"): status = satu pilihan (dulu 8 pil yang pecah beberapa baris); ringkasan =
+  // kartu angka yang sekaligus memilih statusnya (dulu satu kalimat panjang).
+  const kartu = [
+    { key: 'belum_dibayar', label: 'Tertagih belum dibayar', value: fmt(ringkas.tertagih), accent: ringkas.lewat > 0.5 ? 'danger' : 'default',
+      sub: ringkas.lewat > 0.5 ? (Math.abs(ringkas.lewat - ringkas.tertagih) < 1 ? 'semua lewat jatuh tempo' : `${fmt(ringkas.lewat)} lewat jatuh tempo`) : undefined,
+      subTone: 'danger', hint: 'Faktur dan tagihan yang sudah dikirim ke pelanggan/klien dan belum dibayar.' },
+    { key: 'terjadwal', label: 'Terjadwal (belum dikirim)', value: fmt(ringkas.terjadwal), testId: 'piutang-terjadwal',
+      sub: <RincianUmurKirim kirim={ringkas.kirim} format={formatRupiahShort} testId="piutang-umur-kirim" />,
+      hint: 'Nilai PO maklon yang barangnya belum dikirim ke klien. Angkanya sama dengan Portal Maklon › Piutang klien.' },
+    ringkas.uangMuka > 0.5 && { key: 'uang_muka', label: 'Uang muka klien maklon', value: fmt(ringkas.uangMuka), tanpaSaring: true,
+      hint: 'Pembayaran klien yang diterima sebelum barang dikirim.' },
+    { key: 'terbuka', label: 'Total belum lunas', value: fmt(ringkas.totalTerbuka), accent: 'primary', testId: 'piutang-total',
+      sub: [gabungan && `CV Dewi Aditya ${formatRupiahShort(ringkas.perCv.DA)} · CV Sukma ${formatRupiahShort(ringkas.perCv.SMU)}`,
+        ringkas.draf > 0 && `termasuk faktur draf ${fmt(ringkas.draf)}`].filter(Boolean).join(' · ') || undefined,
+      hint: 'Tertagih belum dibayar + terjadwal.' },
+  ].filter(Boolean);
 
   const terbitkan = async (row) => {
     try {
@@ -395,26 +410,28 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
     <PageLayout
       testId="fin-piutang"
       title="Piutang"
-      subtitle="Semua piutang dalam satu daftar: reseller & grosir, klien maklon, saldo marketplace, dan lainnya."
+      subtitle="Semua piutang: reseller & grosir, klien maklon, saldo marketplace, dan lainnya. Klik kartu angka untuk menyaring daftarnya."
       actions={<Button variant="outline" onClick={() => setRekeningKoran({})} data-testid="piutang-buka-rekening-koran"><Users className="w-4 h-4" />Rekening koran</Button>}
       filters={<>
-        <div className="relative w-full sm:w-64">
+        <div className="relative w-full sm:w-56">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8" placeholder="Cari nama, no. PO, no. faktur" value={cari}
             onChange={(e) => setCari(e.target.value)} data-testid="piutang-cari" />
         </div>
         <SmartNativeSelect value={jenis} onChange={(e) => { setJenis(e.target.value); setPihak(''); }} searchable={false}
-          className="h-9 w-44" aria-label="Jenis piutang" data-testid="piutang-jenis">
+          className="h-9 w-40" aria-label="Jenis piutang" data-testid="piutang-jenis">
           <option value="">Semua jenis</option>
           {Object.entries(JENIS_PIUTANG).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-56"
+        <SmartNativeSelect value={pihak} onChange={(e) => setPihak(e.target.value)} className="h-9 w-full sm:w-48"
           aria-label="Nama klien atau pelanggan" data-testid="piutang-pihak">
           <option value="">Semua klien & pelanggan</option>
           {daftarPihak.map((n) => <option key={n} value={n}>{n}</option>)}
         </SmartNativeSelect>
-        <FilterChips value={status} onChange={setStatus} testId="piutang-status" ariaLabel="Status piutang"
-          hideWhenEmpty={false} options={pilStatus} />
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} searchable={false}
+          className="h-9 w-full sm:w-48" aria-label="Status piutang" data-testid="piutang-status">
+          {pilStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
+        </SmartNativeSelect>
       </>}
       tools={<>
         {pilihTampilan}
@@ -436,29 +453,15 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
       </>}
       summary={<>
         {gagal.length > 0 && <Notice tone="danger" icon={AlertCircle} title="Sebagian data gagal dimuat">{gagal.join(' · ')}</Notice>}
-        {!(loading && !semua.length) && <div className="space-y-1.5 text-sm text-muted-foreground" data-testid="piutang-ringkasan">
-          <p>
-            Terjadwal <b className="text-foreground tabular-nums" data-testid="piutang-terjadwal">{fmt(ringkas.terjadwal)}</b>
-            {' · '}tertagih belum dibayar <b className="text-foreground tabular-nums">{fmt(ringkas.tertagih)}</b>
-            {ringkas.lewat > 0 && <> (lewat jatuh tempo <b className="text-[hsl(var(--danger-text))] tabular-nums">{fmt(ringkas.lewat)}</b>)</>}
-            {ringkas.uangMuka > 0.5 && <>{' · '}uang muka klien maklon <b className="text-foreground tabular-nums">{fmt(ringkas.uangMuka)}</b></>}
-            {ringkas.draf > 0 && <>{' · '}faktur draf <b className="text-foreground tabular-nums">{fmt(ringkas.draf)}</b></>}
-            {' · '}total belum lunas <b className="text-foreground tabular-nums" data-testid="piutang-total">{fmt(ringkas.totalTerbuka)}</b>
-            {gabungan && <> (CV Dewi Aditya {fmt(ringkas.perCv.DA)} · CV Sukma {fmt(ringkas.perCv.SMU)})</>}
-          </p>
-          {ringkas.terjadwal > 0 && (
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="piutang-umur-kirim">
-              <span>Terjadwal menurut lama di CMT:</span>
-              {Object.entries(KELOMPOK_KIRIM).map(([k, m]) => (
-                <span key={k} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                  <StatusBadge status={k} label={m.label} tone={m.tone} />
-                  <b className="text-foreground tabular-nums">{fmt(ringkas.kirim[k])}</b>
-                </span>
-              ))}
-            </p>
-          )}
-          <p className="text-xs">Terjadwal = nilai PO maklon yang barangnya belum dikirim ke klien. Angka maklon sama dengan Portal Maklon › Piutang klien.</p>
-        </div>}
+        {!(loading && !semua.length) && (
+          <div className={`grid grid-cols-2 gap-3 ${kartu.length > 3 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`} data-testid="piutang-ringkasan">
+            {kartu.map((k) => (
+              <StatTile key={k.key} label={k.label} value={k.value} accent={k.accent} sub={k.sub} subTone={k.subTone}
+                hint={k.hint} testId={k.testId || `piutang-kartu-${k.key}`} onClick={k.tanpaSaring ? undefined : () => setStatus(k.key)}
+                className={status === k.key ? 'border-[hsl(var(--primary)/0.6)] ring-1 ring-[hsl(var(--primary)/0.35)]' : undefined} />
+            ))}
+          </div>
+        )}
       </>}
       detail={rincian && (rincian.src === 'maklon'
         ? <ReceivableDetail key={rincian.raw.id} arId={rincian.raw.id} headers={headers} token={token} onClose={() => setRincian(null)} onChanged={load} />
