@@ -74,8 +74,11 @@ export default function VendorBuyerShipments({ user }) {
         produced_qty: i.total_produced_qty ?? i.produced_qty,  // parent + child
         // Angka yang relevan untuk vendor = deklarasi ke DA & yang DITERIMA DA
         // (bukan dispatch DA→buyer). Selisih kirim membuka kembali sisa kirim.
+        // 17 Nov 2026: server menghitung dari PENERIMAAN DA (termasuk yang dicatat langsung di Terima & QC).
         shipped_to_da: i.declared_to_da ?? i.shipped_to_buyer ?? 0,
         received_by_da: i.received_by_da ?? i.received_to_buyer ?? 0,
+        in_qc_da: i.in_qc_da || 0,
+        receipt_codes: Array.isArray(i.receipt_codes) ? i.receipt_codes : [],
         qty_short_open: i.qty_short_open || 0,
         shipped_to_buyer: i.shipped_to_buyer || 0,
         received_to_buyer: i.received_to_buyer || 0,
@@ -94,13 +97,15 @@ export default function VendorBuyerShipments({ user }) {
   const handleSubmit = async (e) => {
     e?.preventDefault?.();
     if (!form.job_id) { toast.error('Pilih Production Job terlebih dahulu'); return; }
+    if (form.items.some(i => Number(i.qty_shipped) < 0)) { toast.error('Qty kirim tidak boleh kurang dari 0.'); return; }
     const validItems = form.items.filter(i => Number(i.qty_shipped) > 0);
-    if (validItems.length === 0) { toast.error('Isi minimal 1 item dengan qty > 0'); return; }
+    if (validItems.length === 0) { toast.error('Isi minimal 1 barang dengan qty kirim lebih dari 0.'); return; }
 
-    // Check: qty to ship now <= remaining_to_ship
+    // Qty kirim tidak boleh melebihi sisa kirim (hasil jahit − sudah diterima DA − sedang QC). Pesan berbahasa
+    // Indonesia di sini; dulu atribut max membuat browser menampilkan "Value must be 0." (layar owner 17 Nov 2026).
     for (const item of validItems) {
       if (Number(item.qty_shipped) > Number(item.remaining_to_ship)) {
-        toast.warning(`Qty kirim ${item.sku} (${item.qty_shipped}) melebihi sisa pengiriman (${item.remaining_to_ship} pcs). Server akan memvalidasi terhadap qty produksi aktual.`);
+        toast.error(`Qty kirim ${item.sku || item.product_name} (${item.qty_shipped} pcs) melebihi sisa kirim ${item.remaining_to_ship} pcs.`);
         return;
       }
     }
@@ -315,7 +320,14 @@ export default function VendorBuyerShipments({ user }) {
                       const kum = kumulatif;
                       return (d.items || []).map((it, i) => (
                         <TableRow key={`${d.dispatch_seq}-${it.id}`}>
-                          <TableCell className="tabular-nums">{i === 0 ? `#${d.dispatch_seq}` : ''}</TableCell>
+                          <TableCell className="tabular-nums">
+                            {i === 0 ? `#${d.dispatch_seq}` : ''}
+                            {i === 0 && it.receipt_cancelled && (
+                              <span className="block text-xs text-[hsl(var(--danger-text))]" data-testid={`vendor-dispatch-batal-${d.dispatch_seq}`}>
+                                Dibatalkan DA{it.receipt_cancelled_code ? ` (${it.receipt_cancelled_code})` : ''}
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell>{i === 0 ? fmtDate(d.dispatch_date) : ''}</TableCell>
                           <TableCell className="tabular-nums">{it.serial_number || '—'}</TableCell>
                           <TableCell className="tabular-nums">
@@ -377,7 +389,7 @@ export default function VendorBuyerShipments({ user }) {
                           </optgroup>
                         )}
                         {completed.length > 0 && (
-                          <optgroup label={`Sudah terkirim penuh (${completed.length})`}>
+                          <optgroup label={`Semua sudah diterima DA (${completed.length})`}>
                             {completed.map((j) => <option key={j.id} value={j.id}>{j.job_number} · PO {j.po_number || '—'} · selesai</option>)}
                           </optgroup>
                         )}
@@ -398,6 +410,23 @@ export default function VendorBuyerShipments({ user }) {
             </Isian>
           </div>
           {selectedJob && <p className="text-sm text-muted-foreground">{selectedJob.job_number} — {selectedJob.po_number}. Qty kirim tidak boleh melebihi sisa kirim.</p>}
+          {/* 17 Nov 2026 (layar owner JOB-0018): jelaskan KENAPA sisa kirim 0 — dulu hanya angka 0 + pesan browser Inggris */}
+          {form.items.length > 0 && sumF('remaining_to_ship') === 0 && (() => {
+            const kode = [...new Set(form.items.flatMap((i) => i.receipt_codes || []))];
+            if (sumF('received_by_da') > 0) return (
+              <Notice tone="success" icon={CheckCircle} title="Semua hasil jahit job ini sudah diterima DA" testId="vendor-ship-semua-diterima">
+                Sudah tercatat di Terima &amp; QC{kode.length ? ` (${kode.join(', ')})` : ''}. Tidak ada yang perlu dikirim lagi.
+              </Notice>);
+            if (sumF('in_qc_da') > 0) return (
+              <Notice tone="info" icon={CheckCircle} title="Hasil jahit job ini sedang diperiksa DA" testId="vendor-ship-sedang-qc">
+                Tunggu QC selesai di Terima &amp; QC. Tidak ada yang perlu dikirim lagi.
+              </Notice>);
+            if (sumF('produced_qty') === 0) return (
+              <Notice tone="warning" icon={AlertTriangle} title="Progres jahit job ini masih 0" testId="vendor-ship-progres-kosong">
+                Sisa kirim mengikuti progres jahit. Isi progres jahit dulu di menu Progress produksi.
+              </Notice>);
+            return null;
+          })()}
           {form.items.length > 0 && (
             <section className="space-y-2">
               <p className="text-sm font-medium text-foreground">Barang yang dikirim</p>
@@ -414,13 +443,17 @@ export default function VendorBuyerShipments({ user }) {
                       <TableCell className="text-right tabular-nums">{n(item.ordered_qty)}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(item.produced_qty)}{item.child_produced_qty > 0 && <span className="block text-xs text-muted-foreground">+{item.child_produced_qty} turunan</span>}</TableCell>
                       <TableCell className="text-right tabular-nums">{n(item.shipped_to_da)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{n(item.received_by_da)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{n(item.received_by_da)}{item.in_qc_da > 0 && <span className="block text-xs text-muted-foreground">+{n(item.in_qc_da)} sedang QC</span>}</TableCell>
                       <TableCell className={`text-right tabular-nums ${(item.qty_short_open || 0) > 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : 'text-muted-foreground'}`}>{n(item.qty_short_open)}</TableCell>
                       <TableCell className="text-right tabular-nums font-medium">{n(item.remaining_to_ship)}</TableCell>
                       <TableCell className="text-right">
-                        <Input type="number" min="0" max={item.remaining_to_ship} aria-label={`Kirim sekarang ${item.product_name}`}
+                        {/* tanpa atribut min/max: batas diperiksa sendiri dengan pesan Indonesia (bukan pesan browser) */}
+                        <Input type="number" inputMode="numeric" aria-label={`Kirim sekarang ${item.product_name}`}
                           className={`h-8 w-24 ml-auto text-right ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-[hsl(var(--destructive))] text-[hsl(var(--danger-text))]' : ''}`}
                           value={item.qty_shipped} onChange={(e) => updateQty(idx, e.target.value)} />
+                        {Number(item.qty_shipped) > Number(item.remaining_to_ship) && (
+                          <span className="block text-xs text-[hsl(var(--danger-text))]">Maks. {n(item.remaining_to_ship)} pcs</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}</TableBody>

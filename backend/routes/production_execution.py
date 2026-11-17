@@ -112,6 +112,10 @@ async def _enrich_jobs(db, jobs: list) -> list:
             bucket['vendor_n'] += row['n']
             bucket['vendor_qty'] += row['qty'] or 0
 
+    from core import dispatch_capacity as _dcap_pe
+    _main_poi = list({it['po_item_id'] for j in jobs for it in items_by_job.get(j['id'], []) if it.get('po_item_id')})
+    send_room = await _dcap_pe.cmt_send_room(db, _main_poi) if _main_poi else {}
+
     result = []
     for j in jobs:
         items = items_by_job.get(j['id'], [])
@@ -138,6 +142,14 @@ async def _enrich_jobs(db, jobs: list) -> list:
             remaining_to_ship = max(0, total_produced - total_received_by_da)
         else:
             remaining_to_ship = max(0, total_produced - total_received_to_buyer)
+        # 17 Nov 2026: job CMT biasa (semua baris punya item PO) → angka dari PENERIMAAN (SSOT
+        # `dcap.cmt_send_room`): penerimaan langsung di Terima & QC ikut terbaca, penerimaan batal tidak.
+        _room_rows = [send_room[i['po_item_id']] for i in {i.get('po_item_id'): i for i in items}.values()
+                      if i.get('po_item_id') in send_room]
+        if items and not _dcap_pe.is_rework_job(j) and all(i.get('po_item_id') in send_room for i in items):
+            total_declared_to_da = sum(r['claimed'] for r in _room_rows)
+            total_received_by_da = sum(r['received'] for r in _room_rows)
+            remaining_to_ship = sum(r['room'] for r in _room_rows)
         serial_numbers = list({i.get('serial_number', '') for i in items if i.get('serial_number')})
         # ── FASE 1: agregat buku kuantitas QC per job (parent + child) ──────────
         from core import production_qty_ledger as _qled
@@ -804,6 +816,9 @@ async def get_job_items(request: Request):
     for p in all_progress: progress_by_item.setdefault(p.get('job_item_id'), []).append(p)
     all_po_item_ids = [it['po_item_id'] for it in items if it.get('po_item_id')]
     all_child_item_ids = [c['id'] for c in all_child_items]
+    from core import dispatch_capacity as _dcap_pe
+    _job_rework = _dcap_pe.is_rework_job(await db.production_jobs.find_one({'id': job_id}, {'_id': 0, 'shipment_type': 1}))
+    send_room = await _dcap_pe.cmt_send_room(db, all_po_item_ids) if all_po_item_ids and not _job_rework else {}
     buyer_q = {}
     if all_po_item_ids:
         buyer_q = {'po_item_id': {'$in': all_po_item_ids}}
@@ -853,6 +868,14 @@ async def get_job_items(request: Request):
         # SISA KIRIM vendor: dihitung dari qty yang DITERIMA DA bila item ini
         # memakai deklarasi CMT→DA (selisih kirim membuka kapasitas kirim ulang).
         remaining_to_ship = max(0, total_produced - (received_da if declared_da > 0 else received))
+        # 17 Nov 2026: job CMT biasa → angka dari PENERIMAAN (SSOT `dcap.cmt_send_room`), termasuk penerimaan
+        # yang dicatat langsung di Terima & QC; penerimaan yang dibatalkan tidak dihitung.
+        _room = send_room.get(item.get('po_item_id')) if not _job_rework else None
+        in_qc_da, receipt_codes = 0, []
+        if _room:
+            declared_da, received_da = _room['claimed'], _room['received']
+            remaining_to_ship, in_qc_da = _room['room'], _room['in_qc']
+            receipt_codes = _room['receipt_codes']
         # ── FASE 1: buku kuantitas QC ikut disajikan. `produced_qty` TIDAK pernah
         # dikurangi reject (kebijakan owner: "dikirim 100 reject 10 → tetap 100"),
         # tetapi accepted/reject/rework/scrap tampil eksplisit di sisi vendor & DA.
@@ -869,6 +892,7 @@ async def get_job_items(request: Request):
         result.append({**serialize_doc(item), 'progress_history': serialize_doc(progress),
                        'shipped_to_buyer': shipped, 'received_to_buyer': received,
                        'declared_to_da': declared_da, 'received_by_da': received_da,
+                       'in_qc_da': in_qc_da, 'receipt_codes': receipt_codes,
                        'remaining_to_ship': remaining_to_ship,
                        'qty_short_open': led['qty_short_open'],
                        'qty_claimed_by_vendor': led['qty_claimed_by_vendor'],

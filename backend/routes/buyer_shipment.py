@@ -213,6 +213,8 @@ async def _declared_main_by_item(db, po_item_ids: list) -> dict:
     for r in rows:
         if r.get('shipment_id') not in da or (kinds.get(r.get('job_id')) or {}).get('rework'):
             continue
+        if r.get('receipt_cancelled'):      # penerimaannya dibatalkan DA (17 Nov 2026) — bukan kiriman
+            continue
         out[r['po_item_id']] = out.get(r['po_item_id'], 0) + int(r.get('qty_shipped') or 0)
     return out
 
@@ -246,6 +248,42 @@ async def _over_qty_rows(db, items_data: list, receiver_type: str, job_id) -> li
                      'qty': req[pi['id']]})
     from core import over_qty
     return over_qty.over_lines(rows)
+
+
+async def _guard_cmt_send_room(db, items_data: list, job_id) -> None:
+    """17 Nov 2026 (layar owner JOB-0018): deklarasi kirim CMT→DA ≤ SISA KIRIM per item PO
+    (hasil jahit − sudah diterima DA − sedang QC, SSOT `dcap.cmt_send_room`). Dulu server tidak memeriksa ini:
+    barang yang sudah diterima lewat Terima & QC bisa dideklarasikan lagi ⇒ penerimaan & tagihan dobel.
+    Kiriman balik hasil rework punya alurnya sendiri (tidak dibatasi di sini)."""
+    from core import dispatch_capacity as dcap
+    jids = [job_id] + [it.get('job_id') for it in items_data or []]
+    kinds = await dcap._job_kinds(db, [j for j in jids if j])
+    if any((k or {}).get('rework') for k in kinds.values()):
+        return
+    req: dict = {}
+    label: dict = {}
+    for it in items_data or []:
+        q = int(it.get('qty_shipped', 0) or 0)
+        if q > 0 and it.get('po_item_id'):
+            req[it['po_item_id']] = req.get(it['po_item_id'], 0) + q
+            label.setdefault(it['po_item_id'], ' '.join(x for x in (it.get('sku') or it.get('product_name') or '',
+                                                                     it.get('size') or '') if x))
+    if not req:
+        return
+    room = await dcap.cmt_send_room(db, list(req))
+    for pid, q in req.items():
+        r = room.get(pid) or {}
+        if q <= int(r.get('room', 0) or 0):
+            continue
+        kode = ', '.join(r.get('receipt_codes') or [])
+        saran = ('Progres jahit item ini masih 0 — isi progres jahit dulu.' if not r.get('produced')
+                 else 'Barang yang sudah diterima DA tidak perlu dikirim lagi.')
+        raise HTTPException(
+            400,
+            f"Qty kirim {label.get(pid) or 'barang'} ({q} pcs) melebihi sisa kirim {int(r.get('room', 0) or 0)} pcs. "
+            f"Perhitungan: hasil jahit {int(r.get('produced', 0) or 0)} − sudah diterima DA "
+            f"{int(r.get('received', 0) or 0)}{f' ({kode})' if kode else ''} − sedang QC {int(r.get('in_qc', 0) or 0)}. "
+            f"{saran}")
 
 
 async def _po_ids_of_items(db, items: list) -> list:
@@ -817,6 +855,9 @@ async def get_buyer_shipment(bsid: str, request: Request):
         if seq not in dispatch_map:
             dispatch_map[seq] = {'dispatch_seq': seq, 'dispatch_date': item.get('dispatch_date') or item.get('created_at'), 'items': [], 'total_qty': 0}
         dispatch_map[seq]['items'].append(serialize_doc(item))
+        if item.get('receipt_cancelled'):   # 17 Nov 2026: penerimaannya dibatalkan DA — bukan kiriman
+            dispatch_map[seq]['cancelled_receipt'] = item.get('receipt_cancelled_code') or ''
+            continue
         dispatch_map[seq]['total_qty'] += item.get('qty_shipped', 0)
         key = item.get('po_item_id') or item['id']
         if key not in poi_totals:
@@ -1011,6 +1052,9 @@ async def create_buyer_shipment(request: Request):
     if receiver_type == RECEIVER_BUYER and not is_vendor(user):
         await _validate_source_receipts_cap(db, source_receipt_ids, items_data, user,
                                             require_receipts=not internal_dispatch)
+    # 17 Nov 2026 — deklarasi CMT→DA ≤ sisa kirim (barang yang sudah diterima DA tidak bisa dideklarasi ulang)
+    if receiver_type == RECEIVER_DA:
+        await _guard_cmt_send_room(db, items_data, body.get('job_id'))
     # ──────────────────────────────────────────────────────────────────────
 
     # ─── GAP E pre-flight — stok FG harus CUKUP sebelum dokumen ditulis ────
@@ -1729,7 +1773,13 @@ async def get_dispatches(request: Request):
     for item in items:
         seq = item.get('dispatch_seq', 1)
         if seq not in dm:
-            dm[seq] = {'dispatch_seq': seq, 'dispatch_date': item.get('dispatch_date') or item.get('created_at'), 'items': [], 'total_qty': 0}
+            dm[seq] = {'dispatch_seq': seq, 'dispatch_date': item.get('dispatch_date') or item.get('created_at'), 'items': [],
+                       'total_qty': 0, 'cancelled': True, 'cancelled_receipt': ''}
         dm[seq]['items'].append(serialize_doc(item))
-        dm[seq]['total_qty'] += item.get('qty_shipped', 0)
+        # 17 Nov 2026: dispatch yang penerimaannya dibatalkan DA tidak dihitung sebagai kiriman
+        if item.get('receipt_cancelled'):
+            dm[seq]['cancelled_receipt'] = item.get('receipt_cancelled_code') or dm[seq]['cancelled_receipt']
+        else:
+            dm[seq]['cancelled'] = False
+            dm[seq]['total_qty'] += item.get('qty_shipped', 0)
     return sorted(dm.values(), key=lambda d: d['dispatch_seq'])
