@@ -1461,6 +1461,10 @@ async def reject_receipt(receipt_id: str, request: Request):
             "updated_at": _now()
         }})
     doc_lock.require_matched(res, "Penerimaan ini sedang/baru saja diselesaikan pengguna lain — muat ulang.")
+    # 17 Nov 2026: deklarasi kirim CMT yang melahirkan penerimaan ini ikut dilepas — dulu tetap dianggap sudah
+    # diterima DA, sehingga sisa kirim CMT 0 padahal barangnya belum sampai (JOB-0008/0009).
+    from core.dispatch_capacity import release_declaration_of_receipt
+    await release_declaration_of_receipt(db, doc, body.get("reason", ""))
     result = await db.cmt_receipts.find_one({"id": receipt_id}, {"_id": 0})
     return serialize_doc(result)
 

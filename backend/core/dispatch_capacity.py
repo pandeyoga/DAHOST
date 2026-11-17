@@ -134,7 +134,8 @@ def shipment_progress(items: list) -> dict:
     Dipakai daftar, detail, dan penulis `ship_status` supaya ketiganya sama.
     """
     per: dict = {}
-    for it in items or []:
+    items = [it for it in (items or []) if not it.get('receipt_cancelled')]   # dispatch deklarasi yang penerimaannya dibatalkan DA
+    for it in items:
         key = it.get('po_item_id') or it.get('id')
         p = per.setdefault(key, {'ordered': _i(it.get('ordered_qty')), 'shipped': 0, 'received': 0})
         if not p['ordered']:
@@ -171,6 +172,62 @@ async def refresh_shipment_status(db, shipment_id: str) -> dict:
         'ship_status': prog['ship_status'], 'progress_pct': prog['progress_pct'],
         'updated_at': datetime.now(timezone.utc)}})
     return prog
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SISA KIRIM CMT → DA (17 Nov 2026, layar owner: Kirim ke DA "Diterima DA 0 · Sisa kirim 0")
+# ─────────────────────────────────────────────────────────────────────────────
+# Barang dari CMT bisa tercatat lewat DUA jalan: deklarasi di layar Kirim ke DA (→ draf penerimaan) ATAU langsung
+# di Terima & QC oleh staf DA. Keduanya berakhir di `cmt_receipts`, jadi sisa kirim dihitung dari PENERIMAAN, bukan
+# dari dokumen deklarasi. Dulu: penerimaan langsung tidak terbaca ("Diterima DA 0"), sisa kirim jatuh ke angka
+# "dikirim ke klien", dan penerimaan yang DIBATALKAN tetap terhitung diterima (sisa kirim 0 padahal belum sampai).
+def cmt_send_room_from(q: dict) -> dict:
+    """Sisa kirim CMT→DA satu item PO dari angka `po_item_quantities` (fungsi murni).
+
+        diterima DA = sampai (lolos + reject) di penerimaan SELESAI QC, tanpa kiriman balik retur-ke-CMT
+        sedang QC   = klaim di penerimaan yang belum selesai (penerimaan BATAL tidak dihitung)
+        sisa kirim  = hasil jahit − diterima DA − sedang QC
+    Selisih kirim yang belum sampai (klaim > diterima) otomatis membuka sisa kirim lagi (aturan owner)."""
+    produced = _i(q.get('produced_main'))
+    received = _i(q.get('arrived_fresh'))
+    in_qc = _i(q.get('in_qc'))
+    return {'produced': produced, 'claimed': _i(q.get('claimed')) + in_qc, 'received': received,
+            'in_qc': in_qc, 'room': max(0, produced - received - in_qc)}
+
+
+async def cmt_send_room(db, po_item_ids) -> dict:
+    """{po_item_id: cmt_send_room_from(..) + receipt_codes} — layar Kirim ke DA & pagar deklarasi memakai ini."""
+    q = await po_item_quantities(db, po_item_ids)
+    rids = sorted({r for v in q.values() for r in (v.get('receipt_ids') or [])})
+    codes: dict = {}
+    if rids:
+        async for rc in db.cmt_receipts.find({'id': {'$in': rids}}, {'_id': 0, 'id': 1, 'receipt_code': 1}):
+            codes[rc['id']] = rc.get('receipt_code') or ''
+    return {pid: {**cmt_send_room_from(v),
+                  'receipt_codes': [codes[r] for r in (v.get('receipt_ids') or []) if codes.get(r)]}
+            for pid, v in q.items()}
+
+
+async def release_declaration_of_receipt(db, receipt: dict, reason: str = '') -> int:
+    """Penerimaan hasil deklarasi CMT DIBATALKAN DA ⇒ baris dispatch deklarasi itu ditandai `receipt_cancelled`.
+    Akibatnya dispatch tidak lagi terhitung "dikirim" (progres SJ, batas lebih-pesan) dan sisa kirim CMT terbuka
+    lagi. Dulu pembatalan hanya mengubah penerimaan; deklarasinya tetap dianggap sudah sampai. Kembalikan jumlah baris."""
+    sid = (receipt or {}).get('related_shipment_id')
+    if not sid:
+        return 0
+    seq = _i(receipt.get('related_dispatch_seq')) or 1
+    from datetime import datetime, timezone
+    n = 0
+    for it in await db.buyer_shipment_items.find({'shipment_id': sid}, {'_id': 0}).to_list(None):
+        if (_i(it.get('dispatch_seq')) or 1) != seq or it.get('receipt_cancelled'):
+            continue
+        await db.buyer_shipment_items.update_one({'id': it['id']}, {'$set': {
+            'receipt_cancelled': True, 'receipt_cancelled_code': receipt.get('receipt_code') or '',
+            'receipt_cancelled_reason': reason or '', 'receipt_cancelled_at': datetime.now(timezone.utc)}})
+        n += 1
+    if n:
+        await refresh_shipment_status(db, sid)
+    return n
 
 
 # ─────────────────────────────────────────────────────────────────────────────
