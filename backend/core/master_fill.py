@@ -81,6 +81,16 @@ async def bom_copy_to_missing(db, user: dict | None, model_id: str | None = None
                                                  size_id=v.get("size_id"), source_fabric=src_fab, created_from="bom_copy")
                 new_line = bom_line_for_panel(panel, ln)
                 new_line["qty"] = ln.get("qty") or 1.0
+                # 18 Nov 2026: resep kain (produk lebih dari satu kain) ikut disalin, kodenya diganti warna tujuan
+                recipe = []
+                for r in ln.get("fabric_recipe") or []:
+                    f = await _fabric_for_color(db, r.get("code") or "", key[2])
+                    if f:
+                        recipe.append({**r, "material_id": f["id"], "code": f["code"], "name": f.get("name") or r.get("name")})
+                    else:
+                        notes.append(f"resep kain {r.get('code')} warna {key[2]} belum ada di master")
+                if recipe:
+                    new_line["fabric_recipe"] = recipe
                 lines.append(new_line)
                 if src_fab is None and ln.get("source_material_code"):
                     notes.append(f"kain {ln['source_material_code']} warna {key[2]} belum ada di master")

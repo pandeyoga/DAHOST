@@ -158,7 +158,8 @@ async def apply_progress_value(db, *, fabric_id: str, panel_id: str,
 
 
 async def apply_progress_value_multi(db, *, fabrics: list[dict], panels: list[dict],
-                                     actor: dict | None = None, reference: str = "") -> dict:
+                                     actor: dict | None = None, reference: str = "",
+                                     recipes: list | None = None) -> dict:
     """Order cutting BANYAK KAIN × BANYAK HASIL (keputusan owner 10 Nov 2026).
 
     `fabrics` = [{fabric_id, qty}] (kain terpakai per kain), `panels` = [{panel_id, qty, qty_before}] (pcs per hasil).
@@ -169,6 +170,10 @@ async def apply_progress_value_multi(db, *, fabrics: list[dict], panels: list[di
     Kain yang belum berharga TIDAK dipaksa jadi angka: nilainya tidak ikut (bukan nol yang seolah benar), potongan
     ditandai `unvalued` bila TIDAK ADA kain yang berharga, dan bila sebagian berharga catatannya menyebut kain mana
     yang belum masuk HPP. Tidak pernah melempar (kain sudah terpotong).
+
+    18 Nov 2026 (owner, produk lebih dari satu kain): `recipes` = resep kain tiap baris hasil (sejajar `panels`).
+    Bila ada, nilai TIAP KAIN dibagi ke baris yang memakai kain itu (`core.resep_kain.alokasi_nilai`), jadi HPP masuk
+    per baris bisa berbeda (`panels[].cost_per_pcs_in`). Tanpa resep = aturan lama persis.
     """
     trace = {"value_source": VALUE_SOURCE, "value_out": 0.0, "cost_per_pcs_in": 0.0,
              "value_status": "unvalued", "value_note": "", "fabrics": [], "panels": [],
@@ -214,22 +219,27 @@ async def apply_progress_value_multi(db, *, fabrics: list[dict], panels: list[di
                                         "panel_unit_cost_before": c, "panel_unit_cost_after": c})
             return trace
         cpp = round(value_total / total_pcs, 6)
+        per_line = _per_line_cpp(trace["fabrics"], panels, recipes, cpp)
         note = (f"Nilai kain keluar {value_total:,.2f} dibagi {total_pcs:g} pcs = {cpp:,.2f}/pcs, "
                 "dirata-rata dengan stok potongan lama.")
+        if per_line["by_recipe"]:
+            note = (f"Nilai kain keluar {value_total:,.2f} dibagi per kain ke hasil yang memakainya (resep kain): "
+                    + "; ".join(per_line["parts"]) + ". Dirata-rata dengan stok potongan lama.")
         if missing:
             note += (" Kain " + ", ".join(m.get("code", "") or "?" for m in missing)
                      + " belum punya harga, jadi belum ikut HPP potongan (isi harganya lewat pembelian).")
         trace.update({"cost_per_pcs_in": cpp, "value_status": "valued", "value_note": note})
         src = trace["fabrics"][0] if trace["fabrics"] else {}
-        for p in panels:
+        for n, p in enumerate(panels):
             qty = _f(p.get("qty"))
+            line_cpp = per_line["cpp"][n]
             panel = await db.rahaza_materials.find_one({"id": p["panel_id"]}, {"_id": 0}) or {}
             before = round(accessory_valuation.resolve_unit_cost(panel), 4)
             row = {"panel_id": p["panel_id"], "qty": qty, "panel_qty_before": round(_f(p.get("qty_before")), 4),
-                   "panel_unit_cost_before": before, "panel_unit_cost_after": before}
+                   "panel_unit_cost_before": before, "panel_unit_cost_after": before, "cost_per_pcs_in": line_cpp}
             if qty > 0:
                 res = await accessory_valuation.apply_receipt_cost(
-                    db, p["panel_id"], qty, cpp, qty_before=p.get("qty_before"), actor=actor,
+                    db, p["panel_id"], qty, line_cpp, qty_before=p.get("qty_before"), actor=actor,
                     notes=(f"Potongan dari cutting {reference}" if reference else "Potongan dari cutting"))
                 row["panel_unit_cost_before"] = res.get("old_unit_cost", before)
                 row["panel_unit_cost_after"] = res.get("new_unit_cost", 0.0)
@@ -249,7 +259,8 @@ async def apply_progress_value_multi(db, *, fabrics: list[dict], panels: list[di
 
 
 async def apply_correction_value(db, *, fabric_returns: list[dict], fabrics: list[dict], panels: list[dict],
-                                 actor: dict | None = None, reference: str = "") -> dict:
+                                 actor: dict | None = None, reference: str = "",
+                                 recipes: list | None = None) -> dict:
     """Koreksi progres cutting (keputusan owner 14 Nov 2026): nilai catatan LAMA dibalik, nilai catatan BARU diterapkan.
 
     `fabric_returns` = [{fabric_id, qty, unit_cost, qty_before}] — kain terpakai lama, harga kain SAAT keluar, dan stok
@@ -262,6 +273,7 @@ async def apply_correction_value(db, *, fabric_returns: list[dict], fabrics: lis
       3. Tiap potongan: penerimaan lama (qty_old @ cpp_old) DIGANTI penerimaan baru (qty_new @ HPP masuk baru) di rata-rata
          bergerak (`accessory_valuation.replaced_average`).
     Nilai hanya berpindah antar persediaan (kain ↔ potongan) — tidak ada jurnal, sama seperti progres. Tidak pernah melempar.
+    18 Nov 2026: `recipes` (sejajar `panels`) = resep kain tiap baris — nilai baru dibagi per kain seperti progres.
     """
     trace = {"value_source": VALUE_SOURCE, "value_out": 0.0, "cost_per_pcs_in": 0.0, "value_status": "unvalued",
              "value_note": "", "fabrics": [], "panels": [], "fabric_returns": [], "fabric_unit_cost": 0.0,
@@ -297,6 +309,7 @@ async def apply_correction_value(db, *, fabric_returns: list[dict], fabrics: lis
             trace["fabric_unit_cost"] = trace["fabrics"][0]["fabric_unit_cost"]
         cpp = round(value_total / total_pcs, 6) if total_pcs > 0 and value_total > 0 else 0.0
         trace["cost_per_pcs_in"] = cpp
+        per_line = _per_line_cpp(trace["fabrics"], [{"qty": p.get("qty_new")} for p in panels], recipes, cpp)
         if total_pcs <= 0:
             trace["value_note"] = "Catatan progres dikosongkan — nilai lama dikembalikan ke kain."
         elif cpp <= 0:
@@ -312,11 +325,14 @@ async def apply_correction_value(db, *, fabric_returns: list[dict], fabrics: lis
                                         + " belum punya harga, jadi belum ikut HPP potongan.")
         src = trace["fabrics"][0] if trace["fabrics"] else {}
         clipped = []
-        for p in panels:
+        for n, p in enumerate(panels):
+            line_cpp = per_line["cpp"][n] if cpp > 0 else 0.0
             res = await accessory_valuation.replace_receipt_cost(
                 db, p["panel_id"], qty_before=_f(p.get("qty_before")), qty_old=_f(p.get("qty_old")),
-                cost_old=_f(p.get("cpp_old")), qty_new=_f(p.get("qty_new")), cost_new=cpp, actor=actor, notes=notes)
+                cost_old=_f(p.get("cpp_old")), qty_new=_f(p.get("qty_new")), cost_new=line_cpp, actor=actor,
+                notes=notes)
             trace["panels"].append({"panel_id": p["panel_id"], "qty": round(_f(p.get("qty_new")), 4),
+                                    "cost_per_pcs_in": line_cpp,
                                     "qty_old": round(_f(p.get("qty_old")), 4),
                                     "panel_qty_before": round(_f(p.get("qty_before")), 4),
                                     "panel_unit_cost_before": res["old_unit_cost"],
@@ -340,6 +356,23 @@ async def apply_correction_value(db, *, fabric_returns: list[dict], fabrics: lis
             trace["panel_unit_cost_before"] = p0["panel_unit_cost_before"]
             trace["panel_unit_cost_after"] = p0["panel_unit_cost_after"]
             trace["panel_qty_before"] = p0["panel_qty_before"]
+
+
+def _per_line_cpp(fabric_rows: list[dict], panels: list[dict], recipes: list | None, cpp_flat: float) -> dict:
+    """HPP masuk/pcs per baris hasil. Tanpa resep → `cpp_flat` untuk semua baris (aturan 10 Nov). Dengan resep →
+    nilai tiap kain dibagi ke baris yang memakainya (`core.resep_kain.alokasi_nilai`)."""
+    from core import resep_kain
+    n = len(panels or [])
+    if not recipes or not any(recipes):
+        return {"cpp": [cpp_flat] * n, "by_recipe": False, "parts": []}
+    values: dict = {}
+    for f in fabric_rows or []:
+        values[f.get("fabric_id")] = values.get(f.get("fabric_id"), 0.0) + _f(f.get("value_out"))
+    alloc = resep_kain.alokasi_nilai(values, panels, recipes)
+    cpp = [round(v / _f(p.get("qty")), 6) if _f(p.get("qty")) > 0 else 0.0 for v, p in zip(alloc, panels)]
+    parts = [f"baris {i + 1}: {alloc[i]:,.2f} ÷ {_f(panels[i].get('qty')):g} pcs = {cpp[i]:,.2f}/pcs"
+             for i in range(n) if _f(panels[i].get("qty")) > 0]
+    return {"cpp": cpp, "by_recipe": True, "parts": parts}
 
 
 async def _mark_panel(db, panel_id: str, status: str, note: str, fabric: dict) -> None:

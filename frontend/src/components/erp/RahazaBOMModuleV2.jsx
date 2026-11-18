@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react';
 import PageLayout from './layout/PageLayout';
 import FormPopup from '@/components/ui/form-popup';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -15,6 +15,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState, Notice } from './moduleAtoms';
 import { InlineMaterialPicker } from './bom/InlineMaterialPicker';
+import { ResepKainEditor, resepKeIsian, isianKeResep, ringkasResep } from './bom/ResepKainEditor';
 import { VersionRail } from './bom/VersionRail';
 import { punyaCentang } from '@/lib/rbac';
 import { RequirementsPreviewCard } from './bom/RequirementsPreviewCard';
@@ -45,6 +46,9 @@ const blankMaterial = () => ({
   qty: '', unit: 'kg', notes: '',
 });
 
+/** Baris potongan (CUT-…) — satu set potongan per baju; bisa membawa resep kain (18 Nov 2026). */
+const isPanelRow = (m) => !!m?.is_cut_panel || String(m?.code || '').toUpperCase().startsWith('CUT-');
+
 const materialsFromVersion = (v) => (v?.materials || []).map(m => ({
   material_id: m.material_id || null,
   code: m.code || '',
@@ -55,6 +59,11 @@ const materialsFromVersion = (v) => (v?.materials || []).map(m => ({
   qty: String(m.qty ?? ''),
   unit: m.unit || 'pcs',
   notes: m.notes || '',
+  // penanda potongan + kain asal + resep kain ikut disimpan ulang (dulu hilang saat BOM disunting di layar)
+  is_cut_panel: isPanelRow(m),
+  source_material_code: m.source_material_code || '',
+  migrated_from_fabric: m.migrated_from_fabric || null,
+  fabric_recipe: resepKeIsian(m.fabric_recipe),
 }));
 
 const selCls = 'w-full h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground';
@@ -286,6 +295,12 @@ export default function RahazaBOMModuleV2({ token }) {
           qty: Number(m.qty),
           unit: m.unit || 'pcs',
           notes: m.notes || '',
+          ...(isPanelRow(m) ? {
+            is_cut_panel: true,
+            source_material_code: m.source_material_code || '',
+            ...(m.migrated_from_fabric ? { migrated_from_fabric: m.migrated_from_fabric } : {}),
+            fabric_recipe: isianKeResep(m.fabric_recipe),
+          } : {}),
         }));
 
       if (materials.length === 0) {
@@ -669,7 +684,8 @@ export default function RahazaBOMModuleV2({ token }) {
                             </TableHeader>
                             <TableBody>
                               {editor.form.materials.map((m, idx) => (
-                                <TableRow key={idx}>
+                                <Fragment key={idx}>
+                                <TableRow>
                                   <TableCell>
                                     <div className="flex items-center gap-1">
                                       <InlineMaterialPicker
@@ -774,6 +790,18 @@ export default function RahazaBOMModuleV2({ token }) {
                                     </Button>
                                   </TableCell>
                                 </TableRow>
+                                {isPanelRow(m) && (
+                                  <TableRow data-testid={`bom-mat-${idx}-resep`}>
+                                    <TableCell />
+                                    <TableCell colSpan={7}>
+                                      <ResepKainEditor token={token} categories={categories}
+                                        value={m.fabric_recipe || []}
+                                        onChange={(rows) => updateMaterial(idx, { fabric_recipe: rows })}
+                                        testId={`bom-mat-${idx}-resep-kain`} />
+                                    </TableCell>
+                                  </TableRow>
+                                )}
+                                </Fragment>
                               ))}
                               {editor.form.materials.length === 0 && (
                                 <TableRow>
@@ -873,7 +901,8 @@ export default function RahazaBOMModuleV2({ token }) {
                                   </TableHeader>
                                   <TableBody>
                                     {viewerMaterials.map((m, idx) => (
-                                      <TableRow key={idx} data-testid={`bom-viewer-row-${idx}`}>
+                                      <Fragment key={idx}>
+                                      <TableRow data-testid={`bom-viewer-row-${idx}`}>
                                         {/* ACC-2 — status kopling ke master material terlihat TANPA
                                             harus masuk mode Edit (baris lepas = rantai stok putus). */}
                                         <TableCell>
@@ -903,6 +932,15 @@ export default function RahazaBOMModuleV2({ token }) {
                                         <TableCell className="text-right tabular-nums">{m.qty}</TableCell>
                                         <TableCell className="text-xs">{m.unit}</TableCell>
                                       </TableRow>
+                                      {m.fabric_recipe?.length > 0 && (
+                                        <TableRow data-testid={`bom-viewer-row-${idx}-resep`}>
+                                          <TableCell />
+                                          <TableCell colSpan={6} className="text-xs text-muted-foreground">
+                                            Resep kain ({m.fabric_recipe.length}): {ringkasResep(m.fabric_recipe)}
+                                          </TableCell>
+                                        </TableRow>
+                                      )}
+                                      </Fragment>
                                     ))}
                                   </TableBody>
                                 </Table>

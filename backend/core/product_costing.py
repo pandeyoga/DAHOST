@@ -1245,6 +1245,22 @@ async def list_snapshots(db, *, model_id: str | None = None, limit: int = 50) ->
 # ══════════════════════════════════════════════════════════════════════════════
 # BOM → kebutuhan bahan untuk order cutting
 # ══════════════════════════════════════════════════════════════════════════════
+async def _recipe_rows(db, cache: dict, line: dict, qty_pcs: float) -> list[dict]:
+    """Resep kain baris potongan BOM → baris kebutuhan kain (perkiraan × target pcs, harga kain sekarang)."""
+    from core import resep_kain
+    rows = []
+    for r in resep_kain.resep_of_line(line):
+        mat = await _material_master(db, cache, r.get("material_id"), r.get("code")) or {}
+        per = _f(r.get("qty_per_pcs"))
+        total = _r(per * qty_pcs, 4) if per > 0 and qty_pcs > 0 else 0.0
+        cost = _r(resolve_unit_cost(mat))
+        rows.append({"material_id": mat.get("id") or r.get("material_id"), "code": mat.get("code") or r.get("code"),
+                     "name": mat.get("name") or r.get("name"), "role": r.get("role"),
+                     "qty_per_pcs": _r(per, 6) if per > 0 else None, "unit": (mat.get("unit") or r.get("unit") or "").lower(),
+                     "qty_total": total, "unit_cost": cost, "amount_total": _r(total * cost)})
+    return rows
+
+
 async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None = None,
                                       variant_id: str | None = None, qty_pcs: float = 0.0,
                                       input_material_id: str | None = None,
@@ -1260,6 +1276,8 @@ async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None 
         "qty_pcs": _r(qty_pcs, 4), "bom_id": None, "bom_version": None,
         "size_code": "", "model_code": "", "model_name": "",
         "fabric": None, "panel": None, "plan_manual": False, "plan_note": "", "accessories": [], "others": [],
+        # 18 Nov 2026: produk lebih dari satu kain — resep kain potongan (core.resep_kain), dasar isi otomatis form
+        "fabric_recipe": [],
         "has_bom": False, "gaps": [], "uom_warnings": [],
         "other_sizes_with_bom": [],
     }
@@ -1350,6 +1368,8 @@ async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None 
         row["amount_total"] = _r(row["qty_total"] * row["unit_cost"])
         if cut_panel_master.is_panel_material(mat) or cut_panel_master.is_panel_line(m):
             out["panel"] = row          # potongan yang akan DIHASILKAN order ini
+            if bom_match != BOM_MATCH_OTHER:   # resep BOM warna lain = kain warna lain → tidak dipakai
+                out["fabric_recipe"] = await _recipe_rows(db, cache, m, qty_pcs)
             continue
         if row["group"] == "fabric":
             fabric_candidates.append(row)
@@ -1383,7 +1403,20 @@ async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None 
         out["fabric"] = {**fabric_candidates[0], "matches_input": None}
 
     out["fabric_candidates"] = fabric_candidates
-    if not fabric_candidates and out.get("panel"):
+    recipe = out["fabric_recipe"]
+    if recipe:
+        hit = next((r for r in recipe if input_mat and r["material_id"] == input_mat.get("id")), None)
+        out["fabric"] = {**(hit or recipe[0]), "matches_input": True if hit else (False if input_mat else None)}
+    if recipe and out.get("panel"):
+        out["plan_manual"] = any(not r["qty_per_pcs"] for r in recipe)
+        out["plan_note"] = (
+            f"Potongan {out['panel']['code']} (1 set/pcs) dipotong dari {len(recipe)} kain: "
+            + "; ".join(f"{r['code']} ({r['role']})"
+                        + (f" {r['qty_per_pcs']:g} {r['unit']}/pcs" if r["qty_per_pcs"] else " — perkiraan/pcs belum diisi")
+                        for r in recipe)
+            + ". Semua kain ini wajib ada di order dan wajib terpakai; biaya potongan tetap dari kain yang benar-benar "
+              "dipotong.")
+    elif not fabric_candidates and out.get("panel"):
         # 2026-09-12 (keputusan owner): BOM menyebut POTONGAN, bukan kain roll. Rencana
         # pemakaian roll diisi manual oleh operator — ini keadaan yang diharapkan, bukan cacat.
         out["plan_manual"] = True

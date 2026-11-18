@@ -11,6 +11,10 @@
  * Aturan lama tetap: kain wajib dari master; gulungan wajib untuk kain yang dilacak per gulungan (boleh ditunjuk
  * saat lapor progres); peringatan stok kosong; model wajib dari Master Produk; ukuran wajib.
  *
+ * 18 Nov 2026 (keputusan owner, produk lebih dari satu kain): bila BOM hasil punya RESEP KAIN (mis. Ona = Rib Salur
+ * + Knit 24 kerah), semua kain resep otomatis jadi baris kain (rencana = perkiraan/pcs × target) dan gulungannya
+ * dicentang FIFO sampai cukup. Server menolak order/progres yang kain resepnya tidak lengkap.
+ *
  * 14 Nov 2026 (keputusan owner): order Berjalan / Selesai juga bisa diubah lewat form ini. Gudang sumber, kain yang
  * sudah dipotong, gulungan yang sudah terpakai, dan model/varian hasil yang sudah jadi TERKUNCI (angka potongnya
  * dibetulkan lewat Koreksi di riwayat progres); target, rencana kain, baris PO, gulungan tambahan, catatan, dan baris
@@ -32,6 +36,7 @@ import { punyaCentang } from '@/lib/rbac';
 import { fmtQty } from '../warehouse/rollLines';
 import {
   newInputLine, newOutputLine, rollRemaining, variantLabel, summarizeVariantsByModel, estimateHpp,
+  kebutuhanResep, pakaiKain, pilihGulunganFifo,
 } from './cuttingLines';
 
 /** Angka pemakaian bahan tanpa nol berekor ("6" bukan "6,0000"). */
@@ -68,6 +73,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
   // Kebutuhan bahan menurut BOM per baris hasil (model + ukuran) — rencana kain tidak ditebak.
   const [bomByKey, setBomByKey] = useState({});
   const bomSig = useRef({});
+  const autoRollSig = useRef({});
   const [saving, setSaving] = useState(false);
   // Model baru (Master Produk) untuk satu baris hasil — menggantikan form ini sementara.
   const [newModelFor, setNewModelFor] = useState(null);
@@ -147,6 +153,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
     setOnlyInStock(!order);
     setBomByKey({});
     bomSig.current = {};
+    autoRollSig.current = {};
     (async () => {
       try {
         const [mats, locs] = await Promise.all([
@@ -173,7 +180,8 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
   const matById = useMemo(() => Object.fromEntries(materials.map((m) => [m.id, m])), [materials]);
   // Stok disimpan PER GUDANG — pilihan kain menampilkan gudang yang benar-benar memegang stok.
   const materialOptions = useMemo(
-    () => (onlyInStock ? materials.filter((m) => Number(m.stock_qty || 0) > 0) : materials), [materials, onlyInStock]);
+    () => (onlyInStock ? materials.filter((m) => Number(m.stock_qty || 0) > 0
+      || form.inputs.some((i) => i.input_material_id === m.id)) : materials), [materials, onlyInStock, form.inputs]);
 
   const setInput = (key, patch) => setForm((f) => ({
     ...f, inputs: f.inputs.map((i) => (i.key === key ? { ...i, ...patch } : i)) }));
@@ -293,19 +301,79 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
     return () => clearTimeout(t);
   }, [open, form.inputs, form.outputs, variantsByModel, token]);
 
-  /** Σ kebutuhan kain menurut BOM semua baris hasil untuk satu kain. */
+  /** Σ kebutuhan kain menurut BOM semua baris hasil untuk satu kain (resep kain bila ada). */
   const bomNeedFor = (i) => {
     let q = 0;
     let unit = '';
     form.outputs.forEach((o) => {
-      const f = bomByKey[o.key]?.fabric;
-      if (f && f.material_id === i.input_material_id && Number(f.qty_total) > 0) {
-        q += Number(f.qty_total);
-        unit = f.unit || unit;
-      }
+      const b = bomByKey[o.key];
+      const rows = b?.fabric_recipe?.length ? b.fabric_recipe : (b?.fabric ? [b.fabric] : []);
+      rows.forEach((f) => {
+        if (f.material_id === i.input_material_id && Number(f.qty_total) > 0) {
+          q += Number(f.qty_total);
+          unit = f.unit || unit;
+        }
+      });
     });
     return { q: Math.round(q * 10000) / 10000, unit };
   };
+
+  // ── 18 Nov 2026: RESEP KAIN — kain yang wajib dipotong untuk hasil-hasil order ini (Σ semua hasil per kain) ──
+  const recipeNeed = useMemo(
+    () => kebutuhanResep(form.outputs.map((o) => bomByKey[o.key]?.fabric_recipe || [])), [form.outputs, bomByKey]);
+  const recipeSig = recipeNeed.map((r) => `${r.material_id}:${r.qty}`).join('|');
+
+  // Kain resep yang belum ada → baris kain baru (baris kain kosong dipakai dulu); rencana mengikuti perkiraan selama
+  // angkanya belum diubah staf.
+  useEffect(() => {
+    if (!open || !recipeNeed.length) return;
+    setForm((f) => {
+      let inputs = [...f.inputs];
+      let changed = false;
+      recipeNeed.forEach((r) => {
+        const qty = r.qty > 0 ? String(r.qty) : '';
+        const hit = inputs.find((i) => i.input_material_id === r.material_id);
+        if (!hit) {
+          const empty = inputs.find((i) => !i.input_material_id && !i.locked);
+          const line = { ...(empty || newInputLine()), input_material_id: r.material_id, planned_input_qty: qty,
+            autoQty: qty, fromRecipe: true, roll_ids: [] };
+          inputs = empty ? inputs.map((i) => (i.key === empty.key ? line : i)) : [...inputs, line];
+          changed = true;
+        } else if (!hit.locked && qty && (hit.planned_input_qty === '' || hit.planned_input_qty === hit.autoQty)
+          && hit.planned_input_qty !== qty) {
+          inputs = inputs.map((i) => (i.key === hit.key ? { ...i, planned_input_qty: qty, autoQty: qty } : i));
+          changed = true;
+        }
+      });
+      return changed ? { ...f, inputs } : f;
+    });
+    recipeNeed.forEach((r) => { if (!rollsByMat[r.material_id]) loadRolls(r.material_id); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, recipeSig]);
+
+  // Gulungan kain resep dicentang otomatis FIFO (di gudang order) sampai cukup untuk rencananya — sekali per isian;
+  // staf tetap bisa mengubah centangnya.
+  useEffect(() => {
+    if (!open) return;
+    form.inputs.forEach((i) => {
+      if (!i.fromRecipe || i.locked || i.roll_ids.length || !(Number(i.planned_input_qty) > 0)) return;
+      const sig = `${i.input_material_id}|${i.planned_input_qty}|${form.location_id}`;
+      if (autoRollSig.current[i.key] === sig) return;
+      autoRollSig.current[i.key] = sig;
+      const p = new URLSearchParams({ material_id: i.input_material_id });
+      if (form.location_id) p.set('location_id', form.location_id);
+      cuttingApi('GET', `/rolls?${p}`, token).then((res) => {
+        const ids = pilihGulunganFifo(res?.items || [], Number(i.planned_input_qty));
+        if (!ids.length) return;
+        setForm((f) => ({
+          ...f,
+          inputs: f.inputs.map((x) => (x.key === i.key && !x.roll_ids.length ? { ...x, roll_ids: ids } : x)),
+          outputs: f.outputs.map((o) => (pakaiKain(bomByKey[o.key]?.fabric_recipe, i.input_material_id)
+            ? { ...o, roll_ids: [...new Set([...o.roll_ids, ...ids])] } : o)),
+        }));
+      }).catch(() => {});
+    });
+  }, [open, form.inputs, form.location_id, token, bomByKey]);
 
   // Gudang: yang memegang stok kain terpilih dulu, lalu gudang lain (stok 0).
   const chosenMats = useMemo(
@@ -434,6 +502,7 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-muted-foreground">
             Kain {n + 1}
+            {resepRoles(i.input_material_id) && ` · ${resepRoles(i.input_material_id)} (resep BOM)`}
             {i.locked && ` · sudah dipotong ${fmtQtyTrim(i.consumed)} ${i.unit || m?.unit || ''} — kain terkunci`}
           </p>
           {form.inputs.length > 1 && !i.locked && (
@@ -525,8 +594,20 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
     );
   };
 
+  /** Peran kain di resep BOM hasil-hasil order ini ("Utama", "Kombinasi") — kosong bila bukan kain resep. */
+  const resepRoles = (mid) => (recipeNeed.find((r) => r.material_id === mid)?.roles || []).join(', ');
+
   const bomInfo = (bom) => {
     if (!bom) return null;
+    if (bom.fabric_recipe?.length) {
+      return (
+        <p className="mt-1 text-xs text-muted-foreground" data-testid="cutting-output-recipe">
+          {bom.fabric_recipe.length > 1 ? `${bom.fabric_recipe.length} kain: ` : 'Kain: '}
+          {bom.fabric_recipe.map((r) => `${r.code} (${r.role})`
+            + (Number(r.qty_total) > 0 ? ` ${fmtQtyTrim(r.qty_total)} ${r.unit}` : '')).join(' · ')}
+        </p>
+      );
+    }
     if (bom.fabric) {
       return (
         <p className="mt-1 text-xs text-muted-foreground">

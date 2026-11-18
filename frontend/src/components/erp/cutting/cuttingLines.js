@@ -71,3 +71,42 @@ export function qtyPerUnit(rows, key, fmt) {
   });
   return Object.entries(acc).map(([u, q]) => `${fmt(q)} ${u}`).join(' · ');
 }
+
+/**
+ * 18 Nov 2026 (owner: produk lebih dari satu kain) — Σ kebutuhan kain resep BOM semua baris hasil.
+ * `recipes` = resep tiap baris hasil (`fabric_recipe` dari `/cutting/bom-requirement`). Hasil:
+ * [{material_id, code, name, unit, roles, qty, unknown}] — `unknown` = ada hasil yang perkiraan/pcs-nya belum diisi.
+ */
+export function kebutuhanResep(recipes) {
+  const acc = new Map();
+  (recipes || []).forEach((rows) => (rows || []).forEach((r) => {
+    if (!r?.material_id) return;
+    const a = acc.get(r.material_id) || {
+      material_id: r.material_id, code: r.code, name: r.name, unit: r.unit, roles: [], qty: 0, unknown: false };
+    if (r.role && !a.roles.includes(r.role)) a.roles.push(r.role);
+    if (Number(r.qty_total) > 0) a.qty = Math.round((a.qty + Number(r.qty_total)) * 10000) / 10000;
+    else a.unknown = true;
+    acc.set(r.material_id, a);
+  }));
+  return [...acc.values()];
+}
+
+/** Baris hasil memakai kain ini? (hasil tanpa resep = kainnya tidak diketahui → dianggap memakai). */
+export const pakaiKain = (recipe, materialId) =>
+  !(recipe || []).length || recipe.some((r) => r.material_id === materialId);
+
+/** Gulungan FIFO (urut nomor roll dari server) sampai sisa terpilih ≥ kebutuhan. Kebutuhan 0 = tidak memilih. */
+export function pilihGulunganFifo(items, need) {
+  const want = Number(need || 0);
+  if (!(want > 0)) return [];
+  const out = [];
+  let sum = 0;
+  (items || []).forEach((r) => {
+    if (sum + 0.0001 >= want) return;
+    const left = rollRemaining(r);
+    if (left <= 0) return;
+    out.push(r.id);
+    sum += left;
+  });
+  return out;
+}
