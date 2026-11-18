@@ -52,6 +52,18 @@ def test_kreator_lama_dibaca_dari_platforms_dan_handle_semua_akun():
     assert ak.handles(baru) == ["@ayu", "@ayu.kedua"]
 
 
+def test_tanda_strip_bukan_akun_dan_tidak_bentrok():
+    """VPS 18 Nov: 3 kreator mengisi Shopee lama dengan "-" (artinya tidak ada). Itu bukan akun — kalau dihitung,
+    menyimpan ulang kreator mana pun ditolak "sudah tercatat milik kreator lain"."""
+    assert ak.akun_of({"platforms": {"tiktok": "@ayu", "shopee": "-"}}) == [
+        {"id": "lama-tiktok", "platform": "tiktok", "username": "@ayu", "jenis": "pribadi", "toko_ids": []}]
+    assert ak.normalisasi([{"platform": "shopee", "username": "—"}, {"platform": "shopee", "username": " - "}]) == []
+    assert ak.handles({"platforms": {"shopee": "-"}}) == []
+    db = fm.FakeDB()
+    db.marketing_kol_creators.docs += [{"id": "c1", "name": "Novita", "platforms": {"tiktok": "@nov", "shopee": "-"}}]
+    run(ak.cek_bentrok(db, [{"platform": "shopee", "username": "-"}], "c2"))      # tidak dianggap bentrok
+
+
 def _env(monkeypatch):
     import routes.marketing_kol_creators as kc
     db = fm.FakeDB()

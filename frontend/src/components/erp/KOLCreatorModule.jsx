@@ -58,7 +58,8 @@ const PLATFORM_AKUN = [['tiktok', 'TikTok'], ['shopee', 'Shopee'], ['instagram',
 const JENIS_AKUN = [['pribadi', 'Pribadi kreator'], ['dikelola', 'Dikelola perusahaan'], ['afiliasi', 'Afiliasi lain']];
 const labelJenisAkun = (j) => (JENIS_AKUN.find(([k]) => k === j) || [j, j])[1];
 const akunAwal = (c) => (Array.isArray(c?.accounts) ? c.accounts
-  : Object.entries(c?.platforms || {}).filter(([, v]) => v).map(([k, v]) => ({ id: `lama-${k}`, platform: k === 'tiktokshop' ? 'tiktok' : k, username: v, jenis: 'pribadi', toko_ids: [] })));
+  // isian lama "-" (artinya tidak ada akun) bukan akun
+  : Object.entries(c?.platforms || {}).filter(([, v]) => /[a-z0-9]/i.test(String(v || ''))).map(([k, v]) => ({ id: `lama-${k}`, platform: k === 'tiktokshop' ? 'tiktok' : k, username: v, jenis: 'pribadi', toko_ids: [] })));
 const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
 const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label : (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—'));
 

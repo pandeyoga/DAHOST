@@ -31,7 +31,7 @@ def dari_platforms(platforms: Optional[dict]) -> list[dict]:
     """Akun dari data lama `platforms` (satu username per platform) — kreator yang belum pernah disimpan ulang."""
     out = []
     for p, u in (platforms or {}).items():
-        if str(u or "").strip():
+        if _norm(u):     # "-" / "—" (isian lama untuk "tidak ada") bukan akun
             plat = _ALIAS.get(str(p).lower(), str(p).lower())
             out.append({"id": f"lama-{plat}", "platform": plat if plat in PLATFORM else "lainnya",
                         "username": str(u).strip(), "jenis": "pribadi", "toko_ids": []})
@@ -58,7 +58,7 @@ def normalisasi(daftar: Optional[Iterable], toko_valid: Optional[set] = None) ->
         if not isinstance(a, dict):
             continue
         user = str(a.get("username") or "").strip()
-        if not user:
+        if not _norm(user):          # kosong atau hanya tanda ("-", "—") = tidak ada akun
             continue
         plat = _ALIAS.get(str(a.get("platform") or "").strip().lower(), str(a.get("platform") or "").strip().lower())
         if plat not in PLATFORM:
@@ -92,14 +92,14 @@ def handles(creator: Optional[dict]) -> list[str]:
     """Semua username kreator (semua akun + `platforms` lama) — untuk mencocokkan 'Creator Handle' pesanan."""
     c = creator or {}
     hs = [a.get("username") for a in akun_of(c)] + list((c.get("platforms") or {}).values())
-    return [h for h in dict.fromkeys(str(h).strip() for h in hs if h) if h]
+    return [h for h in dict.fromkeys(str(h).strip() for h in hs if h) if _norm(h)]
 
 
 async def cek_bentrok(db, akun: list[dict], creator_id: Optional[str]) -> None:
     """Satu username (per platform) hanya milik satu kreator — supaya pesanan afiliasi tidak tercatat ganda."""
     if not akun:
         return
-    mine = {(a["platform"], _norm(a["username"])) for a in akun}
+    mine = {(a["platform"], _norm(a["username"])) for a in akun if _norm(a["username"])}
     async for c in db.marketing_kol_creators.find({"id": {"$ne": creator_id or ""}},
                                                   {"_id": 0, "id": 1, "name": 1, "accounts": 1, "platforms": 1}):
         for a in akun_of(c):
