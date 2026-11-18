@@ -1399,11 +1399,13 @@ async def _reference_index(db, st: SourceType, session: dict) -> dict:
         idx["order_ids"] = {o.get("order_id"): o.get("id") for o in orders if o.get("order_id")}
     if st.key == "marketplace_orders":
         # Atribusi kreator afiliasi: `Creator Handle` → master kreator.
+        # 18 Nov 2026 — SEMUA akun kreator (core.akun_kreator.handles), bukan satu username per platform
+        from core.akun_kreator import handles as _handles
         creators = await db[scope.CREATORS].find(
-            {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1, "creator_code": 1}).to_list(2000)
+            {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1, "accounts": 1, "creator_code": 1}).to_list(2000)
         cmap: Dict[str, Any] = {}
         for c in creators:
-            for _plat, handle in (c.get("platforms") or {}).items():
+            for handle in _handles(c):
                 if handle:
                     cmap[scope.norm(handle)] = c
             if c.get("creator_code"):
@@ -1414,15 +1416,16 @@ async def _reference_index(db, st: SourceType, session: dict) -> dict:
         # kode ATAU username platform, karena ekspor platform tidak pernah memuat
         # id internal. Tidak cocok ⇒ baris tetap masuk dengan peringatan (angka
         # konten tidak boleh hilang hanya karena pemiliknya belum terdaftar).
+        from core.akun_kreator import handles as _handles
         creators = await db[scope.CREATORS].find(
-            {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1,
+            {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1, "accounts": 1,
                  "creator_code": 1}).to_list(2000)
         cmap: Dict[str, Any] = {}
         for c in creators:
             for key in (c.get("creator_code"), c.get("name")):
                 if key:
                     cmap.setdefault(scope.norm(key), c)
-            for _plat, handle in (c.get("platforms") or {}).items():
+            for handle in _handles(c):
                 if handle:
                     cmap.setdefault(scope.norm(handle), c)
         idx["creators_by_code"] = cmap

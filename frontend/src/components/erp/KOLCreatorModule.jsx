@@ -51,6 +51,14 @@ const STATUS = {
 };
 const Lencana = ({ s }) => <StatusBadge status={s} label={(STATUS[s] || [s || '—'])[0]} tone={(STATUS[s] || [])[1]} />;
 const TIPE = { new: 'Kreator baru', kontrak: 'Kreator kontrak', continue: 'Kreator lanjutan' };
+// 18 Nov 2026 (owner: "creator juga bisa tambahkan akun lain seperti akun kreator yang di manage dll jadi tidak harus
+// 1 toko 1 akun") — banyak akun per kreator; kunci sama dengan server (core/akun_kreator).
+const PLATFORM_AKUN = [['tiktok', 'TikTok'], ['shopee', 'Shopee'], ['instagram', 'Instagram'], ['tokopedia', 'Tokopedia'],
+  ['lazada', 'Lazada'], ['youtube', 'YouTube'], ['lainnya', 'Lainnya']];
+const JENIS_AKUN = [['pribadi', 'Pribadi kreator'], ['dikelola', 'Dikelola perusahaan'], ['afiliasi', 'Afiliasi lain']];
+const labelJenisAkun = (j) => (JENIS_AKUN.find(([k]) => k === j) || [j, j])[1];
+const akunAwal = (c) => (Array.isArray(c?.accounts) ? c.accounts
+  : Object.entries(c?.platforms || {}).filter(([, v]) => v).map(([k, v]) => ({ id: `lama-${k}`, platform: k === 'tiktokshop' ? 'tiktok' : k, username: v, jenis: 'pribadi', toko_ids: [] })));
 const NAMA_PLATFORM = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', instagram: 'Instagram', lazada: 'Lazada' };
 const labelPlatform = (p) => NAMA_PLATFORM[String(p || '').toLowerCase()] || (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label : (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—'));
 
@@ -81,17 +89,24 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
     domicile: editCreator?.domicile || '',
     domicile_detail: editCreator?.domicile_detail || '',
     phone: editCreator?.phone || '',
-    platforms: editCreator?.platforms || {},
     assigned_account_ids: editCreator?.assigned_account_ids || [],
     kpi_targets: editCreator?.kpi_targets || { monthly_revenue: 0, monthly_sessions: 0, monthly_viewers: 0 },
     notes: editCreator?.notes || '',
+  });
+  const [akun, setAkun] = useState(() => {
+    const a = akunAwal(editCreator);
+    return a.length ? a : [{ id: '', platform: 'tiktok', username: '', jenis: 'pribadi', toko_ids: [] }];
   });
   const [saving, setSaving] = useState(false);
   const [galat, setGalat] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const setKpi = (k, v) => setForm(f => ({ ...f, kpi_targets: { ...f.kpi_targets, [k]: Number(v) } }));
-  const setPlatform = (k, v) => setForm(f => ({ ...f, platforms: { ...f.platforms, [k]: v } }));
+  const ubahAkun = (i, k, v) => setAkun(xs => xs.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
+  const tokoAkun = (i, id) => setAkun(xs => xs.map((x, j) => (j !== i ? x
+    : { ...x, toko_ids: (x.toko_ids || []).includes(id) ? x.toko_ids.filter(t => t !== id) : [...(x.toko_ids || []), id] })));
+  const tambahAkun = () => setAkun(xs => [...xs, { id: '', platform: 'tiktok', username: '', jenis: 'dikelola', toko_ids: [] }]);
+  const hapusAkun = (i) => setAkun(xs => xs.filter((_, j) => j !== i));
   const toggleAccount = (id) => {
     const ids = form.assigned_account_ids.includes(id)
       ? form.assigned_account_ids.filter(x => x !== id)
@@ -109,7 +124,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
     try {
       const url = isEdit ? `${API}/api/marketing/kol/creators/${editCreator.id}` : `${API}/api/marketing/kol/creators`;
       const method = isEdit ? 'PUT' : 'POST';
-      const body = { ...form };
+      const body = { ...form, accounts: akun.filter(a => String(a.username || '').trim()) };
       if (isEdit && !body.login_password) delete body.login_password;
       const r = await fetch(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
@@ -158,13 +173,43 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
         <Isian label="Nomor HP" htmlFor="cr-phone">
           <Input id="cr-phone" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="08…" />
         </Isian>
-        <Isian label="Akun TikTok" htmlFor="cr-tt">
-          <Input id="cr-tt" value={form.platforms?.tiktok || ''} onChange={e => setPlatform('tiktok', e.target.value)} placeholder="@nama" />
-        </Isian>
-        <Isian label="Akun Shopee" htmlFor="cr-sp">
-          <Input id="cr-sp" value={form.platforms?.shopee || ''} onChange={e => setPlatform('shopee', e.target.value)} placeholder="@nama" />
-        </Isian>
       </div>
+      <section className="space-y-2 border-t border-[var(--glass-border)] pt-3" data-testid="creator-accounts">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium">Akun kreator</p>
+          <Button type="button" size="sm" variant="outline" onClick={tambahAkun} data-testid="creator-account-add"><Plus />Tambah akun</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">Boleh lebih dari satu akun per platform, termasuk akun kreator yang dikelola perusahaan.
+          Pesanan afiliasi dari akun mana pun tercatat ke kreator ini; omzetnya tetap milik toko yang produknya terjual.</p>
+        {akun.map((a, i) => (
+          <div key={a.id || `baru-${i}`} className="space-y-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-3" data-testid={`creator-account-${i}`}>
+            <div className="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_12rem_auto]">
+              <SmartNativeSelect value={a.platform} searchable={false} aria-label="Platform akun" onChange={e => ubahAkun(i, 'platform', e.target.value)}>
+                {PLATFORM_AKUN.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </SmartNativeSelect>
+              <Input value={a.username} aria-label="Username akun" placeholder="@nama" onChange={e => ubahAkun(i, 'username', e.target.value)}
+                data-testid={`creator-account-username-${i}`} />
+              <SmartNativeSelect value={a.jenis} searchable={false} aria-label="Jenis akun" onChange={e => ubahAkun(i, 'jenis', e.target.value)}>
+                {JENIS_AKUN.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </SmartNativeSelect>
+              <Button type="button" size="icon" variant="ghost" title="Hapus akun" aria-label={`Hapus akun ${a.username || i + 1}`}
+                onClick={() => hapusAkun(i)}><Trash2 /></Button>
+            </div>
+            {form.assigned_account_ids.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Toko yang dipromosikan:</span>
+                {accounts.filter(acc => form.assigned_account_ids.includes(acc.id)).map(acc => {
+                  const on = (a.toko_ids || []).includes(acc.id);
+                  return (
+                    <Button key={acc.id} type="button" size="sm" variant={on ? 'default' : 'outline'} aria-pressed={on}
+                      onClick={() => tokoAkun(i, acc.id)}>{acc.account_name}</Button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ))}
+      </section>
       <p className="border-t border-[var(--glass-border)] pt-3 text-sm font-medium">Target KPI bulanan</p>
       <div className="grid gap-4 sm:grid-cols-3">
         <Isian label="Omzet (Rp)">
@@ -198,7 +243,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
 // ─── Form sesi live ─────────────────────────────────────────────────────────
 function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
   const [form, setForm] = useState({
-    creator_id: '', account_id: '', date: todayWIB(),
+    creator_id: '', account_id: '', creator_account_id: '', date: todayWIB(),
     platform: 'tiktokshop', session_name: '', duration_minutes: 90,
     viewers: 0, peak_viewers: 0, revenue: 0, orders: 0, notes: '',
   });
@@ -211,10 +256,12 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
   const assignedIds = selectedCreator?.assigned_account_ids || [];
   const availableAccounts = assignedIds.length > 0 ? accounts.filter(a => assignedIds.includes(a.id)) : accounts;
 
+  const akunKreator = akunAwal(selectedCreator).filter(a => !String(a.id || '').startsWith('lama-') || a.username);
   useEffect(() => {
     if (form.account_id && availableAccounts.length > 0 && !availableAccounts.find(a => a.id === form.account_id)) {
       set('account_id', '');
     }
+    set('creator_account_id', '');
   }, [form.creator_id]); // eslint-disable-line
 
   async function handleSubmit() {
@@ -225,7 +272,7 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
       const r = await fetch(`${API}/api/marketing/kol/sessions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, viewers: Number(form.viewers), peak_viewers: Number(form.peak_viewers), revenue: Number(form.revenue), orders: Number(form.orders), duration_minutes: Number(form.duration_minutes) }),
+        body: JSON.stringify({ ...form, creator_account_id: form.creator_account_id || null, viewers: Number(form.viewers), peak_viewers: Number(form.peak_viewers), revenue: Number(form.revenue), orders: Number(form.orders), duration_minutes: Number(form.duration_minutes) }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Gagal menyimpan');
@@ -251,6 +298,15 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
           <SmartNativeSelect id="ss-acc" value={form.account_id} onChange={e => set('account_id', e.target.value)}>
             <option value="">Pilih akun</option>
             {availableAccounts.map(a => <option key={a.id} value={a.id}>{`${a.account_name} (${labelPlatform(a.platform)})`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        {/* 18 Nov 2026 (owner: sesi live boleh di akun kreator) — omzet tetap masuk ke toko di atas */}
+        <Isian label="Live di akun" htmlFor="ss-live-acc"
+          petunjuk={form.creator_account_id ? 'Live di akun kreator; omzet tetap dicatat ke toko di atas.' : 'Bawaan: live di akun toko.'}>
+          <SmartNativeSelect id="ss-live-acc" value={form.creator_account_id} searchable={false} data-testid="session-live-account"
+            onChange={e => set('creator_account_id', e.target.value)} disabled={!form.creator_id}>
+            <option value="">Akun toko di atas</option>
+            {akunKreator.map(a => <option key={a.id} value={a.id}>{`${labelPlatform(a.platform)} ${a.username} · ${labelJenisAkun(a.jenis)}`}</option>)}
           </SmartNativeSelect>
         </Isian>
         <Isian label="Tanggal">
@@ -475,7 +531,10 @@ export default function KOLCreatorModule({ token }) {
   const kolomSesi = [
     { kunci: 'tgl', label: 'Tanggal', hp: 'keterangan', isi: (s) => <span className="tabular-nums md:whitespace-nowrap" data-testid="session-row">{tgl(s.date)}</span> },
     { kunci: 'kreator', label: 'Kreator', hp: 'judul', isi: (s) => <span className="font-medium">{s.creator_name}</span> },
-    { kunci: 'akun', label: 'Toko', isi: (s) => s.account_name || '—' },
+    { kunci: 'akun', label: 'Toko', isi: (s) => (
+      <div className="min-w-0"><span>{s.account_name || '—'}</span>
+        {s.live_di === 'akun_kreator' && <span className="block text-xs text-muted-foreground">Live di {s.live_account_label || s.live_account_username}</span>}
+      </div>) },
     { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (s) => `${fmt(s.duration_minutes)} menit` },
     { kunci: 'penonton', label: 'Penonton', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmt(s.viewers)}</span> },
     { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (s) => <span className="tabular-nums font-medium md:whitespace-nowrap">{fmtRp(s.revenue)}</span> },
@@ -521,6 +580,7 @@ export default function KOLCreatorModule({ token }) {
       { label: 'Status', nilai: (c) => (STATUS[c.status] || [c.status])[0] }] },
     performance: { nama: 'sesi-live-kreator', baris: sessions, kolom: [
       { label: 'Tanggal', nilai: (s) => tgl(s.date) }, { label: 'Kreator', nilai: (s) => s.creator_name }, { label: 'Toko', nilai: (s) => s.account_name || '' },
+      { label: 'Live di akun', nilai: (s) => (s.live_di === 'akun_kreator' ? (s.live_account_label || s.live_account_username || '') : 'Akun toko') },
       { label: 'Durasi (menit)', nilai: (s) => Number(s.duration_minutes) || 0 }, { label: 'Penonton', nilai: (s) => Number(s.viewers) || 0 },
       { label: 'Penonton puncak', nilai: (s) => Number(s.peak_viewers) || 0 }, { label: 'Omzet', nilai: (s) => Number(s.revenue) || 0 },
       { label: 'Pesanan', nilai: (s) => Number(s.orders) || 0 }] },
@@ -645,7 +705,8 @@ export default function KOLCreatorModule({ token }) {
             </>}>
             <dl className="divide-y divide-[var(--glass-border)]">
               <BarisDetail label="Toko">{(c.assigned_account_ids || []).map(namaAkun).filter(Boolean).join(', ') || 'Belum ditugaskan ke toko'}</BarisDetail>
-              <BarisDetail label="Akun platform">{Object.entries(c.platforms || {}).filter(([, v]) => v).map(([k, v]) => `${labelPlatform(k)}: ${v}`).join(' · ') || '—'}</BarisDetail>
+              <BarisDetail label="Akun kreator">{akunAwal(c).length
+                ? akunAwal(c).map(a => `${labelPlatform(a.platform)} ${a.username} (${labelJenisAkun(a.jenis)})`).join(' · ') : '—'}</BarisDetail>
               <BarisDetail label="Domisili">{[c.domicile, c.domicile_detail].filter(Boolean).join(' — ') || '—'}</BarisDetail>
               <BarisDetail label="Nomor HP">{c.phone || '—'}</BarisDetail>
               <BarisDetail label="Akun portal">{c.login_email ? `Siap (${c.login_email})` : 'Belum ada akun portal'}</BarisDetail>

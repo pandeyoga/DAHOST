@@ -9,6 +9,7 @@ from routes.shared import require_perm  # T-01 2.3
 from routes.marketing_kol_shared import router, _uid, _now, _get_user, CreatorCreate, CreatorUpdate
 from collections import defaultdict as _dd
 from core import marketing_account_scope as _scope
+from core import akun_kreator as _ak
 
 # 14 Nov 2026 (owner: filter toko menyeluruh) — kreator dipegang per toko lewat `assigned_account_ids`.
 # Pemakai berlingkup toko hanya melihat kreator yang bertugas di tokonya, hanya melihat tautan ke tokonya
@@ -22,6 +23,10 @@ def _samarkan_toko(creator: dict, visible) -> dict:
     if visible is not None and creator is not None:
         creator['assigned_account_ids'] = _scope.saring_toko_terlihat(creator.get('assigned_account_ids'), visible)
     return creator
+
+
+async def _toko_valid(db) -> set:
+    return {a['id'] async for a in db.marketing_platform_accounts.find({}, {'_id': 0, 'id': 1})}
 
 
 @router.post('/kol/creators')
@@ -41,6 +46,10 @@ async def create_creator(data: CreatorCreate, request: Request):
                                  "akan bisa dipakai login. Isi password minimal 6 karakter.")
     if await db.marketing_kol_creators.find_one({'creator_code': data.creator_code}):
         raise HTTPException(400, f"Kode creator '{data.creator_code}' sudah ada")
+    # 18 Nov 2026 — banyak akun per kreator; tanpa `accounts` (layar lama) akun dibaca dari `platforms`.
+    akun = _ak.normalisasi(data.accounts if data.accounts is not None else _ak.dari_platforms(data.platforms),
+                           await _toko_valid(db))
+    await _ak.cek_bentrok(db, akun, None)
     creator = {
         'id': _uid(), 'creator_code': data.creator_code, 'name': data.name,
         'login_email': email,
@@ -49,7 +58,8 @@ async def create_creator(data: CreatorCreate, request: Request):
         'creator_type': data.creator_type,
         'domicile': (data.domicile or '').strip(),
         'domicile_detail': (data.domicile_detail or '').strip(),
-        'phone': data.phone or '', 'platforms': data.platforms or {},
+        'phone': data.phone or '', 'platforms': _ak.platforms_dari(akun, data.platforms or {}),
+        'accounts': akun,
         'assigned_account_ids': assigned,
         'kpi_targets': data.kpi_targets or {'monthly_revenue': 0, 'monthly_sessions': 0, 'monthly_viewers': 0},
         'notes': data.notes or '', 'status': 'active', 'last_login_at': None,
@@ -102,6 +112,7 @@ async def list_creators(
     ).to_list(500)
     for c in creators:
         _samarkan_toko(c, visible)
+        _ak.lengkapi(c)
     sessions_by_creator = _dd(list)
     for s in all_sessions:
         sessions_by_creator[s['creator_id']].append(s)
@@ -131,6 +142,7 @@ async def get_creator(creator_id: str, request: Request):
         raise HTTPException(404, 'Creator tidak ditemukan')
     # (toko rekaman dijaga core.marketing_record_scope; di sini hanya menyembunyikan toko rekan kerja)
     _samarkan_toko(creator, await _scope.toko_lingkup(db, user))
+    _ak.lengkapi(creator)
     assigned = await db.marketing_platform_accounts.find(
         {'id': {'$in': creator.get('assigned_account_ids', [])}}, {'_id': 0}
     ).to_list(500)
@@ -166,8 +178,14 @@ async def update_creator(creator_id: str, data: CreatorUpdate, request: Request)
         update_data['login_email'] = em
     if data.phone is not None:
         update_data['phone'] = data.phone
-    if data.platforms is not None:
+    if data.accounts is not None:
+        akun = _ak.normalisasi(data.accounts, await _toko_valid(db))
+        await _ak.cek_bentrok(db, akun, creator_id)
+        update_data['accounts'] = akun
+        update_data['platforms'] = _ak.platforms_dari(akun)
+    elif data.platforms is not None:
         update_data['platforms'] = data.platforms
+        update_data['accounts'] = _ak.normalisasi(_ak.dari_platforms(data.platforms), await _toko_valid(db))
     if data.assigned_account_ids is not None:
         # hanya toko yang dipegang pemakai yang boleh ditambah/dilepas; tautan toko lain dipertahankan
         update_data['assigned_account_ids'] = await _scope.gabung_toko_terlihat(
@@ -190,6 +208,7 @@ async def update_creator(creator_id: str, data: CreatorUpdate, request: Request)
                        'update', 'marketing_kol_creator', f"Updated creator: {creator['name']}")
     updated = await db.marketing_kol_creators.find_one({'id': creator_id}, {'_id': 0, 'login_password_hash': 0})
     _samarkan_toko(updated, await _scope.toko_lingkup(db, user))
+    _ak.lengkapi(updated)
     return serialize_doc({'message': 'Creator berhasil diupdate', 'creator': updated})
 
 

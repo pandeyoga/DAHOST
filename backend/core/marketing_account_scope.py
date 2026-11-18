@@ -240,11 +240,12 @@ async def creator_for_handle(db, handle: Any) -> Optional[dict]:
     key = norm(handle)          # "@nama.kreator" → "namakreator"
     if not key:
         return None
+    from core.akun_kreator import handles   # 18 Nov 2026 — SEMUA akun kreator, bukan hanya satu per platform
     creators = await db[CREATORS].find(
-        {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1, "creator_code": 1}).to_list(2000)
+        {}, {"_id": 0, "id": 1, "name": 1, "platforms": 1, "accounts": 1, "creator_code": 1}).to_list(2000)
     by_code = None
     for c in creators:
-        for h in (c.get("platforms") or {}).values():
+        for h in handles(c):
             if h and norm(h) == key:
                 return c
         if by_code is None and c.get("creator_code") and norm(c["creator_code"]) == key:

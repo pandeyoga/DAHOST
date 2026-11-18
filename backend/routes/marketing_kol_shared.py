@@ -127,6 +127,8 @@ class CreatorCreate(BaseModel):
     domicile_detail: Optional[str] = None
     phone: Optional[str] = None
     platforms: Optional[dict] = Field(default_factory=dict)
+    # 18 Nov 2026 — banyak akun per kreator (core.akun_kreator): [{platform, username, jenis, toko_ids}]
+    accounts: Optional[List[dict]] = None
     assigned_account_ids: Optional[List[str]] = Field(default_factory=list)
     kpi_targets: Optional[dict] = Field(default_factory=dict)
     notes: Optional[str] = None
@@ -140,6 +142,7 @@ class CreatorUpdate(BaseModel):
     login_email: Optional[str] = None
     phone: Optional[str] = None
     platforms: Optional[dict] = None
+    accounts: Optional[List[dict]] = None   # 18 Nov 2026 — banyak akun per kreator
     assigned_account_ids: Optional[List[str]] = None
     kpi_targets: Optional[dict] = None
     notes: Optional[str] = None
@@ -150,6 +153,9 @@ class CreatorUpdate(BaseModel):
 class SessionCreate(BaseModel):
     creator_id: str
     account_id: str
+    # 18 Nov 2026 (owner: sesi live boleh di akun kreator) — akun TEMPAT live; kosong = akun toko `account_id`.
+    # Omzet tetap milik toko `account_id` (produknya yang terjual).
+    creator_account_id: Optional[str] = None
     date: str = Field(..., description="YYYY-MM-DD")
     platform: str = Field(..., description="shopee | tiktokshop | tokopedia")
     session_name: Optional[str] = None

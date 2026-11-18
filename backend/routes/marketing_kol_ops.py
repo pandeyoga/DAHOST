@@ -29,6 +29,16 @@ async def create_session(data: SessionCreate, request: Request):
     assigned = creator.get('assigned_account_ids') or []
     if assigned and data.account_id not in assigned:
         raise HTTPException(400, f"Creator '{creator['name']}' tidak di-assign ke toko '{account['account_name']}'.")
+    # 18 Nov 2026 (owner: sesi live boleh di akun kreator): akun TEMPAT live — omzet tetap milik toko di atas.
+    from core import akun_kreator as _ak
+    live = {'live_di': 'akun_toko'}
+    if data.creator_account_id:
+        akun = next((a for a in _ak.akun_of(creator) if a.get('id') == data.creator_account_id), None)
+        if not akun:
+            raise HTTPException(404, f"Akun kreator itu tidak ada di data kreator '{creator['name']}'.")
+        live = {'live_di': 'akun_kreator', 'creator_account_id': akun['id'],
+                'live_account_platform': akun.get('platform'), 'live_account_username': akun.get('username'),
+                'live_account_jenis': akun.get('jenis'), 'live_account_label': _ak.label(akun)}
     session = {
         'id': _uid(), 'creator_id': data.creator_id, 'creator_name': creator['name'],
         'creator_code': creator['creator_code'], 'account_id': data.account_id,
@@ -37,6 +47,7 @@ async def create_session(data: SessionCreate, request: Request):
         'duration_minutes': data.duration_minutes, 'viewers': data.viewers,
         'peak_viewers': data.peak_viewers, 'revenue': data.revenue, 'orders': data.orders,
         'items_promoted': data.items_promoted or '', 'notes': data.notes or '',
+        **live,
         'created_at': _now(), 'created_by': _get_user(request).get('email', 'system'),
     }
     await db.marketing_creator_sessions.insert_one(session)
