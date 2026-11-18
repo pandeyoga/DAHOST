@@ -134,14 +134,16 @@ def shipment_progress(items: list) -> dict:
     Dipakai daftar, detail, dan penulis `ship_status` supaya ketiganya sama.
     """
     per: dict = {}
-    items = [it for it in (items or []) if not it.get('receipt_cancelled')]   # dispatch deklarasi yang penerimaannya dibatalkan DA
-    for it in items:
+    for it in items or []:
         key = it.get('po_item_id') or it.get('id')
         p = per.setdefault(key, {'ordered': _i(it.get('ordered_qty')), 'shipped': 0, 'received': 0})
         if not p['ordered']:
             p['ordered'] = _i(it.get('ordered_qty'))
+        if it.get('receipt_cancelled'):   # dispatch deklarasi yang penerimaannya dibatalkan DA: pesanan tetap, kiriman tidak
+            continue
         p['shipped'] += _i(it.get('qty_shipped'))
         p['received'] += item_dispatched(it)
+    items = [it for it in (items or []) if not it.get('receipt_cancelled')]
     ordered = sum(p['ordered'] for p in per.values())
     shipped = sum(p['shipped'] for p in per.values())
     received = sum(p['received'] for p in per.values())

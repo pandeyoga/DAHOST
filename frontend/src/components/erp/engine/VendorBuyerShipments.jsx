@@ -205,6 +205,8 @@ export default function VendorBuyerShipments({ user }) {
     return { totalOrdered, totalShipped, remaining: s.remaining || Math.max(0, totalOrdered - totalShipped), progressPct };
   };
   const statusKirim = (pct) => (pct >= 100 ? ['Terkirim penuh', 'success'] : pct > 0 ? ['Terkirim sebagian', 'warning'] : ['Belum dikirim', 'muted']);
+  // 18 Nov 2026: semua dispatch deklarasi ini penerimaannya dibatalkan DA → "Dibatalkan DA" (dulu "0 / 0 pcs · Belum dikirim")
+  const statusBaris = (s) => (s.all_dispatch_cancelled ? ['Dibatalkan DA', 'danger'] : statusKirim(hitung(s).progressPct));
   const [rincian, setRincian] = useState(null);
   const bukaRincian = (s) => { setRincian(s); if (expandedShipment !== s.id) loadDispatches(s.id); };
   const tutupRincian = () => { setRincian(null); setExpandedShipment(null); };
@@ -222,9 +224,14 @@ export default function VendorBuyerShipments({ user }) {
       <div className="min-w-[9rem]">
         <span className="text-sm tabular-nums">{n(h.totalShipped)} / {n(h.totalOrdered)} pcs ({h.progressPct}%)</span>
         <div className="mt-1 h-1.5 w-full rounded-full bg-muted"><div className="h-1.5 rounded-full bg-[hsl(var(--primary))]" style={{ width: `${Math.min(h.progressPct, 100)}%` }} /></div>
+        {s.dispatch_cancelled_count > 0 && (
+          <span className="block mt-1 text-xs text-[hsl(var(--danger-text))]" data-testid={`vendor-ship-batal-${s.id}`}>
+            {s.dispatch_cancelled_count} dispatch dibatalkan DA{s.cancelled_receipt_codes?.length ? ` (${s.cancelled_receipt_codes.join(', ')})` : ''}
+          </span>
+        )}
       </div>); } },
     { kunci: 'sisa', label: 'Sisa', rata: 'kanan', isi: (s) => <span className="tabular-nums">{n(hitung(s).remaining)} pcs</span> },
-    { kunci: 'status', label: 'Status', isi: (s) => { const [l, t] = statusKirim(hitung(s).progressPct); return <StatusBadge status={l} label={l} tone={t} />; } },
+    { kunci: 'status', label: 'Status', isi: (s) => { const [l, t] = statusBaris(s); return <StatusBadge status={l} label={l} tone={t} />; } },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
       <div className="flex justify-end gap-1">
         {hitung(s).progressPct < 100 && (
@@ -244,7 +251,7 @@ export default function VendorBuyerShipments({ user }) {
         { label: 'Pelanggan', nilai: (s) => s.customer_name || '' }, { label: 'Job', nilai: (s) => jobs.find((j) => j.id === s.job_id)?.job_number || '' },
         { label: 'Dipesan', nilai: (s) => hitung(s).totalOrdered }, { label: 'Dikirim', nilai: (s) => hitung(s).totalShipped },
         { label: 'Sisa', nilai: (s) => hitung(s).remaining }, { label: 'Kemajuan (%)', nilai: (s) => hitung(s).progressPct },
-        { label: 'Status', nilai: (s) => statusKirim(hitung(s).progressPct)[0] }, { label: 'Dispatch', nilai: (s) => s.dispatch_count || s.last_dispatch_seq || 0 },
+        { label: 'Status', nilai: (s) => statusBaris(s)[0] }, { label: 'Dispatch', nilai: (s) => s.dispatch_count || s.last_dispatch_seq || 0 },
       ]} />}
       summary={<p className="text-sm text-muted-foreground" data-testid="phase-b-banner">
         Alur CMT → DA → buyer: tiap deklarasi otomatis menjadi draf penerimaan CMT di DA. Setelah DA menyetujui (bisa menolak
@@ -292,7 +299,7 @@ export default function VendorBuyerShipments({ user }) {
         const h = hitung(rincian);
         const list = dispatches[rincian.id];
         let kumulatif = 0;
-        const [sl, st] = statusKirim(h.progressPct);
+        const [sl, st] = statusBaris(rincian);
         return (
           <DetailPopup open onClose={tutupRincian} judul={`Deklarasi ${rincian.shipment_number}`} testId="vendor-buyer-shipment-detail"
             keterangan={`PO ${rincian.po_number || '—'} · ${rincian.customer_name || '—'}`}
@@ -372,8 +379,8 @@ export default function VendorBuyerShipments({ user }) {
                     const q = searchJob.toLowerCase();
                     const cocok = (j) => !q || j.job_number?.toLowerCase().includes(q) || j.po_number?.toLowerCase().includes(q);
                     const available = jobs.filter((j) => (j.remaining_to_ship || 0) > 0 && cocok(j));
-                    const notStarted = jobs.filter((j) => (j.total_produced || 0) === 0 && cocok(j) && (showAllJobs || q));
-                    const completed = jobs.filter((j) => (j.remaining_to_ship || 0) <= 0 && (j.total_produced || 0) > 0 && cocok(j) && (showAllJobs || q));
+                    const notStarted = jobs.filter((j) => (j.total_produced || 0) === 0 && cocok(j) && (showAllJobs || q || j.id === form.job_id));
+                    const completed = jobs.filter((j) => (j.remaining_to_ship || 0) <= 0 && (j.total_produced || 0) > 0 && cocok(j) && (showAllJobs || q || j.id === form.job_id));
                     return (
                       <>
                         {available.length > 0 && (

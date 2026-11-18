@@ -825,7 +825,18 @@ async def get_buyer_shipments(request: Request):
         from core import dispatch_capacity as _dcap
         prog = _dcap.shipment_progress(items)
         max_dispatch = max((i.get('dispatch_seq', 1) for i in items), default=0)
+        # 18 Nov 2026: dispatch deklarasi yang penerimaannya dibatalkan DA — layar menulis "Dibatalkan DA",
+        # bukan "0 / 0 pcs · Belum dikirim" (layar owner, SJ-6B9AFF-4432).
+        _seq_items: dict = {}
+        for i in items:
+            _seq_items.setdefault(i.get('dispatch_seq', 1), []).append(i)
+        _batal_seq = [q for q, its in _seq_items.items() if its and all(x.get('receipt_cancelled') for x in its)]
+        _batal_kode = sorted({x.get('receipt_cancelled_code') for x in items
+                              if x.get('receipt_cancelled') and x.get('receipt_cancelled_code')})
         result.append({**serialize_doc(s), 'items': serialize_doc(items),
+                       'dispatch_cancelled_count': len(_batal_seq),
+                       'all_dispatch_cancelled': bool(_seq_items) and len(_batal_seq) == len(_seq_items),
+                       'cancelled_receipt_codes': _batal_kode,
                        'po_ids': po_ids, 'po_numbers': po_numbers,
                        'is_consolidated': is_consolidated,
                        'receiver_type': s.get('receiver_type') or RECEIVER_BUYER,

@@ -77,7 +77,8 @@ def test_penerimaan_batal_tidak_terhitung_dan_deklarasinya_dilepas():
     n = run(dcap.release_declaration_of_receipt(db, db.cmt_receipts.docs[0], "diganti sesuai sheet"))
     it = db.buyer_shipment_items.docs[0]
     assert n == 1 and it["receipt_cancelled"] and it["receipt_cancelled_code"] == "CMT-RCV-00006"
-    assert dcap.shipment_progress([it])["total_shipped"] == 0
+    p = dcap.shipment_progress([it])
+    assert (p["total_ordered"], p["total_shipped"], p["remaining"], p["ship_status"]) == (287, 0, 287, "Pending")
     assert run(dcap.release_declaration_of_receipt(db, db.cmt_receipts.docs[0])) == 0   # idempoten
     import routes.buyer_shipment as bs
     assert run(bs._declared_main_by_item(db, ["poi1"])) == {}           # batas lebih-pesan tidak menghitungnya
