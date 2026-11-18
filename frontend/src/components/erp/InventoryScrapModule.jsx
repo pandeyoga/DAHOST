@@ -315,6 +315,10 @@ export default function InventoryScrapModule({ token }) {
       <TambahQtyForm open={tambahOpen} onClose={() => setTambahOpen(false)} onSaved={fetchMovements}
         token={token} materials={materials} mode="gudang" kirimKe="/api/rahaza/material-adjust"
         renderLokasi={({ value, onChange }) => <StorageLocationSelect token={token} value={value} onChange={onChange} testId="tambah-location" />}
+        cekHpp={async (mid) => {
+          const r = await fetch(`/api/rahaza/material-adjust/hpp?material_id=${mid}`, { headers });
+          return r.ok ? Number((await r.json()).unit_cost || 0) : null;
+        }}
         cekStok={async (mid, lid) => {
           const r = await fetch(`/api/rahaza/material-stock?material_id=${mid}&location_id=${lid}`, { headers });
           return r.ok ? ((await r.json())[0] || null) : null;

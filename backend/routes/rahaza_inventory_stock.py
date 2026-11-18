@@ -389,6 +389,28 @@ async def material_transfer(request: Request):
     return serialize_doc(mv)
 
 
+@router.get("/material-adjust/hpp")
+async def material_adjust_hpp(request: Request, material_id: str):
+    """18 Nov 2026 (owner: "kok tidak bisa barang jadi"): HPP rata-rata yang dipakai Tambah qty bila nilai per
+    satuan dikosongkan — barang jadi dari WAC (`fg_cost_layers.wac_state`, TANPA menulis apa pun), bahan &
+    aksesoris dari master. Dulu layar hanya membaca `unit_cost` master; barang jadi yang WAC-nya belum
+    diinisialisasi terbaca Rp0 sehingga selalu "wajib diisi" padahal server punya HPP-nya."""
+    await require_auth(request)
+    db = get_db()
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+    if not mat:
+        raise HTTPException(404, "Barang tidak ditemukan di master.")
+    from routes.rahaza_posting import inventory_kind
+    kind = inventory_kind(mat)
+    if kind == "fg":
+        from core import fg_cost_layers as fcl
+        st = await fcl.wac_state(db, material_id, init=False)
+        return {"material_id": material_id, "kind": kind, "unit_cost": float(st.get("unit_cost") or 0),
+                "source": st.get("source")}
+    return {"material_id": material_id, "kind": kind, "unit_cost": float(mat.get("unit_cost") or 0),
+            "source": "master"}
+
+
 @router.post("/material-adjust")
 async def material_adjust(request: Request):
     user = await _require_admin(request)
