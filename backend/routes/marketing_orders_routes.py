@@ -328,11 +328,14 @@ def _sla_of(account: dict, preorder: bool) -> float:
     return float((account or {}).get("ship_sla_days") or SLA_DEFAULT_DAYS)
 
 
+MONITOR_MAX_ORDERS = 50000
+
+
 @router.get("/fulfillment-monitor")
 async def fulfillment_monitor(
     request: Request,
     account_id: Optional[str] = Query(None, description="kosong = semua toko"),
-    bucket: str = Query("lewat_batas", description="belum_dikirim | lewat_batas | batal | retur"),
+    bucket: str = Query("lewat_batas", description="belum_dikirim | lewat_batas | batal | batal_cod | retur"),
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD (uji/simulasi); kosong = sekarang"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
@@ -363,9 +366,16 @@ async def fulfillment_monitor(
 
     q: dict = await _scope.scope_filter(
         db, user, {"account_id": account_id} if account_id else {})
-    orders = await db.marketing_orders.find(q, {"_id": 0}).to_list(20000)
+    # 18 Nov 2026: dulu `to_list(20000)` TANPA urutan — dengan 22.953 pesanan, tampilan "Semua toko" membaca
+    # 20.000 pesanan sembarang. Sekarang pesanan TERBARU dulu, batas lebih longgar, dan kalau terpotong diberi tahu.
+    orders = await db.marketing_orders.find(q, {"_id": 0}).sort("order_date", -1).to_list(MONITOR_MAX_ORDERS)
 
+    # 18 Nov 2026 (owner: "tambahkan berkas batal cod … saya ikuti rekomendasi anda"): Batal COD dibaca dari
+    # metode bayar + status batal + alasan batal hasil impor Seller Center (core.batal_cod) — tanpa berkas baru.
+    from core import batal_cod as _bc
     open_rows, late_rows, cancelled_rows, returned_rows = [], [], [], []
+    cod_cancelled_rows = []
+    cod_total = 0
     shipped_n = 0
     per_store: dict = {}
 
@@ -384,11 +394,22 @@ async def fulfillment_monitor(
             "sudah_dikirim": 0,
             "nilai_belum_dikirim": 0.0, "nilai_lewat_batas": 0.0,
             "umur_tertua_hari": 0.0,
+            "cod": 0, "batal_cod": 0, "batal_cod_gagal_kirim": 0, "nilai_batal_cod": 0.0,
         })
 
+        cod = _bc.is_cod(o)
+        if cod:
+            stat["cod"] += 1
+            cod_total += 1
         if st == "cancelled":
             stat["batal"] += 1
             cancelled_rows.append(o)
+            if cod:
+                cod_cancelled_rows.append(o)
+                stat["batal_cod"] += 1
+                stat["nilai_batal_cod"] += float(o.get("revenue_product") or o.get("revenue") or 0)
+                if _bc.jenis_batal_cod(o) == "gagal_kirim":
+                    stat["batal_cod_gagal_kirim"] += 1
             continue
         if st == "returned":
             stat["retur"] += 1
@@ -456,12 +477,20 @@ async def fulfillment_monitor(
             "cancel_reason": o.get("cancel_reason") or o.get("cancelation_return_type") or "",
             "value": float(o.get("revenue_product") or o.get("revenue") or 0),
             "quantity": o.get("quantity") or 0,
+            "payment_method": o.get("payment_method") or "",
         }
+
+    def _cod_row(o: dict) -> dict:
+        j = _bc.jenis_batal_cod(o)
+        return {**_simple(o), "jenis_batal": j, "jenis_batal_label": _bc.JENIS_LABEL[j],
+                "city": o.get("city") or o.get("regency_city") or "",
+                "courier": o.get("courier") or o.get("shipping_provider") or ""}
 
     buckets = {
         "belum_dikirim": sorted(open_rows, key=lambda r: -(r["age_days"] or 0)),
         "lewat_batas": sorted(late_rows, key=lambda r: -(r["over_by_days"] or 0)),
         "batal": [_simple(o) for o in cancelled_rows],
+        "batal_cod": [_cod_row(o) for o in cod_cancelled_rows],
         "retur": [_simple(o) for o in returned_rows],
     }
     if bucket not in buckets:
@@ -481,9 +510,21 @@ async def fulfillment_monitor(
         "nilai_lewat_batas": round(sum(r["value"] for r in late_rows)),
         "umur_tertua_hari": max([r["age_days"] or 0 for r in open_rows], default=0),
         "pesanan_dibaca": len(orders),
+        "cod": cod_total,
+        "batal_cod": len(cod_cancelled_rows),
+        "batal_cod_gagal_kirim": sum(1 for o in cod_cancelled_rows if _bc.jenis_batal_cod(o) == "gagal_kirim"),
+        "nilai_batal_cod": round(sum(float(o.get("revenue_product") or o.get("revenue") or 0) for o in cod_cancelled_rows)),
+        "persen_batal_cod": _bc.persen(len(cod_cancelled_rows), cod_total),
     }
 
     notes = []
+    if len(orders) >= MONITOR_MAX_ORDERS:
+        notes.append(f"Hanya {MONITOR_MAX_ORDERS:,} pesanan terbaru yang dibaca — pilih satu toko untuk angka "
+                     "lengkap toko itu.".replace(",", "."))
+    if bucket == "batal_cod":
+        notes.append("Batal COD = pesanan bayar di tempat (COD) yang berstatus batal. 'Gagal kirim / ditolak' dibaca "
+                     "dari alasan batal (mis. 'Pengiriman paket gagal'); sisanya dibatalkan pembeli sebelum dikirim. "
+                     "Datanya ikut impor pesanan Seller Center — tidak perlu berkas terpisah.")
     if not orders:
         notes.append("Belum ada pesanan sama sekali untuk lingkup ini — impor ekspor "
                      "Seller Center dulu di menu Impor Data.")

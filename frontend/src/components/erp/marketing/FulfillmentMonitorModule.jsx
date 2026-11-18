@@ -42,8 +42,13 @@ const BUCKETS = [
   { key: 'lewat_batas', label: 'Lewat batas kirim' },
   { key: 'belum_dikirim', label: 'Belum dikirim' },
   { key: 'batal', label: 'Batal' },
+  // 18 Nov 2026 (owner: "tambahkan berkas batal cod … saya ikuti rekomendasi anda"): batal COD dibaca dari metode bayar
+  // + alasan batal hasil impor Seller Center (tanpa berkas baru) — dipisah gagal kirim / dibatalkan pembeli.
+  { key: 'batal_cod', label: 'Batal COD' },
   { key: 'retur', label: 'Retur' },
 ];
+const NADA_BATAL_COD = { gagal_kirim: 'danger', batal_pembeli: 'warning', lainnya: 'muted' };
+const persen = (v) => `${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
 const PLATFORM_LABEL = { shopee: 'Shopee', tiktok: 'TikTok', tiktokshop: 'TikTok', tokopedia: 'Tokopedia', lazada: 'Lazada' };
 const labelPlatform = (p) => PLATFORM_LABEL[String(p || '').toLowerCase()] || p || '—';
 const tgl = (v) => (v ? formatDateID(parseServerTime(v)) : '—');
@@ -176,7 +181,7 @@ export default function FulfillmentMonitorModule({ token }) {
   const allRows = data?.rows || [];
   const needle = q.trim().toLowerCase();
   const cocok = (r) => !needle || [r.order_id, r.account_name, r.courier, r.order_channel,
-    r.status_raw, r.status].some((v) => String(v || '').toLowerCase().includes(needle));
+    r.status_raw, r.status, r.cancel_reason, r.jenis_batal_label].some((v) => String(v || '').toLowerCase().includes(needle));
   const rows = allRows.filter(cocok);
   const isOpenBucket = bucket === 'lewat_batas' || bucket === 'belum_dikirim';
   const adaMenunggu = Number(t.belum_dikirim || 0) + Number(t.lewat_batas || 0) > 0;
@@ -208,7 +213,11 @@ export default function FulfillmentMonitorModule({ token }) {
     : [
       { label: 'No. pesanan', nilai: (r) => r.order_id }, { label: 'Toko', nilai: (r) => r.account_name || '' },
       { label: 'Status', nilai: (r) => r.status_raw || r.status || '' }, { label: 'Tanggal', nilai: (r) => tgl(r.order_date) },
-      { label: 'Alasan', nilai: (r) => r.cancel_reason || '' }, { label: 'Pcs', nilai: (r) => Number(r.quantity || 0) },
+      { label: 'Alasan', nilai: (r) => r.cancel_reason || '' },
+      ...(bucket === 'batal_cod' ? [{ label: 'Jenis batal', nilai: (r) => r.jenis_batal_label || '' },
+        { label: 'Kota', nilai: (r) => r.city || '' }, { label: 'Kurir', nilai: (r) => r.courier || '' }] : []),
+      { label: 'Metode bayar', nilai: (r) => r.payment_method || '' },
+      { label: 'Pcs', nilai: (r) => Number(r.quantity || 0) },
       { label: 'Nilai', nilai: (r) => Number(r.value || 0) },
     ];
 
@@ -233,7 +242,10 @@ export default function FulfillmentMonitorModule({ token }) {
       { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{rp(r.value)}</span> },
     ] : [
       { kunci: 'tgl', label: 'Tanggal', isi: (r) => <span className="md:whitespace-nowrap">{tgl(r.order_date)}</span> },
+      ...(bucket === 'batal_cod' ? [{ kunci: 'jenis', label: 'Jenis batal', isi: (r) => (
+        <StatusBadge status={r.jenis_batal} label={r.jenis_batal_label} tone={NADA_BATAL_COD[r.jenis_batal] || 'muted'} />) }] : []),
       { kunci: 'alasan', label: 'Alasan', isi: (r) => r.cancel_reason || '—' },
+      ...(bucket === 'batal_cod' ? [{ kunci: 'kota', label: 'Kota', isi: (r) => r.city || '—' }] : []),
       { kunci: 'pcs', label: 'Pcs', rata: 'kanan', isi: (r) => <span className="tabular-nums">{num(r.quantity)}</span> },
       { kunci: 'nilai', label: 'Nilai', rata: 'kanan', isi: (r) => <span className="tabular-nums md:whitespace-nowrap">{rp(r.value)}</span> },
     ]),
@@ -247,6 +259,10 @@ export default function FulfillmentMonitorModule({ token }) {
       <span className={`tabular-nums ${s.lewat_batas ? 'font-medium text-[hsl(var(--danger-text))]' : ''}`}>{num(s.lewat_batas)}</span>) },
     { kunci: 'belum', label: 'Belum dikirim', rata: 'kanan', isi: (s) => <span className="tabular-nums">{num(s.belum_dikirim)}</span> },
     { kunci: 'nilai', label: 'Nilai tertahan', rata: 'kanan', isi: (s) => <span className="tabular-nums md:whitespace-nowrap">{rp(s.nilai_belum_dikirim)}</span> },
+    { kunci: 'cod', label: 'Batal COD', rata: 'kanan', isi: (s) => (
+      <span className="tabular-nums md:whitespace-nowrap" title={`${num(s.batal_cod_gagal_kirim)} gagal kirim dari ${num(s.cod)} pesanan COD`}>
+        {num(s.batal_cod)}{s.cod ? <span className="text-xs text-muted-foreground"> · {persen(s.cod ? (s.batal_cod / s.cod) * 100 : 0)}</span> : null}
+      </span>) },
     { kunci: 'tua', label: 'Terlama (hari)', rata: 'kanan', isi: (s) => <span className="tabular-nums">{Number(s.umur_tertua_hari || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })}</span> },
     { kunci: 'sla', label: 'Batas normal / pra-pesan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{s.sla_days} / {s.sla_days_preorder} hari</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
@@ -299,7 +315,7 @@ export default function FulfillmentMonitorModule({ token }) {
         </Button>
       </>}
       summary={<>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <StatTile label="Lewat batas kirim" value={num(t.lewat_batas)} accent="danger"
             sub={`Nilai ${rp(t.nilai_lewat_batas)}`} testId="tile-lewat-batas" />
           <StatTile label="Belum dikirim" value={num(t.belum_dikirim)} accent="warning"
@@ -309,6 +325,10 @@ export default function FulfillmentMonitorModule({ token }) {
             sub={adaMenunggu ? 'Sejak dibayar' : 'Tidak ada pesanan yang menunggu kirim'} testId="tile-tertua" />
           <StatTile label="Batal / retur" value={`${num(t.batal)} / ${num(t.retur)}`}
             sub="Perlu ekspor Batal-Retur dari Seller Center" testId="tile-batal" />
+          <StatTile label="Batal COD" value={num(t.batal_cod)} accent={t.batal_cod ? 'danger' : 'default'}
+            sub={t.cod ? `${persen(t.persen_batal_cod)} dari ${num(t.cod)} pesanan COD · ${num(t.batal_cod_gagal_kirim)} gagal kirim`
+              : 'Belum ada pesanan COD yang terbaca'}
+            onClick={() => { setBucket('batal_cod'); setPage(1); }} testId="tile-batal-cod" />
         </div>
         <p className="text-sm text-muted-foreground" data-testid="tile-dikirim">
           {num(t.pesanan_dibaca)} pesanan dibaca · {num(t.sudah_dikirim)} sudah dikirim.
@@ -334,6 +354,9 @@ export default function FulfillmentMonitorModule({ token }) {
                 { label: 'Lewat batas', nilai: (s) => Number(s.lewat_batas || 0) }, { label: 'Belum dikirim', nilai: (s) => Number(s.belum_dikirim || 0) },
                 { label: 'Nilai tertahan', nilai: (s) => Number(s.nilai_belum_dikirim || 0) },
                 { label: 'Terlama (hari)', nilai: (s) => Number(s.umur_tertua_hari || 0) },
+                { label: 'Pesanan COD', nilai: (s) => Number(s.cod || 0) }, { label: 'Batal COD', nilai: (s) => Number(s.batal_cod || 0) },
+                { label: 'Batal COD gagal kirim', nilai: (s) => Number(s.batal_cod_gagal_kirim || 0) },
+                { label: 'Nilai batal COD', nilai: (s) => Number(s.nilai_batal_cod || 0) },
                 { label: 'Batas normal (hari)', nilai: (s) => s.sla_days }, { label: 'Batas pra-pesan (hari)', nilai: (s) => s.sla_days_preorder },
               ]} />
           </div>

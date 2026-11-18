@@ -867,11 +867,14 @@ def is_retired_mapping(source_type: str, header_norm: str, field: str) -> bool:
 # dipercaya, dan omzet retur tidak pernah keluar dari rekap.
 MARKETPLACE_FULFILLMENT = SourceType(
     key="marketplace_fulfillment",
-    label="Status Pengiriman / Pembatalan (Ekspor B & C)",
+    # 18 Nov 2026 (owner: "tambahkan berkas batal cod"): ekspor batal/gagal COD masuk lewat jenis INI (status batal +
+    # alasan batal + metode bayar) — nama menyebut "Batal COD" supaya ketemu saat dicari; hasilnya di Monitoring kirim.
+    label="Status Pengiriman / Pembatalan / Batal COD (Ekspor B & C)",
     group="Penjualan",
     collection="marketing_orders",
     describe="Kabar susulan untuk pesanan yang SUDAH diimpor: dikirim, selesai, "
-             "dibatalkan, atau diretur. Baris yang nomor pesanannya belum pernah "
+             "dibatalkan (termasuk batal COD / gagal kirim), atau diretur. Batal COD "
+             "tampil di Marketing › Monitoring kirim › Batal COD. Baris yang nomor pesanannya belum pernah "
              "diimpor DITOLAK — jenis ini tidak pernah membuat pesanan baru "
              "(impor 'Pesanan Marketplace' dulu). Status tidak boleh MUNDUR "
              "kecuali ada bukti batal/retur.",
