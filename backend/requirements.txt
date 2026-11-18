@@ -71,6 +71,8 @@ numpy==2.4.6
 oauthlib==3.3.1
 openai==1.99.9
 openpyxl==3.1.5
+# 18 Nov 2026: ekspor laporan mesin absen (.xls lama, mis. 001_2026_10_MON.XLS) — core/fingerprint_import
+xlrd==2.0.1
 packaging==26.3
 pandas==3.0.5
 passlib==1.7.4

@@ -3388,6 +3388,14 @@
  "hr-attendance-hub": [
   [
    "GET",
+   "/api/dewi/org/positions"
+  ],
+  [
+   "GET",
+   "/api/dewi/org/units"
+  ],
+  [
+   "GET",
    "/api/rahaza/attendance/approvals"
   ],
   [
@@ -3436,6 +3444,10 @@
   ],
   [
    "POST",
+   "/api/rahaza/devices/fingerprint/hubungkan"
+  ],
+  [
+   "POST",
    "/api/rahaza/devices/fingerprint/import"
   ],
   [
@@ -3473,6 +3485,14 @@
   [
    "GET",
    "/api/rahaza/employees"
+  ],
+  [
+   "GET",
+   "/api/rahaza/self/profile"
+  ],
+  [
+   "GET",
+   "/api/rahaza/shifts"
   ]
  ],
  "hr-attendance-sessions": [
