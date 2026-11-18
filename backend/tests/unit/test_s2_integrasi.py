@@ -316,6 +316,65 @@ def test_04f_tambah_qty_aksesoris_rata_rata_bergerak_dan_penolakan(monkeypatch):
         assert e.value.status_code in (400, 404) and pesan in e.value.detail, (body, e.value.detail)
 
 
+def test_04g_tambah_qty_kain_menerbitkan_gulungan(monkeypatch):
+    """18 Nov 2026 (owner: "tambah juga untuk aksesoris dan kain"): kain dilacak per roll (Cutting wajib memilih
+    roll) — tambah qty menerbitkan gulungan sesuai isi tiap roll; jumlah isi harus sama dengan qty."""
+    from core import fabric_roll_engine as fre
+    ris, cap = _tambah_env(monkeypatch, [{"id": "FAB1", "code": "KAIN", "type": "fabric", "unit": "yard",
+                                          "unit_cost": 30000.0}])
+    cap["rolls"] = []
+
+    async def rolls(db_, receipt, item, material, lines, user, **kw):
+        cap["rolls"].append((receipt["id"], item["unit_price"], [ln["qty"] for ln in lines], kw))
+        return [{"roll_no": f"RL-{i}"} for i, _ in enumerate(lines)]
+    monkeypatch.setattr(fre, "create_rolls_from_receipt", rolls)
+    run(ris.material_adjust(P3Req({"material_id": "FAB1", "location_id": "L1", "qty": 230, "source": "stok_lama",
+                                   "rolls": [115, 115]})))
+    assert cap["rolls"] == [("mv-1", 30000.0, [115.0, 115.0],
+                             {"reference_type": "stock_adjust", "note": "Tambah qty (Stok lama belum tercatat)"})]
+    run(ris.material_adjust(P3Req({"material_id": "FAB1", "location_id": "L1", "qty": 50, "source": "ditemukan"})))
+    assert cap["rolls"][-1][2] == [50.0]                                  # tanpa rincian = satu roll
+    with pytest.raises(HTTPException) as e:
+        run(ris.material_adjust(P3Req({"material_id": "FAB1", "location_id": "L1", "qty": 230, "source": "stok_lama",
+                                       "rolls": [115, 100]})))
+    assert "harus sama dengan qty tambah" in e.value.detail and len(cap["rolls"]) == 2
+
+
+def test_04h_tambah_qty_dari_portal_aksesoris(monkeypatch):
+    """Portal Aksesoris › Tambah qty memakai mesin yang sama di lokasi gudang aksesoris; barang lain ditolak."""
+    import routes.dewi_accessories_stock as das
+    import routes.rahaza_inventory_stock as ris
+    db = P3DB(rahaza_materials=[{"id": "ACC1", "code": "KCG", "type": "accessory", "unit_cost": 2000.0},
+                                {"id": "FAB1", "code": "KAIN", "type": "fabric", "unit": "yard"}])
+    seen = {}
+
+    async def auth(req):
+        return USER
+
+    async def loc(db_):
+        return "LOC-ACC"
+
+    async def qty(db_, mid):
+        return 60.0
+
+    async def adjust(db_, user, **kw):
+        seen.update(kw)
+        return {"id": "mv-9", "qty": kw["delta"]}
+    monkeypatch.setattr(das, "require_auth", auth)
+    monkeypatch.setattr(das, "get_db", lambda: db)
+    monkeypatch.setattr(das, "_get_accessory_location_id", loc)
+    monkeypatch.setattr(das, "_stock_qty", qty)
+    monkeypatch.setattr(ris, "apply_material_adjust", adjust)
+    out = run(das.tambah_qty_aksesoris(P3Req({"acc_id": "ACC1", "qty": 10, "source": "stok_lama", "unit_cost": 2100,
+                                              "reason": "rak 3"})))
+    assert out["new_stock_qty"] == 60.0
+    assert (seen["material_id"], seen["location_id"], seen["delta"], seen["source"], seen["unit_cost"], seen["reason"]) == \
+        ("ACC1", "LOC-ACC", 10.0, "stok_lama", 2100, "rak 3")
+    for body in ({"acc_id": "FAB1", "qty": 5}, {"acc_id": "ACC1", "qty": 0}):
+        with pytest.raises(HTTPException):
+            run(das.tambah_qty_aksesoris(P3Req(body)))
+
+
 def test_04b_accessory_receipt_and_usage_use_1_1402(posting):
     db = _inv_db()
     run(rp.post_inventory_receive(db, {"id": "r1", "material_id": "ACC1", "qty": 10, "unit_cost": 2000}, USER))

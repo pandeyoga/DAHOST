@@ -177,8 +177,13 @@ async def next_roll_no(db) -> str:
 
 
 async def create_rolls_from_receipt(db, receipt: dict, item: dict, material: dict,
-                                    lines: list[dict], user: dict) -> list[dict]:
-    """Terbitkan roll dari SATU baris penerimaan (H-5)."""
+                                    lines: list[dict], user: dict, *, reference_type: str = "goods_receipt",
+                                    note: str | None = None) -> list[dict]:
+    """Terbitkan roll dari SATU baris penerimaan (H-5).
+
+    18 Nov 2026: juga dipakai Tambah qty kain (Gudang › Penyesuaian) — `reference_type="stock_adjust"` dan
+    `note` menggantikan teks "Otomatis dari GR …", supaya kain yang ditambah tanpa GR tetap punya gulungan
+    (Cutting WAJIB memilih roll, H-6)."""
     uom = roll_uom(material.get("unit")) or "meter"
     is_weight = is_weight_uom(uom)
     created = []
@@ -216,7 +221,7 @@ async def create_rolls_from_receipt(db, receipt: dict, item: dict, material: dic
             "location_id": receipt.get("location_id") or "",
             "location_name": receipt.get("location_name") or "",
             "unit_cost": _f(item.get("unit_price")),
-            "notes": ln.get("notes") or f"Otomatis dari GR {receipt.get('receipt_number', '')}",
+            "notes": ln.get("notes") or note or f"Otomatis dari GR {receipt.get('receipt_number', '')}",
             "source_receipt_id": receipt.get("id"),
             "source_receipt_number": receipt.get("receipt_number") or "",
             "source_receipt_item_id": item.get("id"),
@@ -227,10 +232,10 @@ async def create_rolls_from_receipt(db, receipt: dict, item: dict, material: dic
         await db[ROLL_MOVES].insert_one({
             "id": _uid(), "roll_id": doc["id"], "roll_no": roll_no,
             "movement_type": "receive", "qty": qty, "unit": uom,
-            "reference_type": "goods_receipt", "reference_id": receipt.get("id"),
+            "reference_type": reference_type, "reference_id": receipt.get("id"),
             "reference_no": receipt.get("receipt_number") or "",
             "to_location": receipt.get("location_name") or "",
-            "notes": f"Penerimaan GR {receipt.get('receipt_number', '')}",
+            "notes": note or f"Penerimaan GR {receipt.get('receipt_number', '')}",
             "created_at": _now(), "created_by": user.get("name") or user.get("id"),
         })
         doc.pop("_id", None)

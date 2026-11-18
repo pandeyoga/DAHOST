@@ -370,6 +370,34 @@ async def receive_stock(request: Request):
     }
 
 
+@router.post("/stock/tambah")
+async def tambah_qty_aksesoris(request: Request):
+    """18 Nov 2026 (owner: "tambah juga untuk aksesoris dan kain") — Tambah qty aksesoris TANPA pembelian
+    (stok lama belum tercatat / ditemukan) dari Portal Aksesoris. Mesinnya SAMA dengan Gudang › Penyesuaian ›
+    Tambah qty (`rahaza_inventory_stock.apply_material_adjust` + `source`/`unit_cost`): stok di lokasi aksesoris,
+    HPP rata-rata, jurnal persediaan lawan ekuitas saldo awal / selisih. Beda dengan "Terima stok" (pembelian →
+    utang supplier). Hanya untuk barang aksesoris; hak akses = centang Master & Stok Aksesoris (`/api/acc/stock`)."""
+    user = await require_auth(request)
+    db = get_db()
+    body = await request.json()
+    acc_id = body.get("acc_id")
+    try:
+        qty = float(body.get("qty") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "qty harus angka")
+    if not acc_id or qty <= 0:
+        raise HTTPException(400, "Pilih aksesoris dan isi qty lebih dari 0.")
+    item = await db.rahaza_materials.find_one({"id": acc_id, "type": "accessory"}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "Aksesoris tidak ditemukan")
+    loc_id = await _get_accessory_location_id(db)
+    from routes.rahaza_inventory_stock import apply_material_adjust
+    mv = await apply_material_adjust(db, user, material_id=acc_id, location_id=loc_id, delta=qty,
+                                     reason=str(body.get("reason") or ""), source=body.get("source"),
+                                     unit_cost=body.get("unit_cost"))
+    return serialize_doc({**mv, "new_stock_qty": await _stock_qty(db, acc_id)})
+
+
 @router.post("/stock/issue")
 async def issue_stock(request: Request):
     """Keluarkan stok aksesoris (bernilai + berjurnal).

@@ -397,7 +397,7 @@ async def material_adjust(request: Request):
     return serialize_doc(await apply_material_adjust(
         db, user, material_id=body.get("material_id"), location_id=body.get("location_id"),
         delta=float(body.get("qty") or 0), reason=body.get("reason") or "",
-        source=body.get("source"), unit_cost=body.get("unit_cost")))
+        source=body.get("source"), unit_cost=body.get("unit_cost"), rolls=body.get("rolls")))
 
 
 # 18 Nov 2026 (owner: "tambahan fitur input qty di portal gudang jadi bisa menambahkan qty tanpa dari produksi"):
@@ -430,7 +430,8 @@ async def _tambah_unit_cost(db, mat: dict, kind: str, unit_cost, actor: dict) ->
 
 
 async def apply_material_adjust(db, user: dict, *, material_id, location_id, delta: float, reason: str,
-                                extra: dict | None = None, source: str | None = None, unit_cost=None) -> dict:
+                                extra: dict | None = None, source: str | None = None, unit_cost=None,
+                                rolls=None) -> dict:
     """SATU mesin penyesuaian stok manual: stok + kartu stok (`stock_service`) + mutasi + jurnal.
 
     2026-11-06 (pola P8): dipakai juga oleh `POST /api/wms/stock/unified/adjust` (Viewer Stok). Dulu jalur itu
@@ -460,9 +461,24 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
         if kind == "fg" and float(delta) != int(delta):
             raise HTTPException(400, "Qty barang jadi harus bilangan bulat (pcs).")
         uc = await _tambah_unit_cost(db, mat, kind, unit_cost, {"id": user.get("id"), "name": user.get("name", "")})
+        # Kain/benang dilacak per GULUNGAN (Cutting wajib memilih roll, H-6): tambah qty menerbitkan roll juga.
+        # `rolls` = isi tiap roll (satuan barang); kosong = satu roll berisi seluruh qty.
+        from core import fabric_roll_engine as fre
+        roll_lines = []
+        if fre.is_roll_material(mat):
+            try:
+                isi = [float(x) for x in (rolls or [delta])]
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Isi tiap roll harus berupa angka.")
+            if not isi or any(x <= 0 for x in isi):
+                raise HTTPException(400, "Isi tiap roll harus lebih dari 0.")
+            if abs(sum(isi) - float(delta)) > 0.01:
+                raise HTTPException(400, f"Jumlah isi roll ({sum(isi):g}) harus sama dengan qty tambah ({float(delta):g}).")
+            roll_lines = [{"qty": round(x, 4)} for x in isi]
         tambah = {"kind": kind, "mat": mat, "unit_cost": uc,
                   "explicit": unit_cost not in (None, "") and float(unit_cost or 0) > 0,
-                  "qty_before": float(await stock_service.get_onhand(material_id, db=db) or 0)}
+                  "qty_before": float(await stock_service.get_onhand(material_id, db=db) or 0),
+                  "roll_lines": roll_lines}
         if not str(reason or "").strip():
             reason = TAMBAH_SUMBER[src]
     cur = await db.rahaza_material_stock.find_one({"material_id": material_id, "location_id": location_id}) or {"qty": 0}
@@ -503,6 +519,17 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
                 db, material_id=material_id, cost_result=cost_result, qty_in=delta, cost_in=tambah["unit_cost"],
                 source_ref=f"mvadj-wac:{mv['id']}",
                 memo=f"Nilai ulang stok lama {tambah['mat'].get('code') or material_id} oleh tambah qty", user=user)
+        if tambah["roll_lines"]:
+            from core import fabric_roll_engine as fre
+            loc = await db.rahaza_locations.find_one({"id": location_id}, {"_id": 0, "name": 1, "code": 1}) or {}
+            dibuat = await fre.create_rolls_from_receipt(
+                db, {"id": mv["id"], "receipt_number": "", "location_id": location_id,
+                     "location_name": loc.get("name") or loc.get("code") or "", "created_at": mv.get("created_at")},
+                {"id": mv["id"], "unit_price": tambah["unit_cost"], "inspection_status": "passed", "rejected_qty": 0},
+                tambah["mat"], tambah["roll_lines"], user, reference_type="stock_adjust",
+                note=f"Tambah qty ({TAMBAH_SUMBER[src]})")
+            await db.rahaza_material_movements.update_one({"id": mv["id"]}, {"$set": {
+                "roll_nos": [r.get("roll_no") for r in dibuat]}})
     posting_result = None
     try:
         posting_result = await post_inventory_adjust(db, mv, user)

@@ -3,8 +3,7 @@
  * Jalur adjust RESMI: POST /api/rahaza/material-adjust (+ posting GL di server).
  *
  * 18 Nov 2026 (owner: "tambahan fitur input qty di portal gudang jadi bisa menambahkan qty tanpa dari produksi"):
- * tombol TAMBAH QTY — sumber (stok lama belum tercatat / ditemukan) + nilai per pcs (isian staf, kosong = HPP
- * rata-rata), langsung masuk stok. Jalur server yang SAMA (material-adjust + `source`, `unit_cost`), bukan modul baru.
+ * tombol TAMBAH QTY — form bersama `TambahQtyForm` (juga dipakai Portal Aksesoris); kain menerbitkan gulungan.
  *
  * Standar UI/UX v2 (8 Nov 2026): PageLayout, form = FormPopup pendek (dulu kotak melayang buatan sendiri),
  * riwayat = TabelData + unduh Excel/CSV, label Indonesia.
@@ -30,6 +29,7 @@ import StorageLocationSelect from './StorageLocationSelect';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { materialOptionLabel } from '@/lib/materialFields';
 import PageLayout from './layout/PageLayout';
+import TambahQtyForm from './TambahQtyForm';
 import { EmptyState, Notice, StatTile } from './moduleAtoms';
 
 // 2026-11-07 (Tahap 5): tanda qty mengikuti tipe — dulu tipe hanya hiasan (tidak dikirim, tidak diperiksa),
@@ -40,13 +40,6 @@ const ADJ_TYPES = [
   { value: 'found', label: 'Ditemukan / tambahan (menambah stok)', sign: 1 },
   { value: 'correction', label: 'Koreksi hitung stok (tambah atau kurang)', sign: 0 },
 ];
-// Sumber tambah qty — kunci sama dengan server (routes/rahaza_inventory_stock.TAMBAH_SUMBER)
-const SUMBER_TAMBAH = [
-  { value: 'stok_lama', label: 'Stok lama belum tercatat' },
-  { value: 'ditemukan', label: 'Ditemukan saat hitung ulang' },
-];
-const TAMBAH_KOSONG = { material_id: '', location_id: '', qty: '', source: 'stok_lama', unit_cost: '', note: '' };
-const fmtRp = (v) => `Rp${Math.round(Number(v || 0)).toLocaleString('id-ID')}`;
 const BATAS_MUTASI = 500; // batas `limit` GET /rahaza/material-movements (mode tanpa halaman)
 const fmtQty = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 3 });
 
@@ -54,7 +47,7 @@ export default function InventoryScrapModule({ token }) {
   const [movements, setMovements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adjustForm, setAdjustForm] = useState(null);
-  const [tambahForm, setTambahForm] = useState(null);
+  const [tambahOpen, setTambahOpen] = useState(false);
   const [materials, setMaterials] = useState([]);
   const [stockInfo, setStockInfo] = useState(null);
   const [galat, setGalat] = useState('');
@@ -111,44 +104,7 @@ export default function InventoryScrapModule({ token }) {
     }
   };
 
-  const tutupForm = () => { setAdjustForm(null); setTambahForm(null); setStockInfo(null); setGalat(''); };
-  const matTambah = materials.find((m) => m.id === tambahForm?.material_id);
-  const hppSekarang = Number(matTambah?.unit_cost || 0);
-
-  const simpanTambah = async () => {
-    if (!tambahForm) return;
-    setGalat('');
-    const qty = Number(tambahForm.qty);
-    if (!tambahForm.material_id || !tambahForm.location_id) { setGalat('Pilih barang dan lokasi.'); return; }
-    if (!(qty > 0)) { setGalat('Qty tambah harus lebih dari 0.'); return; }
-    const nilai = tambahForm.unit_cost === '' ? null : Number(tambahForm.unit_cost);
-    if (nilai !== null && !(nilai >= 0)) { setGalat('Nilai per pcs harus angka 0 atau lebih.'); return; }
-    if (!(nilai > 0) && !(hppSekarang > 0)) { setGalat('Barang ini belum punya HPP rata-rata — isi nilai per pcs.'); return; }
-    const label = SUMBER_TAMBAH.find((s) => s.value === tambahForm.source)?.label || '';
-    setMenyimpan(true);
-    try {
-      const r = await fetch('/api/rahaza/material-adjust', {
-        method: 'POST', headers,
-        body: JSON.stringify({ material_id: tambahForm.material_id, location_id: tambahForm.location_id, qty,
-          source: tambahForm.source, unit_cost: nilai > 0 ? nilai : null,
-          reason: tambahForm.note.trim() ? `${label} — ${tambahForm.note.trim()}` : label }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { setGalat(typeof d.detail === 'string' ? d.detail : `Gagal menambah qty (HTTP ${r.status})`); return; }
-      const jurnal = d?._posting_result;
-      if (jurnal && jurnal.ok === false) {
-        toast({ title: 'Qty bertambah, jurnal belum terbentuk', description: String(jurnal.error || ''), variant: 'destructive' });
-      } else {
-        toast({ title: 'Qty ditambahkan', description: `${qty.toLocaleString('id-ID')} ${matTambah?.unit || ''} · ${label}` });
-      }
-      tutupForm();
-      fetchMovements();
-    } catch (e) {
-      setGalat('Gagal menambah qty.');
-    } finally {
-      setMenyimpan(false);
-    }
-  };
+  const tutupForm = () => { setAdjustForm(null); setStockInfo(null); setGalat(''); };
 
   const adjust = async () => {
     if (!adjustForm) return;
@@ -236,7 +192,7 @@ export default function InventoryScrapModule({ token }) {
     <PageLayout testId="inventory-scrap-page" title="Penyesuaian stok"
       subtitle="Tambah qty barang yang belum tercatat, atau catat barang rusak, hilang, dan koreksi hitung. Jurnal dibuat otomatis."
       actions={<>
-        <Button onClick={() => { setGalat(''); setStockInfo(null); setTambahForm({ ...TAMBAH_KOSONG }); }} data-testid="adj-tambah">
+        <Button onClick={() => setTambahOpen(true)} data-testid="adj-tambah">
           <Plus />Tambah qty
         </Button>
         <Button variant="outline" onClick={() => { setGalat(''); setAdjustForm({ material_id: '', location_id: '', qty: 0, reason: '', adjustment_type: 'scrap' }); }}
@@ -355,55 +311,14 @@ export default function InventoryScrapModule({ token }) {
           </Isian>
         </>}
       </FormPopup>
-      <FormPopup open={!!tambahForm} onClose={tutupForm} ukuran="pendek" judul="Tambah qty"
-        keterangan="Stok langsung bertambah di lokasi terpilih; jurnal persediaan dibuat otomatis." onSimpan={simpanTambah}
-        menyimpan={menyimpan} galat={galat} labelSimpan="Tambah qty" testId="tambah-form">
-        {tambahForm && <>
-          <Isian label="Barang" wajib htmlFor="tambah-material">
-            <SmartNativeSelect id="tambah-material" value={tambahForm.material_id} className="w-full" data-testid="tambah-material"
-              onChange={(e) => {
-                const v = e.target.value;
-                setTambahForm((f) => ({ ...f, material_id: v }));
-                setStockInfo(null);
-                if (v && tambahForm.location_id) checkStock(v, tambahForm.location_id);
-              }}>
-              <option value="">Pilih barang</option>
-              {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Lokasi" wajib>
-            <StorageLocationSelect token={token} value={tambahForm.location_id} testId="tambah-location"
-              onChange={(v) => {
-                setTambahForm((f) => ({ ...f, location_id: v }));
-                setStockInfo(null);
-                if (tambahForm.material_id && v) checkStock(tambahForm.material_id, v);
-              }} />
-          </Isian>
-          {stockInfo && <Notice tone="info" title={`Stok saat ini di lokasi ini: ${fmtQty(stockInfo.qty)} ${stockInfo.unit || ''}`} />}
-          <Isian label="Qty tambah" wajib htmlFor="tambah-qty">
-            <Input id="tambah-qty" type="number" inputMode="decimal" value={tambahForm.qty} placeholder="Contoh: 24"
-              onChange={(e) => setTambahForm((f) => ({ ...f, qty: e.target.value }))} data-testid="tambah-qty" />
-          </Isian>
-          <Isian label="Sumber" wajib htmlFor="tambah-sumber">
-            <SmartNativeSelect id="tambah-sumber" value={tambahForm.source} searchable={false} className="w-full" data-testid="tambah-sumber"
-              onChange={(e) => setTambahForm((f) => ({ ...f, source: e.target.value }))}>
-              {SUMBER_TAMBAH.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </SmartNativeSelect>
-          </Isian>
-          <Isian label="Nilai per pcs (Rp)" wajib={!!tambahForm.material_id && !(hppSekarang > 0)} htmlFor="tambah-nilai"
-            petunjuk={!tambahForm.material_id ? 'Pilih barang dulu untuk melihat HPP rata-ratanya.'
-              : hppSekarang > 0 ? `HPP rata-rata sekarang ${fmtRp(hppSekarang)}. Kosongkan untuk memakai angka ini.`
-                : 'Barang ini belum punya HPP rata-rata — wajib diisi.'}>
-            <Input id="tambah-nilai" type="number" inputMode="decimal" value={tambahForm.unit_cost}
-              placeholder={hppSekarang > 0 ? String(Math.round(hppSekarang)) : 'Contoh: 45000'}
-              onChange={(e) => setTambahForm((f) => ({ ...f, unit_cost: e.target.value }))} data-testid="tambah-nilai" />
-          </Isian>
-          <Isian label="Catatan" htmlFor="tambah-catatan">
-            <Textarea id="tambah-catatan" rows={2} value={tambahForm.note} placeholder="Contoh: stok gudang lantai 2 belum masuk saat cutoff"
-              onChange={(e) => setTambahForm((f) => ({ ...f, note: e.target.value }))} data-testid="tambah-catatan" />
-          </Isian>
-        </>}
-      </FormPopup>
+      {/* 18 Nov 2026: form Tambah qty bersama (Gudang + Portal Aksesoris) — kain menerbitkan gulungan */}
+      <TambahQtyForm open={tambahOpen} onClose={() => setTambahOpen(false)} onSaved={fetchMovements}
+        token={token} materials={materials} mode="gudang" kirimKe="/api/rahaza/material-adjust"
+        renderLokasi={({ value, onChange }) => <StorageLocationSelect token={token} value={value} onChange={onChange} testId="tambah-location" />}
+        cekStok={async (mid, lid) => {
+          const r = await fetch(`/api/rahaza/material-stock?material_id=${mid}&location_id=${lid}`, { headers });
+          return r.ok ? ((await r.json())[0] || null) : null;
+        }} />
     </PageLayout>
   );
 }
