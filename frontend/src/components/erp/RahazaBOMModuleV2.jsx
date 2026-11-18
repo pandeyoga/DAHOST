@@ -565,6 +565,11 @@ export default function RahazaBOMModuleV2({ token }) {
                             {row.panel_code ? (
                               <span data-testid={`bom-panel-${row.panel_code}`} title={row.panel_source_fabric ? `Kain asal: ${row.panel_source_fabric}` : ''}>
                                 1 pcs <span className="text-[hsl(var(--primary))]">{row.panel_code}</span>
+                                {row.panel_fabric_codes?.length > 0 && (
+                                  <span className="block text-xs text-muted-foreground" data-testid={`bom-panel-kain-${row.panel_code}`}>
+                                    {row.panel_fabric_codes.length} kain: {row.panel_fabric_codes.join(' + ')}
+                                  </span>
+                                )}
                               </span>
                             ) : (
                               <>{readNumber(row, FIELD.totalMaterialKgPerPcs) ? readNumber(row, FIELD.totalMaterialKgPerPcs).toFixed(3) : '—'} kg</>
@@ -793,7 +798,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                 {isPanelRow(m) && (
                                   <TableRow data-testid={`bom-mat-${idx}-resep`}>
                                     <TableCell />
-                                    <TableCell colSpan={7}>
+                                    <TableCell colSpan={7} className="whitespace-normal">
                                       <ResepKainEditor token={token} categories={categories}
                                         value={m.fabric_recipe || []}
                                         onChange={(rows) => updateMaterial(idx, { fabric_recipe: rows })}
@@ -935,7 +940,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                       {m.fabric_recipe?.length > 0 && (
                                         <TableRow data-testid={`bom-viewer-row-${idx}-resep`}>
                                           <TableCell />
-                                          <TableCell colSpan={6} className="text-xs text-muted-foreground">
+                                          <TableCell colSpan={6} className="whitespace-normal text-xs text-muted-foreground">
                                             Resep kain ({m.fabric_recipe.length}): {ringkasResep(m.fabric_recipe)}
                                           </TableCell>
                                         </TableRow>
