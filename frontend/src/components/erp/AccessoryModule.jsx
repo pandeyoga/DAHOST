@@ -53,6 +53,7 @@ import { aksiCentang } from '@/lib/rbac';
 // 2026-11-07 (Tahap 6 HR3): pemohon Request Internal = karyawan dari master (pemilih SDM bersama)
 import { useActiveEmployees, EmployeeSelect } from './hr/hrPickers';
 import PageLayout from './layout/PageLayout';
+import TambahQtyForm from './TambahQtyForm';
 import HubTabs from './hubs/HubTabs';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { denganAlasanMerchandiser } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
@@ -212,6 +213,8 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
   const [editItem, setEditItem] = useState(null);
   const [form, setForm]         = useState({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', supplier_id:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false });
   const [showMove, setShowMove] = useState(null); // {id, name, action:'in'|'out'}
+  // 18 Nov 2026 (owner: "tambah juga untuk aksesoris dan kain"): tambah qty TANPA pembelian (stok lama / ditemukan)
+  const [tambahItem, setTambahItem] = useState(null);
   const [moveForm, setMoveForm] = useState({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' });
   // 2026-11-06 (Tahap 2): divisi pemohon (Keluarkan Stok) + harga penerimaan (hanya Keuangan yang mengubah)
   const divisions = useDivisions(token);
@@ -401,6 +404,9 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setTambahItem(it)} data-testid={`tambah-acc-${it.id}`}>
+              <PackagePlus className="mr-2 h-4 w-4" /> Tambah qty (stok lama)
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => openEdit(it)} data-testid={`edit-acc-${it.id}`}>
               <Pencil className="mr-2 h-4 w-4" /> Ubah
             </DropdownMenuItem>
@@ -599,6 +605,8 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
           </Isian>
         </FormPopup>
       )}
+      <TambahQtyForm open={!!tambahItem} onClose={() => setTambahItem(null)} barangTetap={tambahItem} mode="aksesoris"
+        token={token} onSaved={() => { load(); onRefreshDash(); }} />
     </PageLayout>
   );
 }
