@@ -210,6 +210,112 @@ def test_04_inventory_account_follows_item_kind(posting):
     assert posting.lines() == [("1-1401", 30000.0, 0), ("5-1950", 0, 30000.0)]
 
 
+def test_04d_tambah_qty_nilai_isian_dan_stok_lama_ke_ekuitas(posting, monkeypatch):
+    """18 Nov 2026 (owner: tambah qty di Gudang tanpa produksi): nilai = isian staf / HPP SEBELUM barang masuk
+    (bukan WAC sesudahnya); sumber "stok lama belum tercatat" → ekuitas saldo awal, "ditemukan" → 5-1950."""
+    from core import opening_balance as ob
+
+    async def eq(db):
+        return "3-2000"
+    monkeypatch.setattr(ob, "retained_earnings_code", eq)
+    db = _inv_db()
+    run(rp.post_inventory_adjust(db, {"id": "t1", "material_id": "FG1", "qty": 3, "adjust_source": "stok_lama",
+                                      "adjust_source_label": "Stok lama belum tercatat",
+                                      "adjust_unit_cost": 42000}, USER))
+    assert posting.lines() == [("1-1404", 126000.0, 0), ("3-2000", 0, 126000.0)]
+    assert posting.jes[-1]["memo"].startswith("Tambah qty (Stok lama belum tercatat)")
+    run(rp.post_inventory_adjust(db, {"id": "t2", "material_id": "ACC1", "qty": 5, "adjust_source": "ditemukan",
+                                      "adjust_unit_cost": 2500}, USER))
+    assert posting.lines() == [("1-1402", 12500.0, 0), ("5-1950", 0, 12500.0)]
+
+
+def _tambah_env(monkeypatch, materials):
+    import routes.rahaza_inventory_stock as ris
+    from core import location_resolver, stock_service
+    db = P3DB(rahaza_materials=materials)
+    cap = {"layers": [], "posted": [], "costs": []}
+
+    async def admin(req):
+        return USER
+
+    async def ok_loc(db_, loc):
+        return True
+
+    async def onhand(mid, db=None):
+        return 10.0
+
+    async def meta(*a, **k):
+        return {}
+
+    async def add(*a, **k):
+        cap["added"] = (a, k.get("ref"))
+
+    async def log_mv(db_, user, **kw):
+        cap["mv"] = {"id": "mv-1", **kw}
+        return cap["mv"]
+
+    async def push(db_, **kw):
+        cap["layers"].append(kw)
+        return {"id": "L1"}
+
+    async def post(db_, mv, user):
+        cap["posted"].append(mv)
+        return {"ok": True}
+
+    async def cost(db_, mid, q, c, **kw):
+        cap["costs"].append((mid, q, c, kw.get("qty_before")))
+        return {"old_unit_cost": 2000.0, "new_unit_cost": 2100.0, "qty_before": kw.get("qty_before")}
+
+    async def gap(*a, **k):
+        return None
+    monkeypatch.setattr(ris, "_require_admin", admin)
+    monkeypatch.setattr(ris, "get_db", lambda: db)
+    monkeypatch.setattr(location_resolver, "location_exists", ok_loc)
+    monkeypatch.setattr(stock_service, "get_onhand", onhand)
+    monkeypatch.setattr(stock_service, "identity_meta", meta)
+    monkeypatch.setattr(stock_service, "add", add)
+    monkeypatch.setattr(ris, "_log_movement", log_mv)
+    monkeypatch.setattr(ris, "post_inventory_adjust", post)
+    monkeypatch.setattr(fcl, "push_layer", push)
+    import core.accessory_valuation as av
+    import core.purchase_costing as pcost
+    monkeypatch.setattr(av, "apply_receipt_cost", cost)
+    monkeypatch.setattr(pcost, "post_receipt_wac_gap", gap)
+    return ris, cap
+
+
+def test_04e_tambah_qty_barang_jadi_masuk_lapisan_hpp(monkeypatch):
+    ris, cap = _tambah_env(monkeypatch, [_wac_fg()])
+    run(ris.material_adjust(P3Req({"material_id": "FG1", "location_id": "L1", "qty": 4, "source": "stok_lama",
+                                   "unit_cost": 45000, "reason": ""})))
+    mv = cap["mv"]
+    assert (mv["adjust_source"], mv["adjust_unit_cost"], mv["notes"]) == ("stok_lama", 45000.0, "Stok lama belum tercatat")
+    assert cap["layers"] == [{"material_id": "FG1", "qty": 4, "unit_cost": 45000.0, "actor": {"id": "u-fin", "name": "Finance Uji"},
+                              "ref": {"type": "tambah_stok_lama", "receipt_id": "mv-1", "receipt_code": "Stok lama belum tercatat"}}]
+    assert cap["posted"] and not cap["costs"]
+    # nilai kosong ⇒ HPP rata-rata (WAC) barang itu
+    run(ris.material_adjust(P3Req({"material_id": "FG1", "location_id": "L1", "qty": 2, "source": "ditemukan"})))
+    assert cap["mv"]["adjust_unit_cost"] == 50000.0 and cap["layers"][-1]["unit_cost"] == 50000.0
+
+
+def test_04f_tambah_qty_aksesoris_rata_rata_bergerak_dan_penolakan(monkeypatch):
+    ris, cap = _tambah_env(monkeypatch, [{"id": "ACC1", "code": "KCG", "type": "accessory", "unit_cost": 2000.0},
+                                         {"id": "BARU", "code": "BARU", "type": "accessory", "unit_cost": 0}])
+    run(ris.material_adjust(P3Req({"material_id": "ACC1", "location_id": "L1", "qty": 50, "source": "stok_lama",
+                                   "unit_cost": 2200, "reason": "rak belakang"})))
+    assert cap["costs"] == [("ACC1", 50.0, 2200.0, 10.0)] and not cap["layers"]
+    assert cap["mv"]["notes"] == "rak belakang"
+    for body, pesan in (
+            ({"material_id": "BARU", "qty": 5, "source": "stok_lama"}, "belum punya HPP rata-rata"),
+            ({"material_id": "ACC1", "qty": -5, "source": "stok_lama"}, "lebih dari 0"),
+            ({"material_id": "ACC1", "qty": 5, "source": "entah"}, "tidak dikenal"),
+            ({"material_id": "ACC1", "qty": 5, "source": "stok_lama", "unit_cost": -1}, "negatif"),
+            ({"material_id": "FG1", "qty": 5, "source": "stok_lama"}, "tidak ditemukan")):
+        with pytest.raises(HTTPException) as e:
+            run(ris.material_adjust(P3Req({"location_id": "L1", "reason": "x", **body})))
+        assert e.value.status_code in (400, 404) and pesan in e.value.detail, (body, e.value.detail)
+
+
 def test_04b_accessory_receipt_and_usage_use_1_1402(posting):
     db = _inv_db()
     run(rp.post_inventory_receive(db, {"id": "r1", "material_id": "ACC1", "qty": 10, "unit_cost": 2000}, USER))

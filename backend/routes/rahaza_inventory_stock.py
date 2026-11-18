@@ -396,11 +396,41 @@ async def material_adjust(request: Request):
     body = await request.json()
     return serialize_doc(await apply_material_adjust(
         db, user, material_id=body.get("material_id"), location_id=body.get("location_id"),
-        delta=float(body.get("qty") or 0), reason=body.get("reason") or ""))
+        delta=float(body.get("qty") or 0), reason=body.get("reason") or "",
+        source=body.get("source"), unit_cost=body.get("unit_cost")))
+
+
+# 18 Nov 2026 (owner: "tambahan fitur input qty di portal gudang jadi bisa menambahkan qty tanpa dari produksi"):
+# TAMBAH QTY = penyesuaian tambah dengan SUMBER + NILAI per pcs (keputusan owner: nilai diisi staf, kosong = HPP
+# rata-rata; langsung masuk stok). Sumber menentukan lawan jurnal persediaan:
+#   stok_lama  → ekuitas saldo awal (sama dengan layar Saldo Awal & opname stok awal) — barang lama belum tercatat
+#   ditemukan  → 5-1950 Selisih persediaan (sama dengan penyesuaian tambah biasa) — ketemu saat hitung ulang
+TAMBAH_SUMBER = {"stok_lama": "Stok lama belum tercatat", "ditemukan": "Ditemukan saat hitung ulang"}
+
+
+async def _tambah_unit_cost(db, mat: dict, kind: str, unit_cost, actor: dict) -> float:
+    """Nilai per pcs untuk tambah qty: isian staf (> 0), selain itu HPP rata-rata saat ini; 0 ⇒ ditolak."""
+    try:
+        uc = float(unit_cost) if unit_cost not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Nilai per pcs harus berupa angka.")
+    if uc < 0:
+        raise HTTPException(400, "Nilai per pcs tidak boleh negatif.")
+    if uc > 0:
+        return uc
+    if kind == "fg":
+        from core import fg_cost_layers as fcl
+        uc = float((await fcl.wac_state(db, mat["id"], actor=actor))["unit_cost"] or 0)
+    else:
+        uc = float(mat.get("unit_cost") or 0)
+    if uc <= 0:
+        raise HTTPException(400, f"{mat.get('code') or mat.get('name') or 'Barang ini'} belum punya HPP rata-rata — "
+                                 "isi nilai per pcs.")
+    return uc
 
 
 async def apply_material_adjust(db, user: dict, *, material_id, location_id, delta: float, reason: str,
-                                extra: dict | None = None) -> dict:
+                                extra: dict | None = None, source: str | None = None, unit_cost=None) -> dict:
     """SATU mesin penyesuaian stok manual: stok + kartu stok (`stock_service`) + mutasi + jurnal.
 
     2026-11-06 (pola P8): dipakai juga oleh `POST /api/wms/stock/unified/adjust` (Viewer Stok). Dulu jalur itu
@@ -414,11 +444,32 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
     # per lokasi tetapi tetap terhitung di total).
     if not await location_resolver.location_exists(db, location_id):
         raise HTTPException(400, "Lokasi tidak ditemukan di Struktur Gudang — pilih lokasi dari daftar.")
+    # ── TAMBAH QTY bersumber (18 Nov 2026) ──
+    src = str(source or "").strip().lower() or None
+    tambah = {}
+    if src:
+        if src not in TAMBAH_SUMBER:
+            raise HTTPException(400, f"Sumber tambah qty tidak dikenal: {src}.")
+        if delta <= 0:
+            raise HTTPException(400, "Tambah qty: isi qty lebih dari 0.")
+        mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+        if not mat:
+            raise HTTPException(404, "Barang tidak ditemukan di master.")
+        from routes.rahaza_posting import inventory_kind
+        kind = inventory_kind(mat)
+        if kind == "fg" and float(delta) != int(delta):
+            raise HTTPException(400, "Qty barang jadi harus bilangan bulat (pcs).")
+        uc = await _tambah_unit_cost(db, mat, kind, unit_cost, {"id": user.get("id"), "name": user.get("name", "")})
+        tambah = {"kind": kind, "mat": mat, "unit_cost": uc,
+                  "explicit": unit_cost not in (None, "") and float(unit_cost or 0) > 0,
+                  "qty_before": float(await stock_service.get_onhand(material_id, db=db) or 0)}
+        if not str(reason or "").strip():
+            reason = TAMBAH_SUMBER[src]
     cur = await db.rahaza_material_stock.find_one({"material_id": material_id, "location_id": location_id}) or {"qty": 0}
     if float(cur.get("qty") or 0) + delta < 0:
         raise HTTPException(400, "Penyesuaian akan membuat stok negatif.")
     _actor = {"id": str(user.get("id") or ""), "email": user.get("email", "")}
-    _ref = {"source": "material_adjust", "reason": reason}
+    _ref = {"source": "material_adjust", "reason": reason, **({"adjust_source": src} if src else {})}
     if delta > 0:
         # 2026-11-09 (audit gudang G8): baris baru hasil penyesuaian tambah mendapat identitas (baris itu
         # sendiri bila ada, selain itu dari master) — dulu tanpa kategori ⇒ FG tak terlihat di Penjualan.
@@ -426,11 +477,32 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
                                 meta=await stock_service.identity_meta(material_id, location_id, db=db))
     else:
         await stock_service.issue(material_id, location_id, abs(delta), ref=_ref, actor=_actor, db=db)
+    if tambah:
+        extra = {**(extra or {}), "adjust_source": src, "adjust_source_label": TAMBAH_SUMBER[src],
+                 "adjust_unit_cost": tambah["unit_cost"], "unit_cost": tambah["unit_cost"],
+                 "material_name": tambah["mat"].get("name"), "material_code": tambah["mat"].get("code")}
     mv = await _log_movement(db, user,
         type="adjust", material_id=material_id, qty=delta,
         from_location_id=None, to_location_id=location_id,
         ref_type="adjustment", ref_id=None, notes=reason, **(extra or {}),
     )
+    if tambah:
+        # Nilai per pcs ikut HPP rata-rata: barang jadi lewat lapisan biaya FG (SSOT core.fg_cost_layers), bahan &
+        # aksesoris lewat rata-rata bergerak yang sama dengan penerimaan manual (core.accessory_valuation).
+        _who = {"id": user.get("id"), "name": user.get("name", "")}
+        if tambah["kind"] == "fg":
+            from core import fg_cost_layers as fcl
+            await fcl.push_layer(db, material_id=material_id, qty=int(delta), unit_cost=tambah["unit_cost"], actor=_who,
+                                 ref={"type": f"tambah_{src}", "receipt_id": mv["id"], "receipt_code": TAMBAH_SUMBER[src]})
+        elif tambah["explicit"]:
+            from core import accessory_valuation, purchase_costing
+            cost_result = await accessory_valuation.apply_receipt_cost(
+                db, material_id, delta, tambah["unit_cost"], qty_before=tambah["qty_before"], actor=_who,
+                notes=f"Tambah qty ({TAMBAH_SUMBER[src]})")
+            await purchase_costing.post_receipt_wac_gap(
+                db, material_id=material_id, cost_result=cost_result, qty_in=delta, cost_in=tambah["unit_cost"],
+                source_ref=f"mvadj-wac:{mv['id']}",
+                memo=f"Nilai ulang stok lama {tambah['mat'].get('code') or material_id} oleh tambah qty", user=user)
     posting_result = None
     try:
         posting_result = await post_inventory_adjust(db, mv, user)
