@@ -39,6 +39,7 @@ from auth import require_auth, serialize_doc, log_activity
 from core.authz import izin_atau_peran_lama  # 14 Nov 2026: centang owner = penentu
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
 from core import bom_uom          # 2026-08-02: konversi satuan baris BOM → satuan dasar
+from core import resep_kain      # 18 Nov 2026: resep kain potongan (produk lebih dari satu kain)
 import uuid
 import math
 from datetime import datetime, timezone
@@ -112,6 +113,10 @@ def _clean_materials(raw):
             item["source_material_code"] = (m.get("source_material_code") or "").strip().upper()
             if m.get("migrated_from_fabric"):
                 item["migrated_from_fabric"] = m.get("migrated_from_fabric")
+            # 18 Nov 2026 (owner): produk lebih dari satu kain — resep kain potongan (SSOT core.resep_kain)
+            recipe = resep_kain.normalisasi(m.get("fabric_recipe"))
+            if recipe:
+                item["fabric_recipe"] = recipe
         cleaned.append(item)
     return cleaned
 
@@ -165,6 +170,8 @@ def get_bom_materials(bom):
                 "is_cut_panel": bool(m.get("is_cut_panel")),
                 "source_material_code": m.get("source_material_code") or "",
                 "migrated_from_fabric": m.get("migrated_from_fabric"),
+                # 18 Nov 2026: resep kain potongan (produk lebih dari satu kain) — lihat core.resep_kain
+                **({"fabric_recipe": m["fabric_recipe"]} if m.get("fabric_recipe") else {}),
             })
         return norm
     out = []
@@ -786,6 +793,7 @@ async def create_bom(request: Request):
         raise HTTPException(400, "BOM harus berisi minimal 1 material.")
     # ACC-2 — wajibkan kopling material_id untuk baris aksesoris (auto-link by code bila bisa)
     materials, _link_problems = await resolve_bom_materials(db, materials)
+    materials = await resep_kain.lengkapi(db, materials)
     # Fase 1: BOM per-varian. color "" = BOM umum (berlaku semua warna).
     color = (body.get("color") or "").strip()
     color_q = {"color": color} if color else {"color": {"$in": ["", None]}}
@@ -841,7 +849,7 @@ async def update_bom(bid: str, request: Request):
     if new_mats is not None:
         # ACC-2 — validasi kopling material_id sebelum menyimpan
         new_mats, _link_problems = await resolve_bom_materials(db, new_mats)
-        upd["materials"] = new_mats
+        upd["materials"] = await resep_kain.lengkapi(db, new_mats)
     if "notes" in body:
         upd["notes"] = body.get("notes") or ""
     # Validasi minimal 1 material tersisa

@@ -49,6 +49,12 @@ KEPUTUSAN DESAIN (hasil pemetaan database — bukan tebakan)
    Dokumen lama satu-kain/satu-hasil tetap terbaca (dinormalkan saat dibaca) dan field lama tingkat atas tetap
    diisi (`cutting_lines.compat_fields`).
 
+6. PRODUK LEBIH DARI SATU KAIN (keputusan owner 18 Nov 2026, SSOT `core.resep_kain`): baris potongan BOM membawa
+   `fabric_recipe` (kain per warna + peran + perkiraan/pcs). Baris hasil order menyalin resep itu saat disimpan;
+   semua kain resep WAJIB ada di baris kain order dan WAJIB terpakai sebelum pcs hasilnya dilaporkan (potongan =
+   satu set semua bagian). HPP: nilai tiap kain dibagi ke hasil yang memakai kain itu (hasil tanpa resep = aturan 10
+   Nov). `GET /bom-requirement` mengembalikan resepnya supaya form mengisi baris kain + gulungan otomatis.
+
 STATE MACHINE
 -------------
    draft ──start──▶ in_progress ──complete──▶ completed
@@ -79,6 +85,7 @@ from core import cut_panel_master   # 2026-09-12: SSOT identitas potongan = mode
 from core import bom_uom as _bom_uom  # cakupan lebar: kemasan + global + kain (gsm & lebar)
 from core import product_costing  # BOM → kebutuhan kain per pcs (rencana tidak lagi ditebak)
 from core import cutting_lines  # 2026-11-10: banyak kain × banyak hasil per order (SSOT bentuk baris)
+from core import resep_kain  # 18 Nov 2026: produk lebih dari satu kain — resep kain potongan (wajib kain + HPP per kain)
 from core.stock_service import InsufficientStock
 from core import doc_lock
 from database import get_db
@@ -828,7 +835,11 @@ async def _resolve_identity(db, *, model_id: str, body: dict, fabric: dict) -> d
                 "Kosongkan kodenya — sistem membuat kode potongan yang benar saat cutting dimulai."))
         typed_panel = {"id": cand["id"], "code": cand.get("code"), "name": cand.get("name")}
     panel = bom_panel or typed_panel
+    # 18 Nov 2026: resep kain BOM (produk lebih dari satu kain) disalin ke baris hasil — dasar wajib-kain & HPP per kain
+    recipe, _recipe_note = await resep_kain.resep_bom(
+        db, model_id=model_id, size_id=size_id, color=product_costing.color_of(variant) or output_color)
     return {
+        "fabric_recipe": recipe,
         "style_sku": (model.get("code") or "").strip(), "style_name": (model.get("name") or "").strip(),
         "model_id": model_id, "model_code": (model.get("code") or "").strip(),
         "model_name": (model.get("name") or "").strip(),
@@ -1390,7 +1401,36 @@ async def _build_outputs(db, raw: list, inputs: list[dict]) -> list[dict]:
                     "roll_ids": _link_rolls(r.get("roll_ids"), inputs, pre)})
     if len(out) == 1:   # satu hasil: semua gulungan order memang dipakai untuk hasil itu
         out[0]["roll_ids"] = [rr["roll_id"] for i in inputs for rr in (i.get("roll_ids") or [])]
+    _cek_resep_di_order(out, inputs)
     return out
+
+
+def _cek_resep_di_order(outputs: list[dict], inputs: list[dict]) -> None:
+    """18 Nov 2026: hasil yang punya resep kain (produk lebih dari satu kain) butuh SEMUA kainnya di order ini —
+    potongannya satu set (badan + kerah/lengan), jadi kain kedua tidak boleh dipotong di order lain."""
+    ids = {i.get("input_material_id") for i in inputs or []}
+    msgs = resep_kain.kain_resep_hilang(
+        [{**x, "label": cutting_lines.output_label(x)} for x in outputs or []], ids)
+    if msgs:
+        raise HTTPException(400, (
+            "Produk ini dipotong dari lebih dari satu kain (resep kain di BOM), tetapi kainnya belum lengkap di bagian "
+            "Kain & gulungan: " + "; ".join(msgs) + ". Tambahkan baris kain itu (rencana pakai boleh perkiraan)."))
+
+
+def _cek_resep_dipakai(ins: list[dict], pout: list, used_lines: list[dict]) -> None:
+    """18 Nov 2026: pcs hasil ber-resep hanya boleh dilaporkan bila semua kain resepnya sudah terpakai di order ini
+    (laporan ini atau sebelumnya) — satu potongan = satu set semua bagian."""
+    used = {i.get("input_material_id"): _f(i.get("consumed_input_qty")) for i in ins or []}
+    for u in used_lines or []:
+        mid = u["line"]["input_material_id"]
+        used[mid] = used.get(mid, 0.0) + _f(u.get("used"))
+    msgs = resep_kain.kain_resep_belum_dipakai(
+        [({**line, "label": cutting_lines.output_label(line)}, _f(b.get("output_qty"))) for line, b in pout or []],
+        used)
+    if msgs:
+        raise HTTPException(400, (
+            "Satu potongan = satu set semua bagian, jadi pemakaian semua kain resepnya harus diisi dulu. "
+            "Kain yang belum dipakai: " + "; ".join(msgs) + "."))
 
 
 def _relink_outputs(outputs: list[dict], inputs: list[dict]) -> list[dict]:
@@ -1625,6 +1665,7 @@ async def _merge_running_outputs(db, o: dict, ins: list, cur_outs: list, raw: li
                 f"Hasil {cutting_lines.output_label(x)} sudah dipotong {_f(x.get('produced_qty')):g} pcs — tidak bisa "
                 "dihapus dari order. Kosongkan dulu catatan progresnya lewat tombol Koreksi bila memang salah."))
     out = _relink_outputs(out, ins)
+    _cek_resep_di_order([x for x in out if _f(x.get("produced_qty")) <= 0], ins)
     still = {x.get("output_material_id") for x in out}
     dropped = {x.get("output_material_id") for x in cur_outs if x.get("output_material_id")} - still
     return out, dropped
@@ -1735,6 +1776,7 @@ async def update_order(oid: str, request: Request):
                 db, model_id=(body.get("model_id") if "model_id" in body else cur.get("model_id")) or "",
                 body=merged, fabric=fabric)
             cur.update(ident)
+            _cek_resep_di_order(outs, ins)
         elif any(k in body for k in ("style_name", "style_sku", "output_material_code")):
             raise HTTPException(400, (
                 "Nama style / kode potongan tidak bisa diketik langsung — kirim `model_id` dari Master "
@@ -2117,6 +2159,9 @@ def _progress_payload(used_lines: list, panels: list, value_trace: dict, all_con
             "panel_qty_before": pan_trace.get(p["panel_id"], {}).get("panel_qty_before", p["qty_before"]),
             "panel_unit_cost_before": pan_trace.get(p["panel_id"], {}).get("panel_unit_cost_before", 0.0),
             "panel_unit_cost_after": pan_trace.get(p["panel_id"], {}).get("panel_unit_cost_after", 0.0),
+            # 18 Nov 2026: HPP masuk/pcs per hasil (resep kain → bisa beda antar hasil)
+            "cost_per_pcs_in": pan_trace.get(p["panel_id"], {}).get(
+                "cost_per_pcs_in", value_trace.get("cost_per_pcs_in", 0.0)),
         } for p in panels],
     }
 
@@ -2130,6 +2175,7 @@ async def _add_progress_locked(db, oid: str, request: Request, user: dict):
     prep = await _prepare_progress(db, o, body)
     ins, outs, pout, used_lines = prep["ins"], prep["outs"], prep["pout"], prep["used_lines"]
     many_in = prep["many_in"]
+    _cek_resep_dipakai(ins, pout, used_lines)   # 18 Nov 2026 — sebelum stok apa pun bergerak
 
     loc_id = o["location_id"]
     actor = await _actor(user)
@@ -2178,7 +2224,8 @@ async def _add_progress_locked(db, oid: str, request: Request, user: dict):
     value_trace = await cut_panel_value.apply_progress_value_multi(
         db, fabrics=[{"fabric_id": u["line"]["input_material_id"], "qty": u["used"]} for u in used_lines],
         panels=[{"panel_id": p["panel_id"], "qty": p["qty"], "qty_before": p["qty_before"]} for p in panels],
-        actor=actor, reference=o.get("number", ""))
+        actor=actor, reference=o.get("number", ""),
+        recipes=[resep_kain.resep_of_line(p["line"]) for p in panels])
 
     # ── 4) Roll fisik + 5) tautan gulungan → hasil ──
     all_consumption = await _consume_progress_rolls(db, o, used_lines, outs, [p["line"] for p in panels], user)
@@ -2250,6 +2297,8 @@ async def _add_progress_locked(db, oid: str, request: Request, user: dict):
                 f"Nilai kain {prog['value_out']:,.0f} berpindah ke potongan ⇒ HPP "
                 f"potongan {prog['panel_unit_cost_before']:,.0f} → "
                 f"{prog['panel_unit_cost_after']:,.0f}/pcs (rata-rata bergerak).")
+        elif any(resep_kain.resep_of_line(p["line"]) for p in panels):
+            notices.append(value_trace.get("value_note") or "")
         else:
             notices.append(
                 f"Nilai kain {prog['value_out']:,.0f} ÷ {output_qty:g} pcs = {prog['cost_per_pcs_in']:,.0f}/pcs "
@@ -2523,15 +2572,19 @@ async def _correct_progress_locked(db, oid: str, pid: str, request: Request, use
             cost = _f((await db.rahaza_materials.find_one({"id": m}, {"_id": 0, "unit_cost": 1}) or {}).get("unit_cost"))
         fabric_returns.append({"fabric_id": m, "qty": q, "unit_cost": _f(cost), "qty_before": fab_before.get(m)})
     panel_rows = []
+    old_cpp_line = {x.get("output_material_id"): x.get("cost_per_pcs_in") for x in prog.get("outputs") or []
+                    if x.get("cost_per_pcs_in") is not None}
+    recipe_by_panel = {x.get("output_material_id"): resep_kain.resep_of_line(x) for x in outs}
     for m in pan_delta:
-        cpp_old = _f(prog.get("cost_per_pcs_in")) if has_cpp else _f(
+        cpp_old = _f(old_cpp_line.get(m, prog.get("cost_per_pcs_in"))) if has_cpp else _f(
             (await db.rahaza_materials.find_one({"id": m}, {"_id": 0, "unit_cost": 1}) or {}).get("unit_cost"))
         panel_rows.append({"panel_id": m, "qty_old": old_pan.get(m, 0.0), "cpp_old": cpp_old,
                            "qty_new": new_pan.get(m, 0.0), "qty_before": pan_before.get(m, 0.0)})
     value_trace = await cut_panel_value.apply_correction_value(
         db, fabric_returns=fabric_returns,
         fabrics=[{"fabric_id": u["line"]["input_material_id"], "qty": u["used"]} for u in used_lines],
-        panels=panel_rows, actor=actor, reference=o.get("number", ""))
+        panels=panel_rows, actor=actor, reference=o.get("number", ""),
+        recipes=[recipe_by_panel.get(r["panel_id"]) or [] for r in panel_rows])
 
     # ── 4) Tautan gulungan → hasil ──
     panels = [{"line": line, "body": b, "panel_id": line["output_material_id"], "qty": round(_f(b.get("output_qty")), 4),
@@ -2592,7 +2645,7 @@ async def _correct_progress_locked(db, oid: str, pid: str, request: Request, use
         # order Selesai: nilai & HPP/pcs order dihitung ulang dari catatan progres yang sudah dikoreksi
         fin = await _completion_values(db, o, ins, outs)
         for x in outs:
-            x["output_unit_cost"] = fin["out_unit_cost"]
+            x["output_unit_cost"] = fin["by_line"].get(x.get("line_id"), fin["out_unit_cost"])
         extra = {"output_unit_cost": fin["out_unit_cost"], "total_input_cost": round(fin["total_cost"], 2),
                  "value_source": fin["value_source"]}
     await _save_lines(db, oid, ins, outs, extra)
@@ -2648,8 +2701,22 @@ async def _completion_values(db, o: dict, ins: list, outs: list) -> dict:
             total_cost += consumed * cost
             fallback_bits.append(f"{i.get('input_material_code') or 'kain'} {cost:,.0f}/{i.get('input_unit')} × "
                                  f"{consumed:g}")
+    # 18 Nov 2026: HPP/pcs per baris hasil dari jejak progres (resep kain → bisa beda antar hasil)
+    by_line: dict = {}
+    if value_source == "progress_trace" and len(outs or []) > 1:
+        acc: dict = {}
+        async for pg in db[PROGRESS].find({"cutting_order_id": o["id"]},
+                                          {"_id": 0, "outputs": 1, "cost_per_pcs_in": 1}):
+            for x in pg.get("outputs") or []:
+                q = _f(x.get("output_qty"))
+                cpp = x.get("cost_per_pcs_in", pg.get("cost_per_pcs_in"))
+                a = acc.setdefault(x.get("line_id"), [0.0, 0.0])
+                a[0] += q * _f(cpp)
+                a[1] += q
+        by_line = {k: cutting_lines.cost_per_pcs(v, q) for k, (v, q) in acc.items() if q > 0}
     return {"value_source": value_source, "total_cost": total_cost, "fallback_bits": fallback_bits,
-            "produced": produced, "out_unit_cost": cutting_lines.cost_per_pcs(total_cost, produced)}
+            "produced": produced, "out_unit_cost": cutting_lines.cost_per_pcs(total_cost, produced),
+            "by_line": by_line}
 
 
 @router.post("/orders/{oid}/complete")
@@ -2682,7 +2749,7 @@ async def complete_order(oid: str, request: Request):
 
     filled: list[str] = []
     for x in outs:
-        x["output_unit_cost"] = out_unit_cost
+        x["output_unit_cost"] = fin["by_line"].get(x.get("line_id"), out_unit_cost)
         panel = await db.rahaza_materials.find_one(
             {"id": x.get("output_material_id")}, {"_id": 0}) if x.get("output_material_id") else None
         if panel and _f(panel.get("unit_cost")) <= 0 < out_unit_cost:
@@ -2690,7 +2757,7 @@ async def complete_order(oid: str, request: Request):
             # sini supaya persediaan potongan tidak bernilai nol selamanya.
             await db.rahaza_materials.update_one(
                 {"id": panel["id"]},
-                {"$set": {"unit_cost": out_unit_cost, "value_status": "valued",
+                {"$set": {"unit_cost": x["output_unit_cost"], "value_status": "valued",
                           "value_source": "cutting_complete_backfill",
                           "value_note": (f"Diisi saat order {o.get('number')} diselesaikan "
                                          f"(progres lama tanpa jejak nilai)."),
