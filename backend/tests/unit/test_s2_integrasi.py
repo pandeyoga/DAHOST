@@ -375,6 +375,27 @@ def test_04h_tambah_qty_dari_portal_aksesoris(monkeypatch):
             run(das.tambah_qty_aksesoris(P3Req(body)))
 
 
+def test_04i_hpp_tambah_qty_barang_jadi_dari_wac_tanpa_menulis(monkeypatch):
+    """18 Nov 2026 (owner: "kok tidak bisa barang jadi"): layar membaca HPP barang jadi dari WAC server
+    (bukan `unit_cost` master yang kosong sebelum WAC diinisialisasi) — dan membaca saja, tidak menulis."""
+    import routes.rahaza_inventory_stock as ris
+
+    async def auth(req):
+        return USER
+    db = P3DB(rahaza_materials=[{"id": "FGX", "code": "DA-1501-SCR-M", "type": "fg", "unit": "pcs"},
+                                {"id": "ACC1", "code": "KCG", "type": "accessory", "unit_cost": 2000.0}],
+              fg_cost_layers=[{"id": "L1", "material_id": "FGX", "qty_in": 10, "qty_remaining": 10, "unit_cost": 41000.0,
+                               "breakdown": {"material_cost": 30000.0, "labor_cost": 11000.0}}])
+    monkeypatch.setattr(ris, "require_auth", auth)
+    monkeypatch.setattr(ris, "get_db", lambda: db)
+    out = run(ris.material_adjust_hpp(P3Req({}), material_id="FGX"))
+    assert (out["kind"], out["unit_cost"]) == ("fg", 41000.0)
+    assert "unit_cost" not in db.rahaza_materials.docs[0]                 # GET tidak menginisialisasi WAC
+    assert run(ris.material_adjust_hpp(P3Req({}), material_id="ACC1"))["unit_cost"] == 2000.0
+    with pytest.raises(HTTPException):
+        run(ris.material_adjust_hpp(P3Req({}), material_id="TIDAK-ADA"))
+
+
 def test_04b_accessory_receipt_and_usage_use_1_1402(posting):
     db = _inv_db()
     run(rp.post_inventory_receive(db, {"id": "r1", "material_id": "ACC1", "qty": 10, "unit_cost": 2000}, USER))

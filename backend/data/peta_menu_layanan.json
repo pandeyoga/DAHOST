@@ -11098,6 +11098,10 @@
   ],
   [
    "GET",
+   "/api/rahaza/material-adjust/hpp"
+  ],
+  [
+   "GET",
    "/api/rahaza/material-movements"
   ],
   [

@@ -1,6 +1,6 @@
 // 18 Nov 2026 (owner: "tambah juga untuk aksesoris dan kain"): kain yang ditambah qty-nya menerbitkan gulungan.
 // Isi tiap roll = daftar ketikan (harus sama dengan qty) atau dibagi rata; satuan roll sama dengan server.
-import { isiGulungan, perGulungan } from '../TambahQtyForm';
+import { isiGulungan, perGulungan, jenisOf, JENIS_BARANG } from '../TambahQtyForm';
 
 test('isi roll dibagi rata, sisa pembulatan masuk roll terakhir', () => {
   expect(isiGulungan(100, 4, '').isi).toEqual([25, 25, 25, 25]);
@@ -21,4 +21,14 @@ test('hanya kain/benang bersatuan roll yang dilacak per gulungan', () => {
   expect(perGulungan({ type: 'accessory', unit: 'pcs' })).toBe(false);
   expect(perGulungan({ type: 'fg', unit: 'meter' })).toBe(false);
   expect(perGulungan({ type: 'fabric', unit: 'yard', is_cut_panel: true })).toBe(false);
+});
+
+// 18 Nov 2026 (owner: "bedakan buat filternya … aksesoris bahan atau kain", "jangan disatuan"): jenis barang terpisah.
+test('jenis barang dipisah: barang jadi, kain (bahan), aksesoris', () => {
+  expect(JENIS_BARANG.map((j) => j.key)).toEqual(['fg', 'bahan', 'aksesoris']);
+  expect(jenisOf({ type: 'fg' })).toBe('fg');
+  expect(jenisOf({ type: 'fabric' })).toBe('bahan');
+  expect(jenisOf({ type: 'yarn' })).toBe('bahan');
+  expect(jenisOf({ type: 'accessory' })).toBe('aksesoris');
+  expect(jenisOf({ type: 'packaging' })).toBe('aksesoris');
 });

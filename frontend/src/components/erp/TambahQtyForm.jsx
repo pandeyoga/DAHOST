@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
 import { useToast } from '@/hooks/use-toast';
 import { materialOptionLabel } from '@/lib/materialFields';
 import { Notice } from './moduleAtoms';
@@ -29,6 +30,21 @@ export const SUMBER_TAMBAH = [
 const SATUAN_ROLL = new Set(['kg', 'bal', 'ball', 'meter', 'm', 'mtr', 'rol', 'gulung', 'yard', 'yd']);
 export const perGulungan = (m) => !!m && m.type !== 'fg' && !m.is_cut_panel
   && SATUAN_ROLL.has(String(m.unit || '').trim().toLowerCase());
+
+// 18 Nov 2026 (owner: "bedakan buat filternya … aksesoris bahan atau kain", "jangan disatuan"): pilih JENIS dulu,
+// daftar barang hanya berisi jenis itu. Dulu satu daftar campuran 3.400 barang dan hanya 300 pertama yang tampil
+// (aksesoris & kain di depan) — barang jadi tidak kelihatan ("kok tidak bisa barang jadi", "hanya bahan saja").
+export const JENIS_BARANG = [
+  { key: 'fg', label: 'Barang jadi' },
+  { key: 'bahan', label: 'Kain (bahan)' },
+  { key: 'aksesoris', label: 'Aksesoris' },
+];
+export const jenisOf = (m) => {
+  const t = String(m?.type || '').toLowerCase();
+  if (t === 'fg') return 'fg';
+  if (t === 'accessory' || t === 'packaging') return 'aksesoris';
+  return 'bahan';
+};
 
 const KOSONG = { material_id: '', location_id: '', qty: '', source: 'stok_lama', unit_cost: '', note: '', jml_roll: '1', isi_roll: '' };
 const fmtRp = (v) => `Rp${Math.round(Number(v || 0)).toLocaleString('id-ID')}`;
@@ -55,23 +71,34 @@ export function isiGulungan(qty, jmlRoll, isiTeks) {
 }
 
 export default function TambahQtyForm({ open, onClose, onSaved, token, kirimKe, materials = [], barangTetap = null,
-  mode = 'gudang', renderLokasi = null, cekStok = null }) {
+  mode = 'gudang', renderLokasi = null, cekStok = null, cekHpp = null }) {
   const { toast } = useToast();
   const [f, setF] = useState(KOSONG);
   const [stokLokasi, setStokLokasi] = useState(null);
+  const [jenis, setJenis] = useState('');
+  const [hppServer, setHppServer] = useState(null);   // HPP dari server (barang jadi: WAC); null = belum/tidak dicek
   const [galat, setGalat] = useState('');
   const [menyimpan, setMenyimpan] = useState(false);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
   const aksesoris = mode === 'aksesoris';
 
   useEffect(() => {
-    if (open) { setF({ ...KOSONG, material_id: barangTetap?.id || '' }); setGalat(''); setStokLokasi(null); }
+    if (open) { setF({ ...KOSONG, material_id: barangTetap?.id || '' }); setGalat(''); setStokLokasi(null); setJenis(''); setHppServer(null); }
   }, [open, barangTetap]);
 
   const mat = barangTetap || materials.find((m) => m.id === f.material_id);
-  const hpp = Number(mat?.unit_cost || 0);
+  const hpp = hppServer !== null ? hppServer : Number(mat?.unit_cost || 0);
+  const pilihan = useMemo(() => materials.filter((m) => jenisOf(m) === jenis), [materials, jenis]);
+  const jumlahJenis = useMemo(() => JENIS_BARANG.map((j) => ({ ...j, count: materials.filter((m) => jenisOf(m) === j.key).length })), [materials]);
   const roll = !aksesoris && perGulungan(mat);
   const satuan = mat?.unit || '';
+
+  const lihatHpp = async (mid) => {
+    setHppServer(null);
+    if (!cekHpp || !mid) return;
+    try { const v = await cekHpp(mid); if (v !== null && v !== undefined) setHppServer(Number(v)); } catch { /* pakai master */ }
+  };
+  const gantiJenis = (k) => { setJenis(k); setF((x) => ({ ...x, material_id: '', jml_roll: '1', isi_roll: '' })); setStokLokasi(null); setHppServer(null); };
 
   const lihatStok = async (mid, lid) => {
     if (!cekStok || !mid || !lid) return;
@@ -127,15 +154,20 @@ export default function TambahQtyForm({ open, onClose, onSaved, token, kirimKe, 
       keterangan={aksesoris ? 'Stok aksesoris langsung bertambah tanpa pembelian; jurnal persediaan dibuat otomatis.'
         : 'Stok langsung bertambah di lokasi terpilih; jurnal persediaan dibuat otomatis.'}
       onSimpan={simpan} menyimpan={menyimpan} galat={galat} labelSimpan="Tambah qty" testId="tambah-form">
-      {!barangTetap && (
-        <Isian label="Barang" wajib htmlFor="tambah-material">
-          <SmartNativeSelect id="tambah-material" value={f.material_id} className="w-full" data-testid="tambah-material"
-            onChange={(e) => { const v = e.target.value; setF((x) => ({ ...x, material_id: v })); setStokLokasi(null); lihatStok(v, f.location_id); }}>
-            <option value="">Pilih barang</option>
-            {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+      {!barangTetap && <>
+        <Isian label="Jenis barang" wajib>
+          <FilterChips options={jumlahJenis} value={jenis} onChange={gantiJenis} hideWhenEmpty={false}
+            ariaLabel="Jenis barang" testId="tambah-jenis" />
+        </Isian>
+        <Isian label="Barang" wajib htmlFor="tambah-material"
+          petunjuk={!jenis ? 'Pilih jenis barang dulu.' : `Ketik kode atau nama untuk mencari di ${pilihan.length.toLocaleString('id-ID')} ${JENIS_BARANG.find((j) => j.key === jenis)?.label.toLowerCase()}.`}>
+          <SmartNativeSelect id="tambah-material" value={f.material_id} className="w-full" data-testid="tambah-material" disabled={!jenis}
+            onChange={(e) => { const v = e.target.value; setF((x) => ({ ...x, material_id: v })); setStokLokasi(null); lihatStok(v, f.location_id); lihatHpp(v); }}>
+            <option value="">{jenis ? `Pilih ${JENIS_BARANG.find((j) => j.key === jenis)?.label.toLowerCase()}` : 'Pilih jenis barang dulu'}</option>
+            {pilihan.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
           </SmartNativeSelect>
         </Isian>
-      )}
+      </>}
       {!aksesoris && renderLokasi && (
         <Isian label="Lokasi" wajib>
           {renderLokasi({ value: f.location_id,
