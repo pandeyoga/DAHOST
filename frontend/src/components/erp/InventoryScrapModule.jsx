@@ -313,7 +313,12 @@ export default function InventoryScrapModule({ token }) {
       </FormPopup>
       {/* 18 Nov 2026: form Tambah qty bersama (Gudang + Portal Aksesoris) — kain menerbitkan gulungan */}
       <TambahQtyForm open={tambahOpen} onClose={() => setTambahOpen(false)} onSaved={fetchMovements}
-        token={token} materials={materials} mode="gudang" />
+        token={token} materials={materials} mode="gudang" kirimKe="/api/rahaza/material-adjust"
+        renderLokasi={({ value, onChange }) => <StorageLocationSelect token={token} value={value} onChange={onChange} testId="tambah-location" />}
+        cekStok={async (mid, lid) => {
+          const r = await fetch(`/api/rahaza/material-stock?material_id=${mid}&location_id=${lid}`, { headers });
+          return r.ok ? ((await r.json())[0] || null) : null;
+        }} />
     </PageLayout>
   );
 }

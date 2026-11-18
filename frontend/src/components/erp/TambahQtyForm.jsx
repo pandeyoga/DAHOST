@@ -2,7 +2,10 @@
  * TAMBAH QTY — satu form untuk menambah stok TANPA produksi/pembelian (18 Nov 2026, owner: "tambahan fitur input
  * qty di portal gudang …" lalu "tambah juga untuk aksesoris dan kain").
  *
- * Dipakai di dua tempat, mesin server SAMA (`apply_material_adjust` + `source`/`unit_cost`):
+ * Dipakai di dua tempat, mesin server SAMA (`apply_material_adjust` + `source`/`unit_cost`). Berkas ini SENGAJA tidak
+ * memuat alamat layanan / pemilih lokasi Gudang: alamat (`kirimKe`), pemilih lokasi (`renderLokasi`) dan cek stok
+ * (`cekStok`) dikirim layar pemakainya — supaya centang Portal Aksesoris tidak ikut membuka penyesuaian stok Gudang
+ * (peta menu → layanan membaca berkas yang diimpor layar).
  *   · Gudang › Stok & Akurasi › Penyesuaian (`mode="gudang"`): semua barang (barang jadi, kain, aksesoris) + lokasi;
  *     kain/benang menerbitkan GULUNGAN (Cutting wajib memilih roll) — jumlah roll + isi tiap roll.
  *   · Portal Aksesoris › Master & Stok (`mode="aksesoris"`): satu aksesoris dari baris, lokasi gudang aksesoris.
@@ -16,7 +19,6 @@ import FormPopup, { Isian } from '@/components/ui/form-popup';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { useToast } from '@/hooks/use-toast';
 import { materialOptionLabel } from '@/lib/materialFields';
-import StorageLocationSelect from './StorageLocationSelect';
 import { Notice } from './moduleAtoms';
 
 export const SUMBER_TAMBAH = [
@@ -52,7 +54,8 @@ export function isiGulungan(qty, jmlRoll, isiTeks) {
   return { isi };
 }
 
-export default function TambahQtyForm({ open, onClose, onSaved, token, materials = [], barangTetap = null, mode = 'gudang' }) {
+export default function TambahQtyForm({ open, onClose, onSaved, token, kirimKe, materials = [], barangTetap = null,
+  mode = 'gudang', renderLokasi = null, cekStok = null }) {
   const { toast } = useToast();
   const [f, setF] = useState(KOSONG);
   const [stokLokasi, setStokLokasi] = useState(null);
@@ -70,12 +73,9 @@ export default function TambahQtyForm({ open, onClose, onSaved, token, materials
   const roll = !aksesoris && perGulungan(mat);
   const satuan = mat?.unit || '';
 
-  const cekStok = async (mid, lid) => {
-    if (!mid || !lid) return;
-    try {
-      const r = await fetch(`/api/rahaza/material-stock?material_id=${mid}&location_id=${lid}`, { headers });
-      if (r.ok) { const d = await r.json(); setStokLokasi((Array.isArray(d) ? d[0] : null) || { qty: 0, unit: satuan }); }
-    } catch { /* info saja */ }
+  const lihatStok = async (mid, lid) => {
+    if (!cekStok || !mid || !lid) return;
+    try { setStokLokasi((await cekStok(mid, lid)) || { qty: 0, unit: satuan }); } catch { /* info saja */ }
   };
 
   const simpan = async () => {
@@ -100,7 +100,7 @@ export default function TambahQtyForm({ open, onClose, onSaved, token, materials
       : { material_id: f.material_id, location_id: f.location_id, qty, source: f.source, unit_cost: nilai > 0 ? nilai : null, reason, rolls };
     setMenyimpan(true);
     try {
-      const r = await fetch(aksesoris ? '/api/acc/stock/tambah' : '/api/rahaza/material-adjust', { method: 'POST', headers, body: JSON.stringify(body) });
+      const r = await fetch(kirimKe, { method: 'POST', headers, body: JSON.stringify(body) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setGalat(typeof d.detail === 'string' ? d.detail : `Gagal menambah qty (HTTP ${r.status})`); return; }
       const jurnal = d?._posting_result;
@@ -130,16 +130,16 @@ export default function TambahQtyForm({ open, onClose, onSaved, token, materials
       {!barangTetap && (
         <Isian label="Barang" wajib htmlFor="tambah-material">
           <SmartNativeSelect id="tambah-material" value={f.material_id} className="w-full" data-testid="tambah-material"
-            onChange={(e) => { const v = e.target.value; setF((x) => ({ ...x, material_id: v })); setStokLokasi(null); cekStok(v, f.location_id); }}>
+            onChange={(e) => { const v = e.target.value; setF((x) => ({ ...x, material_id: v })); setStokLokasi(null); lihatStok(v, f.location_id); }}>
             <option value="">Pilih barang</option>
             {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
           </SmartNativeSelect>
         </Isian>
       )}
-      {!aksesoris && (
+      {!aksesoris && renderLokasi && (
         <Isian label="Lokasi" wajib>
-          <StorageLocationSelect token={token} value={f.location_id} testId="tambah-location"
-            onChange={(v) => { setF((x) => ({ ...x, location_id: v })); setStokLokasi(null); cekStok(f.material_id, v); }} />
+          {renderLokasi({ value: f.location_id,
+            onChange: (v) => { setF((x) => ({ ...x, location_id: v })); setStokLokasi(null); lihatStok(f.material_id, v); } })}
         </Isian>
       )}
       {stokLokasi && <Notice tone="info" title={`Stok saat ini di lokasi ini: ${fmtQty(stokLokasi.qty)} ${stokLokasi.unit || satuan}`} />}

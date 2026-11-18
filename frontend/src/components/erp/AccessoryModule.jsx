@@ -606,6 +606,7 @@ function MasterTab({ token, onRefreshDash, onOpenValuation, title, subtitle }) {
         </FormPopup>
       )}
       <TambahQtyForm open={!!tambahItem} onClose={() => setTambahItem(null)} barangTetap={tambahItem} mode="aksesoris"
+        kirimKe="/api/acc/stock/tambah"
         token={token} onSaved={() => { load(); onRefreshDash(); }} />
     </PageLayout>
   );
