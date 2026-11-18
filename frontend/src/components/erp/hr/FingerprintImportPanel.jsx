@@ -7,17 +7,22 @@
  * Aturan gabung (ketukan pertama = masuk, terakhir = pulang; selfie/HR tidak ditimpa; aman diulang) ada di
  * backend/core/fingerprint_import.py.
  *
+ * 18 Nov 2026 (owner: berkas 001_2026_10_MON.XLS → "Bisa diimpor di SDM"): laporan bulanan .xls dari mesin (sheet Log)
+ * ikut terbaca, dan ID mesin yang belum terhubung bisa langsung dihubungkan ke karyawan di sini (dulu tidak ada
+ * layar untuk mengisi ID mesin, jadi impor tidak pernah cocok).
+ *
  * Standar UI/UX v2 (8 Nov 2026): dulu panel tetap di halaman; sekarang popup form standar (FormPopup panjang).
  * Langkah, panggilan API, dan data yang dikirim tidak berubah.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { FileUp, Loader2, Save, Upload } from 'lucide-react';
+import { FileUp, Link2, Loader2, Save, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { Notice, StatTile } from '../moduleAtoms';
+import { useActiveEmployees, EmployeeSelect } from './hrPickers';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const FIELDS = [
@@ -45,6 +50,9 @@ export default function FingerprintImportPanel({ open, onClose, headers }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [tautan, setTautan] = useState({});   // {ID mesin: employee_id} — hubungkan ID mesin ke karyawan
+  const token = String(headers?.Authorization || '').replace(/^Bearer\s+/i, '');
+  const { employees } = useActiveEmployees(token, { enabled: Boolean(open) });
 
   const loadProfiles = useCallback(async () => {
     try {
@@ -95,6 +103,18 @@ export default function FingerprintImportPanel({ open, onClose, headers }) {
     } catch (e) { setError(e.response?.data?.detail || 'Impor gagal.'); } finally { setBusy(''); }
   };
 
+  const hubungkan = async () => {
+    const links = Object.entries(tautan).filter(([, emp]) => emp).map(([code, employee_id]) => ({ code, employee_id }));
+    if (!links.length) { setError('Pilih karyawan untuk minimal satu ID mesin.'); return; }
+    setBusy('link'); setError('');
+    try {
+      const r = await axios.post(`${BACKEND}/api/rahaza/devices/fingerprint/hubungkan`, { links }, { headers });
+      if (r.data?.errors?.length) setError(r.data.errors.join(' '));
+      setTautan({});
+      await runPreview();
+    } catch (e) { setError(e.response?.data?.detail || 'Gagal menghubungkan ID mesin.'); } finally { setBusy(''); }
+  };
+
   const saveProfile = async () => {
     if (!profileName.trim()) { setError('Isi nama profil dulu.'); return; }
     setBusy('profile');
@@ -115,14 +135,14 @@ export default function FingerprintImportPanel({ open, onClose, headers }) {
       keterangan="Ketukan pertama = jam masuk, terakhir = jam pulang. Selfie dan isian HR tidak ditimpa; unggah ulang aman."
       onSimpan={runImport} labelSimpan={result ? 'Sudah diimpor' : 'Impor ke absensi'}
       menyimpan={busy === 'import'} bisaSimpan={Boolean(preview?.ready) && !result && !busy} galat={error}>
-      <Isian label="File ekspor (CSV atau Excel)">
+      <Isian label="File ekspor (CSV, Excel, atau laporan .xls dari mesin)">
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={Boolean(busy)} data-testid="fingerprint-pick">
             {busy === 'preview' ? <Loader2 className="animate-spin" /> : <Upload />} Pilih file
           </Button>
           <span className="text-sm text-muted-foreground">{file ? file.name : 'Belum ada file dipilih'}</span>
         </div>
-        <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx" className="hidden" onChange={onPick}
+        <input ref={fileRef} type="file" accept=".csv,.txt,.xlsx,.xls" className="hidden" onChange={onPick}
           data-testid="fingerprint-file" />
       </Isian>
 
@@ -190,6 +210,29 @@ export default function FingerprintImportPanel({ open, onClose, headers }) {
             <StatTile label="Kode tidak dikenal" value={st.unmatched_count} accent={st.unmatched_count ? 'warning' : 'muted'}
               sub={st.unmatched_codes?.length ? st.unmatched_codes.slice(0, 5).join(', ') : undefined} />
           </div>
+          {st.unmatched_people?.length > 0 && (
+            <section className="space-y-2" data-testid="fingerprint-unmatched">
+              <Notice tone="warning" title={`${st.unmatched_people.length} ID mesin belum terhubung ke karyawan`}>
+                Ketukan mereka tidak diimpor. Pilih karyawan ERP untuk tiap ID mesin lalu tekan Hubungkan — cukup sekali,
+                impor berikutnya otomatis cocok.
+              </Notice>
+              <div className="divide-y divide-[var(--glass-border)] rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+                {st.unmatched_people.map((p) => (
+                  <div key={p.code} className="grid items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]"
+                    data-testid={`fingerprint-unmatched-${p.code}`}>
+                    <p className="text-sm"><span className="font-medium tabular-nums">ID mesin {p.code}</span>
+                      {p.name ? <span className="text-muted-foreground"> · {p.name}</span> : null}</p>
+                    <EmployeeSelect employees={employees} value={tautan[p.code] || ''} placeholder="— Pilih karyawan ERP —"
+                      onChange={(v) => setTautan((x) => ({ ...x, [p.code]: v }))} testId={`fingerprint-link-${p.code}`} />
+                  </div>
+                ))}
+              </div>
+              <Button type="button" variant="outline" onClick={hubungkan} disabled={Boolean(busy) || !Object.values(tautan).some(Boolean)}
+                data-testid="fingerprint-link-save">
+                {busy === 'link' ? <Loader2 className="animate-spin" /> : <Link2 />} Hubungkan
+              </Button>
+            </section>
+          )}
           {(st.conflict > 0 || st.locked > 0) && (
             <Notice tone="warning">
               {st.conflict > 0 && `${st.conflict} hari berstatus cuti/izin/sakit/alpa dari HR — statusnya tidak diubah. `}

@@ -64,8 +64,8 @@ def read_table(filename: str, data: bytes) -> list[list]:
         rows = [list(r) for _, r in zip(range(MAX_ROWS + 1), ws.iter_rows(values_only=True))]
         wb.close()
         return rows
-    if name.endswith(".xls"):
-        raise HTTPException(400, "Format .xls lama belum didukung. Buka di Excel lalu simpan sebagai .xlsx atau .csv.")
+    if name.endswith(".xls") or data[:8] == _OLE_MAGIC:
+        return _read_xls(data)
     text = _decode(data)
     sample = text[:4096]
     try:
@@ -74,6 +74,118 @@ def read_table(filename: str, data: bytes) -> list[list]:
     except csv.Error:
         delim = max((",", ";", "\t", "|"), key=sample.count)
     return [row for _, row in zip(range(MAX_ROWS + 1), csv.reader(io.StringIO(text), delimiter=delim))]
+
+
+# ── Laporan bulanan mesin (.xls lama) ───────────────────────────────────────
+# 18 Nov 2026 (owner: berkas 001_2026_10_MON.XLS → "Bisa diimpor di SDM"). Mesin sidik jari mandiri (Solution/
+# Fingerspot) mengekspor laporan bulanan .xls berisi sheet "Rekap", "Log", dan satu sheet per 3 karyawan. Sheet
+# "Log" memuat ketukan mentah: per karyawan tiga baris — deret tanggal (1 … 25), "No : <ID mesin> · Nama : … ·
+# Dept : …", lalu sel jam per tanggal ("07:59\n17:02\n"). Periode ada di baris "Periode : 2026/10/01 ~ 10/25".
+# Dibaca menjadi tabel biasa [No. ID, Nama, Waktu] supaya pemetaan, pratinjau, dan aturan gabung tetap SATU jalur.
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+LOG_HEADER = ["No. ID", "Nama", "Waktu"]
+_PERIODE = re.compile(r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})")
+_JAM = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
+
+
+def _txt(v) -> str:
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v if v is not None else "").strip()
+
+
+def _day_header(row: list) -> list:
+    """Deret nomor tanggal (1 … 31) bila baris ini kepala tanggal sheet Log, selain itu []."""
+    nums = []
+    for v in row:
+        t = _txt(v)
+        if not t:
+            continue
+        try:
+            f = float(t)
+        except ValueError:
+            return []
+        if not f.is_integer() or not 1 <= int(f) <= 31:
+            return []
+        nums.append(int(f))
+    return nums if len(nums) >= 5 else []
+
+
+def _after(row: list, label: str) -> str:
+    """Nilai pertama yang tidak kosong sesudah sel berlabel (mis. "Nama :")."""
+    cells = [_txt(c) for c in row]
+    for i, c in enumerate(cells):
+        if c.replace(" ", "").lower().startswith(label.replace(" ", "").lower()):
+            return next((x for x in cells[i + 1:i + 9] if x), "")
+    return ""
+
+
+def log_report_rows(rows: list[list]) -> list[list]:
+    """Sheet "Log" laporan mesin → [LOG_HEADER, [no, nama, datetime], …] (fungsi murni, diuji).
+
+    Tanggal kolom dihitung dari awal periode dan nomor tanggal di kepala (periode lintas bulan, mis.
+    26/10 ~ 25/11, tetap benar). Kosong bila sheet ini bukan laporan mesin."""
+    start = None
+    for r in rows[:8]:
+        line = " ".join(_txt(c) for c in r)
+        if "periode" in line.lower():
+            m = _PERIODE.search(line)
+            if m:
+                start = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            break
+    if not start:
+        return []
+    out = [list(LOG_HEADER)]
+    i = 0
+    while i < len(rows):
+        days = _day_header(rows[i])
+        if not days or i + 1 >= len(rows) or not _txt((rows[i + 1] or [""])[0]).lower().startswith("no"):
+            i += 1
+            continue
+        cols, cursor = [], start
+        for d in days:                       # kolom → tanggal, berjalan maju dari awal periode
+            step = 0
+            while cursor.day != d and step < 31:
+                cursor += timedelta(days=1)
+                step += 1
+            cols.append(cursor)
+            cursor += timedelta(days=1)
+        ident = rows[i + 1]
+        no, nama = _after(ident, "No :") or _after(ident, "No"), _after(ident, "Nama :")
+        j = i + 2
+        while j < len(rows) and not _day_header(rows[j]):
+            cells = [c for c in rows[j]]
+            for k, tgl in enumerate(cols):
+                if k >= len(cells):
+                    break
+                for m in _JAM.finditer(_txt(cells[k])):
+                    h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+                    if h < 24 and mi < 60:
+                        out.append([no, nama, datetime.combine(tgl, time(h, mi, s))])
+            j += 1
+        i = j
+    return out if len(out) > 1 or any(_after(r, "Nama :") for r in rows) else []
+
+
+def _read_xls(data: bytes) -> list[list]:
+    """.xls lama (OLE). Laporan bulanan mesin → sheet "Log" diratakan (log_report_rows); selain itu sheet pertama."""
+    try:
+        import xlrd
+    except ImportError:
+        raise HTTPException(503, "Pembaca Excel .xls belum terpasang di server. Simpan file sebagai .xlsx atau .csv.")
+    try:
+        wb = xlrd.open_workbook(file_contents=data)
+    except Exception:  # noqa: BLE001 — file rusak / bukan xls
+        raise HTTPException(400, "File Excel .xls tidak bisa dibaca. Coba simpan ulang sebagai .xlsx.")
+
+    def baris(sh):
+        return [[sh.cell_value(r, c) for c in range(sh.ncols)] for r in range(min(sh.nrows, MAX_ROWS + 1))]
+    for sh in wb.sheets():
+        if sh.name.strip().lower() in ("log", "data log"):
+            rows = log_report_rows(baris(sh))
+            if rows:
+                return rows
+    return baris(wb.sheet_by_index(0))
 
 
 def split_header(rows: list[list], header_row: int = 0) -> tuple[list[str], list[list]]:

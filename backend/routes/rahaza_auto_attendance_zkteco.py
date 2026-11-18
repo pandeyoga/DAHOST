@@ -349,6 +349,11 @@ async def _run_fingerprint(request: Request, file: UploadFile, mapping: str, pro
     stats = await fi.merge_punches(db, punches, user=user, apply=apply, import_id=import_id if apply else None,
                                    source_label=f"file {file.filename or ''}".strip())
     stats["invalid_rows"] = bad
+    # 18 Nov 2026: ID mesin yang belum terhubung ke karyawan ditampilkan BESERTA nama di mesin (laporan .xls mesin
+    # membawa kolom Nama) supaya HR bisa langsung menghubungkannya di pratinjau (POST …/fingerprint/hubungkan).
+    names = _names_by_code(up["header"], up["rows"], up["mapping"])
+    stats["unmatched_people"] = [{"code": c, "name": names.get(c, "")} for c in sorted(stats.get("unmatched_codes") or [],
+                                 key=lambda x: (len(x), x))]
     out = {**base, "ready": True, "stats": stats,
            "previous_import_at": (prev or {}).get("created_at")}
     if apply:
@@ -361,6 +366,54 @@ async def _run_fingerprint(request: Request, file: UploadFile, mapping: str, pro
                            f"{file.filename}: {stats['new']} baru, {stats['updated']} dilengkapi")
         out["import_id"] = import_id
     return serialize_doc(out)
+
+
+def _names_by_code(header: list, rows: list, mapping: dict) -> dict:
+    """{ID mesin dinormalisasi: nama di file} bila file punya kolom Nama/Name (fungsi murni)."""
+    from core import fingerprint_import as fi
+    col = {h: i for i, h in enumerate(header)}
+    ci = col.get((mapping or {}).get("code") or "")
+    ni = next((i for h, i in col.items() if h.strip().lower() in ("nama", "name", "nama karyawan")), None)
+    out: dict = {}
+    if ci is None or ni is None:
+        return out
+    for r in rows:
+        if ci < len(r) and ni < len(r):
+            k = fi._norm_code(r[ci])
+            if k and str(r[ni] or "").strip():
+                out.setdefault(k, str(r[ni]).strip())
+    return out
+
+
+@router.post("/devices/fingerprint/hubungkan")
+async def fingerprint_link(request: Request):
+    """18 Nov 2026: hubungkan ID mesin (No. ID / PIN di mesin) ke karyawan ERP — mengisi `zkteco_user_id`.
+    Dulu tidak ada layar untuk mengisinya (0 dari 27 karyawan punya ID mesin), sehingga impor file mesin tidak
+    pernah cocok. Satu ID mesin hanya boleh dipakai satu karyawan."""
+    user = await require_auth(request)
+    _require_fp(user)
+    db = get_db()
+    body = await request.json()
+    from core import fingerprint_import as fi
+    done, errors = 0, []
+    for ln in (body.get("links") or [])[:500]:
+        code, emp_id = fi._norm_code(ln.get("code")), str(ln.get("employee_id") or "")
+        if not code or not emp_id:
+            continue
+        emp = await db.rahaza_employees.find_one({"id": emp_id}, {"_id": 0, "id": 1, "name": 1})
+        if not emp:
+            errors.append(f"Karyawan untuk ID mesin {code} tidak ditemukan.")
+            continue
+        other = await db.rahaza_employees.find_one({"zkteco_user_id": code, "id": {"$ne": emp_id}}, {"_id": 0, "name": 1})
+        if other:
+            errors.append(f"ID mesin {code} sudah dipakai {other.get('name') or 'karyawan lain'}.")
+            continue
+        await db.rahaza_employees.update_one({"id": emp_id}, {"$set": {"zkteco_user_id": code, "updated_at": _now()}})
+        done += 1
+    if done:
+        await log_activity(user["id"], user.get("name", ""), "update", "attendance.fingerprint",
+                           f"Hubungkan {done} ID mesin ke karyawan")
+    return {"ok": True, "linked": done, "errors": errors}
 
 
 @router.post("/devices/fingerprint/preview")
