@@ -48,7 +48,7 @@ export function ResepKainEditor({ value, onChange, token, categories = [], testI
         Cutting otomatis menambah semua kain ini; perkiraan per pcs boleh dikosongkan.
       </p>
       {rows.map((r, idx) => (
-        <div key={r.material_id || idx} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_140px_120px_36px]"
+        <div key={r.material_id || idx} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,320px)_140px_130px_36px]"
           data-testid={`${testId}-row-${idx}`}>
           <div className="min-w-0 text-sm">
             <span className="tabular-nums">{r.code}</span>

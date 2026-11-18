@@ -521,6 +521,9 @@ async def get_model_bom(model_id: str, request: Request):
             # 2026-09-12: bahan utama = POTONGAN (1 pcs), bukan kg kain
             "panel_code": next((m.get("code") for m in mats if m.get("is_cut_panel")), ""),
             "panel_source_fabric": next((m.get("source_material_code") for m in mats if m.get("is_cut_panel")), ""),
+            # 18 Nov 2026: resep kain potongan (produk lebih dari satu kain) — kode kain untuk ringkasan matriks
+            "panel_fabric_codes": next(([r.get("code") for r in m.get("fabric_recipe") or []]
+                                        for m in mats if m.get("is_cut_panel")), []),
             "notes":           b.get("notes", "") if b else "",
             "updated_at":      b.get("updated_at") if b else None,
         }
