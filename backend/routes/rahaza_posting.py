@@ -2192,12 +2192,25 @@ async def post_inventory_adjust(db, movement: dict, user: dict) -> dict:
     inv_code, inv_err = inventory_account(mapping, event, kind)
     adj_code = mapping.get("debit_scrap_expense") if is_scrap else mapping.get("adjustment_expense")
 
+    # 18 Nov 2026 — TAMBAH QTY "Stok lama belum tercatat": lawannya ekuitas saldo awal (sama dengan layar Saldo
+    # Awal & opname stok awal, `core.opening_balance.retained_earnings_code`), bukan 5-1950.
+    src = str(movement.get("adjust_source") or "")
+    if src == "stok_lama" and not is_scrap:
+        from core.opening_balance import retained_earnings_code
+        adj_code = await retained_earnings_code(db)
+        if not adj_code:
+            inv_err = inv_err or ("Akun ekuitas saldo awal belum diisi — lengkapi di Profil Posting "
+                                  "(subledger_opening_balance.credit_retained_earnings_balancing).")
+
     if not inv_code or not adj_code:
         result = {"ok": False, "error": inv_err or f"Mapping '{event}' belum lengkap."}
         await _save_source_posting_result(db, "rahaza_material_movements", mv_id, result)
         return result
 
-    if kind == "fg" and mat_id:
+    if float(movement.get("adjust_unit_cost") or 0) > 0:
+        # nilai per pcs tambah qty (isian staf / HPP rata-rata SEBELUM barang masuk) — bukan WAC sesudahnya
+        unit_cost = float(movement["adjust_unit_cost"])
+    elif kind == "fg" and mat_id:
         # WAC FG (SSOT core.fg_cost_layers) — diinisialisasi dari lapisan bila belum pernah dinilai
         from core import fg_cost_layers as fcl
         unit_cost = float((await fcl.wac_state(db, mat_id, actor=user))["unit_cost"] or 0)
@@ -2219,7 +2232,10 @@ async def post_inventory_adjust(db, movement: dict, user: dict) -> dict:
         memo = f"Material Scrap · {movement.get('material_name') or mat_id} · {abs(qty)} (Reason: {adjustment_reason})"
     else:
         memo = f"Stock Adjust · {movement.get('material_name') or mat_id} · {qty}"
-    
+    if movement.get("adjust_source_label") and not is_scrap:
+        memo = (f"Tambah qty ({movement['adjust_source_label']}) · "
+                f"{movement.get('material_code') or movement.get('material_name') or mat_id} · {qty}")
+
     # If qty > 0 → increase stock (Dr Inventory / Cr Adjustment). If qty < 0 → decrease (Dr Adjustment / Cr Inventory).
     # For scrap: always qty < 0 (decrease), so Dr Scrap Expense / Cr Inventory
     if qty > 0:
