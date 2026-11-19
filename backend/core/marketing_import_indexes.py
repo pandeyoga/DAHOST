@@ -69,7 +69,9 @@ def unique_import_specs() -> List[dict]:
             partial[k] = _syarat_terisi(kind)
         out.append({"collection": st.collection, "name": f"uniq_impor_{st.key}",
                     "keys": [(k, 1) for k in st.dedupe], "partial": partial,
-                    "label": st.label, "source_type": st.key})
+                    "label": st.label, "source_type": st.key,
+                    # 19 Nov 2026 — kunci dedupe berubah (mis. retur) ⇒ indeks bernama sama dibuang & dibuat ulang
+                    "drop_conflicting": [f"uniq_impor_{st.key}"]})
     return out
 
 

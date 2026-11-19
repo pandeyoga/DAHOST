@@ -663,7 +663,8 @@ async def create_indexes():
             from core.marketing_import_indexes import unique_import_specs as _uniq_impor
             for _spec in _uniq_impor():
                 await _ensure_unique_index(db, _spec["collection"], _spec["keys"],
-                                           name=_spec["name"], partial=_spec["partial"])
+                                           name=_spec["name"], partial=_spec["partial"],
+                                           drop_conflicting=_spec.get("drop_conflicting"))
         except Exception as _e:  # noqa: BLE001
             logger.warning("[index] indeks unik impor marketing dilewati: %s", _e)
         # ── akhir Asisten AI (data) ──

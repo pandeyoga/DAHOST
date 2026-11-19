@@ -607,9 +607,12 @@ def test_migrasi_cek_duplikat_melapor_kembar_dan_hanya_memasang_yang_bersih(monk
     mig = _mig("2026_11_08_cek_duplikat_impor_marketing")
     db = AggDB()
     db.marketing_returns.docs += [
-        {"id": "r1", "_import_source_type": "returns", "account_id": "A1", "order_id": "O1", "product": "X"},
-        {"id": "r2", "_import_source_type": "returns", "account_id": "A1", "order_id": "O1", "product": "X"},
-        {"id": "r3", "account_id": "A1", "order_id": "O1", "product": "X"}]           # entri modul: bukan impor
+        {"id": "r1", "_import_source_type": "returns", "account_id": "A1", "order_id": "O1", "return_id": "R1",
+         "variation": "Hitam, M", "product": "X"},
+        {"id": "r2", "_import_source_type": "returns", "account_id": "A1", "order_id": "O1", "return_id": "R1",
+         "variation": "Hitam, M", "product": "X"},
+        {"id": "r3", "account_id": "A1", "order_id": "O1", "return_id": "R1", "variation": "Hitam, M",
+         "product": "X"}]                                                                # entri modul: bukan impor
     pre = run(mig.run(db, apply=False))
     ret = next(r for r in pre["indeks"] if r["indeks"] == "uniq_impor_returns")
     assert ret["kelompok_kembar"] == 1 and ret["dokumen_berlebih"] == 1
