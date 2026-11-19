@@ -329,13 +329,23 @@ def _sla_of(account: dict, preorder: bool) -> float:
 
 
 MONITOR_MAX_ORDERS = 50000
+# 19 Nov 2026 (kendala staf "Monitoring kirim … penggunaannya seperti apa?"): pesanan yang tidak terlihat di berkas
+# impor apa pun selama ≥ BASI_HARI hari kemungkinan statusnya sudah berubah di Seller Center (sudah dikirim/batal).
+BASI_HARI = 2
+
+
+def _terakhir_terlihat(o: dict):
+    """Kapan pesanan ini terakhir dibaca dari berkas impor / diperbarui (yang paling baru)."""
+    ts = [t for t in (_as_utc(o.get(k)) for k in ("last_seen_import_at", "fulfillment_import_at", "updated_at",
+                                                    "created_at")) if t]
+    return max(ts) if ts else None
 
 
 @router.get("/fulfillment-monitor")
 async def fulfillment_monitor(
     request: Request,
     account_id: Optional[str] = Query(None, description="kosong = semua toko"),
-    bucket: str = Query("lewat_batas", description="belum_dikirim | lewat_batas | batal | batal_cod | retur"),
+    bucket: str = Query("lewat_batas", description="belum_dikirim | lewat_batas | batal | batal_cod | retur | menunggu_bayar"),
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD (uji/simulasi); kosong = sekarang"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
@@ -374,6 +384,7 @@ async def fulfillment_monitor(
     # metode bayar + status batal + alasan batal hasil impor Seller Center (core.batal_cod) — tanpa berkas baru.
     from core import batal_cod as _bc
     open_rows, late_rows, cancelled_rows, returned_rows = [], [], [], []
+    waiting_pay_rows: list = []   # 19 Nov 2026: 'Belum bayar' bukan antrean kirim
     cod_cancelled_rows = []
     cod_total = 0
     shipped_n = 0
@@ -395,6 +406,7 @@ async def fulfillment_monitor(
             "nilai_belum_dikirim": 0.0, "nilai_lewat_batas": 0.0,
             "umur_tertua_hari": 0.0,
             "cod": 0, "batal_cod": 0, "batal_cod_gagal_kirim": 0, "nilai_batal_cod": 0.0,
+            "menunggu_bayar": 0, "basi": 0,
         })
 
         cod = _bc.is_cod(o)
@@ -420,6 +432,11 @@ async def fulfillment_monitor(
             shipped_n += 1
             continue
         if st not in OPEN_STATUSES:
+            continue
+        if st == "new":
+            # 19 Nov 2026: pesanan BELUM DIBAYAR belum bisa dikirim — dulu ikut "Belum dikirim"/"Lewat batas".
+            stat["menunggu_bayar"] += 1
+            waiting_pay_rows.append(o)
             continue
 
         basis = _as_utc(o.get("paid_at")) or _as_utc(o.get("order_date"))
@@ -455,6 +472,11 @@ async def fulfillment_monitor(
             "buyer": o.get("buyer_username") or o.get("customer_name") or "",
             "city": o.get("city") or o.get("regency_city") or "",
         }
+        seen = _terakhir_terlihat(o)
+        row["terakhir_terlihat"] = seen.isoformat() if seen else None
+        row["basi"] = bool(seen and (now - seen).total_seconds() >= BASI_HARI * 86400)
+        if row["basi"]:
+            stat["basi"] += 1
         open_rows.append(row)
         stat["belum_dikirim"] += 1
         stat["nilai_belum_dikirim"] += value
@@ -492,6 +514,7 @@ async def fulfillment_monitor(
         "batal": [_simple(o) for o in cancelled_rows],
         "batal_cod": [_cod_row(o) for o in cod_cancelled_rows],
         "retur": [_simple(o) for o in returned_rows],
+        "menunggu_bayar": [_simple(o) for o in waiting_pay_rows],
     }
     if bucket not in buckets:
         raise HTTPException(400, f"bucket harus salah satu dari: {', '.join(buckets)}")
@@ -515,9 +538,17 @@ async def fulfillment_monitor(
         "batal_cod_gagal_kirim": sum(1 for o in cod_cancelled_rows if _bc.jenis_batal_cod(o) == "gagal_kirim"),
         "nilai_batal_cod": round(sum(float(o.get("revenue_product") or o.get("revenue") or 0) for o in cod_cancelled_rows)),
         "persen_batal_cod": _bc.persen(len(cod_cancelled_rows), cod_total),
+        "menunggu_bayar": len(waiting_pay_rows),
+        "basi": sum(1 for r in open_rows if r.get("basi")),
+        "basi_lewat_batas": sum(1 for r in late_rows if r.get("basi")),
     }
 
     notes = []
+    if totals["basi"]:
+        notes.append(f"{totals['basi']:,} pesanan 'belum dikirim' ({totals['basi_lewat_batas']:,} di antaranya lewat batas) "
+                     f"tidak terlihat di berkas impor mana pun ≥{BASI_HARI} hari — statusnya kemungkinan sudah berubah di "
+                     "Seller Center. Impor ulang ekspor pesanan rentang 14 hari terakhir (Impor Data) supaya statusnya "
+                     "ikut diperbarui.".replace(",", "."))
     if len(orders) >= MONITOR_MAX_ORDERS:
         notes.append(f"Hanya {MONITOR_MAX_ORDERS:,} pesanan terbaru yang dibaca — pilih satu toko untuk angka "
                      "lengkap toko itu.".replace(",", "."))

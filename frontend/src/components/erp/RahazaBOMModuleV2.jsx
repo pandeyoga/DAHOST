@@ -4,6 +4,7 @@ import FormPopup from '@/components/ui/form-popup';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Edit2, Pencil, Trash2, X, Copy, Package, Scale, Save, FileText, Search, Layers, Link2, Unlink, Wrench } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';  // 19 Nov 2026 (kendala R&D): kotak angka menerima koma (1,3789) — MoneyInput, bukan input number peramban
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -764,8 +765,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                     </SmartNativeSelect>
                                   </TableCell>
                                   <TableCell>
-                                    <GlassInput
-                                      type="number"
+                                    <MoneyInput glass decimals={4}
                                       step="0.001"
                                       value={m.qty}
                                       onChange={e => updateMaterial(idx, { qty: e.target.value })}

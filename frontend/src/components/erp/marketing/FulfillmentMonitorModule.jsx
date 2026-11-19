@@ -46,6 +46,8 @@ const BUCKETS = [
   // + alasan batal hasil impor Seller Center (tanpa berkas baru) — dipisah gagal kirim / dibatalkan pembeli.
   { key: 'batal_cod', label: 'Batal COD' },
   { key: 'retur', label: 'Retur' },
+  // 19 Nov 2026: pesanan belum dibayar dipisah — belum bisa dikirim, jadi bukan antrean kirim
+  { key: 'menunggu_bayar', label: 'Menunggu bayar' },
 ];
 const NADA_BATAL_COD = { gagal_kirim: 'danger', batal_pembeli: 'warning', lainnya: 'muted' };
 const persen = (v) => `${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 1 })}%`;
@@ -228,6 +230,11 @@ export default function FulfillmentMonitorModule({ token }) {
       <div className="flex flex-wrap gap-1">
         <StatusBadge status={r.status} label={r.status_raw || r.status} tone="default" />
         {r.is_preorder && <StatusBadge status="pre" label="Pra-pesan" tone="primary" />}
+        {r.basi && (
+          <span title={`Terakhir terlihat di berkas impor ${tgl(r.terakhir_terlihat)} — impor ulang ekspor pesanan 14 hari terakhir`}>
+            <StatusBadge status="basi" label="Data lama" tone="warning" />
+          </span>
+        )}
       </div>) },
     ...(isOpenBucket ? [
       { kunci: 'bayar', label: 'Dibayar', isi: (r) => <span className="md:whitespace-nowrap">{tgl(r.paid_at)}</span> },

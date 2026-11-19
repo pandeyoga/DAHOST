@@ -7,6 +7,7 @@ import uuid
 import logging
 import base64
 import json
+from core import kesehatan_akun as _ka  # 19 Nov 2026: satu aturan status snapshot
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException, Query, UploadFile, File, Form
@@ -159,14 +160,18 @@ async def health_summary(request: Request):
     async for doc in db.marketing_account_health.aggregate(pipeline):
         latest_snapshots.append(doc["latest"])
     
+    # 19 Nov 2026: status dihitung ulang dengan skala yang benar (core.kesehatan_akun) — snapshot lama ikut benar
+    for s in latest_snapshots:
+        s["status"] = _ka.status_dok(s)
     # Calculate summary
     total_accounts = len(latest_snapshots)
     healthy = sum(1 for s in latest_snapshots if s.get("status") == "healthy")
     warning = sum(1 for s in latest_snapshots if s.get("status") == "warning")
     critical = sum(1 for s in latest_snapshots if s.get("status") == "critical")
     
-    avg_ses = sum(s.get("ses_score", 0) for s in latest_snapshots) / max(total_accounts, 1)
-    avg_late_ship = sum(s.get("late_shipment_rate", 0) for s in latest_snapshots) / max(total_accounts, 1)
+    # 19 Nov 2026: nilai kosong (Shopee tanpa SES) tidak lagi membuat ringkasan error — hanya yang terisi dirata-rata
+    avg_ses = _ka.rata(_ka.ses_100(s.get("ses_score")) for s in latest_snapshots) or 0
+    avg_late_ship = _ka.rata(s.get("late_shipment_rate") for s in latest_snapshots) or 0
     
     by_platform = {}
     for snap in latest_snapshots:
@@ -206,6 +211,8 @@ async def health_timeline(
         query["account_name"] = account
     
     snapshots = await db.marketing_account_health.find(query).sort("snapshot_date", 1).to_list(1000)
+    for s in snapshots:
+        s["status"] = _ka.status_dok(s)   # 19 Nov 2026: skala skor yang benar
     
     return success_response(
         data={"snapshots": serialize(snapshots)},
@@ -281,15 +288,9 @@ async def ocr_account_health_screenshot(
     det_platform = extracted.get("detected_platform") or platform
     det_account  = extracted.get("detected_account") or account_name or "Unknown Account"
 
-    # Compute status if not provided by AI
-    status = extracted.get("status", "healthy")
-    ses = extracted.get("ses_score") or 0
-    late = extracted.get("late_shipment_rate") or 0
-    cancel = extracted.get("cancellation_rate") or 0
-    if ses < 60 or late > 5 or cancel > 3:
-        status = "critical"
-    elif ses < 75 or late > 3 or cancel > 2:
-        status = "warning"
+    # 19 Nov 2026: status dari aturan yang sama dengan simpan (skor 0–5 dibaca ×20, SES kosong tidak menilai)
+    status = _ka.status_snapshot(extracted.get("ses_score"), extracted.get("late_shipment_rate"),
+                                 extracted.get("cancellation_rate"))
 
     return success_response(data={
         "extracted": extracted,
@@ -343,16 +344,7 @@ async def create_manual_snapshot(payload: ManualSnapshotIn, request: Request):
     user = await require_auth(request)
     db = get_db()
 
-    ses = payload.ses_score or 0
-    late = payload.late_shipment_rate or 0
-    cancel = payload.cancellation_rate or 0
-
-    if ses < 60 or late > 5 or cancel > 3:
-        status = "critical"
-    elif ses < 75 or late > 3 or cancel > 2:
-        status = "warning"
-    else:
-        status = "healthy"
+    status = _ka.status_snapshot(payload.ses_score, payload.late_shipment_rate, payload.cancellation_rate)
 
     acc = await db.marketing_platform_accounts.find_one({"id": payload.account_id}, {"_id": 0}) \
         if payload.account_id else None

@@ -808,6 +808,38 @@ async def preview_hpp(body: dict, user: dict = Depends(require_auth)):
     return _calculate_hpp(body)
 
 
+def _warna_baris(b: dict) -> str:
+    """Warna/motif yang memakai baris BOM tech pack ini (kosong = berlaku semua warna)."""
+    return str(b.get('color_name') or b.get('color_code') or b.get('color_id') or '').strip()
+
+
+def _cocok_warna(b: dict, warna: str) -> bool:
+    w = str(warna or '').strip().lower()
+    return any(str(b.get(k) or '').strip().lower() == w for k in ('color_name', 'color_code', 'color_id'))
+
+
+async def _techpack_style(db, style_id: str):
+    return (await db.dewi_rnd_tech_packs.find_one({'style_id': style_id, 'is_latest': True}, {'_id': 0})
+            or await db.dewi_rnd_tech_packs.find_one({'style_id': style_id}, {'_id': 0}, sort=[('created_at', -1)]))
+
+
+@router.get('/hpp-calculator/techpack-pilihan')
+async def techpack_pilihan(style_id: str, user: dict = Depends(require_auth)):
+    """19 Nov 2026 (kendala R&D): pilihan warna/motif BOM tech pack + ukuran estimasi kain, untuk tombol
+    "Tarik dari BOM tech pack" — supaya kancing tiap motif tidak ikut terhitung semua di satu HPP."""
+    db = get_db()
+    tp = await _techpack_style(db, style_id)
+    if not tp:
+        return {'warna': [], 'ukuran': [], 'ada_tech_pack': False}
+    warna = []
+    for b in tp.get('bom_items') or []:
+        w = _warna_baris(b)
+        if w and w not in warna:
+            warna.append(w)
+    est = await compute_fabric_cost(db, tp, None)
+    return {'warna': warna, 'ukuran': [s['size'] for s in est.get('sizes') or []], 'ada_tech_pack': True}
+
+
 @router.post('/hpp-calculator/cost-lines/from-techpack')
 async def cost_lines_from_techpack(body: dict, user: dict = Depends(require_auth)):
     """Ubah BOM Tech Pack terbaru sebuah style menjadi `cost_lines` bersumber `techpack`.
@@ -826,6 +858,14 @@ async def cost_lines_from_techpack(body: dict, user: dict = Depends(require_auth
             404,
             'BOM Tech Pack untuk style ini belum ada. Buat/impor Tech Pack yang berisi BOM dulu.',
         )
+    # 19 Nov 2026 (kendala R&D): baris per warna/motif (mis. kancing tiap motif) hanya dihitung untuk SATU motif.
+    warna = str(body.get('warna') or '').strip()
+    berwarna = sorted({_warna_baris(b) for b in bom_items if _warna_baris(b)})
+    if berwarna and not warna:
+        raise HTTPException(400, 'BOM tech pack ini punya baris per warna/motif (' + ', '.join(berwarna[:6])
+                            + ('…' if len(berwarna) > 6 else '') + '). Pilih warna/motif yang dihitung dulu.')
+    if warna:
+        bom_items = [b for b in bom_items if not _warna_baris(b) or _cocok_warna(b, warna)]
     raw = [{
         'source': 'techpack',
         'label': line_name(b) or line_code(b) or 'Baris BOM',
@@ -836,12 +876,28 @@ async def cost_lines_from_techpack(body: dict, user: dict = Depends(require_auth
         'qty': b.get('qty') or 0,
         'unit': b.get('unit') or '',
     } for b in bom_items]
-    total, lines = await compute_cost_lines(db, raw)
+    # 19 Nov 2026 (kendala R&D): kain dari tab Bahan ikut ditarik (dulu hanya aksesoris tab BOM, dan bagian kain
+    # mode lama tersembunyi begitu ada baris biaya → kain hilang dari HPP). Harga per meter = estimasi tech pack.
+    kain = []
+    if style_id and body.get('sertakan_kain', True):
+        tp = await _techpack_style(db, style_id)
+        if tp and (tp.get('fabric_consumption') or []):
+            est = await compute_fabric_cost(db, tp, body.get('ukuran') or None)
+            sel = est.get('selected') or {}
+            for e in sel.get('entries') or []:
+                peran = {'main': 'utama', 'combination': 'kombinasi'}.get(e.get('fabric_role'), e.get('fabric_role') or '')
+                kain.append({'source': 'manual',
+                             'label': f"Kain {e.get('fabric_name') or ''} ({peran}) · ukuran {sel.get('size')}".replace('  ', ' '),
+                             'qty': e.get('meters_per_pcs') or 0, 'unit': 'meter',
+                             'unit_cost_used': e.get('price_per_meter') or 0})
+    total, lines = await compute_cost_lines(db, raw + kain)
     return {
         'cost_lines': lines,
         'cost_lines_total': total,
         'bom_items_count': len(bom_items),
-        'unlinked_count': len([l for l in lines if not l.get('master_linked')]),
+        'kain_count': len(kain),
+        'warna': warna,
+        'unlinked_count': len([l for l in lines if not l.get('master_linked') and l.get('source') != 'manual']),
         'style_id': style_id,
     }
 

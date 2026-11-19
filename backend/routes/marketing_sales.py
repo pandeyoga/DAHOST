@@ -197,6 +197,74 @@ async def create_sales_data(
     return serialize_doc({"message": "Sales data created", "entry": sales_entry})
 
 
+class TidakAdaPenjualanIn(BaseModel):
+    account_id: str
+    date: str
+    alasan: str
+    catatan: Optional[str] = None
+
+
+@router.post("/sales-data/tidak-ada-penjualan")
+async def tandai_tidak_ada_penjualan(data: TidakAdaPenjualanIn, request: Request):
+    """19 Nov 2026 (kendala staf: "jika tidak input penjualan harian terdeteksi belum input padahal memang tidak ada
+    penjualan"): tandai satu tanggal TANPA penjualan, dengan alasan. Berlaku juga untuk toko bermode "Impor pesanan"
+    (yang menolak omzet diketik) — hasilnya rekap Total 0 bersumber `tidak_ada_penjualan`, terhitung "Sudah" di
+    Laporan harian. Bila belakangan pesanan tanggal itu diimpor, rekap pesanan menggantikannya otomatis."""
+    user = await require_auth(request)
+    db = get_db()
+    account = await db.marketing_platform_accounts.find_one({"id": data.account_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(404, "Akun toko tidak ditemukan")
+    from core import marketing_account_scope as _scope
+    vis = await _scope.visible_account_ids(db, user)
+    if vis is not None and data.account_id not in vis:
+        raise HTTPException(403, "Toko ini bukan toko yang Anda pegang.")
+    alasan = (data.alasan or "").strip()
+    if alasan not in _shape.ALASAN_NIHIL:
+        raise HTTPException(400, "Pilih alasan tidak ada penjualan.")
+    catatan = (data.catatan or "").strip()
+    if alasan == "lainnya" and len(catatan) < 3:
+        raise HTTPException(400, "Alasan 'Lainnya' wajib diberi keterangan.")
+    tanggal = _shape.norm_date(data.date)
+    if not tanggal or tanggal > today_wib().isoformat():
+        raise HTTPException(400, "Tanggal tidak boleh kosong atau di masa depan.")
+    await _cycle.assert_period_open(db, data.account_id, tanggal, action='menandai tidak ada penjualan')
+    from core.marketing_daily_rollup import _day_bounds
+    start, end = _day_bounds(tanggal)
+    n_order = await db.marketing_orders.count_documents({
+        "account_id": data.account_id,
+        "$or": [{"order_date": {"$gte": start, "$lt": end}}, {"order_date": {"$gte": tanggal, "$lt": tanggal + "\uffff"}}]})
+    if n_order:
+        raise HTTPException(409, f"Ada {n_order} pesanan {account.get('account_name')} tanggal {tanggal} — omzetnya "
+                                 "dihitung dari pesanan itu, jadi tanggal ini tidak bisa ditandai tidak ada penjualan.")
+    existing = await db.marketing_sales_data.find_one(
+        {"account_id": data.account_id, "date": tanggal, "revenue_type": "total"}, {"_id": 0})
+    label = _shape.ALASAN_NIHIL[alasan]
+    jejak = {"nihil_alasan": alasan, "nihil_alasan_label": label, "nihil_catatan": catatan,
+             "nihil_by": user.get("name") or user.get("email"), "nihil_at": _now()}
+    if existing and existing.get("source") != _shape.SOURCE_NIHIL:
+        raise HTTPException(409, f"Rekap {tanggal} sudah ada (omzet {(existing.get('metrics') or {}).get('revenue', 0):,.0f})"
+                                 " — tanggal ini sudah tercatat, tidak perlu ditandai tidak ada penjualan.")
+    if existing:
+        await db.marketing_sales_data.update_one({"id": existing["id"]}, {"$set": {**jejak, "updated_at": _now()}})
+        doc_id = existing["id"]
+    else:
+        doc = _shape.build_daily_doc(
+            account=account, date=tanggal, revenue_type="total", flat={"revenue": 0, "orders": 0},
+            source=_shape.SOURCE_NIHIL,
+            extra={"id": _uid(), "import_history_id": None, "created_at": _now(),
+                   "created_by": user.get("email", "system"), **jejak})
+        await db.marketing_sales_data.insert_one(doc)
+        doc_id = doc["id"]
+    await _recalculate_health_score(db, data.account_id)
+    await log_activity(user.get("id", "system"), user.get("name") or user.get("email", "system"), "create",
+                       "marketing_sales_data",
+                       f"Tidak ada penjualan: {account['account_name']} {tanggal} — {label}"
+                       + (f" ({catatan})" if catatan else ""))
+    return serialize_doc({"message": f"{account.get('account_name')} {tanggal} ditandai tidak ada penjualan ({label}).",
+                          "id": doc_id})
+
+
 @router.put("/sales-data/kanal")
 async def save_sales_kanal(data: SalesKanalEntry, request: Request):
     """11 Nov 2026 — simpan RINCIAN OMZET PER KANAL untuk rekap total yang sudah ada.

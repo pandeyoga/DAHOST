@@ -6576,6 +6576,10 @@
   ],
   [
    "POST",
+   "/api/marketing/sales-data/tidak-ada-penjualan"
+  ],
+  [
+   "POST",
    "/api/marketing/sales/recompute"
   ]
  ],
@@ -8991,6 +8995,10 @@
   [
    "POST",
    "/api/dewi/rnd/hpp-calculator/cost-lines/from-techpack"
+  ],
+  [
+   "GET",
+   "/api/dewi/rnd/hpp-calculator/techpack-pilihan"
   ],
   [
    "DELETE",

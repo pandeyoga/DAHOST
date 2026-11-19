@@ -121,6 +121,9 @@ async def daily_report(
             "health_score":  acc.get("health_score"),
             "sales_status": {
                 "entered_total": has_total,
+                # 19 Nov 2026: hari yang ditandai tidak ada penjualan (alasan tampil di Laporan harian)
+                "nihil": bool(has_total and total_data[0].get("source") == _shape.SOURCE_NIHIL),
+                "nihil_alasan": (total_data[0].get("nihil_alasan_label") or "") if has_total else "",
                 "entered_live":  has_live,
                 "revenue":       rev_total,
                 "orders":        ord_total,

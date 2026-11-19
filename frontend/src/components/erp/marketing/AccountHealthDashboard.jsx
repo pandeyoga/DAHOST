@@ -136,7 +136,7 @@ function OCRModal({ open, onClose, onSaved, token }) {
     try {
       await axios.post(`${API}/api/marketing/health/manual-snapshot`, editData, { headers: authH });
       toast({ title: 'Snapshot disimpan', description: `Akun ${editData.account_name} ditambahkan.` });
-      onSaved();
+      onSaved(editData.account_id);
       handleClose();
     } catch (e) {
       setGalat(e.response?.data?.detail || 'Gagal menyimpan snapshot');
@@ -286,7 +286,14 @@ export default function AccountHealthDashboard({ token }) {
     }
   }, [days, platformFilter, accountFilter, token]); // eslint-disable-line
 
-  const onSaved = () => { fetchSummary(); fetchTimeline(); };
+  // 19 Nov 2026: sesudah simpan, tabel menampilkan toko yang baru disimpan (dulu tetap tersaring ke toko lain,
+  // sehingga snapshot terlihat "tidak tersimpan" dan staf menyimpan ulang).
+  const onSaved = (accountId) => {
+    const acc = (masterAccounts || []).find((a) => a.id === accountId);
+    if (acc && acc.account_name !== accountFilter) setActiveAccount(acc);
+    fetchSummary();
+    fetchTimeline();
+  };
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchTimeline(); }, [fetchTimeline]);

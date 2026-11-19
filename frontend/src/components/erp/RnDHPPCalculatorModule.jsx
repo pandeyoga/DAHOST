@@ -289,17 +289,39 @@ export default function RnDHPPCalculatorModule({ token }) {
     }],
   }));
 
+  // 19 Nov 2026 (kendala R&D): warna/motif & ukuran yang dihitung saat menarik BOM tech pack
+  const [tpPilihan, setTpPilihan] = useState({ warna: [], ukuran: [] });
+  const [tpWarna, setTpWarna] = useState('');
+  const [tpUkuran, setTpUkuran] = useState('');
+  useEffect(() => {
+    if (!form.style_id) { setTpPilihan({ warna: [], ukuran: [] }); return; }
+    let hidup = true;
+    fetch(`${API}/api/dewi/rnd/hpp-calculator/techpack-pilihan?style_id=${form.style_id}`, { headers: hdr })
+      .then((r) => (r.ok ? r.json() : { warna: [], ukuran: [] }))
+      .then((d) => {
+        if (!hidup) return;
+        setTpPilihan({ warna: d.warna || [], ukuran: d.ukuran || [] });
+        setTpWarna((d.warna || [])[0] || '');
+        setTpUkuran((d.ukuran || [])[0] || '');
+      })
+      .catch(() => {});
+    return () => { hidup = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.style_id]);
+
   const pullFromTechpack = async () => {
     if (!form.style_id) return toast.error('Pilih style dulu untuk menarik BOM tech pack');
     try {
       const res = await fetch(`${API}/api/dewi/rnd/hpp-calculator/cost-lines/from-techpack`, {
-        method: 'POST', headers: hdr, body: JSON.stringify({ style_id: form.style_id }),
+        method: 'POST', headers: hdr,
+        body: JSON.stringify({ style_id: form.style_id, warna: tpWarna, ukuran: tpUkuran, sertakan_kain: true }),
       });
       if (!res.ok) return toast.error(await readErr(res, 'Gagal menarik BOM tech pack'), { duration: 7000 });
       const d = await res.json();
       const incoming = (d.cost_lines || []).map(l => ({ ...l, line_id: l.line_id || newLineId() }));
       setForm(prev => ({ ...prev, cost_lines: [...(prev.cost_lines || []), ...incoming] }));
-      toast.success(`${incoming.length} baris BOM tech pack ditambahkan (sumber: Tech pack)`);
+      toast.success(`${incoming.length - (d.kain_count || 0)} baris BOM${d.warna ? ` (motif ${d.warna})` : ''}`
+        + `${d.kain_count ? ` + ${d.kain_count} baris kain${tpUkuran ? ` ukuran ${tpUkuran}` : ''}` : ''} ditambahkan dari tech pack`);
       if (d.unlinked_count > 0) {
         toast.warning(`${d.unlinked_count} baris tidak tertaut master — harganya Rp0. Tautkan materialnya di tech pack, atau ubah sumbernya jadi Manual.`, { duration: 9000 });
       }
@@ -641,7 +663,19 @@ export default function RnDHPPCalculatorModule({ token }) {
                 <p className="text-sm font-semibold text-foreground">Biaya bahan — sumber per baris</p>
                 <p className="text-xs text-muted-foreground">Master, tech pack, dan manual boleh bercampur. Total = jumlah semua baris.</p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {tpPilihan.warna.length > 0 && (
+                  <SmartNativeSelect className="h-9 w-44" value={tpWarna} onChange={(e) => setTpWarna(e.target.value)}
+                    aria-label="Warna/motif yang dihitung" data-testid="hpp-tp-warna">
+                    {tpPilihan.warna.map((w) => <option key={w} value={w}>Motif: {w}</option>)}
+                  </SmartNativeSelect>
+                )}
+                {tpPilihan.ukuran.length > 0 && (
+                  <SmartNativeSelect className="h-9 w-36" value={tpUkuran} onChange={(e) => setTpUkuran(e.target.value)}
+                    aria-label="Ukuran untuk kain" data-testid="hpp-tp-ukuran">
+                    {tpPilihan.ukuran.map((u) => <option key={u} value={u}>Kain ukuran {u}</option>)}
+                  </SmartNativeSelect>
+                )}
                 <Button type="button" variant="outline" size="sm" onClick={pullFromTechpack} data-testid="hpp-pull-techpack">
                   <Wand2 />Tarik dari BOM tech pack
                 </Button>
@@ -743,7 +777,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-[80px_96px_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)]">
                         <div>
                           <Lbl>Qty</Lbl>
-                          <Input type="number" step="0.01" value={l.qty ?? 1}
+                          <MoneyInput decimals={4} value={l.qty ?? 1}
                             onChange={e => setLine(i, { qty: Number(e.target.value) })}
                             className="text-right" data-testid={`hpp-line-qty-${i}`} />
                         </div>
@@ -827,7 +861,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Isian label="Pemakaian kain/pcs (meter)">
-                    <Input type="number" step="0.01" value={form.fabric_usage_per_pcs}
+                    <MoneyInput decimals={4} value={form.fabric_usage_per_pcs}
                       onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
                   </Isian>
                   <Isian label="Harga kain/meter (Rp)">
@@ -875,7 +909,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                     <Input value={acc.name} onChange={e => setAcc(i, 'name', e.target.value)} placeholder="Nama item" />
                     <MoneyInput decimals={2} value={acc.unit_cost}
                       onChange={e => setAcc(i, 'unit_cost', e.target.value)} placeholder="Harga/unit" />
-                    <Input type="number" value={acc.qty} min="1"
+                    <MoneyInput decimals={2} value={acc.qty}
                       onChange={e => setAcc(i, 'qty', e.target.value)} placeholder="Qty" />
                     <Button type="button" variant="ghost" size="icon" onClick={() => removeAcc(i)}
                       title="Hapus item" aria-label="Hapus item">
@@ -933,11 +967,11 @@ export default function RnDHPPCalculatorModule({ token }) {
             <p className="text-sm font-semibold text-foreground">Overhead & target margin</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Isian label="Overhead (%)" petunjuk="Informasi saja, tidak masuk HPP — overhead pabrik tetap beban bulanan.">
-                <Input type="number" step="0.5" value={form.overhead_pct}
+                <MoneyInput decimals={2} value={form.overhead_pct}
                   onChange={e => f('overhead_pct', Number(e.target.value))} />
               </Isian>
               <Isian label="Target margin (%)" petunjuk="Dihitung dari harga jual.">
-                <Input type="number" step="0.5" value={form.margin_pct}
+                <MoneyInput decimals={2} value={form.margin_pct}
                   onChange={e => f('margin_pct', Number(e.target.value))} />
               </Isian>
             </div>

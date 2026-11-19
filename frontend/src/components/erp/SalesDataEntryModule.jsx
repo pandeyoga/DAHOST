@@ -53,6 +53,8 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
   const [existingRow, setExistingRow] = useState(null);   // baris rekap yang sudah ada
   const [checkingLock, setCheckingLock] = useState(false);
   const [overrideMode, setOverrideMode] = useState(false);
+  // 19 Nov 2026 — tandai tanggal tanpa penjualan (berlaku juga untuk toko bermode Impor pesanan)
+  const [nihil, setNihil] = useState({ buka: false, alasan: 'tidak_ada_pesanan', catatan: '', simpan: false });
   const [overrideReason, setOverrideReason] = useState('');
   const [saveError, setSaveError] = useState('');          // pesan galat yang MENETAP
   const [kanal, setKanal] = useState(KANAL_KOSONG);        // rincian omzet per kanal (jenis Total)
@@ -366,6 +368,58 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
         </Notice>
       )}
 
+      {/* 19 Nov 2026 — hari tanpa penjualan: ditandai dengan alasan, terhitung "Sudah" di Laporan harian */}
+      {existingRow?.source === 'tidak_ada_penjualan' && (
+        <Notice tone="info" testId="sd-nihil-notice" title={`${formatTanggalID(form.date)} ditandai tidak ada penjualan`}>
+          Alasan: {existingRow.nihil_alasan_label || '—'}{existingRow.nihil_catatan ? ` (${existingRow.nihil_catatan})` : ''}.
+          Kalau ternyata ada pesanan, impor pesanannya lewat Impor Data — tanda ini otomatis diganti angka pesanan.
+        </Notice>
+      )}
+      {activeTab === 'total' && !existingRow && !checkingLock && form.account_id && form.date && (
+        <div className="rounded-lg border border-[var(--glass-border)] p-3 text-sm" data-testid="sd-nihil">
+          {!nihil.buka ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-muted-foreground">Tanggal ini memang tidak ada penjualan?</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => setNihil((x) => ({ ...x, buka: true }))}
+                data-testid="sd-nihil-open">Tandai tidak ada penjualan</Button>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-[220px_1fr_auto] sm:items-end">
+              <Isian label="Alasan" wajib>
+                <SmartNativeSelect className="w-full" value={nihil.alasan} data-testid="sd-nihil-alasan"
+                  onChange={(e) => setNihil((x) => ({ ...x, alasan: e.target.value }))}>
+                  {ALASAN_NIHIL.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </SmartNativeSelect>
+              </Isian>
+              <Isian label="Keterangan" wajib={nihil.alasan === 'lainnya'}>
+                <Input value={nihil.catatan} placeholder="mis. toko tutup sementara karena stok habis"
+                  onChange={(e) => setNihil((x) => ({ ...x, catatan: e.target.value }))} data-testid="sd-nihil-catatan" />
+              </Isian>
+              <Button type="button" size="sm" variant="outline" disabled={nihil.simpan} data-testid="sd-nihil-save"
+                onClick={async () => {
+                  setNihil((x) => ({ ...x, simpan: true }));
+                  setSaveError('');
+                  try {
+                    const r = await fetch('/api/marketing/sales-data/tidak-ada-penjualan', {
+                      method: 'POST', headers,
+                      body: JSON.stringify({ account_id: form.account_id, date: form.date, alasan: nihil.alasan,
+                        catatan: nihil.catatan }) });
+                    const body = await r.json().catch(() => ({}));
+                    if (!r.ok) throw new Error(body.detail || `Gagal menandai (HTTP ${r.status})`);
+                    toast.success(body.message || 'Tanggal ditandai tidak ada penjualan');
+                    setNihil({ buka: false, alasan: 'tidak_ada_pesanan', catatan: '', simpan: false });
+                    if (onSaved) onSaved();
+                    onOpenChange(false);
+                  } catch (err) {
+                    setSaveError(err.message);
+                    setNihil((x) => ({ ...x, simpan: false }));
+                  }
+                }}>Simpan tanda</Button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Rekap total yang sudah ada: hanya rincian kanal yang disimpan — kolom angka lain tidak
           ditampilkan supaya tidak ada isian yang diam-diam tidak tersimpan. */}
       {!hanyaKanal && <CommonMetricsForm form={form} setForm={setForm} lockedMetrics={lockedMetrics} />}
@@ -462,7 +516,14 @@ const SOURCE_META = {
   import_kpi:      { label: 'Impor KPI',            tone: 'info' },
   livehost_creator_auto: { label: 'Live otomatis',  tone: 'primary' },
   task_action:     { label: 'Dari tugas',           tone: 'muted' },
+  tidak_ada_penjualan: { label: 'Tidak ada penjualan', tone: 'muted' },
 };
+
+/** 19 Nov 2026 — alasan hari tanpa penjualan (sama dengan server `ALASAN_NIHIL`). */
+const ALASAN_NIHIL = [
+  ['tidak_ada_pesanan', 'Tidak ada pesanan'], ['toko_libur', 'Toko libur / tutup'],
+  ['akun_dibekukan', 'Akun dibekukan / dibatasi platform'], ['lainnya', 'Lainnya'],
+];
 const sumberLabel = (row) => (SOURCE_META[row.source] || { label: row.source ? 'Lainnya' : 'Manual' }).label;
 
 /** 11 Nov 2026 — pecahan kanal satu rekap Total, dalam persen omzet terinci (3 kanal terbesar). */
