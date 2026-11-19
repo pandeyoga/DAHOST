@@ -665,13 +665,13 @@ export default function RnDHPPCalculatorModule({ token }) {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {tpPilihan.warna.length > 0 && (
-                  <SmartNativeSelect className="h-9 w-44" value={tpWarna} onChange={(e) => setTpWarna(e.target.value)}
+                  <SmartNativeSelect className="h-9 w-48" value={tpWarna} onChange={(e) => setTpWarna(e.target.value)}
                     aria-label="Warna/motif yang dihitung" data-testid="hpp-tp-warna">
                     {tpPilihan.warna.map((w) => <option key={w} value={w}>Motif: {w}</option>)}
                   </SmartNativeSelect>
                 )}
                 {tpPilihan.ukuran.length > 0 && (
-                  <SmartNativeSelect className="h-9 w-36" value={tpUkuran} onChange={(e) => setTpUkuran(e.target.value)}
+                  <SmartNativeSelect className="h-9 w-48" value={tpUkuran} onChange={(e) => setTpUkuran(e.target.value)}
                     aria-label="Ukuran untuk kain" data-testid="hpp-tp-ukuran">
                     {tpPilihan.ukuran.map((u) => <option key={u} value={u}>Kain ukuran {u}</option>)}
                   </SmartNativeSelect>
