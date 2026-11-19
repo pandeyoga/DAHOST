@@ -1385,7 +1385,11 @@ RETURNS = SourceType(
              "yang ada, retur ditautkan ke order tersebut.",
     module_hint="Komplain & Retur",
     account_scope="required",
-    dedupe=("account_id", "order_id", "product"),
+    # 19 Nov 2026 (kendala Packing) — satu baris = satu barang dari satu PENGAJUAN retur: No. Pengembalian + variasi
+    # (keduanya disimpan apa adanya; nama produk diganti nama katalog saat tertaut). Pemeriksa dobel impor memakai
+    # `core.marketing_returns.kunci_dedupe_retur` (juga mengenali retur form tanpa No. Pengembalian); tuple ini
+    # menurunkan indeks unik `uniq_impor_returns` (`core.marketing_import_indexes`).
+    dedupe=("account_id", "order_id", "return_id", "variation"),
     identity="order_id",
     identity_collection="marketing_orders",
     identity_label="nomor pesanan",
