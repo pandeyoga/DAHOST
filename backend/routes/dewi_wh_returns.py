@@ -139,7 +139,7 @@ async def list_returns(request: Request):
     if sp.get("search"):
         rx = re.compile(re.escape(sp["search"]), re.IGNORECASE)
         query["$or"] = [{"return_code": rx}, {"order_number": rx},
-                         {"customer_name": rx}, {"resi_number": rx}]
+                         {"customer_name": rx}, {"resi_number": rx}, {"resi_pesanan": rx}]
     docs = await db.wh_returns.find(query, {"_id": 0}).sort("created_at", -1).limit(200).to_list(500)
     return serialize_doc(docs)
 
@@ -741,6 +741,27 @@ async def quick_restock(return_id: str, request: Request):
         "message": res.get("message", ""),
         "data": serialize_doc(res.get("wh_return") or {}),
     }
+
+
+@router.post("/returns/{return_id}/stok-awal")
+async def decide_opening_stock(return_id: str, request: Request):
+    """2026-11-19 (keputusan owner, kendala Packing) — keputusan "Sudah masuk stok awal (sebelum cutoff)".
+
+    Paket yang sudah diterima gudang sebelum cutoff sudah termasuk stok awal 9 Nov. Retur diselesaikan TANPA stok &
+    jurnal (Terima barang akan menggandakan stok), dan refund-nya tetap mengurangi omzet Marketing (Batalkan tidak).
+    Body: {note?}. Hanya untuk retur yang diajukan paling lambat tanggal cutoff."""
+    user = await require_auth(request)
+    db = get_db()
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    try:
+        res = await _rb.putuskan_stok_awal(db, return_id, actor=user, note=str((body or {}).get("note") or ""))
+    except _rb.ReturnBridgeError as e:
+        raise HTTPException(400, str(e))
+    await _refresh_mkt_rekap(db, (res.get("wh_return") or {}).get("source_marketing_return_id"), user)
+    return {"success": True, "message": res["message"], "data": serialize_doc(res["wh_return"])}
 
 
 @router.post("/returns/{return_id}/relink")

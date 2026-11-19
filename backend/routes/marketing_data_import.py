@@ -1525,6 +1525,10 @@ async def _annotate_existing(db, st: SourceType, session: dict,
                 ok = False
                 break
             key[k] = v
+        if st.key == "returns":   # 19 Nov 2026 — kunci retur per pengajuan & variasi
+            from core import marketing_returns as _mret_k
+            key = _mret_k.kunci_dedupe_retur(d, session.get("account_id"))
+            ok = key is not None
         raw = d.get("date") or d.get("order_date") or d.get("session_date")
         day = (raw.strftime("%Y-%m-%d") if isinstance(raw, datetime)
                else str(raw or "")[:10])
@@ -3490,6 +3494,10 @@ async def _plan_rows(db, st: SourceType, s: dict, built: List[dict], refidx: dic
                     ok = False
                     break
                 key[k] = v
+            if st.key == "returns":   # 19 Nov 2026 — kunci retur per pengajuan & variasi
+                from core import marketing_returns as _mret_k
+                key = _mret_k.kunci_dedupe_retur(doc, s.get("account_id"))
+                ok = key is not None
             if ok:
                 existing = await db[st.collection].find_one(key, {"_id": 0})
 
@@ -3858,6 +3866,10 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
                         ok = False
                         break
                     key[k] = v
+                if st.key == "returns":   # 19 Nov 2026 — kunci retur per pengajuan & variasi
+                    from core import marketing_returns as _mret_k
+                    key = _mret_k.kunci_dedupe_retur(doc, s.get("account_id"))
+                    ok = key is not None
                 if ok:
                     # F2 (2026-08-12) — dokumen LENGKAP dibaca (bukan hanya `id`) karena
                     # kita perlu tahu apakah dokumen tujuan itu TURUNAN. Lihat catatan di
