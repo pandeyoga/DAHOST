@@ -10667,6 +10667,10 @@
    "/api/wh/returns/x/set-material"
   ],
   [
+   "POST",
+   "/api/wh/returns/x/stok-awal"
+  ],
+  [
    "GET",
    "/api/wh/scan-out/locations"
   ]

@@ -35,7 +35,7 @@ import {
 import { toast } from 'sonner';
 import {
   Package, Plus, Search, RefreshCw, CheckCircle, Truck, RotateCcw, ChevronDown,
-  PackageOpen, XCircle, Trash2, ClipboardCheck, DownloadCloud, Link2, Zap, MapPin, Undo2, Info,
+  PackageOpen, XCircle, Trash2, ClipboardCheck, DownloadCloud, Link2, Zap, MapPin, Undo2, Info, Archive,
 } from 'lucide-react';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
@@ -431,6 +431,20 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
     finally { setSaving(false); }
   };
 
+  // 2026-11-19 (keputusan owner, kendala Packing) — paket sudah diterima sebelum cutoff = sudah di stok awal:
+  // selesai tanpa stok & jurnal, refund tetap mengurangi omzet Marketing (beda dengan Batalkan).
+  const doStokAwal = async () => {
+    setSaving(true); setErr('');
+    try {
+      const res = await api('POST', `/api/wh/returns/${data.id}/stok-awal`, token, { note: form.note || '' });
+      setData(res.data || data); setStep(null);
+      setInfo(res.message || 'Retur selesai: sudah masuk stok awal.');
+      toast.success(res.message || 'Retur selesai: sudah masuk stok awal.');
+      onRefresh();
+    } catch (e) { setErr(e.message); }
+    finally { setSaving(false); }
+  };
+
   const doCancel = async () => {
     if (!(await confirmDialog({ title: 'Batalkan retur ini?', body: `${data.return_code} tidak diproses lagi.`, confirmLabel: 'Batalkan retur', danger: true }))) return;
     setSaving(true);
@@ -642,6 +656,19 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
       </FormPopup>
     );
   }
+  if (step === 'stokawal') {
+    return (
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="stok-awal-form"
+        judul={`Sudah masuk stok awal · ${data.return_code}`}
+        keterangan="Pakai ini bila paket sudah diterima gudang SEBELUM cutoff 9 Nov 2026, sehingga barangnya sudah terhitung di stok awal. Retur diselesaikan tanpa menambah stok dan tanpa jurnal; refund-nya tetap mengurangi omzet Marketing. Hanya untuk retur yang diajukan paling lambat 9 Nov."
+        onSimpan={doStokAwal} menyimpan={saving} galat={err} labelSimpan="Selesaikan tanpa stok">
+        <Isian label="Catatan" htmlFor="ret-stok-awal-note">
+          <Input id="ret-stok-awal-note" value={form.note || ''} onChange={set('note')}
+            placeholder="Opsional, mis. diterima 2 Nov menurut data gudang" data-testid="stok-awal-note" />
+        </Isian>
+      </FormPopup>
+    );
+  }
   if (step === 'cancel') {
     return (
       <FormPopup open onClose={tutupStep} ukuran="pendek" testId="cancel-form"
@@ -672,6 +699,9 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
           {data.status === 'Inspected' && (
             <Button size="sm" variant="success" onClick={() => openStep('resolve')} data-testid="btn-resolve"><CheckCircle />Selesaikan</Button>
           )}
+          {!data.restocked && (
+            <Button size="sm" variant="outline" onClick={() => openStep('stokawal')} data-testid="btn-stok-awal"><Archive />Sudah masuk stok awal</Button>
+          )}
           <Button size="sm" variant="destructive" onClick={() => openStep('cancel')} data-testid="btn-cancel-return"><XCircle />Batalkan</Button>
         </>
       ) : data.status === 'Resolved' ? (
@@ -686,6 +716,9 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
         <BarisDetail label="Asal">{asalRetur(data)}</BarisDetail>
         <BarisDetail label="No. order">{data.order_number || '-'}</BarisDetail>
         <BarisDetail label="No. resi">{data.resi_number || '-'}</BarisDetail>
+        {data.resi_pesanan && data.resi_pesanan !== data.resi_number && (
+          <BarisDetail label="Resi kirim pesanan">{data.resi_pesanan}</BarisDetail>
+        )}
         <BarisDetail label="Channel">{data.channel || '-'}</BarisDetail>
         <BarisDetail label="Pembeli">{data.customer_name || '-'}</BarisDetail>
         <BarisDetail label="Produk">{data.product_name || data.sku_code || '-'}</BarisDetail>

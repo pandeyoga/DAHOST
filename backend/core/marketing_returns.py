@@ -144,6 +144,29 @@ def _key(v: Any) -> str:
     return str(v or "").strip()
 
 
+def kunci_dedupe_retur(doc: dict, account_id) -> dict | None:
+    """19 Nov 2026 (kendala Packing): kueri "baris retur ini sudah ada?" untuk impor Retur & Refund.
+
+    Dulu kuncinya toko + no. pesanan + NAMA produk, sehingga dua pengajuan retur untuk dua variasi produk yang sama
+    dalam satu pesanan (mis. MELA Scarlet XL dan MELA Leopard Pink XL) dianggap dobel dan pengajuan kedua hilang.
+    Sekarang satu baris = satu barang dari satu pengajuan: no. pesanan + produk + variasi, dan bila berkas membawa
+    No. Pengembalian, retur dengan No. Pengembalian LAIN tidak dianggap sama. Retur tanpa No. Pengembalian (dibuat
+    dari form refund) tetap dikenali supaya impor tidak menggandakannya."""
+    d = doc or {}
+    order = _key(d.get("order_id"))
+    prod = _key(d.get("product"))
+    if not (account_id and order and prod):
+        return None
+    syarat = [{"product": prod}]
+    var = _key(d.get("variation"))
+    if var:
+        syarat.append({"$or": [{"variation": var}, {"variation": {"$in": [None, ""]}}]})
+    rid = _key(d.get("return_id"))
+    if rid:
+        syarat.append({"$or": [{"return_id": rid}, {"return_id": {"$in": [None, ""]}}]})
+    return {"account_id": account_id, "order_id": order, "$and": syarat}
+
+
 def is_warehouse_decided(ret: dict) -> bool:
     """2026-11-02 (K36) — sudah ada keputusan gudang yang berlaku dan menerima barangnya?"""
     r = ret or {}

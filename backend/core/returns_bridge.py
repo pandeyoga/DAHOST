@@ -110,6 +110,11 @@ ACTION_QUARANTINE = "Karantina (Rusak)"
 # 2026-11-02 (K1) — keputusan "Tolak": barang dikembalikan ke pembeli, TANPA stok/jurnal.
 ACTION_REJECT_TO_BUYER = "Ditolak — Dikembalikan ke Pembeli"
 ACTION_DISPOSE = "Dibuang / Dispose"
+# 2026-11-19 (keputusan owner, kendala Packing) — paket yang SUDAH diterima gudang sebelum cutoff sudah termasuk
+# stok awal 9 Nov: keputusan ini menyelesaikan retur TANPA stok/jurnal, tetapi refund-nya tetap dihitung
+# mengurangi omzet Marketing (K36) — berbeda dengan Batalkan.
+ACTION_STOK_AWAL = "Sudah masuk stok awal (sebelum cutoff)"
+TANGGAL_CUTOFF = "2026-11-09"   # stok awal ERP = hitung fisik per 9 Nov 2026 (cutoff)
 
 # 2026-11-02 (K1) — status alur Retur Fisik.
 STATUS_PENDING = "Pending"
@@ -301,6 +306,100 @@ async def _from_catalog_item(db, catalog_item_id: str) -> dict | None:
     return snap
 
 
+def _norm_teks(v) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(v or "").lower())
+
+
+def cocok_baris_retur(lines: list, ret: dict) -> list:
+    """Baris pesanan yang ditunjuk retur lewat SKU platform (`platform_sku_id`/`seller_sku`) atau variasi
+    (mis. 'Scarlet, XL / JUMBO'). Kosong bila retur tidak membawa keduanya atau tidak ada yang cocok."""
+    sku = str(ret.get("sku") or "").strip()
+    if sku:
+        hits = [i for i in lines if sku in (str(i.get("platform_sku_id") or "").strip(),
+                                            str(i.get("seller_sku") or "").strip())]
+        if hits:
+            return hits
+    var = _norm_teks(ret.get("variation"))
+    if var:
+        return [i for i in lines if _norm_teks(i.get("variation_raw")) == var]
+    return []
+
+
+async def resi_retur(db, ret: dict, order: dict | None = None) -> tuple:
+    """(resi paket retur, resi kirim pesanan). Resi retur dari berkas Retur & Refund (`tracking_number`);
+    resi kirim dari pesanan Marketing — dipakai bila paket kembali dengan resi pengiriman asal (mis. gagal kirim)."""
+    if order is None and ret.get("order_id"):
+        order = await db.marketing_orders.find_one({"order_id": ret["order_id"]}, {"_id": 0, "tracking_number": 1})
+    return (str(ret.get("tracking_number") or "").strip(),
+            str((order or {}).get("tracking_number") or "").strip())
+
+
+async def isi_resi(db, wh: dict, ret: dict) -> dict:
+    """Lengkapi resi retur fisik yang masih kosong dari retur Marketing (19 Nov 2026)."""
+    if not wh or (wh.get("resi_number") and wh.get("resi_pesanan")):
+        return wh
+    retur, kirim = await resi_retur(db, ret)
+    upd = {}
+    if not wh.get("resi_number") and (retur or kirim):
+        upd["resi_number"] = retur or kirim
+    if not wh.get("resi_pesanan") and kirim:
+        upd["resi_pesanan"] = kirim
+    if upd:
+        await db[WH].update_one({"id": wh["id"]}, {"$set": upd})
+        wh = {**wh, **upd}
+    return wh
+
+
+async def tanggal_acuan(db, wh: dict) -> str:
+    """Tanggal pengajuan retur (retur Marketing), atau tanggal pesanan, atau tanggal dicatat — 'YYYY-MM-DD'."""
+    if wh.get("source_marketing_return_id"):
+        r = await db[MKT].find_one({"id": wh["source_marketing_return_id"]}, {"_id": 0, "date": 1})
+        if r and r.get("date"):
+            return str(r["date"])[:10]
+    if wh.get("order_number"):
+        o = await db.marketing_orders.find_one({"order_id": wh["order_number"]}, {"_id": 0, "order_date": 1})
+        if o and o.get("order_date"):
+            return str(o["order_date"])[:10]
+    return str(wh.get("created_at") or "")[:10]
+
+
+async def putuskan_stok_awal(db, wh_return_id: str, *, actor=None, note: str = "") -> dict:
+    """Keputusan "Sudah masuk stok awal": paket diterima gudang sebelum cutoff, jadi barangnya sudah ada di stok
+    awal. Retur selesai TANPA stok & jurnal; refund tetap mengurangi omzet Marketing (K36). Hanya untuk retur yang
+    diajukan paling lambat tanggal cutoff dan belum diputuskan."""
+    doc = await db[WH].find_one({"id": wh_return_id}, {"_id": 0})
+    if not doc:
+        raise ReturnBridgeError("Retur fisik tidak ditemukan.")
+    if doc.get("status") not in OPEN_STATUSES or doc.get("restocked"):
+        raise ReturnBridgeError("Retur ini sudah diputuskan atau dibatalkan.")
+    tgl = await tanggal_acuan(db, doc)
+    if not tgl or tgl > TANGGAL_CUTOFF:
+        raise ReturnBridgeError(
+            f"Retur ini diajukan {tgl or 'tanpa tanggal'}, sesudah cutoff {TANGGAL_CUTOFF[8:10]}/{TANGGAL_CUTOFF[5:7]}/"
+            f"{TANGGAL_CUTOFF[:4]} — paketnya tidak mungkin ada di stok awal. Proses lewat Terima barang.")
+    who = _actor_name(actor or {})
+    now = _now_iso()
+    note = (note or "").strip()
+    res = await db[WH].update_one({"id": wh_return_id, "status": doc["status"], "restocked": {"$ne": True}}, {
+        "$set": {"status": STATUS_RESOLVED, "resolved_at": now, "resolved_by": who,
+                 "action_taken": ACTION_STOK_AWAL, "action_notes": note, "restock_qty": 0,
+                 "stock_effect": "stok_awal", "updated_at": now},
+        "$push": {"timeline": {"status": STATUS_RESOLVED, "at": now, "by": who,
+                               "note": f"Aksi: {ACTION_STOK_AWAL} (diajukan {tgl}) — tanpa stok & jurnal"
+                                       + (f" | {note}" if note else "")}}})
+    if not res.matched_count:
+        raise ReturnBridgeError("Retur ini baru saja diproses pengguna lain — muat ulang.")
+    fresh = await db[WH].find_one({"id": wh_return_id}, {"_id": 0})
+    await close_pending_notifs(db, wh_return_id)
+    if fresh.get("source_marketing_return_id"):
+        await _stamp_marketing(db, fresh["source_marketing_return_id"], fresh)
+        await db[MKT].update_one({"id": fresh["source_marketing_return_id"]}, {"$set": {
+            "wh_return_status": STATUS_RESOLVED, "wh_action_taken": ACTION_STOK_AWAL,
+            "wh_resolved_at": now, "updated_at": now}})
+    return {"wh_return": fresh, "tanggal": tgl,
+            "message": f"{fresh.get('return_code')} selesai: sudah masuk stok awal — stok tidak berubah."}
+
+
 async def resolve_identity(db, ret: dict) -> dict:
     """Tentukan barang & jumlah yang kembali. Hasil:
 
@@ -394,12 +493,17 @@ async def resolve_identity(db, ret: dict) -> dict:
             chosen = linked[0]
             src = "order_item"
         else:
-            want = (ret.get("product") or "").strip().lower()
-            hits = [i for i in linked
-                    if want and want in str(i.get("product_name_raw") or "").lower()]
+            # 2026-11-19 (kendala Packing): retur impor membawa SKU platform & variasi — dipakai lebih dulu
+            # (dulu pesanan 2 barang dengan nama produk sama selalu "Belum tertaut master").
+            hits = cocok_baris_retur(linked, ret)
+            src = "order_item_variation"
+            if len(hits) != 1:
+                want = (ret.get("product") or "").strip().lower()
+                hits = [i for i in linked
+                        if want and want in str(i.get("product_name_raw") or "").lower()]
+                src = "order_item_name_match"
             if len(hits) == 1:
                 chosen = hits[0]
-                src = "order_item_name_match"
             else:
                 out["link_status"] = LINK_AMBIGUOUS
                 out["reason"] = (
@@ -1098,6 +1202,7 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
             existing = await _link_unlinked(db, cand, ret, ident, actor=actor, cond=cond)
             linked_now = bool(existing)
     if existing:
+        existing = await isi_resi(db, existing, ret)   # 2026-11-19 — resi retur menyusul lewat impor ulang
         res = {"created": False, "restocked": False, "wh_return": existing,
                "identity": ident, "message": f"Sudah terhubung ke {existing.get('return_code')}"}
         if linked_now:
@@ -1134,6 +1239,7 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
             _ln = _lines[line_no - 1]
             line_label = " · ".join(x for x in (_line_name(_ln), _ln.get("variation_raw") or "") if x)
 
+    resi_paket, resi_kirim = await resi_retur(db, ret, order)   # 2026-11-19 (kendala Packing)
     doc = _wh_skeleton(code, actor_name, (
         f"Dibuat otomatis dari retur Marketing (pesanan {ret.get('order_id') or '-'}) — "
         "menunggu paket diterima gudang (K1: stok baru bergerak saat keputusan gudang)"))
@@ -1141,7 +1247,10 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
         "return_type": "customer_refund",
         # ── info pesanan (dipetakan dari retur Marketing) ─────────────────────
         "order_number": ret.get("order_id", ""),
-        "resi_number": str((order or {}).get("tracking_number") or "").strip(),
+        # 2026-11-19 — resi paket retur dari berkas Retur & Refund (dulu hanya resi kirim pesanan, dan hanya
+        # untuk refund dari form ⇒ retur impor selalu tanpa resi); resi kirim pesanan disimpan terpisah.
+        "resi_number": resi_paket or resi_kirim,
+        "resi_pesanan": resi_kirim,
         "channel": ret.get("platform", ""),
         "customer_name": (ret.get("customer_name") or (order or {}).get("customer_name")
                           or (order or {}).get("buyer_username") or ret.get("account_name")
