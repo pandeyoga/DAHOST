@@ -51,6 +51,15 @@ def test_dua_variasi_satu_pesanan_tidak_dianggap_dobel():
         {"order_id": "X1", "product": "Gamis", "variation": "Hitam, M", "return_id": "R-5"}, "a")))
     assert hit["id"] == "manual"
     assert mret.kunci_dedupe_retur({"order_id": "", "product": PROD}, "a") is None
+    # impor mengganti nama produk dengan nama katalog begitu tertaut — baris lama tetap dikenali lewat
+    # No. Pengembalian + variasi (Shopee GHS 19 Nov: 'AISAR DRESS - ...' tersimpan sebagai 'Aisar [Caramel · ALL SIZE]')
+    db.marketing_returns.docs.append({"id": "shp", "account_id": "a", "order_id": "261026M6P0SYSW",
+                                      "return_id": "2610290V0CYDDG4", "product": "Aisar [Caramel · ALL SIZE]",
+                                      "variation": "AISAR - CARAMEL"})
+    hit = run(db.marketing_returns.find_one(mret.kunci_dedupe_retur(
+        {"order_id": "261026M6P0SYSW", "return_id": "2610290V0CYDDG4", "variation": "AISAR - CARAMEL",
+         "product": "AISAR DRESS - Dress Wanita Knit Busui"}, "a")))
+    assert hit["id"] == "shp"
 
 
 def test_baris_pesanan_dipilih_lewat_sku_platform_atau_variasi():
