@@ -9,6 +9,8 @@
  * Panggilan API, isian, dan isi yang dikirim tidak berubah.
  * 10 Nov 2026: kolom Aksi daftar kreator = Insentif · Ubah · Hapus (hapus permanen hanya bila kreator belum punya
  * riwayat; bila sudah, server menolak 409 dan layar menawarkan Nonaktifkan). Rincian: Nonaktifkan + Hapus.
+ * 19 Nov 2026 (keputusan owner, kendala Licha): status, tipe, target, dan catatan = data kerja sama PER TOKO
+ * (`core/kreator_per_toko`); identitas (nama, kontak, akun) tetap satu. Form: bagian "Kerja sama dengan toko".
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -77,8 +79,20 @@ function KPIBar({ label, value, target, unit = '' }) {
 }
 
 // ─── Form kreator ───────────────────────────────────────────────────────────
-function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
+const KPI_KOSONG = { monthly_revenue: 0, monthly_sessions: 0, monthly_viewers: 0 };
+const kerjaDari = (v) => ({ status: v?.status || 'active', creator_type: v?.creator_type || 'new',
+  kpi_targets: { ...KPI_KOSONG, ...(v?.kpi_targets || {}) }, notes: v?.notes || '' });
+
+function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator, tokoKonteks }) {
   const isEdit = !!editCreator;
+  // 19 Nov 2026 — data kerja sama per toko (hanya toko yang boleh dilihat pemakai; dikirim server di `per_toko`)
+  const tokoKerja = isEdit ? Object.keys(editCreator?.per_toko || {}) : [];
+  const pakaiPerToko = tokoKerja.length > 0;
+  const [perToko, setPerToko] = useState(() => Object.fromEntries(
+    Object.entries(editCreator?.per_toko || {}).map(([k, v]) => [k, kerjaDari(v)])));
+  const [tokoAktif, setTokoAktif] = useState(() => (tokoKerja.includes(tokoKonteks) ? tokoKonteks
+    : (editCreator?.toko_konteks && tokoKerja.includes(editCreator.toko_konteks) ? editCreator.toko_konteks : tokoKerja[0] || '')));
+  const [disentuh, setDisentuh] = useState([]);
   const [form, setForm] = useState({
     name: editCreator?.name || '',
     creator_code: editCreator?.creator_code || '',
@@ -102,7 +116,14 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
   const [galat, setGalat] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-  const setKpi = (k, v) => setForm(f => ({ ...f, kpi_targets: { ...f.kpi_targets, [k]: Number(v) } }));
+  const kerja = pakaiPerToko ? (perToko[tokoAktif] || kerjaDari(null)) : kerjaDari(form);
+  const setKerja = (k, v) => {
+    if (!pakaiPerToko) { set(k, v); return; }
+    setPerToko(p => ({ ...p, [tokoAktif]: { ...(p[tokoAktif] || kerjaDari(null)), [k]: v } }));
+    setDisentuh(d => (d.includes(tokoAktif) ? d : [...d, tokoAktif]));
+  };
+  const setKpi = (k, v) => setKerja('kpi_targets', { ...kerja.kpi_targets, [k]: Number(v) });
+  const namaToko = (id) => accounts.find(a => a.id === id)?.account_name || 'toko';
   const ubahAkun = (i, k, v) => setAkun(xs => xs.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const tokoAkun = (i, id) => setAkun(xs => xs.map((x, j) => (j !== i ? x
     : { ...x, toko_ids: (x.toko_ids || []).includes(id) ? x.toko_ids.filter(t => t !== id) : [...(x.toko_ids || []), id] })));
@@ -119,7 +140,8 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
     setGalat('');
     if (!form.name || !form.creator_code) { setGalat('Nama dan kode kreator wajib diisi.'); return; }
     // Akun portal hanya wajib untuk kreator kontrak/lanjutan; bila email diisi, sandi harus ada.
-    if (form.creator_type !== 'new' && !form.login_email) { setGalat('Kreator kontrak/lanjutan butuh email login untuk akses portal.'); return; }
+    const tipeSemua = pakaiPerToko ? Object.values(perToko).map(v => v.creator_type) : [form.creator_type];
+    if (tipeSemua.some(t => t !== 'new') && !form.login_email) { setGalat('Kreator kontrak/lanjutan butuh email login untuk akses portal.'); return; }
     if (!isEdit && form.login_email && !form.login_password) { setGalat('Email diisi — sandi wajib minimal 6 karakter.'); return; }
     setSaving(true);
     try {
@@ -127,6 +149,10 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
       const method = isEdit ? 'PUT' : 'POST';
       const body = { ...form, accounts: akun.filter(a => String(a.username || '').trim()) };
       if (isEdit && !body.login_password) delete body.login_password;
+      if (pakaiPerToko) {
+        ['creator_type', 'kpi_targets', 'notes', 'status'].forEach(k => delete body[k]);
+        body.per_toko = Object.fromEntries(disentuh.map(a => [a, perToko[a]]));
+      }
       const r = await fetch(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Gagal menyimpan');
@@ -147,14 +173,6 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
         <Isian label="Kode kreator" wajib htmlFor="cr-code">
           <Input id="cr-code" data-testid="creator-code-input" value={form.creator_code} onChange={e => set('creator_code', e.target.value)} placeholder="KOL-001" />
         </Isian>
-        <Isian label="Tipe kreator" wajib htmlFor="cr-type">
-          <SmartNativeSelect id="cr-type" data-testid="creator-type-select" value={form.creator_type} searchable={false}
-            onChange={e => set('creator_type', e.target.value)}>
-            <option value="new">Kreator baru (tanpa akun portal)</option>
-            <option value="kontrak">Kreator kontrak (dapat insentif)</option>
-            <option value="continue">Kreator lanjutan (dapat insentif)</option>
-          </SmartNativeSelect>
-        </Isian>
         <Isian label="Domisili (kota/kab.)" htmlFor="cr-dom">
           <Input id="cr-dom" data-testid="creator-domicile-input" value={form.domicile} onChange={e => set('domicile', e.target.value)} placeholder="Bandung" />
         </Isian>
@@ -164,7 +182,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
           onChange={e => set('domicile_detail', e.target.value)} placeholder="Kec. Coblong, Jl. ..." />
       </Isian>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Isian label="Email login" wajib={form.creator_type !== 'new'} petunjuk={form.creator_type === 'new' ? 'Opsional untuk kreator baru.' : undefined} htmlFor="cr-email">
+        <Isian label="Email login" wajib={kerja.creator_type !== 'new'} petunjuk={kerja.creator_type === 'new' ? 'Opsional untuk kreator baru.' : undefined} htmlFor="cr-email">
           <Input id="cr-email" data-testid="creator-email-input" type="email" value={form.login_email} onChange={e => set('login_email', e.target.value)} placeholder="kreator@email.com" />
         </Isian>
         <Isian label={isEdit ? 'Sandi baru' : 'Sandi'} wajib={!isEdit && !!form.login_email}
@@ -211,18 +229,6 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
           </div>
         ))}
       </section>
-      <p className="border-t border-[var(--glass-border)] pt-3 text-sm font-medium">Target KPI bulanan</p>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Isian label="Omzet (Rp)">
-          <MoneyInput value={form.kpi_targets.monthly_revenue} onChange={e => setKpi('monthly_revenue', e.target.value)} />
-        </Isian>
-        <Isian label="Sesi live" htmlFor="cr-kpi-s">
-          <Input id="cr-kpi-s" type="number" value={form.kpi_targets.monthly_sessions} onChange={e => setKpi('monthly_sessions', e.target.value)} />
-        </Isian>
-        <Isian label="Total penonton" htmlFor="cr-kpi-v">
-          <Input id="cr-kpi-v" type="number" value={form.kpi_targets.monthly_viewers} onChange={e => setKpi('monthly_viewers', e.target.value)} />
-        </Isian>
-      </div>
       <Isian label="Toko yang ditugaskan">
         <div className="flex flex-wrap gap-1.5">
           {accounts.map(acc => {
@@ -234,9 +240,57 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
           })}
         </div>
       </Isian>
-      <Isian label="Catatan" htmlFor="cr-notes">
-        <Textarea id="cr-notes" value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} />
-      </Isian>
+      <section className="space-y-3 border-t border-[var(--glass-border)] pt-3" data-testid="creator-kerja-sama">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium">
+            {pakaiPerToko && tokoKerja.length === 1 ? `Kerja sama dengan ${namaToko(tokoKerja[0])}` : 'Kerja sama dengan toko'}
+          </p>
+          {pakaiPerToko && tokoKerja.length > 1 && (
+            <SmartNativeSelect value={tokoAktif} onChange={e => setTokoAktif(e.target.value)} searchable={false}
+              className="w-full" wrapperClassName="w-56 max-w-full" aria-label="Toko kerja sama" data-testid="creator-kerja-toko">
+              {tokoKerja.map(id => <option key={id} value={id}>{namaToko(id)}</option>)}
+            </SmartNativeSelect>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {pakaiPerToko
+            ? 'Tipe, status, target, dan catatan berlaku untuk toko ini saja; toko lain tidak ikut berubah. Nama, kontak, dan akun kreator berlaku untuk semua toko.'
+            : 'Berlaku untuk semua toko yang dipilih. Sesudah kreator dibuat, data ini bisa dibedakan per toko.'}
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Tipe kreator" wajib htmlFor="cr-type">
+            <SmartNativeSelect id="cr-type" data-testid="creator-type-select" value={kerja.creator_type} searchable={false}
+              onChange={e => setKerja('creator_type', e.target.value)}>
+              <option value="new">Kreator baru (tanpa akun portal)</option>
+              <option value="kontrak">Kreator kontrak (dapat insentif)</option>
+              <option value="continue">Kreator lanjutan (dapat insentif)</option>
+            </SmartNativeSelect>
+          </Isian>
+          {pakaiPerToko && (
+            <Isian label="Status" htmlFor="cr-status">
+              <SmartNativeSelect id="cr-status" data-testid="creator-status-select" value={kerja.status} searchable={false}
+                onChange={e => setKerja('status', e.target.value)}>
+                <option value="active">Aktif</option>
+                <option value="inactive">Nonaktif</option>
+              </SmartNativeSelect>
+            </Isian>
+          )}
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Isian label="Target omzet bulanan (Rp)">
+            <MoneyInput value={kerja.kpi_targets.monthly_revenue} onChange={e => setKpi('monthly_revenue', e.target.value)} />
+          </Isian>
+          <Isian label="Target sesi live" htmlFor="cr-kpi-s">
+            <Input id="cr-kpi-s" type="number" value={kerja.kpi_targets.monthly_sessions} onChange={e => setKpi('monthly_sessions', e.target.value)} />
+          </Isian>
+          <Isian label="Target penonton" htmlFor="cr-kpi-v">
+            <Input id="cr-kpi-v" type="number" value={kerja.kpi_targets.monthly_viewers} onChange={e => setKpi('monthly_viewers', e.target.value)} />
+          </Isian>
+        </div>
+        <Isian label="Catatan" htmlFor="cr-notes">
+          <Textarea id="cr-notes" value={kerja.notes} onChange={e => setKerja('notes', e.target.value)} rows={2} />
+        </Isian>
+      </section>
     </FormPopup>
   );
 }
@@ -379,7 +433,7 @@ export default function KOLCreatorModule({ token }) {
     const [cy, cm] = bulanMarketingWIB().split('-').map(Number);
     try {
       const [crRes, ac, sess, reqs, lb, tgtsRaw] = await Promise.all([
-        fetch(`${API}/api/marketing/kol/creators?page=${creatorPage}&limit=${ITEMS_PER_PAGE}`, { headers }).then(r => r.json()),
+        fetch(`${API}/api/marketing/kol/creators?page=${creatorPage}&limit=${ITEMS_PER_PAGE}${filterAccountId ? `&account_id=${filterAccountId}` : ''}`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/accounts`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/kol/sessions`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/kol/requests?page=${requestPage}&limit=${ITEMS_PER_PAGE}`, { headers }).then(r => r.json()),
@@ -408,7 +462,7 @@ export default function KOLCreatorModule({ token }) {
       setCreatorTargets(tMap);
     } catch (err) { toast.error('Gagal memuat data'); }
     finally { setLoading(false); }
-  }, [headers, leaderMonth, creatorPage, requestPage]);
+  }, [headers, leaderMonth, creatorPage, requestPage, filterAccountId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -706,6 +760,16 @@ export default function KOLCreatorModule({ token }) {
             </>}>
             <dl className="divide-y divide-[var(--glass-border)]">
               <BarisDetail label="Toko">{(c.assigned_account_ids || []).map(namaAkun).filter(Boolean).join(', ') || 'Belum ditugaskan ke toko'}</BarisDetail>
+              {Object.keys(c.per_toko || {}).length > 1 && (
+                <BarisDetail label="Kerja sama per toko">
+                  <span className="block space-y-0.5" data-testid="creator-detail-per-toko">
+                    {Object.entries(c.per_toko).map(([id, v]) => (
+                      <span key={id} className="block">{namaAkun(id) || 'Toko'}: {(STATUS[v.status] || [v.status])[0]} · {TIPE[v.creator_type || 'new']}
+                        {Number(v.kpi_targets?.monthly_revenue) > 0 ? ` · target ${fmtRp(v.kpi_targets.monthly_revenue)}` : ''}</span>
+                    ))}
+                  </span>
+                </BarisDetail>
+              )}
               <BarisDetail label="Akun kreator">{akunAwal(c).length
                 ? akunAwal(c).map(a => `${labelPlatform(a.platform)} ${a.username} (${labelJenisAkun(a.jenis)})`).join(' · ') : '—'}</BarisDetail>
               <BarisDetail label="Domisili">{[c.domicile, c.domicile_detail].filter(Boolean).join(' — ') || '—'}</BarisDetail>
@@ -730,7 +794,7 @@ export default function KOLCreatorModule({ token }) {
           onClose={() => { setIncentiveCreator(null); load(); }} />
       )}
       {showCreatorForm && (
-        <CreatorFormModal token={token} accounts={accounts} editCreator={editCreator}
+        <CreatorFormModal token={token} accounts={accounts} editCreator={editCreator} tokoKonteks={filterAccountId}
           onClose={() => { setShowCreatorForm(false); setEditCreator(null); }}
           onSaved={() => { setShowCreatorForm(false); setEditCreator(null); load(); }} />
       )}

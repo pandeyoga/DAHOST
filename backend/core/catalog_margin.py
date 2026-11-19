@@ -44,13 +44,21 @@ UNKNOWN = "belum_bisa_diukur"
 SRC_WAC = "fg_wac"              # biaya nyata: WAC FG (`unit_cost`, core/fg_cost_layers)
 SRC_ESTIMATE = "fg_estimasi"    # `hpp` master FG = kalkulator BOM / R&D (perkiraan)
 SRC_CATALOG = "catalog_manual"
+# 19 Nov 2026 (keputusan owner, kendala Kirim Sample): WAC yang belum memuat kain (barang dari PO saldo awal cutoff,
+# dinilai upah jahit saja) TIDAK dipakai sebagai HPP katalog/sampel selama barangnya belum lahir dari cutting nyata —
+# HPP R&D (BOM) dipakai. WAC itu hanya cadangan terakhir.
+SRC_WAC_TANPA_KAIN = "fg_wac_tanpa_kain"
+SRC_RND = "rnd_bom"
 SOURCE_LABEL = {
     SRC_WAC: "WAC aktual",
     SRC_ESTIMATE: "estimasi (kalkulator HPP)",
     SRC_CATALOG: "ketikan katalog",
+    SRC_WAC_TANPA_KAIN: "WAC tanpa kain (stok cutoff)",
+    SRC_RND: "HPP R&D (BOM)",
     "none": "belum ada",
 }
-FG_COST_PROJECTION = {"_id": 0, "id": 1, "hpp": 1, "hpp_source": 1, "unit_cost": 1, "wac_components": 1}
+FG_COST_PROJECTION = {"_id": 0, "id": 1, "hpp": 1, "hpp_source": 1, "unit_cost": 1, "wac_components": 1,
+                      "wac_tanpa_kain": 1}
 
 
 def _f(v) -> float:
@@ -60,17 +68,39 @@ def _f(v) -> float:
         return 0.0
 
 
+def wac_tanpa_kain(mat: dict | None) -> bool:
+    """WAC FG ada tetapi belum memuat kain: ditandai `wac_tanpa_kain` (lapisan PO saldo awal cutoff / produksi tanpa
+    bahan, dan belum ada lapisan dari cutting nyata — `core.fg_cost_layers.push_layer`) atau komponen bahannya 0."""
+    m = mat or {}
+    comps = m.get("wac_components")
+    if not isinstance(comps, dict) or _f(m.get("unit_cost")) <= 0:
+        return False
+    return bool(m.get("wac_tanpa_kain")) or _f(comps.get("material")) <= 0
+
+
+def rnd_layak(hpp, mat: dict | None) -> bool:
+    """HPP R&D pengganti WAC tanpa kain hanya dipakai bila lebih besar dari upah jahit di WAC itu
+    (HPP R&D di bawah upah jahit pasti BOM-nya belum lengkap, mis. kainnya belum berharga)."""
+    labor = _f(((mat or {}).get("wac_components") or {}).get("labor"))
+    return _f(hpp) > 0 and _f(hpp) > labor
+
+
 def effective_fg_cost(mat: dict | None) -> dict:
     """HPP efektif satu master FG (fungsi murni; dipakai katalog & Portal Penjualan).
 
     WAC aktual hanya bila FG sudah dinilai WAC (`wac_components` ada) dan > 0 —
-    `unit_cost` FG lama yang kosong/0 tidak dianggap biaya nyata."""
+    `unit_cost` FG lama yang kosong/0 tidak dianggap biaya nyata.
+    19 Nov 2026: WAC tanpa kain (`wac_tanpa_kain`) didahului HPP kalkulator/R&D FG yang layak; ia cadangan terakhir."""
     m = mat or {}
     wac = _f(m.get("unit_cost")) if isinstance(m.get("wac_components"), dict) else 0.0
-    if wac > 0:
+    tanpa = wac > 0 and wac_tanpa_kain(m)
+    est = _f(m.get("hpp"))
+    if wac > 0 and not tanpa:
         src, hpp = SRC_WAC, wac
-    elif _f(m.get("hpp")) > 0:
-        src, hpp = SRC_ESTIMATE, _f(m.get("hpp"))
+    elif est > 0 and (not tanpa or rnd_layak(est, m)):
+        src, hpp = SRC_ESTIMATE, est
+    elif wac > 0:
+        src, hpp = SRC_WAC_TANPA_KAIN, wac
     else:
         src, hpp = "", 0.0
     return {"hpp": round(hpp, 2), "source": src, "is_estimate": src == SRC_ESTIMATE,
@@ -98,6 +128,10 @@ def decorate(row: dict, fg_cost: dict = None) -> dict:
     fg = fg_cost or {}
     hpp = _f(fg.get("hpp"))
     source = fg.get("source") or ""
+    # 19 Nov 2026: FG ber-WAC tanpa kain → HPP katalog (sudah = HPP R&D model lewat `resolve_catalog_hpp`) didahulukan
+    if (source == SRC_WAC_TANPA_KAIN and _f(row.get("hpp")) > 0
+            and row.get("hpp_source") not in ("wac", "wac_tanpa_kain")):
+        hpp, source = _f(row.get("hpp")), SRC_RND
     if hpp <= 0:
         hpp = _f(row.get("hpp"))
         source = SRC_CATALOG if hpp > 0 else "none"
@@ -142,7 +176,9 @@ def resolve_catalog_hpp(fg: dict | None, model: dict | None) -> tuple:
     dan "Segarkan dari master" (dulu tambah mendahulukan model, segarkan mendahulukan FG 'bom').
 
     Urutan: WAC aktual FG → HPP standar FG (HPP per potong per warna/ukuran yang diterapkan) →
-    HPP model (rata-rata / R&D / manual, hanya bila FG belum punya angka) → 0."""
+    HPP model (rata-rata / R&D / manual, hanya bila FG belum punya angka) → 0.
+    19 Nov 2026 (keputusan owner): WAC yang belum memuat kain (stok PO saldo awal cutoff) TIDAK dipakai selama ada
+    HPP R&D yang layak (> upah jahit); ia jadi cadangan terakhir bersumber 'wac_tanpa_kain'."""
     eff = effective_fg_cost(fg)
     if eff["source"] == SRC_WAC:
         return eff["hpp"], "wac"
@@ -151,8 +187,10 @@ def resolve_catalog_hpp(fg: dict | None, model: dict | None) -> tuple:
     if model:
         from core import product_master as _pm
         hpp, src = _pm.resolve_hpp(model)
-        if hpp:
+        if hpp and (eff["source"] != SRC_WAC_TANPA_KAIN or rnd_layak(hpp, fg)):
             return float(hpp), src
+    if eff["source"] == SRC_WAC_TANPA_KAIN:
+        return eff["hpp"], "wac_tanpa_kain"
     return 0.0, "none"
 
 

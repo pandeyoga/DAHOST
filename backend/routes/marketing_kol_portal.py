@@ -277,7 +277,8 @@ async def creator_my_performance(
     sessions = await db.marketing_creator_sessions.find(
         {'creator_id': creator['id'], 'date': {'$gte': date_from, '$lte': date_to}}, {'_id': 0}
     ).sort('date', -1).to_list(500)
-    kpi = creator.get('kpi_targets', {})
+    from core import kreator_per_toko as _kt   # 19 Nov 2026: target per toko dijumlah
+    kpi = _kt.kpi_total(creator)
     total_revenue = sum(s.get('revenue', 0) for s in sessions)
     total_sessions = len(sessions)
     total_viewers = sum(s.get('viewers', 0) for s in sessions)
@@ -310,7 +311,8 @@ async def creator_my_kpi(request: Request):
     sessions = await db.marketing_creator_sessions.find(
         {'creator_id': creator['id'], 'date': {'$gte': date_from, '$lte': date_to}}, {'_id': 0}
     ).to_list(500)
-    kpi = creator.get('kpi_targets', {})
+    from core import kreator_per_toko as _kt   # 19 Nov 2026: target per toko dijumlah
+    kpi = _kt.kpi_total(creator)
     total_revenue = sum(s.get('revenue', 0) for s in sessions)
     total_sessions = len(sessions)
     total_viewers = sum(s.get('viewers', 0) for s in sessions)
