@@ -57,6 +57,15 @@ SOURCE_MANUAL = "manual"                      # diketik manusia
 SOURCE_IMPORT = "import"                      # impor rekap harian (platform tanpa ekspor pesanan)
 SOURCE_IMPORT_KPI = "import_kpi"              # F8 — hanya mengisi grup KPI
 SOURCE_TASK = "task_action"                   # aksi dari modul Tugas
+# 19 Nov 2026 (kendala staf): hari tanpa penjualan ditandai dengan alasan — rekap Total 0. BUKAN turunan: bila
+# belakangan pesanan tanggal itu diimpor, rollup menggantinya dan menyimpan jejak lamanya (`previous_source`).
+SOURCE_NIHIL = "tidak_ada_penjualan"
+ALASAN_NIHIL = {
+    "tidak_ada_pesanan": "Tidak ada pesanan",
+    "toko_libur": "Toko libur / tutup",
+    "akun_dibekukan": "Akun dibekukan / dibatasi platform",
+    "lainnya": "Lainnya",
+}
 # F2 (2026-08-12) — SPV MENGGANTI angka turunan secara sadar (dengan alasan).
 # Bukan "derived": angka ini boleh diedit lagi, tetapi TIDAK ditimpa rollup
 # otomatis kecuali diminta paksa. Lihat core/marketing_daily_rollup.py.

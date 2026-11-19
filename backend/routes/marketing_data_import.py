@@ -2716,6 +2716,8 @@ async def _apply_fulfillment_row(db, st: SourceType, doc: dict, existing: dict,
         changed = True
 
     if not changed:
+        if st.collection == "marketing_orders":   # 19 Nov 2026: terlihat lagi di berkas status (lihat Monitoring Kirim)
+            await db[st.collection].update_one({"id": existing["id"]}, {"$set": {"last_seen_import_at": _now()}})
         return ("dilewati", ["tidak ada perubahan (status & field susulan sama)"], None)
 
     # 4. penanda bahwa pesanan ini SUDAH pernah terlihat di berkas fulfillment —
@@ -3995,6 +3997,11 @@ async def _commit_locked(session_id: str, request: Request, body: Optional[Commi
                                                   "why": ["sudah ada (duplikat)"]
                                                   + (moved[1] if moved else []),
                                                   "id": existing["id"]})
+                            if st.collection == "marketing_orders":
+                                # 19 Nov 2026: pesanan yang terlihat lagi di berkas (walau tidak berubah) dicatat
+                                # waktunya — Monitoring Kirim menandai pesanan yang lama tidak ikut berkas impor.
+                                await db[st.collection].update_one(
+                                    {"id": existing["id"]}, {"$set": {"last_seen_import_at": now}})
                         continue
 
             # ── F3 — jenis `update_only` TIDAK PERNAH membuat baris baru ──────────

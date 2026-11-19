@@ -8,7 +8,7 @@
  */
 import { Plus, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';  // 19 Nov 2026 (kendala R&D): kotak angka menerima koma (1,3789) — MoneyInput, bukan input number peramban
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { InlineMaterialPicker } from './InlineMaterialPicker';
 
@@ -59,7 +59,7 @@ export function ResepKainEditor({ value, onChange, token, categories = [], testI
             {[...new Set([...PERAN_KAIN, r.role].filter(Boolean))].map((p) => <option key={p} value={p}>{p}</option>)}
           </SmartNativeSelect>
           <div className="flex items-center gap-1">
-            <GlassInput type="number" step="0.001" min="0" value={r.qty_per_pcs} placeholder="per pcs"
+            <MoneyInput glass decimals={4} value={r.qty_per_pcs} placeholder="per pcs"
               onChange={(e) => set(idx, { qty_per_pcs: e.target.value })} aria-label="Perkiraan per pcs"
               data-testid={`${testId}-qty-${idx}`} />
             <span className="text-xs text-muted-foreground">{r.unit}</span>

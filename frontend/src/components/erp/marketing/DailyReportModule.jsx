@@ -202,7 +202,16 @@ export default function DailyReportModule({ token }) {
         <p className="font-medium text-foreground">{acc.account_name}</p>
         <p className="text-xs text-muted-foreground">{acc.account_code} · {labelPlatform(acc.platform)}</p>
       </div>) },
-    { kunci: 'total', label: judulUrut(kol('total')), isi: (acc) => <YesNo ok={!!acc.sales_status?.entered_total} /> },
+    { kunci: 'total', label: judulUrut(kol('total')), isi: (acc) => (
+      <span>
+        <YesNo ok={!!acc.sales_status?.entered_total} />
+        {acc.sales_status?.nihil && (
+          <span className="block text-xs text-muted-foreground" data-testid={`daily-nihil-${acc.account_id}`}>
+            Tidak ada penjualan{acc.sales_status.nihil_alasan ? ` · ${acc.sales_status.nihil_alasan}` : ''}
+          </span>
+        )}
+      </span>
+    ) },
     { kunci: 'revenue', label: judulUrut(kol('revenue')), rata: 'kanan', isi: (acc) => (acc.sales_status?.entered_total
       ? <span className="tabular-nums md:whitespace-nowrap">{fmtRp(acc.sales_status.revenue)}</span> : <span className="text-muted-foreground">—</span>) },
     { kunci: 'orders', label: judulUrut(kol('orders')), rata: 'kanan', isi: (acc) => (acc.sales_status?.entered_total

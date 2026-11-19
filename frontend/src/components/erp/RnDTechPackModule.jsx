@@ -9,6 +9,7 @@
 import { useState, useEffect, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
+import { MoneyInput } from '@/components/ui/money-input';  // 19 Nov 2026 (kendala R&D): kotak angka menerima koma (1,3789) — MoneyInput, bukan input number peramban
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import FilterChips from '@/components/ui/filter-chips';
@@ -953,7 +954,7 @@ export default function RnDTechPackModule({ token }) {
                   <Input id="tp-stitch" value={form.stitch_type} onChange={e => f('stitch_type', e.target.value)} placeholder="Obras / jahit satu jarum…" />
                 </Isian>
                 <Isian label="Lebar kampuh (mm)" htmlFor="tp-seam">
-                  <Input id="tp-seam" type="number" value={form.seam_allowance_mm} onChange={e => f('seam_allowance_mm', Number(e.target.value))} />
+                  <MoneyInput id="tp-seam" decimals={1} value={form.seam_allowance_mm} onChange={e => f('seam_allowance_mm', Number(e.target.value))} />
                 </Isian>
               </div>
             </div>
@@ -1032,9 +1033,9 @@ export default function RnDTechPackModule({ token }) {
                       <option value="main">Utama</option>
                       <option value="combination">Kombinasi</option>
                     </SmartNativeSelect>
-                    <Input type="number" value={e.length_cm ?? ''} onChange={ev => setCons(i, 'length_cm', ev.target.value)} placeholder="Panjang cm" aria-label="Panjang (cm)" />
-                    <Input type="number" value={e.width_cm ?? ''} onChange={ev => setCons(i, 'width_cm', ev.target.value)} placeholder="Lebar cm" aria-label="Lebar (cm)" />
-                    <Input type="number" value={e.yield_pcs ?? ''} onChange={ev => setCons(i, 'yield_pcs', ev.target.value)} placeholder="Hasil pcs" aria-label="Hasil (pcs)" />
+                    <MoneyInput decimals={2} value={e.length_cm ?? ''} onChange={ev => setCons(i, 'length_cm', ev.target.value)} placeholder="Panjang cm" aria-label="Panjang (cm)" />
+                    <MoneyInput decimals={2} value={e.width_cm ?? ''} onChange={ev => setCons(i, 'width_cm', ev.target.value)} placeholder="Lebar cm" aria-label="Lebar (cm)" />
+                    <MoneyInput decimals={2} value={e.yield_pcs ?? ''} onChange={ev => setCons(i, 'yield_pcs', ev.target.value)} placeholder="Hasil pcs" aria-label="Hasil (pcs)" />
                     <div className="flex justify-end">
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeCons(i)} title="Hapus baris" aria-label="Hapus baris">
                         <X className="text-[hsl(var(--danger-text))]" />
@@ -1106,7 +1107,7 @@ export default function RnDTechPackModule({ token }) {
                       </div>
                       <div>
                         <Lbl>Qty</Lbl>
-                        <Input type="number" value={b.qty} onChange={e => setBOM(i, 'qty', e.target.value)} placeholder="0" className="text-right" data-testid={`tp-bom-qty-${i}`} />
+                        <MoneyInput decimals={4} value={b.qty} onChange={e => setBOM(i, 'qty', e.target.value)} placeholder="0" className="text-right" data-testid={`tp-bom-qty-${i}`} />
                       </div>
                       <div>
                         <Lbl>Satuan</Lbl>
