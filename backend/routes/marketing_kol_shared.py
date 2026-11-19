@@ -148,6 +148,10 @@ class CreatorUpdate(BaseModel):
     notes: Optional[str] = None
     status: Optional[str] = Field(None, description="active | inactive")
     login_password: Optional[str] = Field(None, min_length=6)
+    # 19 Nov 2026 (keputusan owner) — data kerja sama per toko: {account_id: {status, creator_type, kpi_targets,
+    # notes}}; `account_id` = toko tujuan field kerja sama di tingkat atas (core.kreator_per_toko).
+    per_toko: Optional[dict] = None
+    account_id: Optional[str] = None
 
 
 class SessionCreate(BaseModel):

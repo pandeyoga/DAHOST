@@ -111,7 +111,8 @@ async def _creator(db, creator_id: str) -> dict:
 async def _summary(db, creator: dict) -> dict:
     cfg = _norm_cfg(creator.get("incentive"))
     win = _period_window(cfg)
-    ctype = creator.get("creator_type") or "new"
+    from core import kreator_per_toko as _kt   # 19 Nov 2026: tipe kerja sama per toko
+    ctype = _kt.tipe_insentif(creator)
     rows = await db[ENTRIES].find(
         {"creator_id": creator["id"], "date": {"$gte": win["start"], "$lt": win["end"]}},
         {"_id": 0}).sort("date", -1).to_list(1000)

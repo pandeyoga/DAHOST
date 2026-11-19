@@ -278,11 +278,15 @@ async def get_leaderboard(request: Request, month: Optional[str] = Query(None, d
     month = f'{year:04d}-{mon:02d}'
     date_from, date_to = _bulan.rentang(year, mon)
     # 14 Nov 2026 — lingkup toko: kreator yang bertugas di toko pemakai, angka dari sesi toko itu saja.
-    creators = await db.marketing_kol_creators.find(
-        await _scope.saring_lingkup(db, user, {'status': 'active'}, field='assigned_account_ids'),
-        {'_id': 0, 'login_password_hash': 0}).to_list(500)
+    # 19 Nov 2026 — status & target kreator per toko (core.kreator_per_toko)
+    from core import kreator_per_toko as _kt
+    visible = await _scope.toko_lingkup(db, user)
+    creators = [c for c in await db.marketing_kol_creators.find(
+        await _scope.saring_lingkup(db, user, {}, field='assigned_account_ids'),
+        {'_id': 0, 'login_password_hash': 0}).to_list(500) if _kt.aktif_di(c, visible)]
     leaderboard = []
     for creator in creators:
+        _kt.terapkan(creator, visible)
         sessions = await db.marketing_creator_sessions.find(
             await _scope.saring_lingkup(db, user, {'creator_id': creator['id'],
                                                  'date': {'$gte': date_from, '$lte': date_to}}),

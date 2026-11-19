@@ -444,17 +444,46 @@ async def wac_state(db, material_id: str, *, init: bool = True, actor: dict | No
     return state
 
 
+async def _tandai_kain(db, material_id: str, layer: dict, components: dict | None) -> None:
+    """19 Nov 2026 (keputusan owner, HPP sampel/katalog): tandai FG yang nilai persediaannya BELUM memuat kain.
+
+    Lapisan produksi tanpa bahan (PO saldo awal cutoff dinilai upah jahit, atau bahan belum tercatat) →
+    `wac_tanpa_kain` True, kecuali FG sudah pernah menerima lapisan berbahan. Lapisan berbahan (cutting nyata /
+    BOM) → `wac_kain_nyata` True dan tanda dicabut: sejak itu WAC dipakai lagi. Retur tidak mengubah tanda."""
+    src = str((layer.get("batch") or {}).get("source") or "")
+    if "return" in src:
+        return
+    bd = layer.get("breakdown") or {}
+    bahan = _f((components or {}).get("material")) if components is not None else _f(bd.get("material_cost"))
+    if bahan > 0:
+        await db.rahaza_materials.update_one({"id": material_id}, {"$set": {
+            "wac_kain_nyata": True, "wac_tanpa_kain": False}})
+    elif src == "production" or bd.get("material_source") == "saldo_awal_nol":
+        await db.rahaza_materials.update_one({"id": material_id, "wac_kain_nyata": {"$ne": True}},
+                                             {"$set": {"wac_tanpa_kain": True}})
+
+
 async def _sync_catalog(db, material_id: str, unit_cost: float) -> None:
     """Cache HPP item katalog = WAC aktual (dibaca margin/marketing). Master `hpp` FG
-    tidak disentuh: itu HPP kalkulator (estimasi)."""
+    tidak disentuh: itu HPP kalkulator (estimasi).
+    19 Nov 2026: FG yang WAC-nya belum memuat kain → cache = `catalog_margin.resolve_catalog_hpp` (HPP R&D)."""
     if _f(unit_cost) <= 0:
         return
-    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0, "code": 1}) or {}
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {
+        "_id": 0, "code": 1, "unit_cost": 1, "wac_components": 1, "wac_tanpa_kain": 1, "hpp": 1,
+        "hpp_source": 1, "model_id": 1}) or {}
+    hpp, src = _r(unit_cost), "wac"
+    from core import catalog_margin as _cm
+    if _cm.wac_tanpa_kain(mat):
+        model = (await db.rahaza_models.find_one({"id": mat["model_id"]}, {"_id": 0})
+                 if mat.get("model_id") else None)
+        hpp, src = _cm.resolve_catalog_hpp(mat, model)
+        hpp = _r(hpp)
     ors = [{"fg_material_id": material_id}, {"fg_product_id": material_id}, {"material_id": material_id}]
     if mat.get("code"):
         ors.append({"sku": mat["code"]})
     await db.marketing_catalog_items.update_many(
-        {"$or": ors}, {"$set": {"hpp": _r(unit_cost), "hpp_source": "wac", "hpp_updated_at": _now()},
+        {"$or": ors}, {"$set": {"hpp": hpp, "hpp_source": src, "hpp_updated_at": _now()},
                        "$unset": {"hpp_fifo_avg": "", "hpp_last_batch": ""}})
 
 
@@ -545,6 +574,7 @@ async def push_layer(db, *, material_id: str, qty: int, po_item: dict | None = N
     }
     await db[LAYERS].insert_one(doc)
     doc.pop("_id", None)
+    await _tandai_kain(db, material_id, doc, components)
     # ongkos permak yang ikut lapisan ini ditandai SUDAH diserap (sekali saja)
     for a in doc["permak_absorbed"]:
         await db.dewi_cmt_permak.update_one({"id": a["id"]}, {
