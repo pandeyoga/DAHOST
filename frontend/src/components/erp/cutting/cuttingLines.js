@@ -1,7 +1,8 @@
 /**
  * cuttingLines — bentuk baris order cutting di layar (keputusan owner 10 Nov 2026):
  * satu order = beberapa KAIN (masing-masing beberapa gulungan) × beberapa HASIL (model · varian · target pcs).
- * HPP potongan per pcs = total biaya kain ÷ total pcs hasil semua baris (sama untuk semua baris) — cermin
+ * HPP potongan per pcs = total biaya kain ÷ total pcs hasil semua baris (sama untuk semua baris; sejak 19 Nov produk
+ * ber-resep kain: nilai tiap kain dibagi ke hasil yang memakainya, lihat `bagiNilaiPerKain`) — cermin
  * `backend/core/cutting_lines.py`. Tautan gulungan → hasil = ketelusuran, bukan dasar HPP.
  */
 
@@ -109,4 +110,37 @@ export function pilihGulunganFifo(items, need) {
     sum += left;
   });
   return out;
+}
+
+/**
+ * Cermin `backend/core/resep_kain.py::alokasi_nilai` (19 Nov 2026): nilai tiap kain dibagi ke baris hasil yang
+ * memakainya menurut resep kain. Baris tanpa resep ikut semua kain; kain di luar resep mana pun dibagi ke semua baris;
+ * bobot = pcs × perkiraan/pcs bila semua yang berhak punya perkiraan untuk kain itu, selain itu pcs.
+ * `nilaiKain` = {material_id: nilai}, `baris` = [{qty}], `resep` = resep tiap baris (sejajar). Hasil: nilai per baris.
+ */
+export function bagiNilaiPerKain(nilaiKain, baris, resep) {
+  const n = (baris || []).length;
+  const out = Array(n).fill(0);
+  const byLine = Array.from({ length: n }, (_, i) => new Map(((resep || [])[i] || [])
+    .filter((r) => r?.material_id).map((r) => [r.material_id, r])));
+  const live = [...Array(n).keys()].filter((i) => Number(baris[i]?.qty || 0) > 0);
+  Object.entries(nilaiKain || {}).forEach(([fid, v]) => {
+    const value = Number(v || 0);
+    if (!(value > 0) || !live.length) return;
+    let hak = live.filter((i) => byLine[i].size === 0 || byLine[i].has(fid));
+    if (!hak.length) hak = live;
+    const pakaiQty = hak.every((i) => byLine[i].has(fid) && Number(byLine[i].get(fid).qty_per_pcs) > 0);
+    const w = hak.map((i) => Number(baris[i].qty) * (pakaiQty ? Number(byLine[i].get(fid).qty_per_pcs) : 1));
+    const tw = w.reduce((s, x) => s + x, 0);
+    if (!(tw > 0)) return;
+    hak.forEach((i, k) => { out[i] += (value * w[k]) / tw; });
+  });
+  return out;
+}
+
+/** HPP/pcs per baris hasil dari nilai kain (resep kain) — `null` bila tidak ada baris ber-resep (aturan lama: rata). */
+export function hppPerBaris(nilaiKain, baris, resep) {
+  if (!(resep || []).some((r) => (r || []).length)) return null;
+  const nilai = bagiNilaiPerKain(nilaiKain, baris, resep);
+  return nilai.map((v, i) => (Number(baris[i]?.qty) > 0 ? v / Number(baris[i].qty) : 0));
 }

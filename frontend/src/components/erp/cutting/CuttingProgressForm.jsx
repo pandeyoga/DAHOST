@@ -5,7 +5,8 @@
  *   · Per KAIN: kain diambil (satuan operator boleh beda — server menerjemahkan), sisa kain yang kembali ke stok,
  *     limbah, dan gulungan yang dipotong (FASE H-6: wajib untuk kain yang dilacak per gulungan; dibagi FIFO).
  *   · Per HASIL: pcs jadi + "Gulungan dipakai" (ketelusuran gulungan → hasil, bukan dasar HPP).
- *   · Tabel "Gulungan → hasil potongan" progres ini + perkiraan HPP/pcs = biaya kain ÷ total pcs (sama semua baris).
+ *   · Tabel "Gulungan → hasil potongan" progres ini + perkiraan HPP/pcs = biaya kain ÷ total pcs (sama semua baris;
+ *     hasil ber-resep kain: nilai tiap kain dibagi ke hasil yang memakainya — 19 Nov 2026).
  * Kain yang tidak dipakai pada progres ini cukup dikosongkan.
  *
  * 14 Nov 2026 (owner: "di cutting yang sedang berjalan, tolong bisa dilakukan EDIT"; order Selesai juga): `correcting`
@@ -27,7 +28,7 @@ import useUomOptions from '../../../hooks/useUomOptions';
 import { UomSelect, UomConversionHint, toBaseQty } from '../uom/UomPicker';
 // FASE H-6 — gulungan WAJIB ditunjuk saat memotong kain yang punya gulungan.
 import { previewAllocation, fmtQty } from '../warehouse/rollLines';
-import { rollRemaining } from './cuttingLines';
+import { rollRemaining, hppPerBaris } from './cuttingLines';
 
 const EMPTY_LINE = { input_consumed: '', input_uom: '', leftover_qty: '', waste_qty: '', waste_uom: '', roll_ids: [] };
 const EMPTY_ROLLS = { items: [], roll_required: false, total_remaining: 0, uom: '', other_location_count: 0 };
@@ -153,6 +154,16 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
 
   const totalPcs = outs.reduce((s, x) => s + Number(outState[x.line_id]?.output_qty || 0), 0);
   const totalValue = ins.reduce((s, i) => s + (calc[i.line_id]?.value || 0), 0);
+  // 19 Nov 2026: hasil ber-resep kain — nilai tiap kain dibagi ke hasil yang memakainya (cermin server)
+  const hppBaris = useMemo(() => {
+    const nilai = {};
+    ins.forEach((i) => {
+      const v = calc[i.line_id]?.value || 0;
+      if (v > 0) nilai[i.input_material_id] = (nilai[i.input_material_id] || 0) + v;
+    });
+    return hppPerBaris(nilai, outs.map((x) => ({ qty: Number(outState[x.line_id]?.output_qty || 0) })),
+      outs.map((x) => x.fabric_recipe || []));
+  }, [ins, outs, calc, outState]);
   const anyBlocking = ins.some((i) => calc[i.line_id]?.blocking);
   const anyShortage = ins.some((i) => calc[i.line_id]?.active && calc[i.line_id]?.alloc.shortage > 0);
 
@@ -240,8 +251,14 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
         toast.info('Gulungan dipakai: ' + lp.roll_consumption
           .map((u) => `${u.roll_no} −${fmtQty(u.qty)} (sisa ${fmtQty(u.remaining_after)})`).join(' · '), { duration: 9000 });
       }
-      // SESI #32 — NILAI yang berpindah dari kain ke potongan (sama per pcs untuk semua baris hasil).
-      if (lp.value_status === 'valued' && Number(lp.value_out) > 0) {
+      // SESI #32 — NILAI yang berpindah dari kain ke potongan. 19 Nov 2026: hasil ber-resep kain punya HPP masuk per baris.
+      const perBaris = (lp.outputs || []).filter((x) => Number(x.output_qty) > 0);
+      const beda = new Set(perBaris.map((x) => Math.round(Number(x.cost_per_pcs_in || 0)))).size > 1;
+      if (lp.value_status === 'valued' && Number(lp.value_out) > 0 && beda) {
+        toast.info(`Nilai kain keluar ${fmtRp(lp.value_out)} dibagi per kain ke hasil yang memakainya: `
+          + perBaris.map((x) => `${x.label} ${fmtRp(Math.round(x.cost_per_pcs_in))}/pcs`).join(' · ')
+          + ' (masuk HPP potongan, rata-rata bergerak).', { duration: 10000 });
+      } else if (lp.value_status === 'valued' && Number(lp.value_out) > 0) {
         toast.info(`Nilai kain keluar ${fmtRp(lp.value_out)} ÷ ${fmtNum(lp.output_qty)} pcs → ${fmtRp(Math.round(lp.cost_per_pcs_in))}/pcs`
           + ' masuk ke HPP potongan (rata-rata bergerak).', { duration: 9000 });
       }
@@ -473,9 +490,16 @@ export default function CuttingProgressForm({ open, onClose, order, token, onSav
       <p className="text-sm text-muted-foreground" data-testid="cutting-progress-hpp">
         Total <b className="tabular-nums text-foreground">{fmtNum(totalPcs)} pcs</b>
         {totalPcs > 0 && totalValue > 0 && (
-          <> · perkiraan biaya kain {fmtRp(Math.round(totalValue))} ÷ {fmtNum(totalPcs)} pcs ≈{' '}
-            <b className="tabular-nums text-foreground">{fmtRp(Math.round(totalValue / totalPcs))}/pcs</b> untuk semua baris
-            (angka pasti memakai harga kain saat dicatat)</>
+          hppBaris ? (
+            <> · perkiraan biaya kain {fmtRp(Math.round(totalValue))}, dibagi per kain ke hasil yang memakainya (resep kain):{' '}
+              {outs.map((x, n) => (Number(outState[x.line_id]?.output_qty) > 0
+                ? `${x.label || `Baris ${n + 1}`} ≈ ${fmtRp(Math.round(hppBaris[n]))}/pcs` : null)).filter(Boolean).join(' · ')}
+              {' '}(angka pasti memakai harga kain saat dicatat)</>
+          ) : (
+            <> · perkiraan biaya kain {fmtRp(Math.round(totalValue))} ÷ {fmtNum(totalPcs)} pcs ≈{' '}
+              <b className="tabular-nums text-foreground">{fmtRp(Math.round(totalValue / totalPcs))}/pcs</b> untuk semua baris
+              (angka pasti memakai harga kain saat dicatat)</>
+          )
         )}
       </p>
 

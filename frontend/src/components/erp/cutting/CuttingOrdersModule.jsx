@@ -11,7 +11,8 @@
  *
  * Semua mutasi stok terjadi di backend lewat SSOT gudang — UI hanya melaporkan
  * hasilnya (stok kain turun, stok potongan naik) supaya user melihat efeknya.
- * HPP potongan per pcs = total biaya kain ÷ total pcs hasil (sama untuk semua baris order).
+ * HPP potongan per pcs = total biaya kain ÷ total pcs hasil (sama untuk semua baris order; order ber-resep kain:
+ * per baris, nilai tiap kain dibagi ke hasil yang memakainya — 19 Nov 2026).
  *
  * 14 Nov 2026 (owner: "di cutting yang sedang berjalan, tolong bisa dilakukan EDIT"; "yang sudah selesai juga bisa"):
  * tombol Ubah juga untuk order Berjalan/Selesai (baris yang sudah dipotong terkunci), dan tiap catatan progres punya
@@ -575,7 +576,15 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               </Table>
             </div>
             <p className="text-xs text-muted-foreground" data-testid="cutting-detail-hpp">
-              {Number(hpp.produced) > 0 && Number(hpp.value_total) > 0
+              {hpp.per_kain ? (
+                <>HPP potongan dibagi per kain ke hasil yang memakainya (resep kain):{' '}
+                  {(detail.outputs || []).map((x) => {
+                    const b = (hpp.by_line || {})[x.line_id] || {};
+                    const v = Number(b.per_pcs) > 0 ? b.per_pcs : b.estimate_per_pcs;
+                    return Number(v) > 0 ? `${x.label} ${Number(b.per_pcs) > 0 ? '' : '≈ '}${fmtRp(Math.round(v))}/pcs` : null;
+                  }).filter(Boolean).join(' · ') || 'belum ada harga kain'}
+                  {Number(hpp.produced) > 0 ? ' (angka dari kain yang benar-benar terpakai).' : ' (perkiraan dari rencana).'}</>
+              ) : Number(hpp.produced) > 0 && Number(hpp.value_total) > 0
                 ? <>Biaya kain nyata {fmtRp(Math.round(hpp.value_total))} ÷ {fmtNum(hpp.produced)} pcs ={' '}
                   <b className="text-foreground">{fmtRp(Math.round(hpp.per_pcs))}/pcs</b> — sama untuk semua baris hasil.</>
                 : <>Perkiraan dari rencana: {fmtRp(Math.round(hpp.estimate_total || 0))} ÷ {fmtNum(hpp.planned_pcs)} pcs ≈{' '}
