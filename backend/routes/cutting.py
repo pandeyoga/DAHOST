@@ -1170,18 +1170,40 @@ async def _hpp_summary(db, o: dict) -> dict:
     produced = sum(_f(x.get("produced_qty")) for x in outs)
     planned_pcs = sum(_f(x.get("planned_output_qty")) for x in outs)
     est, missing = 0.0, []
+    nilai_rencana: dict = {}
     for i in ins:
         m = await db.rahaza_materials.find_one({"id": i.get("input_material_id")}, {"_id": 0, "unit_cost": 1}) or {}
         cost = _f(m.get("unit_cost")) or _f(i.get("input_unit_cost"))
         if cost <= 0:
             missing.append(i.get("input_material_code") or i.get("input_material_name") or "")
         est += _f(i.get("planned_input_qty")) * cost
+        mid = i.get("input_material_id")
+        nilai_rencana[mid] = nilai_rencana.get(mid, 0.0) + _f(i.get("planned_input_qty")) * cost
     value_total = _f(totals.get("value_total"))
+    # 19 Nov 2026: order ber-resep kain — HPP/pcs PER BARIS (nyata dari jejak progres, perkiraan dari rencana)
+    recipes = [resep_kain.resep_of_line(x) for x in outs]
+    by_line: dict = {}
+    if any(recipes):
+        acc: dict = {}
+        async for pg in db[PROGRESS].find({"cutting_order_id": o["id"]},
+                                          {"_id": 0, "outputs": 1, "cost_per_pcs_in": 1}):
+            for x in pg.get("outputs") or []:
+                q = _f(x.get("output_qty"))
+                a = acc.setdefault(x.get("line_id"), [0.0, 0.0])
+                a[0] += q * _f(x.get("cost_per_pcs_in", pg.get("cost_per_pcs_in")))
+                a[1] += q
+        est_alloc = resep_kain.alokasi_nilai(nilai_rencana, [{"qty": x.get("planned_output_qty")} for x in outs], recipes)
+        for x, v in zip(outs, est_alloc):
+            v_q = acc.get(x.get("line_id")) or [0.0, 0.0]
+            by_line[x["line_id"]] = {
+                "estimate_per_pcs": cutting_lines.cost_per_pcs(v, _f(x.get("planned_output_qty"))),
+                "per_pcs": cutting_lines.cost_per_pcs(v_q[0], v_q[1]) if v_q[1] > 0 else 0.0}
     return {"value_total": round(value_total, 2), "produced": round(produced, 4),
             "per_pcs": cutting_lines.cost_per_pcs(value_total, produced),
             "estimate_total": round(est, 2), "planned_pcs": round(planned_pcs, 4),
             "estimate_per_pcs": cutting_lines.cost_per_pcs(est, planned_pcs),
-            "missing_price": [x for x in missing if x]}
+            "missing_price": [x for x in missing if x],
+            "per_kain": bool(by_line), "by_line": by_line}
 
 
 @router.get("/orders/{oid}")

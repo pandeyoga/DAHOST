@@ -6,7 +6,8 @@
  *      rencana pemakaian per kain (bisa diisi dari BOM hasil potongannya).
  *   2. Hasil potongan — tabel baris: model, varian (warna · ukuran · SKU), target pcs, baris PO (opsional), dan
  *      "Gulungan dipakai" (gulungan mana dipakai untuk hasil ini — ketelusuran, bukan dasar HPP).
- *   3. Ringkasan — total pcs & perkiraan HPP potongan per pcs = total biaya kain ÷ total pcs (sama untuk semua baris).
+ *   3. Ringkasan — total pcs & perkiraan HPP potongan per pcs = total biaya kain ÷ total pcs (sama untuk semua baris);
+ *      produk ber-resep kain (19 Nov 2026): perkiraan per baris — nilai tiap kain dibagi ke hasil yang memakainya.
  *
  * Aturan lama tetap: kain wajib dari master; gulungan wajib untuk kain yang dilacak per gulungan (boleh ditunjuk
  * saat lapor progres); peringatan stok kosong; model wajib dari Master Produk; ukuran wajib.
@@ -36,7 +37,7 @@ import { punyaCentang } from '@/lib/rbac';
 import { fmtQty } from '../warehouse/rollLines';
 import {
   newInputLine, newOutputLine, rollRemaining, variantLabel, summarizeVariantsByModel, estimateHpp,
-  kebutuhanResep, pakaiKain, pilihGulunganFifo,
+  kebutuhanResep, pakaiKain, pilihGulunganFifo, hppPerBaris,
 } from './cuttingLines';
 
 /** Angka pemakaian bahan tanpa nol berekor ("6" bukan "6,0000"). */
@@ -397,6 +398,22 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
   const est = useMemo(
     () => estimateHpp(form.inputs.filter((i) => i.input_material_id), form.outputs,
       (i) => matById[i.input_material_id]?.unit_cost), [form.inputs, form.outputs, matById]);
+  /** Label baris hasil di form: model · warna · ukuran (untuk perkiraan HPP per baris). */
+  const outputLabelOf = (o) => {
+    const m = models.find((x) => x.id === o.model_id);
+    const v = (variantsByModel[o.model_id] || []).find((x) => x.id === o.variant_id);
+    return [m?.name || m?.code, v?.color_name || v?.color, v?.size_code].filter(Boolean).join(' · ');
+  };
+  // 19 Nov 2026: produk ber-resep kain — perkiraan HPP per baris (cermin pembagian nilai per kain di server)
+  const estBaris = useMemo(() => {
+    const nilai = {};
+    form.inputs.forEach((i) => {
+      const v = Number(i.planned_input_qty || 0) * Number(matById[i.input_material_id]?.unit_cost || 0);
+      if (i.input_material_id && v > 0) nilai[i.input_material_id] = (nilai[i.input_material_id] || 0) + v;
+    });
+    return hppPerBaris(nilai, form.outputs.map((o) => ({ qty: Number(o.planned_output_qty || 0) })),
+      form.outputs.map((o) => bomByKey[o.key]?.fabric_recipe || []));
+  }, [form.inputs, form.outputs, matById, bomByKey]);
   const unlinked = form.outputs.length > 1
     ? pickedRolls.filter((r) => !form.outputs.some((o) => o.roll_ids.includes(r.id))) : [];
 
@@ -815,11 +832,21 @@ export default function CuttingOrderForm({ open, onClose, token, order = null, o
             Total target <b className="tabular-nums">{fmtNum(est.pcs)} pcs</b> dari {form.outputs.length} baris hasil
             {planText && <> · rencana kain {planText}</>}
           </p>
-          <p className="text-muted-foreground">
-            Perkiraan biaya kain {fmtRp(Math.round(est.total))} ÷ {fmtNum(est.pcs)} pcs ≈{' '}
-            <b className="tabular-nums text-foreground">{fmtRp(Math.round(est.perPcs))}/pcs</b> — HPP potongan sama untuk
-            semua baris; angka pasti dihitung dari kain yang benar-benar terpakai saat lapor progres.
-          </p>
+          {estBaris ? (
+            <p className="text-muted-foreground" data-testid="cutting-hpp-per-baris">
+              Perkiraan biaya kain {fmtRp(Math.round(est.total))}, dibagi per kain ke hasil yang memakainya (resep kain):{' '}
+              {form.outputs.map((o, n) => (Number(o.planned_output_qty) > 0
+                ? `${outputLabelOf(o) || `Baris ${n + 1}`} ≈ ${fmtRp(Math.round(estBaris[n]))}/pcs` : null))
+                .filter(Boolean).join(' · ')}
+              . Angka pasti dihitung dari kain yang benar-benar terpakai saat lapor progres.
+            </p>
+          ) : (
+            <p className="text-muted-foreground">
+              Perkiraan biaya kain {fmtRp(Math.round(est.total))} ÷ {fmtNum(est.pcs)} pcs ≈{' '}
+              <b className="tabular-nums text-foreground">{fmtRp(Math.round(est.perPcs))}/pcs</b> — HPP potongan sama untuk
+              semua baris; angka pasti dihitung dari kain yang benar-benar terpakai saat lapor progres.
+            </p>
+          )}
           {est.missing.length > 0 && (
             <p className="text-xs text-[hsl(var(--warning-text))]">
               Kain {est.missing.map((i) => matById[i.input_material_id]?.code || '').join(', ')} belum punya harga dari

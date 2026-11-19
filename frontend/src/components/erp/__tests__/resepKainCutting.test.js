@@ -5,7 +5,7 @@
  *   • gulungan dicentang FIFO sampai sisa terpilih cukup untuk rencana;
  *   • hasil tanpa resep dianggap memakai semua kain (tautan gulungan tidak hilang).
  */
-import { kebutuhanResep, pakaiKain, pilihGulunganFifo } from '../cutting/cuttingLines';
+import { kebutuhanResep, pakaiKain, pilihGulunganFifo, bagiNilaiPerKain, hppPerBaris } from '../cutting/cuttingLines';
 import { isianKeResep, resepKeIsian, ringkasResep } from '../bom/ResepKainEditor';
 
 const SLR = { material_id: 'f-slr', code: 'KN-SLR-CRM', role: 'Utama', unit: 'kg' };
@@ -43,5 +43,19 @@ describe('resep kain di Order Cutting', () => {
     expect(isian.map((r) => r.qty_per_pcs)).toEqual(['0.35', '']);
     expect(isianKeResep(isian).map((r) => r.qty_per_pcs)).toEqual([0.35, null]);
     expect(ringkasResep(isian)).toBe('KN-SLR-CRM (Utama) 0,35 kg/pcs · KN-K24-CRM (Kerah)');
+  });
+
+  it('HPP per baris sama dengan aturan server (nilai tiap kain ke pemakainya)', () => {
+    const S = { ...SLR, qty_per_pcs: 0.35 };
+    const K = { ...K24, qty_per_pcs: 0.05 };
+    // Ona (Rib Salur + Knit 24) 40 pcs, produk lain hanya Rib Salur 20 pcs
+    expect(bagiNilaiPerKain({ 'f-slr': 1200, 'f-k24': 300 }, [{ qty: 40 }, { qty: 20 }], [[S, K], [S]]))
+      .toEqual([1100, 400]);
+    expect(hppPerBaris({ 'f-slr': 1200, 'f-k24': 300 }, [{ qty: 40 }, { qty: 20 }], [[S, K], [S]])).toEqual([27.5, 20]);
+    // tanpa resep → null (layar memakai aturan rata lama)
+    expect(hppPerBaris({ 'f-slr': 1200 }, [{ qty: 40 }, { qty: 20 }], [[], []])).toBeNull();
+    // kain di luar resep mana pun tidak hilang
+    const v = bagiNilaiPerKain({ 'f-lain': 90 }, [{ qty: 10 }, { qty: 20 }], [[S], [K]]);
+    expect(v[0] + v[1]).toBeCloseTo(90);
   });
 });
