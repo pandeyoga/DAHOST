@@ -8380,6 +8380,10 @@
   ],
   [
    "POST",
+   "/api/rahaza/master/bom/dari-techpack"
+  ],
+  [
+   "POST",
    "/api/rahaza/master/fill-apply"
   ],
   [
@@ -9399,6 +9403,10 @@
   [
    "POST",
    "/api/rahaza/master/bom/copy-missing"
+  ],
+  [
+   "POST",
+   "/api/rahaza/master/bom/dari-techpack"
   ],
   [
    "POST",

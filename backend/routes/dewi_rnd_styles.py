@@ -737,16 +737,27 @@ async def promote_style_to_production(
     # master (yang mencari style lewat kode) lalu membuat style KEDUA untuk produk ini.
     from core import ganti_kode_produk as gkp
     await gkp.selaraskan_style_tertaut(db, await db.rahaza_models.find_one({'id': model_id}, {'_id': 0}))
+    # 20 Nov 2026 (owner, pertanyaan R&D): BOM produksi per ukuran × warna langsung dibuat dari BOM tech pack
+    # (dulu hanya disalin sebagai referensi dan harus diketik ulang di Master Produk › BOM).
+    try:
+        from core import bom_techpack as _bt
+        bom_result = await _bt.buat_dari_techpack(db, model_id, user)
+    except Exception:  # noqa: BLE001 — promosi tetap sah; BOM bisa dibuat dari tombol di Master Produk › BOM
+        import logging
+        logging.getLogger(__name__).exception('BOM dari tech pack gagal utk model %s', model_code)
+        bom_result = {'ok': False, 'created': 0, 'message': 'BOM dari tech pack gagal dibuat — pakai tombol di Master Produk › BOM.'}
 
     return {
         'status': 'promoted',
         'model_id': model_id,
         'model_code': model_code,
         'variants': variants_result,
+        'bom': bom_result,
         'sop_steps_count': len(sop_steps),
         'message': (
             f'Style {style["style_code"]} berhasil di-promote ke Production Model {model_code} '
             f'({variants_result.get("created_count", 0)} varian + FG dibuat, '
+            f'{bom_result.get("created", 0)} BOM dari tech pack, '
             f'{len(sop_steps)} langkah SOP dari techpack)'
         ),
     }

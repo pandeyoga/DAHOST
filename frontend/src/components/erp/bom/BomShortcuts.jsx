@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Copy, PackagePlus, Calculator, X } from 'lucide-react';
+import { Copy, PackagePlus, Calculator, X, FileText } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import FormPopup from '@/components/ui/form-popup';
 import { GlassInput } from '@/components/ui/glass';
@@ -23,6 +24,31 @@ export function BomShortcuts({ headers, token, selectedModelId, modelLabel, cate
       onDone && onDone();
     } catch (e) { toast.error(e.message); } finally { setBusy(''); }
   };
+  // 20 Nov 2026 (owner, pertanyaan R&D) — BOM varian tanpa BOM dibuat dari BOM tech pack style asal model
+  const dariTechpack = async () => {
+    setBusy('tp');
+    try {
+      const pra = await post('/api/rahaza/master/bom/dari-techpack', headers, { model_id: selectedModelId, pratinjau: true });
+      if (!pra.created) {
+        toast.info(`Tidak ada BOM yang perlu dibuat untuk ${modelLabel}${pra.skipped?.length ? ` — ${pra.skipped.length} varian dilewati (${pra.skipped[0].alasan})` : ''}.`);
+        return;
+      }
+      const catatan = [...new Set((pra.detail || []).flatMap((d) => d.catatan || []))];
+      const ok = await confirmDialog({
+        title: `Buat ${pra.created} BOM dari tech pack ${pra.tech_pack || ''}?`,
+        body: [
+          `Varian ${modelLabel} yang belum punya BOM dibuatkan: potongan + resep kain dari tab Bahan, dan aksesoris sesuai warna/motif. BOM yang sudah ada tidak diubah.`,
+          pra.warna_tak_terpakai?.length ? `Warna tech pack tanpa varian (aksesorisnya tidak masuk): ${pra.warna_tak_terpakai.join(', ')}.` : '',
+          catatan.length ? `Perlu dicek: ${catatan.slice(0, 4).join('; ')}${catatan.length > 4 ? ` (+${catatan.length - 4} lagi)` : ''}.` : '',
+        ].filter(Boolean).map((t) => <span key={t} className="mt-2 block first:mt-0">{t}</span>),
+        confirmLabel: `Buat ${pra.created} BOM`,
+      });
+      if (!ok) return;
+      const r = await post('/api/rahaza/master/bom/dari-techpack', headers, { model_id: selectedModelId });
+      toast.success(r.message || `${r.created} BOM dibuat dari tech pack`);
+      onDone && onDone();
+    } catch (e) { toast.error(e.message); } finally { setBusy(''); }
+  };
   const recalc = async () => {
     setBusy('hpp');
     try {
@@ -43,6 +69,9 @@ export function BomShortcuts({ headers, token, selectedModelId, modelLabel, cate
 
   return (
     <div className="flex items-center gap-2 flex-wrap" data-testid="bom-shortcuts">
+      <Button type="button" size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={dariTechpack} title="Buat BOM untuk varian yang belum punya BOM dari BOM tech pack R&D: potongan + resep kain dari tab Bahan, aksesoris sesuai warna/motif" data-testid="bom-from-techpack">
+        <FileText className="w-3.5 h-3.5 mr-1" />{busy === 'tp' ? 'Membuat…' : 'Buat dari tech pack'}
+      </Button>
       <Button type="button" size="sm" variant="outline" disabled={!selectedModelId || !!busy} onClick={() => copyMissing(false)} title="Buat BOM untuk semua varian model ini yang belum punya BOM — potongan & kain otomatis mengikuti warna/ukuran tujuan, aksesoris disalin" data-testid="bom-copy-missing-model">
         <Copy className="w-3.5 h-3.5 mr-1" />{busy === 'copy' ? 'Menyalin…' : 'Salin ke varian tanpa BOM'}
       </Button>

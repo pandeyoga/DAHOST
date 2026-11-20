@@ -33,6 +33,26 @@ async def bom_copy_missing(request: Request):
     return res
 
 
+@router.post("/bom/dari-techpack")
+async def bom_dari_techpack(request: Request):
+    """20 Nov 2026 (owner, pertanyaan R&D) — BOM produksi dari BOM tech pack R&D untuk setiap varian model yang belum
+    punya BOM (`core.bom_techpack`): potongan + resep kain dari tab Bahan, aksesoris per warna/motif. BOM yang sudah ada
+    tidak disentuh. Body: {model_id, pratinjau?: bool} — pratinjau tidak menulis apa pun."""
+    user = await _require_fin(request)
+    body = await request.json() if (request.headers.get("content-length") or "0") != "0" else {}
+    if not body.get("model_id"):
+        raise HTTPException(400, "Pilih model dulu.")
+    from core import bom_techpack as bt
+    pratinjau = bool(body.get("pratinjau"))
+    res = await bt.buat_dari_techpack(get_db(), body["model_id"], user, terapkan=not pratinjau)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("message") or "BOM tidak bisa dibuat dari tech pack.")
+    if not pratinjau:
+        await log_activity(user["id"], user.get("name", ""), "bom_dari_techpack", "rahaza.bom",
+                           f"{res.get('model')}: {res['created']} BOM")
+    return res
+
+
 @router.post("/bom/add-lines")
 async def bom_add_lines(request: Request):
     user = await _require_fin(request)
