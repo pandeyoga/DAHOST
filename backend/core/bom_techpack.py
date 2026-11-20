@@ -76,12 +76,13 @@ def baris_untuk_warna(items: list, color_code: str, color_name: str) -> list:
 
 def warna_tak_terpakai(items: list, variants: list) -> list:
     """Warna/motif di BOM tech pack yang tidak cocok dengan varian mana pun (aksesorisnya tidak masuk BOM)."""
-    kode = {(v.get("color_code") or "").upper() for v in variants}
-    nama = {_norm(v.get("color_name")) for v in variants}
+    kode = {(v.get("color_code") or "").upper() for v in variants} - {""}
+    nama = {_norm(v.get("color_name")) for v in variants} - {""}
     out = []
     for b in items or []:
         k, n = _warna_item(b)
-        if (k or n) and k not in kode and _norm(n) not in nama:
+        cocok = (k and k in kode) or (n and _norm(n) in nama)
+        if (k or n) and not cocok:
             label = n or k
             if label not in out:
                 out.append(label)
