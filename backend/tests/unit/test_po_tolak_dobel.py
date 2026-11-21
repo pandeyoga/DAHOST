@@ -70,6 +70,16 @@ def test_satu_kode_banyak_warna_boleh_tapi_kode_dan_varian_sama_ditolak():
     assert len(kembar) == 1 and kembar[0].startswith("DA-1891")
 
 
+def test_artikel_maklon_tanpa_varian_satu_seri_dua_warna_boleh():
+    # 21 Nov 2026: PO Kamira koh Tri — artikel BJ_1940 tanpa varian, satu seri dua warna (SKU sama = kode artikel)
+    putih = _baris("AF-4522-1", "BJ_1940", qty=171, color="PUTIH", size="L")
+    hitam = _baris("af-4522-1", "BJ_1940", qty=150, color="Hitam", size="L")
+    assert ptd.baris_kembar([putih, hitam]) == []
+    assert ptd.baris_kembar([putih, {**putih, "size": "XL"}]) == []
+    kembar = ptd.baris_kembar([putih, {**putih, "color": " putih ", "qty": 5}])        # warna & ukuran sama → kembar
+    assert len(kembar) == 1 and kembar[0].startswith("AF-4522-1")
+
+
 def test_kode_dipakai_po_lain_ditolak_dengan_nomor_po_dan_cmt(db):
     with pytest.raises(HTTPException) as e:
         run(ptd.periksa_kode(db, [_baris(" da-1869", "DA-2204-DST")]))
