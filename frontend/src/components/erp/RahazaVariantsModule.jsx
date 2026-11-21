@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import TombolUnduh from '@/components/ui/tombol-unduh';
-import { Plus, Trash2, Wand2, Package, Pencil } from 'lucide-react';
+import { Plus, Trash2, Wand2, Package, Pencil, Search } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -49,6 +49,7 @@ export function RahazaVariantsModule({ token }) {
   const [genOpen, setGenOpen] = useState(false);
   const [genColorIds, setGenColorIds] = useState([]);
   const [genSizeIds, setGenSizeIds] = useState([]);
+  const [genCariWarna, setGenCariWarna] = useState('');   // 21 Nov 2026 (Ega R&D): cari warna di popup Buat varian
   const [generating, setGenerating] = useState(false);
 
   // Edit dialog state (formulir pendek: status produk · barcode · catatan)
@@ -117,6 +118,7 @@ export function RahazaVariantsModule({ token }) {
 
   const openGenerate = () => {
     setGenColorIds([]);
+    setGenCariWarna('');
     setGenSizeIds(sizes.map(s => s.id)); // default: semua size
     setGenOpen(true);
   };
@@ -184,6 +186,13 @@ export function RahazaVariantsModule({ token }) {
   };
 
   const selectedModel = models.find(m => m.id === selectedModelId);
+  const warnaTersaring = useMemo(() => {
+    const q = genCariWarna.trim().toLowerCase();
+    if (!q) return colors;
+    // warna yang sudah dicentang tetap tampil supaya bisa dilepas walau tidak cocok pencarian
+    return colors.filter(c => genColorIds.includes(c.id)
+      || `${c.name || ''} ${c.code || ''}`.toLowerCase().includes(q));
+  }, [colors, genCariWarna, genColorIds]);
   const allModels = selectedModelId === ALL_MODELS;
 
   return (
@@ -328,15 +337,30 @@ export function RahazaVariantsModule({ token }) {
           <div className="space-y-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-semibold text-foreground">Pilih warna</span>
+                <span className="text-sm font-semibold text-foreground">
+                  Pilih warna{genColorIds.length > 0 && <span className="font-normal text-muted-foreground"> · {genColorIds.length} dipilih</span>}
+                </span>
                 <Button type="button" variant="link" size="sm"
-                  onClick={() => setGenColorIds(genColorIds.length === colors.length ? [] : colors.map(c => c.id))}
+                  onClick={() => {
+                    const ids = warnaTersaring.map(c => c.id);
+                    const semua = ids.length > 0 && ids.every(id => genColorIds.includes(id));
+                    setGenColorIds(semua ? genColorIds.filter(id => !ids.includes(id)) : [...new Set([...genColorIds, ...ids])]);
+                  }}
                   data-testid="variant-gen-toggle-all-colors">
-                  {genColorIds.length === colors.length ? 'Kosongkan' : 'Pilih semua'}
+                  {warnaTersaring.length > 0 && warnaTersaring.every(c => genColorIds.includes(c.id))
+                    ? 'Kosongkan' : (genCariWarna.trim() ? 'Pilih yang tampil' : 'Pilih semua')}
                 </Button>
               </div>
+              <div className="relative mb-2">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={genCariWarna} onChange={e => setGenCariWarna(e.target.value)} className="pl-8"
+                  placeholder="Cari warna (nama atau kode)…" aria-label="Cari warna" data-testid="variant-gen-search-color" />
+              </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
-                {colors.map(c => {
+                {warnaTersaring.length === 0 && (
+                  <p className="col-span-full py-2 text-center text-sm text-muted-foreground">Tidak ada warna yang cocok.</p>
+                )}
+                {warnaTersaring.map(c => {
                   const checked = genColorIds.includes(c.id);
                   return (
                     <label key={c.id}

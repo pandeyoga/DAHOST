@@ -55,10 +55,32 @@ const bomTanpaMaster = (tp) => (tp.bom_unlinked_count || 0);
 /** Label kecil di atas isian baris BOM. */
 const Lbl = ({ children }) => <span className="mb-1 block text-xs text-muted-foreground">{children}</span>;
 
-const emptyBOM = { material: '', spec: '', qty: 0, unit: 'meter', supplier: '', material_id: '', color_id: '', color_code: '', color_name: '', color_hex: '' };
+const emptyBOM = { material: '', spec: '', qty: 0, unit: '', supplier: '', supplier_id: '', material_id: '', color_id: '', color_code: '', color_name: '', color_hex: '' };
 const emptyCP = { seq: 0, title: '', description: '' };
-const emptyFab = { name: '', role: 'main', color_id: '', color_code: '', color_name: '', color_hex: '' };
-const emptyCons = { size: '', fabric_role: 'main', length_cm: '', width_cm: '', yield_pcs: '' };
+const emptyFab = { kode: '', name: '', role: 'main', color_id: '', color_code: '', color_name: '', color_hex: '' };
+const emptyCons = { size: '', fabric_role: 'main', length_cm: '', width_cm: '', weight_kg: '', yield_pcs: '' };
+
+/* 21 Nov 2026 (owner: "harus singkron bukan dipilih bebas"): kain tab Bahan dipilih dari MASTER kain (keluarga
+ * KN-xxx). Satuan ikut master — kain kg diisi berat per hasil pcs, kain yard/meter diisi panjang per hasil pcs. */
+const SATUAN_KAIN = { kg: 'kg', yard: 'yard', m: 'meter' };
+const KAIN_BARU = '__kain_baru__';
+const normKain = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+/** Keluarga master untuk satu baris kain (kode; data lama: nama yang ejaannya sama). */
+const keluargaKain = (opts, fb) => (opts || []).find(k => (fb?.kode && k.kode === fb.kode)
+  || (!fb?.kode && fb?.name && normKain(k.nama) === normKain(fb.name)));
+/** Cara isi pemakaian untuk satu peran kain: 'kg' (berat) atau 'cm' (panjang). */
+const pakaiPeran = (fabrics, opts, role) => {
+  const fb = (fabrics || []).find(x => (x.role || 'main') === (role || 'main'));
+  return keluargaKain(opts, fb)?.satuan_pakai || fb?.satuan_pakai || 'cm';
+};
+const angka = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+/** Teks pemakaian per pcs: "0,25 kg/pcs" atau "1,10 m/pcs". */
+const perPcs = (e, cara) => {
+  const hasil = angka(e.yield_pcs) || 1;
+  const q = cara === 'kg' ? angka(e.weight_kg) / hasil : angka(e.length_cm) / 100 / hasil;
+  if (!q) return '';
+  return `${q.toLocaleString('id-ID', { maximumFractionDigits: 4 })} ${cara === 'kg' ? 'kg' : 'm'}/pcs`;
+};
 const DEFAULT_SIZE_COLS = ['S', 'M', 'L', 'XL', 'XXL'];
 
 /** F3/C3 — kolom ukuran selalu `[{col_id,label}]`. `col_id` STABIL: mengganti
@@ -142,6 +164,10 @@ export default function RnDTechPackModule({ token }) {
   const [techPacks, setTechPacks] = useState([]);
   const [styles,    setStyles]    = useState([]);
   const [matOpts,   setMatOpts]   = useState([]);
+  const [kainOpts,  setKainOpts]  = useState([]);     // keluarga kain master (21 Nov 2026)
+  const [pemasokOpts, setPemasokOpts] = useState([]); // master supplier untuk kolom Pemasok BOM
+  const [kainBaru,  setKainBaru]  = useState(null);   // {i, nama, kode, satuan, gsm, lebar_cm} — daftarkan kain baru
+  const [kainSibuk, setKainSibuk] = useState('');
   const [loading,   setLoading]   = useState(false);
   const [search,    setSearch]    = useState('');
   const [filterStyle, setFilterStyle] = useState('');
@@ -193,8 +219,22 @@ export default function RnDTechPackModule({ token }) {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadTechPacks(); }, [filterStyle]);
+  const loadKainOpts = async () => {
+    try {
+      const res = await fetch(`${API}/api/dewi/rnd/techpack/kain-keluarga`, { headers: h });
+      if (res.ok) { const d = await res.json(); setKainOpts(d.items || []); return d.items || []; }
+    } catch { /* ignore */ }
+    return null;
+  };
+  const loadPemasok = async () => {
+    try {
+      const res = await fetch(`${API}/api/dewi/rnd/material-form-options`, { headers: h });
+      if (res.ok) { const d = await res.json(); setPemasokOpts(d.suppliers || []); }
+    } catch { /* ignore */ }
+  };
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadStyles(); loadMatOpts(); }, []);
+  useEffect(() => { loadStyles(); loadMatOpts(); loadKainOpts(); loadPemasok(); }, []);
 
   /** F2 — ambil daftar ukuran style (satu sumber untuk Varian & Tech Pack). */
   const loadStyleSizes = async (sid) => {
@@ -249,6 +289,55 @@ export default function RnDTechPackModule({ token }) {
 
   // Fabric helpers (c)
   const setFab = (i, k, v) => { const items = [...(form.fabrics || [])]; items[i] = { ...items[i], [k]: v }; f('fabrics', items); };
+  const pilihKain = (i, kode) => {
+    if (kode === KAIN_BARU) {
+      setKainBaru({ i, nama: '', kode: 'KN-', satuan: '', gsm: '', lebar_cm: '' });
+      return;
+    }
+    const k = kainOpts.find(o => o.kode === kode);
+    const items = [...(form.fabrics || [])];
+    items[i] = { ...items[i], kode: k?.kode || '', name: k?.nama || '', satuan: k?.satuan || '',
+      satuan_pakai: k?.satuan_pakai || 'cm' };
+    f('fabrics', items);
+  };
+  const buatMasterWarna = async (fb) => {
+    const kode = `${fb.kode}-${fb.color_code}`;
+    const ok = await confirmDialog({
+      title: `Buat master kain ${kode}?`,
+      body: `Master kain ${fb.name} warna ${fb.color_name || fb.color_code} dibuat dari keluarganya (satuan, kemasan, `
+        + 'gramasi/lebar, dan harga ikut kain yang sama). SPV Cutting dan SPV Gudang diberi tahu supaya roll kain warna ini '
+        + `dicatat dengan kode ${kode}.`,
+      confirmLabel: 'Buat master',
+    });
+    if (!ok) return;
+    setKainSibuk(kode);
+    try {
+      await apiPost('/api/dewi/rnd/techpack/kain-master', { kode: fb.kode, kode_warna: fb.color_code });
+      toast.success(`Master ${kode} dibuat · SPV Cutting & Gudang sudah diberi tahu`);
+      loadKainOpts();
+    } catch (e) { toast.error(e?.message || `Gagal membuat master ${kode}`); }
+    finally { setKainSibuk(''); }
+  };
+  const simpanKainBaru = async () => {
+    const kb = kainBaru || {};
+    if (!String(kb.nama || '').trim()) return toast.error('Nama kain wajib diisi');
+    if (!/^[A-Za-z]{2,3}-[A-Za-z0-9]{2,6}$/.test(String(kb.kode || '').trim())) return toast.error('Kode kain berbentuk KN-XXX, mis. KN-RMT');
+    if (!kb.satuan) return toast.error('Pilih satuan kain: kg, yard, atau meter');
+    setKainSibuk('baru');
+    try {
+      const d = await apiPost('/api/dewi/rnd/techpack/kain-keluarga', {
+        nama: kb.nama, kode: String(kb.kode).toUpperCase(), satuan: kb.satuan, gsm: kb.gsm, lebar_cm: kb.lebar_cm });
+      const opts = await loadKainOpts();
+      const k = (opts || []).find(o => o.kode === d.material_code);
+      const items = [...(form.fabrics || [])];
+      items[kb.i] = { ...items[kb.i], kode: d.material_code, name: d.material_name, satuan: d.unit,
+        satuan_pakai: k?.satuan_pakai || (d.unit === 'kg' ? 'kg' : 'cm') };
+      f('fabrics', items);
+      setKainBaru(null);
+      toast.success(`Kain ${d.material_name} (${d.material_code}) didaftarkan · SPV Cutting & Gudang diberi tahu`);
+    } catch (e) { toast.error(e?.message || 'Gagal mendaftarkan kain'); }
+    finally { setKainSibuk(''); }
+  };
   const addFab = () => f('fabrics', [...(form.fabrics || []), { ...emptyFab }]);
   const removeFab = i => f('fabrics', (form.fabrics || []).filter((_, j) => j !== i));
 
@@ -360,7 +449,19 @@ export default function RnDTechPackModule({ token }) {
       construction_notes: (form.construction_points || []).map(cp => cp.description).filter(Boolean).join('\n') || form.construction_notes,
       // F3/C3: kirim {col_id,label} — col_id dipertahankan supaya nilai tidak yatim
       size_columns: (form.size_columns || []).filter(c => c && (c.label || '').trim()),
+      fabrics: (form.fabrics || []).filter(fb => (fb.kode || fb.name || '').trim()),
+      bom_items: (form.bom_items || []).filter(b => b.material_id || (b.material || '').trim()),
     };
+    const kainLama = payload.fabrics.filter(fb => !keluargaKain(kainOpts, fb));
+    if (kainOpts.length && kainLama.length) {
+      setTab('bahan');
+      return toast.error(`Kain "${kainLama[0].name}" belum ada di master. Pilih dari daftar kain, atau daftarkan kain barunya.`);
+    }
+    const bomLepas = payload.bom_items.filter(b => !b.material_id);
+    if (bomLepas.length) {
+      setTab('bom');
+      return toast.error(`${bomLepas.length} baris BOM belum dipilih dari master material.`);
+    }
     try {
       const method = editing ? 'PUT' : 'POST';
       const url = editing ? `${API}/api/dewi/rnd/tech-packs/${editing}` : `${API}/api/dewi/rnd/tech-packs`;
@@ -434,6 +535,7 @@ export default function RnDTechPackModule({ token }) {
 
   // F3/C1 — jumlah baris BOM yang belum tertaut master (badge peringatan di tab BOM)
   const unlinkedBom = (form.bom_items || []).filter(b => !b.material_id && (b.material || b.qty)).length;
+  const matOpt = (b) => matOpts.find(m => m.material_id === b.material_id);
 
   const detailSizeCols = (tp) => normSizeCols(
     (tp.size_columns && tp.size_columns.length) ? tp.size_columns : DEFAULT_SIZE_COLS);
@@ -604,6 +706,7 @@ export default function RnDTechPackModule({ token }) {
                     {fb.color_hex && <span className="h-2.5 w-2.5 rounded-full border border-[var(--glass-border)]" style={{ backgroundColor: fb.color_hex }} />}
                     {fb.name} · {peranKain(fb.role)}
                     {fb.color_name && <span className="text-muted-foreground">{fb.color_code || fb.color_name}</span>}
+                    {fb.satuan && <span className="text-muted-foreground">· {SATUAN_KAIN[fb.satuan] || fb.satuan}</span>}
                   </span>
                 ))}
               </div>
@@ -649,23 +752,29 @@ export default function RnDTechPackModule({ token }) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Ukuran</TableHead><TableHead>Kain</TableHead>
-                    <TableHead className="text-right">Panjang (cm)</TableHead><TableHead className="text-right">Lebar (cm)</TableHead>
-                    <TableHead className="text-right">Hasil (pcs)</TableHead>
+                    <TableHead className="text-right">Panjang (cm) / berat (kg)</TableHead><TableHead className="text-right">Lebar (cm)</TableHead>
+                    <TableHead className="text-right">Hasil (pcs)</TableHead><TableHead className="text-right">Per pcs</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {detail.fabric_consumption.map((e, i) => (
+                  {detail.fabric_consumption.map((e, i) => {
+                    const cara = e.satuan === 'kg' ? 'kg' : 'cm';
+                    return (
                     <TableRow key={i}>
                       <TableCell className="font-medium">
                         {e.size}
                         {e.size_off_list && <StatusBadge status="luar" tone="warning" label="di luar daftar ukuran style" className="ml-1" />}
                       </TableCell>
                       <TableCell>{peranKain(e.fabric_role)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{e.length_cm ?? '—'}</TableCell>
-                      <TableCell className="text-right tabular-nums">{e.width_cm ?? '—'}</TableCell>
-                      <TableCell className="text-right tabular-nums">{e.yield_pcs ?? '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {cara === 'kg' ? (e.weight_kg ? `${e.weight_kg} kg` : '—') : (e.length_cm ? `${e.length_cm} cm` : '—')}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{cara === 'kg' ? '—' : (e.width_cm || '—')}</TableCell>
+                      <TableCell className="text-right tabular-nums">{e.yield_pcs || '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">{perPcs(e, cara) || '—'}</TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -967,14 +1076,30 @@ export default function RnDTechPackModule({ token }) {
                   <p className="text-sm font-semibold text-foreground">Material / kain (utama + kombinasi)</p>
                   <Button type="button" variant="outline" size="sm" onClick={addFab}><Plus />Tambah kain</Button>
                 </div>
+                <Notice tone="info">
+                  Kain dipilih dari <b>master kain</b>; satuannya ikut master (kain knit <b>kg</b>, kain lembaran
+                  <b> yard/meter</b>). Warna yang belum punya master kain bisa dibuatkan di sini — SPV Cutting dan SPV Gudang
+                  (pemegang roll kain) otomatis diberi tahu.
+                </Notice>
                 {(form.fabrics || []).length > 0 && (
                   <div className="hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1fr)_130px_minmax(0,1fr)_36px]">
-                    <span>Nama kain</span><span>Peran</span><span>Warna (master)</span><span />
+                    <span>Kain (master)</span><span>Peran</span><span>Warna (master)</span><span />
                   </div>
                 )}
-                {(form.fabrics || []).map((fb, i) => (
+                {(form.fabrics || []).map((fb, i) => {
+                  const kel = keluargaKain(kainOpts, fb);
+                  const kodeMaster = kel && fb.color_code ? `${kel.kode}-${fb.color_code}` : '';
+                  const adaMaster = kel && fb.color_code && (kel.warna || []).some(w => w.kode_warna === fb.color_code);
+                  return (
                   <div key={i} className="grid grid-cols-[minmax(0,1fr)_120px] gap-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2 sm:grid-cols-[minmax(0,1fr)_130px_minmax(0,1fr)_36px] sm:items-start sm:border-0 sm:p-0">
-                    <Input value={fb.name} onChange={e => setFab(i, 'name', e.target.value)} placeholder="Nama kain (mis. CONDRU)" className="col-span-2 sm:col-span-1" data-testid={`tp-fab-name-${i}`} />
+                    <SmartNativeSelect value={kel?.kode || ''} onChange={e => pilihKain(i, e.target.value)}
+                      searchPlaceholder="Cari kain…" className="col-span-2 w-full sm:col-span-1" data-testid={`tp-fab-name-${i}`}>
+                      <option value="">{fb.name && !kel ? `${fb.name} (belum ada di master) — pilih…` : 'Pilih kain…'}</option>
+                      {kainOpts.map(k => (
+                        <option key={k.kode} value={k.kode}>{`${k.nama} · ${k.kode} (${SATUAN_KAIN[k.satuan] || k.satuan || 'satuan belum ada'})`}</option>
+                      ))}
+                      <option value={KAIN_BARU}>+ Daftarkan kain baru…</option>
+                    </SmartNativeSelect>
                     <SmartNativeSelect value={fb.role} onChange={e => setFab(i, 'role', e.target.value)}
                       searchable={false} className="w-full" data-testid={`tp-fab-role-${i}`}>
                       <option value="main">Utama</option>
@@ -997,8 +1122,69 @@ export default function RnDTechPackModule({ token }) {
                           f('fabrics', items);
                         }} />
                     </div>
+                    <div className="col-span-2 text-xs sm:col-span-4" data-testid={`tp-fab-status-${i}`}>
+                      {fb.name && !kel && (
+                        <span className="flex items-start gap-1 text-[hsl(var(--danger-text))]">
+                          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                          Kain "{fb.name}" belum ada di master kain — pilih kain yang benar dari daftar, atau daftarkan kain barunya.
+                        </span>
+                      )}
+                      {kel && (
+                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
+                          <span>Satuan: <b className="text-foreground">{SATUAN_KAIN[kel.satuan] || kel.satuan || '—'}</b> (dari master)
+                            {kel.satuan_pakai === 'kg' ? ' · pemakaian diisi berat (kg)' : ' · pemakaian diisi panjang (cm)'}</span>
+                          {kel.penanda && <span className="text-[hsl(var(--warning-text))]">Kain belum ditentukan — biaya kain dan BOM produksi menunggu kainnya diputuskan.</span>}
+                          {!kel.penanda && fb.color_code && adaMaster && (
+                            <StatusBadge status="ada" tone="success" label={`Master ${kodeMaster}`} />
+                          )}
+                          {!kel.penanda && fb.color_code && !adaMaster && (
+                            <>
+                              <StatusBadge status="belum" tone="warning" label={`Master ${kodeMaster} belum ada`} />
+                              <Button type="button" variant="link" size="sm" className="h-auto p-0"
+                                disabled={kainSibuk === kodeMaster} onClick={() => buatMasterWarna({ ...fb, kode: kel.kode, name: kel.nama })}
+                                data-testid={`tp-fab-buat-master-${i}`}>
+                                {kainSibuk === kodeMaster ? 'Membuat…' : `Buat master ${kodeMaster}`}
+                              </Button>
+                            </>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    {kainBaru && kainBaru.i === i && (
+                      <div className="col-span-2 space-y-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2.5 sm:col-span-4" data-testid="tp-kain-baru">
+                        <p className="text-sm font-medium text-foreground">Daftarkan kain baru</p>
+                        <p className="text-xs text-muted-foreground">
+                          Hanya untuk kain yang belum ada di daftar. Satuan wajib benar: <b>kg</b> untuk kain yang dibeli/dipotong
+                          per kilo (knit), <b>yard</b> atau <b>meter</b> untuk kain lembaran. Gramasi &amp; lebar membuat konversi
+                          meter ⇄ kg bisa dihitung.
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_120px_120px_100px_100px]">
+                          <Input value={kainBaru.nama} onChange={e => setKainBaru(p => ({ ...p, nama: e.target.value }))}
+                            placeholder="Nama kain, mis. RAYON TWILL MOTIF" aria-label="Nama kain" data-testid="tp-kain-baru-nama" />
+                          <Input value={kainBaru.kode} onChange={e => setKainBaru(p => ({ ...p, kode: e.target.value.toUpperCase() }))}
+                            placeholder="Kode, mis. KN-RMT" aria-label="Kode kain" data-testid="tp-kain-baru-kode" />
+                          <SmartNativeSelect value={kainBaru.satuan} onChange={e => setKainBaru(p => ({ ...p, satuan: e.target.value }))}
+                            searchable={false} className="w-full" data-testid="tp-kain-baru-satuan">
+                            <option value="">Satuan…</option>
+                            <option value="kg">kg</option>
+                            <option value="yard">yard</option>
+                            <option value="m">meter</option>
+                          </SmartNativeSelect>
+                          <MoneyInput decimals={0} value={kainBaru.gsm} onChange={e => setKainBaru(p => ({ ...p, gsm: e.target.value }))}
+                            placeholder="Gramasi (gsm)" aria-label="Gramasi (gsm)" />
+                          <MoneyInput decimals={1} value={kainBaru.lebar_cm} onChange={e => setKainBaru(p => ({ ...p, lebar_cm: e.target.value }))}
+                            placeholder="Lebar (cm)" aria-label="Lebar (cm)" />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setKainBaru(null)}>Batal</Button>
+                          <Button type="button" size="sm" disabled={kainSibuk === 'baru'} onClick={simpanKainBaru}
+                            data-testid="tp-kain-baru-simpan">{kainSibuk === 'baru' ? 'Menyimpan…' : 'Daftarkan kain'}</Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </section>
               <section className="space-y-2 border-t border-[var(--glass-border)] pt-4">
                 <div className="flex items-center justify-between gap-2">
@@ -1006,7 +1192,7 @@ export default function RnDTechPackModule({ token }) {
                   <Button type="button" variant="outline" size="sm" onClick={addCons}><Plus />Tambah baris</Button>
                 </div>
                 {(form.fabric_consumption || []).length === 0 && (
-                  <p className="py-2 text-center text-sm text-muted-foreground">Data pemakaian masih kosong. Contoh isian: M / Utama / 463 cm / 150 / 5 pcs.</p>
+                  <p className="py-2 text-center text-sm text-muted-foreground">Data pemakaian masih kosong. Contoh kain yard/meter: M / Utama / 463 cm / 150 / 5 pcs. Contoh kain kg: M / Utama / 1,25 kg / 5 pcs.</p>
                 )}
                 {(styleSizes.size_list || []).length === 0 && (
                   <Notice tone="warning">
@@ -1015,10 +1201,13 @@ export default function RnDTechPackModule({ token }) {
                 )}
                 {(form.fabric_consumption || []).length > 0 && (
                   <div className="hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[130px_120px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_36px]">
-                    <span>Ukuran</span><span>Kain</span><span>Panjang (cm)</span><span>Lebar (cm)</span><span>Hasil (pcs)</span><span />
+                    <span>Ukuran</span><span>Kain</span><span>Panjang (cm) / berat (kg)</span><span>Lebar (cm)</span><span>Hasil (pcs)</span><span />
                   </div>
                 )}
-                {(form.fabric_consumption || []).map((e, i) => (
+                {(form.fabric_consumption || []).map((e, i) => {
+                  const cara = pakaiPeran(form.fabrics, kainOpts, e.fabric_role);
+                  const hint = perPcs(e, cara);
+                  return (
                   <div key={i} className="grid grid-cols-2 gap-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2 sm:grid-cols-[130px_120px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_36px] sm:border-0 sm:p-0">
                     <SmartNativeSelect value={e.size || ''} onChange={ev => setCons(i, 'size', ev.target.value)}
                       data-testid={`tp-cons-size-${i}`} className="w-full">
@@ -1033,16 +1222,28 @@ export default function RnDTechPackModule({ token }) {
                       <option value="main">Utama</option>
                       <option value="combination">Kombinasi</option>
                     </SmartNativeSelect>
-                    <MoneyInput decimals={2} value={e.length_cm ?? ''} onChange={ev => setCons(i, 'length_cm', ev.target.value)} placeholder="Panjang cm" aria-label="Panjang (cm)" />
-                    <MoneyInput decimals={2} value={e.width_cm ?? ''} onChange={ev => setCons(i, 'width_cm', ev.target.value)} placeholder="Lebar cm" aria-label="Lebar (cm)" />
+                    {cara === 'kg' ? (
+                      <>
+                        <MoneyInput decimals={4} value={e.weight_kg ?? ''} onChange={ev => setCons(i, 'weight_kg', ev.target.value)}
+                          placeholder="Berat kg" aria-label="Berat (kg)" data-testid={`tp-cons-kg-${i}`} />
+                        <span className="hidden self-center text-xs text-muted-foreground sm:block">— (kain kg)</span>
+                      </>
+                    ) : (
+                      <>
+                        <MoneyInput decimals={2} value={e.length_cm ?? ''} onChange={ev => setCons(i, 'length_cm', ev.target.value)} placeholder="Panjang cm" aria-label="Panjang (cm)" data-testid={`tp-cons-cm-${i}`} />
+                        <MoneyInput decimals={2} value={e.width_cm ?? ''} onChange={ev => setCons(i, 'width_cm', ev.target.value)} placeholder="Lebar cm" aria-label="Lebar (cm)" />
+                      </>
+                    )}
                     <MoneyInput decimals={2} value={e.yield_pcs ?? ''} onChange={ev => setCons(i, 'yield_pcs', ev.target.value)} placeholder="Hasil pcs" aria-label="Hasil (pcs)" />
                     <div className="flex justify-end">
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeCons(i)} title="Hapus baris" aria-label="Hapus baris">
                         <X className="text-[hsl(var(--danger-text))]" />
                       </Button>
                     </div>
+                    {hint && <p className="col-span-2 text-xs text-muted-foreground sm:col-span-6">= {hint}</p>}
                   </div>
-                ))}
+                  );
+                })}
               </section>
             </div>
           )}
@@ -1061,9 +1262,8 @@ export default function RnDTechPackModule({ token }) {
                 </div>
               </div>
               <Notice tone="info">
-                <b>Tautan master adalah kolom utama.</b> Baris tanpa tautan master tidak punya harga &amp; faktor konversi
-                satuan (gram→kg, lusin→pcs, meter↔kg lewat gramasi &amp; lebar), sehingga <b>HPP dari BOM untuk baris itu
-                akan meleset</b> — karena itu barisnya diberi tanda merah.
+                <b>Setiap baris dipilih dari master material.</b> Nama dan pilihan satuan mengikuti master (satuan dasar,
+                kemasan resmi, atau satuan yang bisa dikonversi), supaya harga dan konversi satuan HPP selalu benar.
               </Notice>
               {form.bom_items.map((b, i) => {
                 const st = UOM_STATUS[b.uom_status] || {};
@@ -1078,20 +1278,23 @@ export default function RnDTechPackModule({ token }) {
                         <SmartNativeSelect value={b.material_id || ''} onChange={e => {
                             const opt = matOpts.find(m => m.material_id === e.target.value);
                             const items = [...form.bom_items];
+                            const sah = opt?.units || [];
+                            // 21 Nov 2026: nama & satuan ikut master; satuan lama dipertahankan hanya bila sah untuk bahan ini
                             items[i] = { ...items[i], material_id: e.target.value,
-                              material: items[i].material || opt?.name || '',
+                              material: opt?.name || items[i].material || '',
                               material_code: opt?.code || items[i].material_code || '',
-                              unit: items[i].unit || opt?.base_unit || 'pcs' };
+                              unit: (items[i].unit && sah.includes(items[i].unit)) ? items[i].unit : (opt?.base_unit || '') };
                             f('bom_items', items);
                           }}
                           data-testid={`tp-bom-master-${i}`} className="w-full">
-                          <option value="">Belum ditautkan…</option>
+                          <option value="">Pilih bahan dari master…</option>
                           {matOpts.map(m => <option key={m.material_id} value={m.material_id}>{`${m.code} — ${m.name} (${m.base_unit})`}</option>)}
                         </SmartNativeSelect>
                       </div>
-                      <div className="col-span-2 sm:col-span-1">
-                        <Lbl>Nama baris</Lbl>
-                        <Input value={b.material} onChange={e => setBOM(i, 'material', e.target.value)} placeholder="Nama bebas" data-testid={`tp-bom-material-${i}`} />
+                      <div className="col-span-2 min-w-0 sm:col-span-1">
+                        <Lbl>Nama bahan (dari master)</Lbl>
+                        <p className="truncate py-2 text-sm text-foreground" data-testid={`tp-bom-material-${i}`}
+                          title={b.material || ''}>{linked ? (matOpt(b)?.name || b.master_name || b.material || '—') : (b.material ? `${b.material} (lama)` : '—')}</p>
                       </div>
                       <div className="col-span-2 min-w-0 sm:col-span-1">
                         <Lbl>Warna</Lbl>
@@ -1111,7 +1314,8 @@ export default function RnDTechPackModule({ token }) {
                       </div>
                       <div>
                         <Lbl>Satuan</Lbl>
-                        <RnDUnitSelect value={b.unit} onChange={e => setBOM(i, 'unit', e.target.value)} testId={`tp-bom-unit-${i}`} />
+                        <RnDUnitSelect value={b.unit} onChange={e => setBOM(i, 'unit', e.target.value)} testId={`tp-bom-unit-${i}`}
+                          units={matOpt(b)?.units || (linked ? undefined : [])} />
                       </div>
                       <div className="col-span-2 flex justify-end sm:col-span-1 sm:pt-5">
                         <Button type="button" variant="ghost" size="icon" onClick={() => removeBOM(i)} title="Hapus baris" aria-label="Hapus baris"
@@ -1120,13 +1324,23 @@ export default function RnDTechPackModule({ token }) {
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <Input value={b.spec} onChange={e => setBOM(i, 'spec', e.target.value)} placeholder="Spesifikasi / keterangan" aria-label="Spesifikasi" />
-                      <Input value={b.supplier} onChange={e => setBOM(i, 'supplier', e.target.value)} placeholder="Pemasok" aria-label="Pemasok" />
+                      <SmartNativeSelect value={b.supplier_id || ''} aria-label="Pemasok" className="w-full"
+                        searchPlaceholder="Cari pemasok…" data-testid={`tp-bom-supplier-${i}`}
+                        onChange={e => {
+                          const sp = pemasokOpts.find(x => x.id === e.target.value);
+                          const items = [...form.bom_items];
+                          items[i] = { ...items[i], supplier_id: sp?.id || '', supplier: sp?.name || '' };
+                          f('bom_items', items);
+                        }}>
+                        <option value="">{b.supplier && !b.supplier_id ? `${b.supplier} (ketikan lama) — pilih pemasok…` : 'Pemasok (opsional)…'}</option>
+                        {pemasokOpts.map(sp => <option key={sp.id} value={sp.id}>{sp.code ? `${sp.code} — ${sp.name}` : sp.name}</option>)}
+                      </SmartNativeSelect>
                     </div>
                     {!linked && (
                       <p className="flex items-start gap-1 text-xs text-[hsl(var(--danger-text))]" data-testid={`tp-bom-warn-${i}`}>
                         <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span>Tanpa master: <b>harga &amp; konversi satuan tidak dihitung</b> ⇒ HPP baris ini salah.
-                          Pilih materialnya di kolom "Tautan master", atau hapus barisnya.</span>
+                        <span>Wajib dipilih dari master supaya harga &amp; konversi satuan benar — tech pack tidak bisa disimpan
+                          sebelum semua baris tertaut. Aksesoris yang belum ada di master: ajukan lewat Request Aksesoris.</span>
                       </p>
                     )}
                     {linked && b.uom_status && (

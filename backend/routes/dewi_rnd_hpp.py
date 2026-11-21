@@ -432,7 +432,8 @@ def legacy_cost_lines(doc: dict) -> list:
             lines.append({
                 'line_id': 'legacy-fabric', 'label': 'Kain (input manual lama)',
                 'source': 'manual', 'material_id': '', 'material_code': '', 'material_name': '',
-                'master_linked': False, 'qty': fu, 'unit': 'm', 'qty_costed': fu, 'cost_unit': 'm',
+                'master_linked': False, 'qty': fu, 'unit': _satuan_kain_lama(doc.get('fabric_unit')),
+                'qty_costed': fu, 'cost_unit': _satuan_kain_lama(doc.get('fabric_unit')),
                 'unit_cost_master': 0.0, 'unit_cost_used': round(fp, 2),
                 'override': False, 'override_reason': '',
                 'line_cost': round(fu * fp, 2), 'cost_source': 'manual',
@@ -452,6 +453,12 @@ def legacy_cost_lines(doc: dict) -> list:
                 'uom_status': 'manual', 'uom_note': '', 'legacy': True,
             })
     return lines
+
+
+def _satuan_kain_lama(v) -> str:
+    """Satuan kain HPP mode lama: hanya m / kg / yard / set (paket kain campuran per pcs); lainnya → m."""
+    u = bom_uom.norm_unit(v or 'm')
+    return u if u in ('m', 'kg', 'yard', 'set') else 'm'
 
 
 async def annotate_techpack_bom(db, bom_items: list) -> list:
@@ -539,25 +546,43 @@ async def _normalize_techpack_payload(db, body: dict, existing: dict = None) -> 
         out['measurements'] = rows
         out['measurements_stats'] = stats
 
-    # ── C2 konsumsi kain terikat daftar ukuran ──
-    if 'fabric_consumption' in body:
-        cons, off = normalize_fabric_consumption(body.get('fabric_consumption'), size_list)
-        out['fabric_consumption'] = cons
-        out['fabric_consumption_off_list'] = off
-
-    # ── C5 warna baris kain ──
+    # ── C5 warna baris kain + 21 Nov 2026 (owner): kain WAJIB dari master kain (kode keluarga; nama & satuan ikut
+    #    master, warna → master per warna `<kode>-<warna>`). Kain tak dikenal ditolak — daftarkan dulu.
+    from core import kain_master
     if 'fabrics' in body:
-        out['fabrics'] = [await attach_row_color(db, dict(r or {})) for r in (body.get('fabrics') or [])]
+        rows = [await attach_row_color(db, dict(r or {})) for r in (body.get('fabrics') or [])]
+        out['fabrics'] = await kain_master.normalisasi_kain(db, rows)
+
+    # ── C2 konsumsi kain terikat daftar ukuran; satuan baris ikut satuan kain perannya (kg → berat, lainnya → cm) ──
+    if 'fabric_consumption' in body or 'fabrics' in body:
+        cons, off = normalize_fabric_consumption(body.get('fabric_consumption', existing.get('fabric_consumption')),
+                                                 size_list)
+        out['fabric_consumption'] = kain_master.satuan_pemakaian(
+            cons, out.get('fabrics', existing.get('fabrics') or []))
+        out['fabric_consumption_off_list'] = off
 
     # ── C4 colorways tech pack ──
     if 'colorways' in body:
         out['colorways'] = await normalize_colorways(db, body.get('colorways'))
 
-    # ── C1 badge "tanpa master" ──
+    # ── C1 badge "tanpa master" + 21 Nov 2026 (owner: "harus singkron"): baris BOM WAJIB tertaut master material dan
+    #    satuannya harus bisa dikonversi ke satuan dasar master — bukan lagi sekadar peringatan.
     if 'bom_items' in body:
-        items = await annotate_techpack_bom(db, body.get('bom_items') or [])
+        isi = [b for b in (body.get('bom_items') or [])
+               if str((b or {}).get('material_id') or (b or {}).get('material_code') or (b or {}).get('material') or '').strip()]
+        items = await annotate_techpack_bom(db, isi)
+        tanpa = [b.get('material') or b.get('material_code') or 'baris tanpa nama' for b in items if not b.get('master_linked')]
+        if tanpa:
+            raise HTTPException(400, 'Baris BOM harus dipilih dari master material: ' + ', '.join(tanpa[:5])
+                                + ('…' if len(tanpa) > 5 else '') + '. Aksesoris yang belum ada di master: ajukan '
+                                'lewat menu Request Aksesoris; kain: pilih di tab Bahan.')
+        salah = [f"{b.get('master_name') or b.get('material')} ({b.get('unit')})" for b in items
+                 if b.get('uom_status') == 'mismatch']
+        if salah:
+            raise HTTPException(400, 'Satuan tidak cocok dengan master: ' + ', '.join(salah[:5])
+                                + '. Pilih satuan dari daftar satuan bahan itu.')
         out['bom_items'] = items
-        out['bom_unlinked_count'] = len([b for b in items if not b.get('master_linked')])
+        out['bom_unlinked_count'] = 0
 
     # ── B/F2 base_size & size_range: satu sumber = size_list style ──
     if size_list:
@@ -700,6 +725,8 @@ async def create_hpp(body: dict, user: dict = Depends(require_auth)):
         'fabric_price_per_meter': body.get('fabric_price_per_meter', 0),
         'fabric_source':          body.get('fabric_source', 'manual'),   # 'techpack' bila di-tarik dari fabric_consumption
         'fabric_size':            body.get('fabric_size', ''),           # size acuan saat tarik dari techpack
+        # 21 Nov 2026: satuan pemakaian & harga kain mode lama (m / kg / yard / set) — kain knit dihitung per kg
+        'fabric_unit':            _satuan_kain_lama(body.get('fabric_unit')),
         'accessories_cost':       body.get('accessories_cost', []),
         'cmt_cost_per_pcs':       body.get('cmt_cost_per_pcs', 0),
         'cmt_cost_source':        body.get('cmt_cost_source', 'manual'), # F4: 'catalog' bila dari master katalog buyer
@@ -759,6 +786,8 @@ async def update_hpp(calc_id: str, body: dict, user: dict = Depends(require_auth
         calc = _calculate_hpp(merged)
 
     upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'created_by', 'bom_items')}
+    if 'fabric_unit' in body:
+        upd['fabric_unit'] = _satuan_kain_lama(body.get('fabric_unit'))
     upd.update(calc)
     upd['use_bom'] = use_bom
     upd['bom_breakdown'] = bom_breakdown
@@ -888,8 +917,10 @@ async def cost_lines_from_techpack(body: dict, user: dict = Depends(require_auth
                 peran = {'main': 'utama', 'combination': 'kombinasi'}.get(e.get('fabric_role'), e.get('fabric_role') or '')
                 kain.append({'source': 'manual',
                              'label': f"Kain {e.get('fabric_name') or ''} ({peran}) · ukuran {sel.get('size')}".replace('  ', ' '),
-                             'qty': e.get('meters_per_pcs') or 0, 'unit': 'meter',
-                             'unit_cost_used': e.get('price_per_meter') or 0})
+                             # 21 Nov 2026: satuan ikut kain (kg untuk knit, meter untuk kain lembaran)
+                             'qty': e.get('qty_per_pcs') or e.get('meters_per_pcs') or 0,
+                             'unit': 'kg' if e.get('satuan') == 'kg' else 'meter',
+                             'unit_cost_used': e.get('price_per_unit') or e.get('price_per_meter') or 0})
     total, lines = await compute_cost_lines(db, raw + kain)
     return {
         'cost_lines': lines,
@@ -1042,6 +1073,35 @@ async def propagate_hpp_endpoint(calc_id: str, user: dict = Depends(require_auth
 # ──────────────────────────────────────────────────────────────────────────────
 # TECH PACK (Dokumen teknis per style: BOM, konstruksi, grading)
 # ──────────────────────────────────────────────────────────────────────────────
+
+# ── 21 Nov 2026 (owner, permintaan Ega R&D): kain tech pack SINKRON master kain ─────────────────────────────
+@router.get('/techpack/kain-keluarga')
+async def techpack_kain_keluarga(user: dict = Depends(require_auth)):
+    """Pilihan kain tab Bahan: keluarga kain master (kode, nama, satuan dari master, warna yang sudah punya master)."""
+    from core import kain_master
+    return {'items': await kain_master.daftar_keluarga(get_db())}
+
+
+@router.post('/techpack/kain-master')
+async def techpack_kain_master(body: dict, user: dict = Depends(require_auth)):
+    """Kain + warna belum punya master per warna → dibuat dari keluarganya (satuan/kemasan/harga ikut keluarga)
+    dan SPV Cutting + SPV Gudang (pemegang roll kain) diberi tahu."""
+    from core import kain_master
+    assert_can_act(user, 'rnd.manage', portal='rnd', what='membuat master kain')
+    res = await kain_master.pastikan_master_warna(get_db(), body.get('kode'), body.get('kode_warna'), user)
+    return serialize(res)
+
+
+@router.post('/techpack/kain-keluarga')
+async def techpack_kain_keluarga_baru(body: dict, user: dict = Depends(require_auth)):
+    """Kain yang belum ada sama sekali → didaftarkan di Riset Material dengan satuan wajib (kg / yard / meter)."""
+    from core import kain_master
+    assert_can_act(user, 'rnd.manage', portal='rnd', what='mendaftarkan kain baru')
+    doc = await kain_master.daftar_keluarga_baru(
+        get_db(), nama=body.get('nama'), kode=body.get('kode'), satuan=body.get('satuan'),
+        gsm=body.get('gsm'), lebar_cm=body.get('lebar_cm'), user=user)
+    return serialize(doc)
+
 
 @router.get('/tech-packs')
 async def list_tech_packs(

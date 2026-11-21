@@ -66,10 +66,33 @@ async def techpack_import_commit(file: UploadFile = File(...), user: dict = Depe
 
     for p in res["products"]:
         try:
-            fabric_type = ", ".join(f["name"] for f in p["fabrics"])
+            # 21 Nov 2026 (owner: kain SINKRON master): nama kain Excel dipadankan ke master kain; yang belum
+            # dikenal dilaporkan (dipilih/didaftarkan R&D di tab Bahan), bukan disimpan diam-diam sebagai teks bebas.
+            from core import kain_master
+            fabrics, kain_asing = await kain_master.cocokkan_kain_longgar(db, p["fabrics"])
+            for nama in kain_asing:
+                summary["errors"].append({"row": p.get("row_start"), "name": p.get("style_name"),
+                                          "error": f"Kain '{nama}' belum ada di master kain — pilih atau daftarkan "
+                                                   "di tab Bahan tech pack."})
+            consumption = kain_master.satuan_pemakaian(p["fabric_consumption"], fabrics)
+            if any(c.get("satuan") == "kg" and not c.get("weight_kg") for c in consumption):
+                summary["errors"].append({"row": p.get("row_start"), "name": p.get("style_name"),
+                                          "error": "Kain ber-satuan kg: isi berat (kg) per hasil pcs di tab Bahan "
+                                                   "(Excel hanya memuat panjang)."})
+            fabric_type = ", ".join(f["name"] for f in fabrics)
+            # Kategori hanya dari master Kategori Produk; yang tidak dikenal dikosongkan + dilaporkan.
+            from routes.dewi_rnd_styles import kategori_master
+            kategori = (p["category"] or "").strip()
+            try:
+                kategori = await kategori_master(db, kategori)
+            except HTTPException:
+                summary["errors"].append({"row": p.get("row_start"), "name": p.get("style_name"),
+                                          "error": f"Kategori '{kategori}' tidak ada di master Kategori Produk — "
+                                                   "dikosongkan, pilih di Style."})
+                kategori = ""
             style_fields = {
                 "style_name": p["style_name"],
-                "category": (p["category"] or "").strip(),
+                "category": kategori,
                 "buyer": (p["buyer"] or "DA").strip(),
                 "season": (p["season"] or "").strip(),
                 "description": (p["description"] or "").strip(),
@@ -123,10 +146,9 @@ async def techpack_import_commit(file: UploadFile = File(...), user: dict = Depe
                 {"style_id": style_id, "is_latest": True}, {"$set": {"is_latest": False}}
             )
             construction_notes = "\n".join(cp["description"] for cp in p["construction_points"])
-            bom_items = [
-                {"material": f["name"], "spec": f["role"], "qty": 0, "unit": "meter", "supplier": ""}
-                for f in p["fabrics"]
-            ]
+            # 21 Nov 2026: kain TIDAK lagi disalin ke BOM sebagai baris tanpa master ber-satuan "meter" (kain sudah
+            # di tab Bahan; BOM produksi & HPP mengambil kain dari sana). BOM = aksesoris yang dipilih dari master.
+            bom_items = []
             # F3/C3: Excel memberi kolom sebagai daftar STRING (STANDAR/JUMBO) dan nilai
             # measurement berkunci NAMA kolom. Dinormalkan di sini supaya hasil impor
             # langsung memakai `col_id` stabil — kalau tidak, nilai ukuran bisa yatim
@@ -143,8 +165,8 @@ async def techpack_import_commit(file: UploadFile = File(...), user: dict = Depe
                 "title": f"Techpack {p['style_name']} (Import Excel)",
                 "description": (p["description"] or "").strip(),
                 "bom_items": bom_items,
-                "fabrics": p["fabrics"],                      # (c) main + combination
-                "fabric_consumption": p["fabric_consumption"],  # (c) per-size + kombinasi
+                "fabrics": fabrics,                           # (c) main + combination (kode master kain)
+                "fabric_consumption": consumption,            # (c) per-size + kombinasi (satuan ikut kain)
                 "construction_points": p["construction_points"],  # (b) per-poin terstruktur
                 "construction_notes": construction_notes,     # backward-compat (join)
                 "stitch_type": "",
@@ -176,7 +198,8 @@ async def techpack_import_commit(file: UploadFile = File(...), user: dict = Depe
                 "colors": len(color_list),
                 "sizes": p["sizes"],
                 "construction_points": len(p["construction_points"]),
-                "fabrics": len(p["fabrics"]),
+                "fabrics": len(fabrics),
+                "kain_belum_master": kain_asing,
                 "measurement_categories": p["measurement_categories"],
             })
         except Exception as e:  # noqa: BLE001

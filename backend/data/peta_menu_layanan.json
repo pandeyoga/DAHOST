@@ -9098,6 +9098,10 @@
   ],
   [
    "GET",
+   "/api/dewi/rnd/material-form-options"
+  ],
+  [
+   "GET",
    "/api/dewi/rnd/material-options"
   ],
   [
@@ -9239,6 +9243,18 @@
   [
    "POST",
    "/api/dewi/rnd/techpack/import/x"
+  ],
+  [
+   "GET",
+   "/api/dewi/rnd/techpack/kain-keluarga"
+  ],
+  [
+   "POST",
+   "/api/dewi/rnd/techpack/kain-keluarga"
+  ],
+  [
+   "POST",
+   "/api/dewi/rnd/techpack/kain-master"
   ],
   [
    "POST",

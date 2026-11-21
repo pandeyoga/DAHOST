@@ -29,6 +29,7 @@ import { apiDelete } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import RnDUnitSelect from './RnDUnitSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -57,11 +58,14 @@ const statusHpp = (s) => STATUS_HPP[s] || { label: s ? 'Lainnya' : 'Draf', tone:
 const aturanLama = (r) => r.hpp_rule !== 'bahan_cmt_2026_11_06'
   && (Number(r.cutting_cost || 0) > 0 || Number(r.overhead_value || 0) > 0);
 
+/** Satuan kain HPP mode lama (21 Nov 2026): kain knit per kg, kain lembaran per meter/yard. */
+const SATUAN_KAIN_LAMA = { m: 'meter', yard: 'yard', kg: 'kg', set: 'set' };
+
 const emptyForm = {
   hpp_code: '', style_id: '', style_code: '', style_name: '',
   fabric_usage_per_pcs: 0,
   fabric_price_per_meter: 0,
-  fabric_source: 'manual', fabric_size: '',
+  fabric_source: 'manual', fabric_size: '', fabric_unit: 'm',
   accessories_cost: [{ name: 'Label / Tag', unit_cost: 500, qty: 1 }],
   cost_lines: [],
   cmt_cost_per_pcs: 0, cmt_cost_source: 'manual', cmt_cost_ref: '',
@@ -220,6 +224,7 @@ export default function RnDHPPCalculatorModule({ token }) {
       fabric_price_per_meter: rec.fabric_price_per_meter || 0,
       fabric_source: rec.fabric_source || 'manual',
       fabric_size: rec.fabric_size || '',
+      fabric_unit: rec.fabric_unit || 'm',
       accessories_cost: rec.accessories_cost?.length ? rec.accessories_cost : [{ ...emptyAcc }],
       // dokumen lama dibaca sebagai cost_lines oleh backend (legacy mapping)
       cost_lines: (rec.cost_lines || []).map(l => ({ ...l, line_id: l.line_id || newLineId() })),
@@ -362,9 +367,12 @@ export default function RnDHPPCalculatorModule({ token }) {
   };
 
   const applyFabricSize = (sz) => {
+    // 21 Nov 2026: satuan ikut kain tech pack (kg untuk knit, meter untuk kain lembaran, "set" bila campuran)
+    const pakai = sz.pakai || { qty: sz.meters_per_pcs, satuan: 'm', harga: sz.weighted_price_per_meter };
     setForm(prev => ({ ...prev,
-      fabric_usage_per_pcs: sz.meters_per_pcs,
-      fabric_price_per_meter: sz.weighted_price_per_meter,
+      fabric_usage_per_pcs: pakai.qty,
+      fabric_price_per_meter: pakai.harga,
+      fabric_unit: pakai.satuan || 'm',
       fabric_source: 'techpack', fabric_size: sz.size,
     }));
     toast.success(`Kain ukuran ${sz.size} diterapkan`);
@@ -753,11 +761,13 @@ export default function RnDHPPCalculatorModule({ token }) {
                               <SmartNativeSelect value={l.material_id || ''}
                                 onChange={e => {
                                   const opt = matOpts.find(m => m.material_id === e.target.value);
+                                  const sah = opt?.units || [];
                                   setLine(i, { material_id: e.target.value,
                                     material_code: opt?.code || '',
                                     material_name: opt?.name || '',
-                                    label: l.label || opt?.name || '',
-                                    unit: l.unit || opt?.base_unit || '' });
+                                    label: opt?.name || l.label || '',
+                                    // 21 Nov 2026: satuan ikut master — yang lama dipakai hanya bila sah untuk bahan ini
+                                    unit: (l.unit && sah.includes(l.unit)) ? l.unit : (opt?.base_unit || '') });
                                 }}
                                 data-testid={`hpp-line-material-${i}`} className="w-full">
                                 <option value="">Pilih master material…</option>
@@ -783,8 +793,10 @@ export default function RnDHPPCalculatorModule({ token }) {
                         </div>
                         <div>
                           <Lbl>Satuan</Lbl>
-                          <Input value={l.unit || ''} onChange={e => setLine(i, { unit: e.target.value })}
-                            placeholder="pcs" data-testid={`hpp-line-unit-${i}`} />
+                          <RnDUnitSelect value={l.unit || ''} onChange={e => setLine(i, { unit: e.target.value })}
+                            testId={`hpp-line-unit-${i}`}
+                            units={isManual ? undefined : (matOpts.find(m => m.material_id === l.material_id)?.units
+                              || (l.material_id ? undefined : []))} />
                         </div>
                         <div>
                           <Lbl>Harga master</Lbl>
@@ -860,17 +872,27 @@ export default function RnDHPPCalculatorModule({ token }) {
                   </Button>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Isian label="Pemakaian kain/pcs (meter)">
-                    <MoneyInput decimals={4} value={form.fabric_usage_per_pcs}
-                      onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
+                  <Isian label={`Pemakaian kain/pcs (${SATUAN_KAIN_LAMA[form.fabric_unit] || 'meter'})`}>
+                    <div className="flex gap-2">
+                      <MoneyInput decimals={4} value={form.fabric_usage_per_pcs} className="min-w-0 flex-1"
+                        onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
+                      <SmartNativeSelect value={form.fabric_unit || 'm'} searchable={false} className="w-28"
+                        aria-label="Satuan kain" data-testid="hpp-fabric-unit"
+                        onChange={e => { f('fabric_unit', e.target.value); f('fabric_source', 'manual'); }}>
+                        <option value="m">meter</option>
+                        <option value="yard">yard</option>
+                        <option value="kg">kg</option>
+                        {form.fabric_unit === 'set' && <option value="set">set (campuran)</option>}
+                      </SmartNativeSelect>
+                    </div>
                   </Isian>
-                  <Isian label="Harga kain/meter (Rp)">
+                  <Isian label={`Harga kain/${SATUAN_KAIN_LAMA[form.fabric_unit] || 'meter'} (Rp)`}>
                     <MoneyInput decimals={2} value={form.fabric_price_per_meter}
                       onChange={e => { f('fabric_price_per_meter', Number(e.target.value)); f('fabric_source', 'manual'); }} />
                   </Isian>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Biaya kain = {form.fabric_usage_per_pcs} m × {fmt(Number(form.fabric_price_per_meter))} = <b className="text-foreground">{fmt(form.fabric_usage_per_pcs * form.fabric_price_per_meter)}</b>
+                  Biaya kain = {form.fabric_usage_per_pcs} {SATUAN_KAIN_LAMA[form.fabric_unit] || 'meter'} × {fmt(Number(form.fabric_price_per_meter))} = <b className="text-foreground">{fmt(form.fabric_usage_per_pcs * form.fabric_price_per_meter)}</b>
                 </p>
 
                 {fabricEst && fabricEst.sizes?.length > 0 && (
@@ -885,7 +907,8 @@ export default function RnDHPPCalculatorModule({ token }) {
                         return (
                           <Button key={sz.size} type="button" size="sm" variant={dipilih ? 'default' : 'outline'}
                             className="h-auto whitespace-normal py-1.5 text-left" onClick={() => applyFabricSize(sz)}>
-                            <b>{sz.size}</b>: {sz.meters_per_pcs} m × {fmt(Number(sz.weighted_price_per_meter))} = {fmt(sz.fabric_cost_per_pcs)}
+                            <b>{sz.size}</b>: {sz.pakai ? `${sz.pakai.qty} ${SATUAN_KAIN_LAMA[sz.pakai.satuan] || sz.pakai.satuan}` : `${sz.meters_per_pcs} meter`}
+                            {' × '}{fmt(Number(sz.pakai ? sz.pakai.harga : sz.weighted_price_per_meter))} = {fmt(sz.fabric_cost_per_pcs)}
                           </Button>
                         );
                       })}
