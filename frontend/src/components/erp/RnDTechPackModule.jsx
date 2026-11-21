@@ -1133,10 +1133,11 @@ export default function RnDTechPackModule({ token }) {
                         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
                           <span>Satuan: <b className="text-foreground">{SATUAN_KAIN[kel.satuan] || kel.satuan || '—'}</b> (dari master)
                             {kel.satuan_pakai === 'kg' ? ' · pemakaian diisi berat (kg)' : ' · pemakaian diisi panjang (cm)'}</span>
-                          {fb.color_code && adaMaster && (
+                          {kel.penanda && <span className="text-[hsl(var(--warning-text))]">Kain belum ditentukan — biaya kain dan BOM produksi menunggu kainnya diputuskan.</span>}
+                          {!kel.penanda && fb.color_code && adaMaster && (
                             <StatusBadge status="ada" tone="success" label={`Master ${kodeMaster}`} />
                           )}
-                          {fb.color_code && !adaMaster && (
+                          {!kel.penanda && fb.color_code && !adaMaster && (
                             <>
                               <StatusBadge status="belum" tone="warning" label={`Master ${kodeMaster} belum ada`} />
                               <Button type="button" variant="link" size="sm" className="h-auto p-0"

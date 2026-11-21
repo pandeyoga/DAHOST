@@ -233,6 +233,9 @@ async def buat_dari_techpack(db, model_id: str, user: dict | None = None, *, ter
         # potongan + resep kain
         resep, kain_asal, kain_doc = [], None, {}
         for f, warna in kain_untuk_warna(fabrics, cc):
+            if str(f.get("kode") or "").upper() == "KN-TBD":
+                catatan.append("kain belum ditentukan di tech pack — resep kain diisi setelah kainnya diputuskan")
+                continue
             m = await master_kain(db, f.get("name"), warna, f.get("kode") or "")
             if not m:
                 catatan.append(f"kain {str(f.get('name') or f.get('kode')).strip()} warna {warna} belum ada di master bahan")

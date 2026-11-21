@@ -27,7 +27,7 @@ from core import bom_uom
 
 # Pemegang roll kain: SPV Cutting mengeluarkan roll untuk dipotong, SPV Gudang menerima kain pembelian.
 PENERIMA_PERAN = ("spv_cuting", "spv_gudang")
-KODE_DIKECUALIKAN = {"KN-TBD"}          # "KAIN BELUM DITENTUKAN" = penanda, bukan kain
+KODE_DIKECUALIKAN = {"KN-TBD"}          # "KAIN BELUM DITENTUKAN" = penanda (boleh dipilih), tidak dibuatkan master
 SATUAN_SAH = {"kg": "kg", "yard": "yard", "m": "m", "meter": "m"}
 POLA_KODE = re.compile(r"^[A-Z]{2,3}-[A-Z0-9]{2,6}$")
 
@@ -60,7 +60,8 @@ def satuan_pakai(satuan: str) -> str:
 
 
 async def daftar_keluarga(db) -> list:
-    """[{kode, nama, satuan, satuan_pakai, warna:[{kode_warna, kode, material_id, nama_warna}], riset_id}]"""
+    """[{kode, nama, satuan, satuan_pakai, warna:[{kode_warna, kode, material_id, nama_warna}], riset_id, penanda}]
+    `penanda` = "KAIN BELUM DITENTUKAN": boleh dipilih selama kain belum diputuskan, tidak dibuatkan master per warna."""
     fam: dict = {}
     async for m in db.rahaza_materials.find(
             {"type": "fabric", "active": {"$ne": False}, "is_cut_panel": {"$ne": True}},
@@ -69,8 +70,6 @@ async def daftar_keluarga(db) -> list:
         if not code or code.startswith("CUT-"):
             continue
         k = kode_keluarga(code)
-        if k in KODE_DIKECUALIKAN:
-            continue
         f = fam.setdefault(k, {"kode": k, "nama": m.get("name") or k, "satuan": satuan_dasar(m), "warna": [],
                                "gsm": m.get("gsm"), "lebar_cm": m.get("width_cm"), "riset_id": None})
         if code != k:
@@ -78,7 +77,7 @@ async def daftar_keluarga(db) -> list:
                                "nama_warna": m.get("color") or ""})
     async for r in db.dewi_rnd_materials.find({"status": {"$ne": "inactive"}}, {"_id": 0}):
         k = str(r.get("material_code") or "").strip().upper()
-        if not k or k in KODE_DIKECUALIKAN:
+        if not k:
             continue
         f = fam.setdefault(k, {"kode": k, "nama": r.get("material_name") or k,
                                "satuan": _satuan(r.get("unit") or r.get("price_unit") or ""),
@@ -87,6 +86,7 @@ async def daftar_keluarga(db) -> list:
     out = []
     for f in fam.values():
         f["satuan_pakai"] = satuan_pakai(f["satuan"])
+        f["penanda"] = f["kode"] in KODE_DIKECUALIKAN
         f["warna"].sort(key=lambda w: w["kode_warna"])
         out.append(f)
     return sorted(out, key=lambda f: _norm(f["nama"]))
@@ -122,6 +122,8 @@ async def pastikan_master_warna(db, kode: str, kode_warna: str, user: dict | Non
     k, w = str(kode or "").strip().upper(), str(kode_warna or "").strip().upper()
     if not k or not w:
         raise HTTPException(400, "Pilih kain dan warnanya dulu.")
+    if k in KODE_DIKECUALIKAN:
+        raise HTTPException(400, "Kain belum ditentukan tidak dibuatkan master per warna — pilih kainnya dulu.")
     code = f"{k}-{w}"
     ada = await db.rahaza_materials.find_one({"code": code, "active": {"$ne": False}}, {"_id": 0})
     if ada:

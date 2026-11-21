@@ -52,7 +52,8 @@ def _db():
 
 def test_daftar_keluarga_gabungan_master_dan_riset():
     fam = {f["kode"]: f for f in run(km.daftar_keluarga(_db()))}
-    assert set(fam) == {"KN-RMT", "KN-KTN", "KN-SFN"}            # potongan CUT- & KN-TBD tidak ikut
+    assert set(fam) == {"KN-RMT", "KN-KTN", "KN-SFN", "KN-TBD"}  # potongan CUT- tidak ikut
+    assert fam["KN-TBD"]["penanda"] and not fam["KN-RMT"]["penanda"]
     assert fam["KN-RMT"]["satuan"] == "yard" and fam["KN-RMT"]["satuan_pakai"] == "cm"
     assert fam["KN-KTN"]["satuan"] == "kg" and fam["KN-KTN"]["satuan_pakai"] == "kg"
     assert [w["kode"] for w in fam["KN-RMT"]["warna"]] == ["KN-RMT-LLG"] and fam["KN-RMT"]["riset_id"] == "R1"
@@ -92,6 +93,9 @@ def test_buat_master_warna_dari_keluarga_dan_kabari_pemegang_roll(monkeypatch):
     assert not lagi["dibuat"] and len(kabar) == 1
     with pytest.raises(HTTPException):
         run(km.pastikan_master_warna(db, "KN-RMT", "ZZZ"))                          # warna tak ada di master warna
+    with pytest.raises(HTTPException) as e:
+        run(km.pastikan_master_warna(db, "KN-TBD", "SKB"))                          # penanda: tidak dibuatkan master
+    assert "belum ditentukan" in e.value.detail
 
 
 def test_daftar_kain_baru_wajib_satuan_dan_kode_unik(monkeypatch):
