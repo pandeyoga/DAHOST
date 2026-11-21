@@ -281,9 +281,25 @@ async def list_patterns(
     return [serialize(d) for d in docs]
 
 
+async def _rapikan_pola(db, body: dict) -> dict:
+    """21 Nov 2026 (audit celah R&D): rentang ukuran pola = daftar ukuran style (bukan ketikan bebas); satuan kain
+    per pcs hanya m / yard / kg (kain knit dihitung per kg)."""
+    out = {}
+    if body.get('style_id'):
+        from routes.dewi_rnd_sizes import resolve_style_sizes, compute_size_range
+        sl = (await resolve_style_sizes(db, body['style_id'])).get('size_list') or []
+        if sl:
+            out['size_range'] = compute_size_range(sl)
+    if 'fabric_unit' in body:
+        u = str(body.get('fabric_unit') or 'm').strip().lower()
+        out['fabric_unit'] = u if u in ('m', 'yard', 'kg') else 'm'
+    return out
+
+
 @router.post('/patterns')
 async def create_pattern(body: dict, user: dict = Depends(require_auth)):
     db = get_db()
+    body = {**body, **(await _rapikan_pola(db, body))}
     doc = {
         'id':            sid(),
         'pattern_code':  body.get('pattern_code', ''),
@@ -294,6 +310,9 @@ async def create_pattern(body: dict, user: dict = Depends(require_auth)):
         'total_pieces':  body.get('total_pieces', 0),
         'fabric_width':  body.get('fabric_width', 150),
         'fabric_usage_per_pcs': body.get('fabric_usage_per_pcs', 0.0),
+        'fabric_unit':          body.get('fabric_unit', 'm'),
+        'fabric_source':        body.get('fabric_source', 'manual'),
+        'fabric_size':          body.get('fabric_size', ''),
         'hpp_fabric_per_pcs':   body.get('hpp_fabric_per_pcs', 0.0),
         'efficiency_pct':       body.get('efficiency_pct', 0.0),
         'marking_photo_url':    body.get('marking_photo_url', None),
@@ -315,6 +334,7 @@ async def create_pattern(body: dict, user: dict = Depends(require_auth)):
 async def update_pattern(pattern_id: str, body: dict, user: dict = Depends(require_auth)):
     db = get_db()
     upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'created_by')}
+    upd.update(await _rapikan_pola(db, body))
     upd['updated_at'] = now_utc()
     res = await db.dewi_rnd_patterns.update_one({'id': pattern_id}, {'$set': upd})
     if res.matched_count == 0:

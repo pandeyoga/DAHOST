@@ -28,11 +28,11 @@ import RnDUnitSelect, { UOM_STATUS } from './RnDUnitSelect';
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = (n) => n != null ? formatRupiah(n) : '—';
 
-const emptyAcc = { name: '', material_id: '', qty: 0, unit: 'm', unit_cost: 0 };
+const emptyAcc = { name: '', material_id: '', qty: 0, unit: '', unit_cost: 0 };
 
 const emptyForm = {
   sample_code: '', style_id: '', style_name: '',
-  fabric_items: [{ name: 'Main Fabric', material_id: '', qty: 1, unit: 'm', unit_cost: 0 }],
+  fabric_items: [{ name: '', material_id: '', qty: 1, unit: '', unit_cost: 0 }],
   trim_items: [],
   labor_cost: 0,
   overhead_cost: 0,
@@ -62,7 +62,7 @@ function LineHint({ row }) {
       {warn && <AlertTriangle className="mr-1 -mt-0.5 inline h-3 w-3" />}
       {row.qty} {row.unit} → <b>{row.qty_priced}</b> {row.price_unit} × {fmt(row.price_per_unit)} = <b>{fmt(row.total_cost)}</b>
       {row.uom_note ? ` · ${row.uom_note}` : (st.label ? ` · ${st.label}` : '')}
-      {row.price_source === 'unresolved' && ' · harga belum ada, isi harga atau lengkapi Riset Material'}
+      {row.price_source === 'unresolved' && ' · harga belum ada di master — isi harga di kolom Harga'}
     </div>
   );
 }
@@ -137,7 +137,9 @@ export default function RnDCostingTab({ token }) {
     let row = { ...items[i], [k]: ['qty', 'unit_cost'].includes(k) ? Number(v) : v };
     if (k === 'material_id') {
       const m = matOpts.find(o => o.material_id === v);
-      if (m) row = { ...row, name: m.name, unit: row.unit || m.base_unit };
+      // 21 Nov 2026: nama & satuan ikut master; satuan lama dipertahankan hanya bila sah untuk bahan ini
+      if (m) row = { ...row, name: m.name, material_code: m.code,
+        unit: (row.unit && (m.units || []).includes(row.unit)) ? row.unit : m.base_unit };
     }
     items[i] = row;
     f(key, items);
@@ -239,21 +241,22 @@ export default function RnDCostingTab({ token }) {
   const renderRows = (key, testPrefix) => (
     <div className="space-y-2">
       {(form[key] || []).length > 0 && (
-        <div className="hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_72px_96px_104px_36px]">
-          <span>Nama bahan</span><span>Master material</span><span>Qty</span><span>Satuan</span><span>Harga</span><span />
+        <div className="hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[minmax(0,2fr)_72px_96px_120px_36px]">
+          <span>Bahan (master material)</span><span>Qty</span><span>Satuan</span><span>Harga</span><span />
         </div>
       )}
-      {(form[key] || []).map((it, i) => (
+      {(form[key] || []).map((it, i) => {
+        const opt = matOpts.find(m => m.material_id === it.material_id);
+        const hargaMaster = Number(opt?.unit_cost || 0) > 0;
+        return (
         <div key={i}
-          className="grid grid-cols-2 gap-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)_72px_96px_104px_36px] sm:border-0 sm:p-0">
-          <Input value={it.name} onChange={e => setRow(key, i, 'name', e.target.value)}
-            placeholder="Nama bahan" className="col-span-2 sm:col-span-1" data-testid={`${testPrefix}-name-${i}`} />
-          <div className="col-span-2 min-w-0 sm:col-span-1">
+          className="grid grid-cols-2 gap-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2 sm:grid-cols-[minmax(0,2fr)_72px_96px_120px_36px] sm:border-0 sm:p-0">
+          <div className="col-span-2 min-w-0 sm:col-span-1" data-testid={`${testPrefix}-name-${i}`}>
             <SmartNativeSelect value={it.material_id || ''}
               onChange={e => setRow(key, i, 'material_id', e.target.value)}
               data-testid={`${testPrefix}-master-${i}`}
               className="w-full text-sm">
-              <option value="">Tautkan master…</option>
+              <option value="">{it.name && !it.material_id ? `${it.name} (belum dari master) — pilih…` : 'Pilih bahan dari master…'}</option>
               {matOpts.map(m => (
                 <option key={m.material_id} value={m.material_id}>{m.code} — {m.name} ({m.base_unit})</option>
               ))}
@@ -262,15 +265,21 @@ export default function RnDCostingTab({ token }) {
           <Input type="number" value={it.qty} onChange={e => setRow(key, i, 'qty', e.target.value)}
             placeholder="Qty" className="text-right" data-testid={`${testPrefix}-qty-${i}`} />
           <RnDUnitSelect value={it.unit} onChange={e => setRow(key, i, 'unit', e.target.value)}
-            testId={`${testPrefix}-unit-${i}`} />
-          <MoneyInput decimals={2} value={it.unit_cost} onChange={e => setRow(key, i, 'unit_cost', e.target.value)}
-            placeholder="Harga" data-testid={`${testPrefix}-price-${i}`} />
+            testId={`${testPrefix}-unit-${i}`} units={opt?.units || (it.material_id ? undefined : [])} />
+          {hargaMaster ? (
+            <p className="truncate py-2 text-right text-sm tabular-nums text-muted-foreground" data-testid={`${testPrefix}-price-${i}`}
+              title="Harga dari master material (sama dengan HPP)">{fmt(opt.unit_cost)}/{opt.base_unit}</p>
+          ) : (
+            <MoneyInput decimals={2} value={it.unit_cost} onChange={e => setRow(key, i, 'unit_cost', e.target.value)}
+              placeholder="Harga" data-testid={`${testPrefix}-price-${i}`} />
+          )}
           <Button type="button" variant="ghost" size="icon" onClick={() => removeRow(key, i)}
             title="Hapus baris" aria-label="Hapus baris" className="justify-self-end">
             <X className="text-[hsl(var(--danger-text))]" /></Button>
           <LineHint row={rowsOf(key)[i]} />
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -437,7 +446,7 @@ export default function RnDCostingTab({ token }) {
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-medium text-foreground">Bahan kain</p>
-              <Button type="button" variant="outline" size="sm" onClick={() => addRow('fabric_items', { unit: 'm' })}
+              <Button type="button" variant="outline" size="sm" onClick={() => addRow('fabric_items', {})}
                 data-testid="add-fabric-row">
                 <Plus />Tambah bahan
               </Button>
@@ -448,7 +457,7 @@ export default function RnDCostingTab({ token }) {
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-medium text-foreground">Aksesoris / trim</p>
-              <Button type="button" variant="outline" size="sm" onClick={() => addRow('trim_items', { name: 'Label', unit: 'pcs' })}
+              <Button type="button" variant="outline" size="sm" onClick={() => addRow('trim_items', {})}
                 data-testid="add-trim-row">
                 <Plus />Tambah aksesoris
               </Button>

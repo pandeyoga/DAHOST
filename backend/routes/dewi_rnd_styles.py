@@ -177,7 +177,7 @@ async def create_style(body: dict, user: dict = Depends(require_auth)):
         'id': sid(),
         'style_code': code,
         'style_name': name,
-        'category': body.get('category', ''),
+        'category': await kategori_master(db, body.get('category', '')),
         'buyer': masters.get('buyer', ''),
         'fabric_type': masters.get('fabric_type', ''),
         'season': body.get('season', ''),
@@ -297,6 +297,18 @@ async def _record_style_revision(db, style: dict, user: dict, changed: list, *,
     return serialize(doc)
 
 
+async def kategori_master(db, teks: str, sebelum: str = '') -> str:
+    """21 Nov 2026 (audit celah R&D): kategori style = NAMA di master Kategori Produk (bukan ketikan bebas).
+    Nilai lama yang tidak diubah tetap boleh (data lama); kosong boleh."""
+    raw = str(teks or '').strip()
+    if not raw or raw == str(sebelum or '').strip():
+        return raw
+    cat = await pm.resolve_category_by_text(db, raw, allow_create=False)
+    if not cat:
+        raise HTTPException(400, f"Kategori '{raw}' tidak ada di master Kategori Produk — pilih dari daftar.")
+    return cat.get('name') or raw
+
+
 @router.put('/styles/{style_id}')
 async def update_style(style_id: str, body: dict, user: dict = Depends(require_auth)):
     """Update style — perubahan field terlacak otomatis tercatat sebagai revisi.
@@ -319,6 +331,8 @@ async def update_style(style_id: str, body: dict, user: dict = Depends(require_a
     body.pop('id', None)
     body.pop('created_at', None)
     body.pop('created_by', None)
+    if 'category' in body:
+        body['category'] = await kategori_master(db, body.get('category'), before.get('category'))
 
     # F2: `size_list` hanya boleh lewat PUT /styles/{id}/size-list supaya pemadanan
     # master (size_map), base_size, dan size_range selalu ikut terhitung.

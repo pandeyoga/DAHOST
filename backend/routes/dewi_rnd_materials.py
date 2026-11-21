@@ -49,8 +49,9 @@ async def _enrich_costing_line(db, line: dict) -> dict:
     sebagai 500 kg. Bila satuan tidak bisa dikonversi, biaya TETAP dihitung 1:1
     tapi baris ditandai `uom_status='mismatch'` + catatan agar terlihat di UI.
 
-    Urutan harga (keputusan owner): harga yang DIKETIK user menang → Riset
-    Material → `unit_cost` master material.
+    Urutan harga — 21 Nov 2026 (owner: "harus konsisten"): SAMA dengan HPP & biaya kain tech pack =
+    `unit_cost` master material → Riset Material → harga yang diketik (hanya bila master & riset belum
+    punya harga). Dulu harga ketikan menang, sehingga biaya sample bisa beda dari HPP untuk bahan yang sama.
     """
     out = dict(line)
     qty = _num(line.get('qty') or line.get('quantity'), 0)
@@ -61,18 +62,20 @@ async def _enrich_costing_line(db, line: dict) -> dict:
     if master is None and (rnd or {}).get('linked_material_id'):
         master = await db.rahaza_materials.find_one({'id': rnd['linked_material_id']}, {'_id': 0})
 
-    price = _num(line.get('price_per_unit') or line.get('unit_cost')
-                 or line.get('unit_price') or line.get('price'), 0)
-    price_unit = bom_uom.norm_unit(line.get('price_unit') or '')
-    source = 'line' if price > 0 else None
+    price, price_unit, source = 0.0, '', None
+    if master:
+        price = _num(master.get('unit_cost'), 0)
+        price_unit = bom_uom.norm_unit(master.get('base_uom') or master.get('unit') or 'pcs')
+        source = 'master_material' if price > 0 else None
     if price <= 0 and rnd:
         price = _num(rnd.get('price_per_unit'), _num(rnd.get('price_per_meter'), 0))
         price_unit = bom_uom.norm_unit(rnd.get('price_unit') or rnd.get('unit') or 'm')
         source = 'rnd_material' if price > 0 else None
-    if price <= 0 and master:
-        price = _num(master.get('unit_cost'), 0)
-        price_unit = bom_uom.norm_unit(master.get('base_uom') or master.get('unit') or 'pcs')
-        source = 'master_material' if price > 0 else None
+    if price <= 0:
+        price = _num(line.get('price_per_unit') or line.get('unit_cost')
+                     or line.get('unit_price') or line.get('price'), 0)
+        price_unit = bom_uom.norm_unit(line.get('price_unit') or '') if price > 0 else ''
+        source = 'line' if price > 0 else None
 
     price_unit = price_unit or unit or 'pcs'
     qty_priced, status, note = qty, 'base', ''
@@ -107,26 +110,48 @@ async def _enrich_costing_line(db, line: dict) -> dict:
     if master:
         out['material_id'] = master.get('id')
         out['material_code'] = master.get('code') or out.get('material_code') or ''
+        out['name'] = master.get('name') or out.get('name') or ''
         out['unit_base'] = bom_uom.norm_unit(master.get('base_uom') or master.get('unit') or 'pcs')
+        out['master_linked'] = True
     else:
         out['material_id'] = out.get('material_id') or ''
+        out['master_linked'] = False
     return out
 
 
+def _baris_isi(ln) -> bool:
+    ln = ln or {}
+    return bool(str(ln.get('material_id') or ln.get('material_code') or '').strip()
+                or (str(ln.get('name') or ln.get('material') or '').strip() and _num(ln.get('qty'), 0)))
+
+
 async def _recompute_costing_lines(db, lines: list) -> tuple:
-    enriched = [await _enrich_costing_line(db, ln) for ln in (lines or [])]
+    enriched = [await _enrich_costing_line(db, ln) for ln in (lines or []) if _baris_isi(ln)]
     total = round(sum(_num(x.get('total_cost')) for x in enriched), 2)
     notes = [f"{line_name(x) or x.get('material_code') or '(baris)'}: {x['uom_note']}"
              for x in enriched if x.get('uom_status') in ('mismatch', 'unlinked') and x.get('uom_note')]
     return enriched, total, notes
 
 
-async def _recompute_costing_doc(db, body: dict, base: dict = None) -> dict:
-    """Hitung ulang SELURUH angka Sample Costing di server (sadar satuan)."""
+async def _recompute_costing_doc(db, body: dict, base: dict = None, *, wajib_master: bool = False) -> dict:
+    """Hitung ulang SELURUH angka Sample Costing di server (sadar satuan).
+
+    21 Nov 2026 (owner: "harus singkron bukan dipilih bebas"): saat DISIMPAN, baris kain/aksesoris yang diubah wajib
+    tertaut master material dan satuannya harus bisa dikonversi (pratinjau tetap menghitung untuk ditampilkan)."""
     src = {**(base or {}), **body}
     fabric, fab_total, w1 = await _recompute_costing_lines(db, src.get('fabric_items') or [])
     trim, trim_total, w2 = await _recompute_costing_lines(db, src.get('trim_items') or [])
     bom, bom_total, w3 = await _recompute_costing_lines(db, src.get('bom_lines') or [])
+    if wajib_master:
+        dicek = [x for k, rows in (('fabric_items', fabric), ('trim_items', trim)) if k in body for x in rows]
+        lepas = [x.get('name') or x.get('material') or 'baris tanpa nama' for x in dicek if not x.get('master_linked')]
+        if lepas:
+            raise HTTPException(400, 'Bahan harus dipilih dari master material: ' + ', '.join(lepas[:5])
+                                + ('…' if len(lepas) > 5 else '') + '.')
+        salah = [f"{x.get('name')} ({x.get('unit')})" for x in dicek if x.get('uom_status') == 'mismatch']
+        if salah:
+            raise HTTPException(400, 'Satuan tidak cocok dengan master: ' + ', '.join(salah[:5])
+                                + '. Pilih satuan dari daftar satuan bahan itu.')
     material = round(fab_total + trim_total + bom_total, 2)
     labor = _num(src.get('labor_cost'), 0)
     overhead = _num(src.get('overhead_cost'), 0)
@@ -187,7 +212,8 @@ async def material_options(
         rx = {'$regex': re.escape(search), '$options': 'i'}
         q['$or'] = [{'code': rx}, {'name': rx}]
     proj = {'_id': 0, 'id': 1, 'code': 1, 'name': 1, 'type': 1, 'unit': 1,
-            'base_uom': 1, 'unit_cost': 1, 'gsm': 1, 'width_cm': 1}
+            'base_uom': 1, 'unit_cost': 1, 'gsm': 1, 'width_cm': 1,
+            'uoms': 1, 'pack_unit': 1, 'pack_size': 1, 'display_in_packs': 1}
     rows = await db.rahaza_materials.find(q, proj).sort([('type', 1), ('code', 1)]).to_list(limit)
     return [{
         'material_id': m.get('id'),
@@ -197,6 +223,9 @@ async def material_options(
         'base_unit': bom_uom.norm_unit(m.get('base_uom') or m.get('unit') or 'pcs'),
         'unit_cost': float(m.get('unit_cost') or 0),
         'has_fabric_dims': bool(bom_uom.fabric_kg_per_meter(m)),
+        # 21 Nov 2026 (owner: "harus singkron"): satuan yang SAH untuk material ini (satuan dasar, kemasan master,
+        # satuan sedimensi, kain meter ⇄ kg via gramasi & lebar) — pilihan satuan baris BOM/costing hanya dari sini.
+        'units': [u['unit'] for u in bom_uom.allowed_units(m)],
     } for m in rows]
 
 
@@ -505,7 +534,7 @@ async def create_sample_costing(body: dict, user: dict = Depends(require_auth)):
     if not sample_request_id and not sample_code:
         raise HTTPException(400, 'sample_request_id atau sample_code wajib diisi')
 
-    computed = await _recompute_costing_doc(db, body)
+    computed = await _recompute_costing_doc(db, body, wajib_master=True)
     doc = {
         'id': sid(),
         'sample_request_id': sample_request_id or '',
@@ -541,7 +570,7 @@ async def update_sample_costing(costing_id: str, body: dict, user: dict = Depend
 
     for k in ('_id', 'id', 'created_at', 'created_by'):
         body.pop(k, None)
-    computed = await _recompute_costing_doc(db, body, existing)
+    computed = await _recompute_costing_doc(db, body, existing, wajib_master=True)
     upd = dict(body)
     upd.update(computed)
     upd['updated_at'] = now_utc()

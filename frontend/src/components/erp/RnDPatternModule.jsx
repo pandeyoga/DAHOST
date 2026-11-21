@@ -37,6 +37,9 @@ const STATUS_POLA = {
   draft:    { label: 'Draf', tone: 'warning' },
 };
 const statusPola = (s) => STATUS_POLA[s] || STATUS_POLA.draft;
+/** Satuan kain per pcs (21 Nov 2026): kain knit per kg, kain lembaran per meter/yard. */
+const SATUAN_POLA = { m: 'm', yard: 'yard', kg: 'kg' };
+const satuanPola = (p) => ` ${SATUAN_POLA[p?.fabric_unit] || 'm'}`;
 const fmtAngka = (n, akhiran = '') => (n ? `${Number(n).toLocaleString('id-ID', { maximumFractionDigits: 2 })}${akhiran}` : '—');
 
 const emptyForm = {
@@ -45,6 +48,7 @@ const emptyForm = {
   total_pieces: 0,
   fabric_width: 150,
   fabric_usage_per_pcs: 0,
+  fabric_unit: 'm',
   hpp_fabric_per_pcs: 0,
   efficiency_pct: 0,
   fabric_source: 'manual', fabric_size: '',
@@ -114,13 +118,19 @@ export default function RnDPatternModule({ token }) {
     } catch { toast.error('Gagal memuat estimasi kain'); }
     finally { setFabricEstLoading(false); }
   };
+  /** Pemakaian per pcs dari estimasi tech pack: satuan ikut kain (kg / meter); kain campuran → bagian meter. */
+  const pakaiPola = (sz) => (sz.pakai && sz.pakai.satuan !== 'set'
+    ? { qty: sz.pakai.qty, satuan: sz.pakai.satuan === 'kg' ? 'kg' : 'm' }
+    : { qty: sz.meters_per_pcs, satuan: 'm' });
   const applyFabricSize = (sz) => {
+    const pk = pakaiPola(sz);
     setForm(prev => ({ ...prev,
-      fabric_usage_per_pcs: sz.meters_per_pcs,
+      fabric_usage_per_pcs: pk.qty,
+      fabric_unit: pk.satuan,
       hpp_fabric_per_pcs: sz.fabric_cost_per_pcs,
       fabric_source: 'techpack', fabric_size: sz.size,
     }));
-    toast.success(`Kain ukuran ${sz.size} diterapkan (${sz.meters_per_pcs} m, HPP ${formatRupiah(sz.fabric_cost_per_pcs)})`);
+    toast.success(`Kain ukuran ${sz.size} diterapkan (${pk.qty} ${pk.satuan}, HPP ${formatRupiah(sz.fabric_cost_per_pcs)})`);
   };
 
   const loadPatterns = async () => {
@@ -172,6 +182,9 @@ export default function RnDPatternModule({ token }) {
       total_pieces: p.total_pieces || 0,
       fabric_width: p.fabric_width || 150,
       fabric_usage_per_pcs: p.fabric_usage_per_pcs || 0,
+      fabric_unit: p.fabric_unit || 'm',
+      fabric_source: p.fabric_source || 'manual',
+      fabric_size: p.fabric_size || '',
       hpp_fabric_per_pcs: p.hpp_fabric_per_pcs || 0,
       efficiency_pct: p.efficiency_pct || 0,
       marking_photo_url: p.marking_photo_url || '',
@@ -183,10 +196,16 @@ export default function RnDPatternModule({ token }) {
     setShowForm(true);
   };
 
-  const setStyleField = (styleId) => {
+  const setStyleField = async (styleId) => {
     const sel = styles.find(s => s.id === styleId);
     setForm(prev => ({ ...prev, style_id: styleId, style_code: sel?.style_code || '', style_name: sel?.style_name || '' }));
     setFabricEst(null);
+    // 21 Nov 2026: rentang ukuran ikut daftar ukuran style (satu sumber ukuran), bukan ketikan bebas
+    if (!styleId) return;
+    try {
+      const res = await fetch(`${API}/api/dewi/rnd/styles/${styleId}/size-list`, { headers: h });
+      if (res.ok) { const d = await res.json(); if (d.size_range) setForm(prev => ({ ...prev, size_range: d.size_range })); }
+    } catch { /* ignore */ }
   };
 
   const handleSave = async () => {
@@ -333,7 +352,7 @@ export default function RnDPatternModule({ token }) {
         {p.style_name && <p className="text-xs text-muted-foreground">{p.style_name}</p>}
       </div>) },
     { kunci: 'ukuran', label: 'Ukuran', isi: (p) => p.size_range || '—' },
-    { kunci: 'kain', label: 'Kain/pcs', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtAngka(p.fabric_usage_per_pcs, ' m')}</span> },
+    { kunci: 'kain', label: 'Kain/pcs', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtAngka(p.fabric_usage_per_pcs, satuanPola(p))}</span> },
     { kunci: 'hpp', label: 'HPP bahan/pcs', rata: 'kanan', isi: (p) => <span className="tabular-nums">{p.hpp_fabric_per_pcs ? formatRupiah(p.hpp_fabric_per_pcs) : '—'}</span> },
     { kunci: 'efisiensi', label: 'Efisiensi', rata: 'kanan', isi: (p) => <span className="tabular-nums">{fmtAngka(p.efficiency_pct, '%')}</span> },
     { kunci: 'media', label: 'Media', rata: 'kanan', isi: (p) => ((p.marking_media || []).length > 0 ? (
@@ -392,7 +411,8 @@ export default function RnDPatternModule({ token }) {
             { label: 'Rentang ukuran', nilai: (p) => p.size_range || '' },
             { label: 'Jumlah potongan', nilai: (p) => Number(p.total_pieces || 0) },
             { label: 'Lebar kain (cm)', nilai: (p) => Number(p.fabric_width || 0) },
-            { label: 'Kain per pcs (m)', nilai: (p) => Number(p.fabric_usage_per_pcs || 0) },
+            { label: 'Kain per pcs', nilai: (p) => Number(p.fabric_usage_per_pcs || 0) },
+            { label: 'Satuan kain', nilai: (p) => SATUAN_POLA[p.fabric_unit] || 'm' },
             { label: 'HPP bahan per pcs (Rp)', nilai: (p) => Number(p.hpp_fabric_per_pcs || 0) },
             { label: 'Efisiensi (%)', nilai: (p) => Number(p.efficiency_pct || 0) },
             { label: 'Jumlah media', nilai: (p) => (p.marking_media || []).length },
@@ -433,7 +453,7 @@ export default function RnDPatternModule({ token }) {
             <BarisDetail label="Jumlah potongan">{detail.total_pieces || '—'}</BarisDetail>
             <BarisDetail label="Lebar kain">{fmtAngka(detail.fabric_width, ' cm')}</BarisDetail>
             <BarisDetail label="Kain per pcs">
-              {fmtAngka(detail.fabric_usage_per_pcs, ' m')}
+              {fmtAngka(detail.fabric_usage_per_pcs, satuanPola(detail))}
               {detail.fabric_source === 'techpack' && <span className="text-muted-foreground"> (dari tech pack{detail.fabric_size ? `, ukuran ${detail.fabric_size}` : ''})</span>}
             </BarisDetail>
             <BarisDetail label="HPP bahan per pcs">{detail.hpp_fabric_per_pcs ? formatRupiah(detail.hpp_fabric_per_pcs) : '—'}</BarisDetail>
@@ -483,7 +503,8 @@ export default function RnDPatternModule({ token }) {
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
           <Isian label="Rentang ukuran" htmlFor="pola-ukuran">
-            <Input id="pola-ukuran" value={form.size_range} onChange={e => f('size_range', e.target.value)} placeholder="S-XL" />
+            <Input id="pola-ukuran" value={form.size_range} readOnly disabled placeholder="Pilih style dulu"
+              title="Ikut daftar ukuran style" />
           </Isian>
           <Isian label="Jumlah potongan" htmlFor="pola-potong">
             <Input id="pola-potong" type="number" value={form.total_pieces} onChange={e => f('total_pieces', Number(e.target.value))} />
@@ -513,7 +534,7 @@ export default function RnDPatternModule({ token }) {
                   return (
                     <Button key={sz.size} type="button" size="sm" variant={dipilih ? 'default' : 'outline'}
                       onClick={() => applyFabricSize(sz)}>
-                      <b>{sz.size}</b>: {sz.meters_per_pcs} m · {formatRupiah(sz.fabric_cost_per_pcs)}/pcs
+                      <b>{sz.size}</b>: {pakaiPola(sz).qty} {pakaiPola(sz).satuan} · {formatRupiah(sz.fabric_cost_per_pcs)}/pcs
                     </Button>
                   );
                 })}
@@ -521,9 +542,18 @@ export default function RnDPatternModule({ token }) {
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-3">
-            <Isian label="Kain per pcs (m)" htmlFor="pola-kain">
-              <Input id="pola-kain" type="number" step="0.01" value={form.fabric_usage_per_pcs}
-                onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
+            <Isian label={`Kain per pcs (${SATUAN_POLA[form.fabric_unit] || 'm'})`} htmlFor="pola-kain">
+              <div className="flex gap-2">
+                <MoneyInput id="pola-kain" decimals={4} value={form.fabric_usage_per_pcs} className="min-w-0 flex-1"
+                  onChange={e => { f('fabric_usage_per_pcs', Number(e.target.value)); f('fabric_source', 'manual'); }} />
+                <SmartNativeSelect value={form.fabric_unit || 'm'} searchable={false} className="w-24"
+                  aria-label="Satuan kain" data-testid="pattern-fabric-unit"
+                  onChange={e => { f('fabric_unit', e.target.value); f('fabric_source', 'manual'); }}>
+                  <option value="m">meter</option>
+                  <option value="yard">yard</option>
+                  <option value="kg">kg</option>
+                </SmartNativeSelect>
+              </div>
             </Isian>
             <Isian label="HPP bahan per pcs (Rp)">
               <MoneyInput value={form.hpp_fabric_per_pcs}

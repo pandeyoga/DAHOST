@@ -8,7 +8,8 @@ dari tech pack terbaru style asal model, untuk setiap varian aktif yang BELUM pu
   kain dicocokkan ke master kain per warna (Riset Material `KN-RMT` + warna → `KN-RMT-<WARNA>`). Kain tanpa warna di
   tech pack memakai warna varian; kain berwarna dipilih yang warnanya = warna varian, dan pasangannya (mis. polos
   utama + motif kombinasi yang ditulis berurutan) ikut. Perkiraan per pcs = panjang ÷ isi (cm → satuan kain master);
-  bila satuannya tidak bisa dikonversi, perkiraannya dikosongkan;
+  bila satuannya tidak bisa dikonversi, perkiraannya dikosongkan. 21 Nov 2026: kain tab Bahan menyimpan `kode`
+  keluarga master (dicari `<kode>-<warna>` dulu) dan pemakaian kain knit dalam kg (berat ÷ hasil);
 * baris AKSESORIS tech pack untuk warna/motif varian itu + baris tanpa warna (berlaku semua motif), qty & satuan
   apa adanya, dikonversi ke satuan dasar lewat `routes.rahaza_bom.resolve_bom_materials` (sama dengan editor BOM).
 
@@ -120,11 +121,17 @@ def kain_untuk_warna(fabrics: list, color_code: str) -> list:
     return out
 
 
-async def master_kain(db, nama: str, warna: str) -> dict | None:
-    """Kain roll master untuk nama kain tech pack + warna: kode Riset Material + '-' + warna, atau nama sama."""
+async def master_kain(db, nama: str, warna: str, kode: str = "") -> dict | None:
+    """Kain roll master untuk kain tech pack + warna: kode keluarga (tab Bahan sinkron master, 21 Nov 2026) + '-' +
+    warna; cadangan data lama: kode Riset Material dari nama + '-' + warna, atau nama sama."""
     nama = (nama or "").strip()
-    if not nama or not warna:
+    if not warna or not (nama or kode):
         return None
+    if kode:
+        m = await db.rahaza_materials.find_one(
+            {"code": f"{kode}-{warna}".upper(), "type": "fabric", "active": {"$ne": False}}, {"_id": 0})
+        if m or not nama:
+            return m
     rx = {"$regex": f"^{re.escape(nama)}$", "$options": "i"}
     riset = await db.dewi_rnd_materials.find_one({"material_name": rx}, {"_id": 0, "material_code": 1})
     if riset and riset.get("material_code"):
@@ -139,7 +146,14 @@ async def master_kain(db, nama: str, warna: str) -> dict | None:
 
 
 def meter_per_pcs(consumption: list, role: str, size_code: str) -> tuple:
-    """(meter per pcs, catatan) dari tab Bahan: ukuran sama → ALLSIZE/kosong → satu-satunya ukuran yang ada."""
+    """(meter per pcs, catatan) — hanya baris panjang (cm); lihat `pakai_per_pcs` untuk baris kg."""
+    qty, satuan, note = pakai_per_pcs(consumption, role, size_code)
+    return (qty if satuan == "m" else None), note
+
+
+def pakai_per_pcs(consumption: list, role: str, size_code: str) -> tuple:
+    """(qty per pcs, satuan 'm'|'kg', catatan) dari tab Bahan: ukuran sama → ALLSIZE/kosong → satu-satunya ukuran.
+    21 Nov 2026: kain knit diisi BERAT (kg) per hasil pcs; kain lembaran PANJANG (cm) per hasil pcs."""
     rows = [c for c in consumption or [] if (c.get("fabric_role") or "main") == (role or "main")]
     if not rows:
         return None, ""
@@ -152,23 +166,35 @@ def meter_per_pcs(consumption: list, role: str, size_code: str) -> tuple:
         pick = rows
         note = f"perkiraan kain memakai ukuran {rows[0].get('size')}"
     if not pick:
-        return None, ""
+        return None, "m", ""
     c = pick[0]
-    length, yld = _num(c.get("length_cm")), _num(c.get("yield_pcs"))
+    yld = _num(c.get("yield_pcs"))
+    if c.get("satuan") == "kg":
+        kg = _num(c.get("weight_kg"))
+        return ((kg / (yld if yld > 0 else 1.0)) if kg > 0 else None), "kg", note
+    length = _num(c.get("length_cm"))
     if length <= 0:
-        return None, note
-    return (length / 100.0) / (yld if yld > 0 else 1.0), note
+        return None, "m", note
+    return (length / 100.0) / (yld if yld > 0 else 1.0), "m", note
 
 
-def qty_satuan_kain(meters: float | None, master: dict) -> float | None:
-    if not meters:
+def qty_satuan_kain(qty: float | None, master: dict, satuan: str = "m") -> float | None:
+    """Pemakaian per pcs (meter atau kg) → satuan dasar kain master; kg ⇄ meter butuh gramasi & lebar."""
+    if not qty:
         return None
     unit = master.get("base_uom") or master.get("unit") or ""
-    gf = bom_uom.global_factor("m", unit)
+    gf = bom_uom.global_factor(satuan, unit)
     if gf:
-        return round(meters * gf, 4)
-    kgm = bom_uom.fabric_kg_per_meter(master) if bom_uom.norm_unit(unit) == "kg" else None
-    return round(meters * kgm, 4) if kgm else None
+        return round(qty * gf, 4)
+    kgm = bom_uom.fabric_kg_per_meter(master)
+    if not kgm:
+        return None
+    if satuan == "m" and bom_uom.norm_unit(unit) == "kg":
+        return round(qty * kgm, 4)
+    if satuan == "kg":
+        gm = bom_uom.global_factor("m", unit)
+        return round(qty / kgm * gm, 4) if gm else None
+    return None
 
 
 # ── rencana + terapkan ────────────────────────────────────────────────────────
@@ -207,16 +233,17 @@ async def buat_dari_techpack(db, model_id: str, user: dict | None = None, *, ter
         # potongan + resep kain
         resep, kain_asal, kain_doc = [], None, {}
         for f, warna in kain_untuk_warna(fabrics, cc):
-            m = await master_kain(db, f.get("name"), warna)
+            m = await master_kain(db, f.get("name"), warna, f.get("kode") or "")
             if not m:
-                catatan.append(f"kain {str(f.get('name')).strip()} warna {warna} belum ada di master bahan")
+                catatan.append(f"kain {str(f.get('name') or f.get('kode')).strip()} warna {warna} belum ada di master bahan")
                 continue
-            meters, note = meter_per_pcs(consumption, f.get("role"), v.get("size_code"))
+            pakai, satuan, note = pakai_per_pcs(consumption, f.get("role"), v.get("size_code"))
             if note:
                 catatan.append(note)
-            qty = qty_satuan_kain(meters, m)
-            if meters and qty is None:
-                catatan.append(f"perkiraan {m.get('code')} kosong (satuan {m.get('unit')} belum bisa dihitung dari meter)")
+            qty = qty_satuan_kain(pakai, m, satuan)
+            if pakai and qty is None:
+                catatan.append(f"perkiraan {m.get('code')} kosong (satuan {m.get('unit')} belum bisa dihitung dari "
+                               f"{'kg' if satuan == 'kg' else 'meter'})")
             peran = PERAN.get(str(f.get("role") or "main").lower(), str(f.get("role") or "Utama").title())
             resep.append({"material_id": m["id"], "code": m["code"], "name": m.get("name") or "", "role": peran,
                           "qty_per_pcs": qty, "unit": m.get("unit") or ""})

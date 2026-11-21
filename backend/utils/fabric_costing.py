@@ -89,65 +89,134 @@ async def resolve_fabric_price(db, name: str):
     return 0.0, "unresolved"
 
 
+async def harga_kain(db, fb: dict, satuan: str):
+    """(harga per `satuan` pakai ('m' atau 'kg'), sumber) — 21 Nov 2026 (owner): SATU aturan harga kain untuk semua
+    layar R&D = master per warna (`master_code`) → master keluarga (`kode`) → Riset Material/nama (aturan lama).
+    Harga master per satuan dasar dikonversi ke satuan pakai (yard → meter; kg ⇄ meter butuh gramasi & lebar)."""
+    cands = []
+    if fb.get("master_code"):
+        m = await db.rahaza_materials.find_one({"code": str(fb["master_code"]).upper()}, {"_id": 0})
+        if m:
+            cands.append((m, "master_warna"))
+    if fb.get("kode"):
+        async for m in db.rahaza_materials.find(
+                {"code": {"$regex": f"^{re.escape(str(fb['kode']).upper())}-"}, "type": "fabric",
+                 "active": {"$ne": False}, "unit_cost": {"$gt": 0}}, {"_id": 0}).limit(1):
+            cands.append((m, "master_keluarga"))
+    for m, src in cands:
+        base = bom_uom.norm_unit(m.get("base_uom") or m.get("unit") or "")
+        price = _num(m.get("unit_cost"))
+        if price <= 0:
+            continue
+        if satuan == "kg":
+            gf = bom_uom.global_factor("kg", base)          # 1 kg = gf satuan dasar
+            if gf:
+                return price * gf, src
+            kgm = bom_uom.fabric_kg_per_meter(m)
+            if kgm and base in ("m", "meter", "yard", "cm"):
+                per_m, _n = _price_per_meter_from_base(m, price)
+                if per_m:
+                    return per_m / kgm, f"{src}_dikonversi"
+            continue
+        per_m, _n = _price_per_meter_from_base(m, price)
+        if per_m:
+            return per_m, src
+    if satuan == "kg":
+        r = await db.dewi_rnd_materials.find_one(
+            {"$or": [{"material_code": str(fb.get("kode") or "").upper() or "__"},
+                     {"material_name": {"$regex": f"^{re.escape(str(fb.get('name') or '').strip())}$", "$options": "i"}}]},
+            {"_id": 0})
+        if r and bom_uom.norm_unit(r.get("price_unit") or r.get("unit") or "") == "kg" and _num(r.get("price_per_unit")) > 0:
+            return _num(r.get("price_per_unit")), "rnd_material"
+        return 0.0, "unresolved"
+    return await resolve_fabric_price(db, fb.get("name"))
+
+
+def _pakai_baris(e: dict) -> tuple:
+    """(qty per pcs, satuan 'm'|'kg') dari satu baris pemakaian; kg = berat ÷ hasil, cm = panjang ÷ 100 ÷ hasil."""
+    yld = _num(e.get("yield_pcs"))
+    if (e.get("satuan") == "kg") or (e.get("weight_kg") not in (None, "") and not _num(e.get("length_cm"))):
+        kg = _num(e.get("weight_kg"))
+        return (kg / yld if yld > 0 else kg), "kg"
+    length = _num(e.get("length_cm"))
+    return ((length / 100.0) / yld if yld > 0 else (length / 100.0)), "m"
+
+
 async def compute_fabric_cost(db, techpack: dict, size: str = None) -> dict:
-    """Return per-size fabric cost breakdown derived from a tech pack."""
+    """Return per-size fabric cost breakdown derived from a tech pack.
+
+    21 Nov 2026: baris pemakaian ber-satuan kg (kain knit: berat ÷ hasil) didukung; harga kain satu aturan
+    (`harga_kain`). Per ukuran: `meters_per_pcs` (baris meter), `kg_per_pcs` (baris kg), `fabric_cost_per_pcs`,
+    dan `pakai` {qty, satuan, harga} untuk mengisi kalkulator (satu satuan; campuran → 1 set × biaya)."""
     fabrics = techpack.get("fabrics") or []
     consumption = techpack.get("fabric_consumption") or []
-
-    priced, role_price, role_name = [], {}, {}
+    by_role = {}
     for fb in fabrics:
-        price, src = await resolve_fabric_price(db, fb.get("name"))
-        role = fb.get("role", "main")
-        priced.append({"name": fb.get("name"), "role": role, "price_per_meter": price, "price_source": src})
-        # keep the FIRST price per role
-        role_price.setdefault(role, price)
-        role_name.setdefault(role, fb.get("name"))
+        by_role.setdefault(fb.get("role", "main"), fb)
+    cache: dict = {}
 
-    def price_for(role):
-        return role_price.get(role, role_price.get("main", 0.0))
+    async def price_for(role, satuan):
+        fb = by_role.get(role) or by_role.get("main") or {}
+        key = (fb.get("master_code") or fb.get("kode") or fb.get("name"), satuan)
+        if key not in cache:
+            cache[key] = await harga_kain(db, fb, satuan) if fb else (0.0, "unresolved")
+        return cache[key]
 
-    def name_for(role):
-        return role_name.get(role, role_name.get("main", ""))
-
-    def source_for(role):
-        return next((p["price_source"] for p in priced if p["role"] == role), "unresolved")
+    priced = []
+    for fb in fabrics:
+        sat = "kg" if fb.get("satuan_pakai") == "kg" else "m"
+        price, src = await price_for(fb.get("role", "main"), sat)
+        priced.append({"name": fb.get("name"), "role": fb.get("role", "main"), "kode": fb.get("kode") or "",
+                       "price_per_meter" if sat == "m" else "price_per_kg": price, "price_source": src})
 
     sizes = {}
     for e in consumption:
         sz = (e.get("size") or "ALLSIZE")
         role = e.get("fabric_role", "main")
-        length = _num(e.get("length_cm"))
-        yld = _num(e.get("yield_pcs"))
-        meters = (length / 100.0) / yld if yld > 0 else (length / 100.0)
-        price = price_for(role)
-        cost = meters * price
-        s = sizes.setdefault(sz, {"size": sz, "entries": [], "meters_per_pcs": 0.0, "fabric_cost_per_pcs": 0.0})
+        qty, sat = _pakai_baris(e)
+        price, src = await price_for(role, sat)
+        cost = qty * price
+        fb = by_role.get(role) or by_role.get("main") or {}
+        s = sizes.setdefault(sz, {"size": sz, "entries": [], "meters_per_pcs": 0.0, "kg_per_pcs": 0.0,
+                                  "fabric_cost_per_pcs": 0.0, "_m_cost": 0.0})
         s["entries"].append({
-            "fabric_role": role,
-            "fabric_name": name_for(role),
-            "length_cm": length,
-            "yield_pcs": yld,
-            "meters_per_pcs": round(meters, 4),
-            "price_per_meter": price,
-            "cost_per_pcs": round(cost, 2),
-            "price_source": source_for(role),
+            "fabric_role": role, "fabric_name": fb.get("name", ""), "kode": fb.get("kode") or "",
+            "satuan": sat, "qty_per_pcs": round(qty, 4), "price_per_unit": price,
+            "length_cm": _num(e.get("length_cm")), "weight_kg": _num(e.get("weight_kg")),
+            "yield_pcs": _num(e.get("yield_pcs")),
+            "meters_per_pcs": round(qty, 4) if sat == "m" else 0.0,
+            "price_per_meter": price if sat == "m" else 0.0,
+            "cost_per_pcs": round(cost, 2), "price_source": src,
         })
-        s["meters_per_pcs"] += meters
+        if sat == "m":
+            s["meters_per_pcs"] += qty
+            s["_m_cost"] += cost
+        else:
+            s["kg_per_pcs"] += qty
         s["fabric_cost_per_pcs"] += cost
 
     size_list = []
     for s in sizes.values():
-        wp = (s["fabric_cost_per_pcs"] / s["meters_per_pcs"]) if s["meters_per_pcs"] > 0 else 0.0
+        wp = (s["_m_cost"] / s["meters_per_pcs"]) if s["meters_per_pcs"] > 0 else 0.0
+        sats = {x["satuan"] for x in s["entries"]}
+        if sats == {"kg"}:
+            pakai = {"qty": round(s["kg_per_pcs"], 4), "satuan": "kg",
+                     "harga": round(s["fabric_cost_per_pcs"] / s["kg_per_pcs"], 2) if s["kg_per_pcs"] else 0.0}
+        elif sats == {"m"}:
+            pakai = {"qty": round(s["meters_per_pcs"], 4), "satuan": "m", "harga": round(wp, 2)}
+        else:
+            pakai = {"qty": 1, "satuan": "set", "harga": round(s["fabric_cost_per_pcs"], 2)}
         size_list.append({
             "size": s["size"],
             "entries": s["entries"],
             "meters_per_pcs": round(s["meters_per_pcs"], 4),
+            "kg_per_pcs": round(s["kg_per_pcs"], 4),
             "fabric_cost_per_pcs": round(s["fabric_cost_per_pcs"], 2),
             "weighted_price_per_meter": round(wp, 2),
+            "pakai": pakai,
         })
     size_list.sort(key=lambda x: str(x["size"]))
     avg = round(sum(x["fabric_cost_per_pcs"] for x in size_list) / len(size_list), 2) if size_list else 0.0
-
     result = {
         "fabrics": priced,
         "sizes": size_list,

@@ -21,8 +21,12 @@ export const UOM_STATUS = {
   unlinked: { label: 'belum tertaut master material', warn: true },
 };
 
+/** `units` (21 Nov 2026): daftar satuan SAH dari master material (`/material-options` → `units`). Bila dikirim,
+ *  hanya satuan itu yang bisa dipilih; daftar kosong = bahan belum dipilih. Tanpa `units` → daftar umum. */
 export default function RnDUnitSelect({ value, onChange, className = '', testId, units }) {
-  const list = units?.length ? units : RND_UNITS;
+  const terikat = Array.isArray(units);
+  const list = terikat ? units : RND_UNITS;
+  const lepas = terikat && value && !units.includes(value);
   return (
     <SmartNativeSelect
       value={value || ''}
@@ -32,7 +36,8 @@ export default function RnDUnitSelect({ value, onChange, className = '', testId,
       searchPlaceholder="Cari satuan..."
       className={`w-full text-sm ${className}`}
     >
-      <option value="">Satuan…</option>
+      <option value="">{terikat && !units.length ? 'Pilih bahan dulu' : 'Satuan…'}</option>
+      {lepas && <option value={value}>{`${value} (tidak sah untuk bahan ini)`}</option>}
       {list.map((u) => <option key={u} value={u}>{u}</option>)}
     </SmartNativeSelect>
   );
