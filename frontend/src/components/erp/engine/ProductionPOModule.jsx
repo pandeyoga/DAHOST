@@ -1121,7 +1121,10 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                       if (!cur) return null;
                       // 14 Nov 2026: satu kode potongan boleh banyak baris (warna/ukuran dari batch yang sama);
                       // yang kembar hanya kode + varian yang sama (aturan server: core.po_tolak_dobel).
-                      const varKey = (o) => o.rahaza_variant_id || o.maklon_variant_id || (o.sku || '').trim().toUpperCase();
+                      // 21 Nov 2026: artikel katalog buyer tanpa varian → SKU sama untuk semua warna; kunci = SKU + warna + ukuran
+                      const rapi = (v) => String(v || '').trim().toUpperCase().replace(/\s+/g, ' ');
+                      const varKey = (o) => o.rahaza_variant_id || o.maklon_variant_id
+                        || (rapi(o.sku) ? [rapi(o.sku), rapi(o.color), rapi(o.size)].join('|') : '');
                       const inFormDup = !!varKey(item) && form.items.some((o, j) => j !== idx
                         && (o.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ') === cur && varKey(o) === varKey(item));
                       const chk = serialChecks[idx];

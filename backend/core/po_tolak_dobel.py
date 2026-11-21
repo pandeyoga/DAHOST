@@ -57,13 +57,19 @@ def kunci_buat_po() -> asyncio.Lock:
 
 
 def _kunci_varian(it: dict) -> str:
-    """Identitas varian satu baris PO (internal: varian master; maklon: varian/artikel katalog buyer)."""
+    """Identitas varian satu baris PO (internal: varian master; maklon: varian/artikel katalog buyer).
+
+    21 Nov 2026 (kendala Admin Produksi, PO Kamira koh Tri "1 seri 2 warna"): 89 dari 92 artikel katalog buyer
+    tidak punya varian, sehingga semua baris artikel itu ber-SKU sama (kode artikel, mis. BJ_1940) dan warna/
+    ukurannya diketik. Dulu kuncinya SKU saja → PUTIH dan HITAM dari seri yang sama dianggap baris kembar.
+    Kini SKU + warna + ukuran."""
     for k in ("rahaza_variant_id", "maklon_variant_id"):
         if it.get(k):
             return f"{k}:{it[k]}"
     sku = " ".join(str(it.get("sku") or "").upper().split())
     if sku:
-        return f"sku:{sku}"
+        warna_ukuran = "|".join(" ".join(str(it.get(k) or "").upper().split()) for k in ("color", "size"))
+        return f"sku:{sku}|{warna_ukuran}"
     return "|".join(" ".join(str(it.get(k) or "").upper().split())
                     for k in ("model_id", "catalog_item_id", "product_name", "color", "size"))
 
