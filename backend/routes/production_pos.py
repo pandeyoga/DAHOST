@@ -329,6 +329,10 @@ async def create_po(request: Request):
     # 2026-11-07 (Tahap 8): satu aturan dengan tombol "Buat PO" — peran bawaan atau izin Tambah modul PO
     assert_po_action(user, 'create', body.get('business_type') or 'internal')
     assert_maklon_buyer(body)
+    # 22 Nov 2026 (owner: "varian wajib"): baris PO maklon = varian Katalog Buyer; SKU/warna/ukuran dari varian.
+    if (body.get('business_type') or 'internal') == 'maklon':
+        from core import maklon_varian
+        body['items'] = await maklon_varian.rapikan_baris(db, body.get('items') or [], body.get('buyer_id'))
     # 12 Nov 2026 (K-M2): pengaman Merchandiser — PO internal untuk model lambat/mati, atau yang membuat
     # persediaannya melewati batas, wajib beralasan (HTTP 428 + `alasan_merchandiser`, pola sama dengan over-qty).
     # Jalur impor/saldo awal (`create_po_internal` langsung) tidak lewat sini.
@@ -923,6 +927,14 @@ async def update_po(po_id: str, request: Request):
         _efektif = [{**(_lama_by_id.get(r.get('id')) or {}), **r} for r in items_payload if isinstance(r, dict)]
         await ptd.periksa_kode(db, _efektif, kecuali_po_id=po_id, kode_lama=ptd.kode_di(_lama_items))
 
+    # 22 Nov 2026 (owner: "varian wajib"): baris maklon baru/diubah harus varian Katalog Buyer (sesudah cek kode
+    # potongan, sebelum apa pun ditulis).
+    if items_payload is not None and (body.get('business_type') or existing.get('business_type')) == 'maklon':
+        from core import maklon_varian
+        _lama_mkl = {i['id']: i for i in await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(2000)}
+        items_payload = await maklon_varian.rapikan_baris(
+            db, items_payload, body.get('buyer_id') or existing.get('buyer_id'), lama_by_id=_lama_mkl)
+
     # 12 Nov 2026 (K-M2): pengaman Merchandiser — hanya TAMBAHAN qty per model pada PO internal yang diperiksa
     # (sebelum apa pun ditulis, supaya penolakan 428 tidak meninggalkan perubahan setengah jalan).
     from core import merchandiser as mc
@@ -1234,6 +1246,12 @@ async def update_po_item(item_id: str, request: Request):
                                                         'maklon_variant_id': 1})
     from core.po_lock import assert_po_open
     await assert_po_open(db, (_cur or {}).get('po_id'), 'perubahan baris PO')
+    # 22 Nov 2026 (audit celah varian): identitas baris (artikel/varian/SKU/warna/ukuran) hanya lewat formulir Ubah PO,
+    # yang memeriksa varian master. Jalur satu-baris ini dulu menulis isian apa pun ($set mentah).
+    _identitas = [k for k in ('sku', 'color', 'color_code', 'size', 'catalog_item_id', 'maklon_variant_id',
+                              'rahaza_variant_id', 'model_id', 'size_id', 'product_name') if k in body]
+    if _identitas:
+        raise HTTPException(400, 'Artikel/varian/SKU/warna/ukuran baris PO hanya bisa diubah lewat formulir Ubah PO.')
     # 14 Nov 2026 (owner): kode potongan baru di baris ini tidak boleh sudah dipakai PO lain (core.po_tolak_dobel)
     if 'serial_number' in body and _cur:
         from core import po_tolak_dobel as ptd

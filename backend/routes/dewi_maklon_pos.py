@@ -186,7 +186,7 @@ class MaklonPOItemIn(BaseModel):
     # hilang begitu disimpan, sehingga SKU/FG/stok tidak bisa ditautkan ke master
     # dan varian yang sudah dibuat di Buyer Catalog tidak pernah terpakai.
     maklon_variant_id: Optional[str] = Field(
-        None, description="FK ke variants[] embedded di dewi_maklon_buyer_catalog (WAJIB bila artikel punya varian)")
+        None, description="FK ke variants[] embedded di dewi_maklon_buyer_catalog (WAJIB — artikel tanpa varian ditolak)")
     buyer_ref_code: Optional[str] = Field(None, description="Kode artikel milik buyer untuk varian ini")
     serial_number: Optional[str] = Field(None, description="Nomor seri produksi (opsional)")
 
@@ -288,6 +288,9 @@ async def _create_engine_po_for_maklon(db, *, payload, client, po_number, items,
             'selling_price_snapshot': it.get('selling_price_per_pcs', 0),
         } for it in items],
     }
+    # 22 Nov 2026 (owner: "varian wajib"): jalur ini (dipakai Asisten ERP) juga hanya menerima varian Katalog Buyer.
+    from core import maklon_varian
+    body['items'] = await maklon_varian.rapikan_baris(db, body['items'], payload.client_id)
     try:
         # FASE G (2026-08-16): nomornya SUDAH diterbitkan `_next_po_number()` di
         # bawah jenis dokumen `dewi_maklon_pos.po_number`. `number_issued=True`

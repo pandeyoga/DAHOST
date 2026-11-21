@@ -121,8 +121,10 @@ async def _color_code_for(db, color_name: str) -> str:
     if not name:
         return ''
     import re
+    # 22 Nov 2026 (audit celah varian): warna master tanpa field `active` juga warna aktif — dulu filter
+    # `active: True` melewatkannya sehingga kode SKU ditebak dari 3 huruf nama (mis. SAK, padahal master SKB).
     row = await db.rahaza_colors.find_one(
-        {'name': {'$regex': f'^{re.escape(name)}$', '$options': 'i'}, 'active': True},
+        {'name': {'$regex': f'^{re.escape(name)}$', '$options': 'i'}, 'active': {'$ne': False}},
         {'_id': 0, 'code': 1})
     if row and row.get('code'):
         return row['code']
@@ -457,7 +459,7 @@ class MaklonVariantUpdate(BaseModel):
     active: Optional[bool] = None
 
 
-@router.post('/buyer-catalog/{catalog_id}/variants/generate')
+@router.post('/buyer-catalog/{catalog_id}/variants/generate', dependencies=only(*MAKLON_ROLES, perm="maklon.manage"))
 async def generate_maklon_variants(catalog_id: str, user: dict = Depends(require_auth)):
     """Generate matriks varian ber-SKU dari color_options × size_options artikel.
     Idempoten: kombinasi (color,size) yang sudah ada dipertahankan (buyer_ref_code tetap)."""
@@ -482,12 +484,14 @@ async def generate_maklon_variants(catalog_id: str, user: dict = Depends(require
     new_variants = []
     seen_sku = set()
     created = 0
+    bentrok = []      # 22 Nov 2026: kombinasi yang SKU-nya sama dengan kombinasi lain dilaporkan, bukan hilang diam-diam
     for color in colors:
         ccode = await _color_code_for(db, color)
         for size in sizes:
             scode = _mk_size_code(size)
             sku = '-'.join(p for p in [artikel_code, ccode, scode] if p)
             if sku in seen_sku:
+                bentrok.append(f"{color} · {size} ({sku})")
                 continue
             seen_sku.add(sku)
             prev = by_combo.get((color.strip().lower(), size.strip().lower()))
@@ -509,8 +513,12 @@ async def generate_maklon_variants(catalog_id: str, user: dict = Depends(require
     await log_activity(user.get('id') or '', user.get('name') or user.get('email') or 'system',
                        'buyer_catalog.generate_variants', 'dewi-maklon',
                        f"id={catalog_id} total={len(new_variants)} created={created}")
-    return {'message': 'Varian maklon di-generate', 'total': len(new_variants),
-            'created': created, 'variants': new_variants}
+    pesan = 'Varian maklon di-generate'
+    if bentrok:
+        pesan += (' · ' + str(len(bentrok)) + ' kombinasi tidak dibuat karena kode SKU-nya sama dengan warna lain: '
+                  + ', '.join(bentrok[:5]) + '. Periksa kode warna di master.')
+    return {'message': pesan, 'total': len(new_variants),
+            'created': created, 'variants': new_variants, 'bentrok': bentrok}
 
 
 @router.put('/buyer-catalog/{catalog_id}/variants/{variant_id}')

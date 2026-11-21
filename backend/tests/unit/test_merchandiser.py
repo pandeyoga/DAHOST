@@ -304,7 +304,12 @@ def test_route_po_produksi_buat_dan_ubah(db, monkeypatch):
     run(pp.create_po(_Req({**body, "alasan_merchandiser": ALASAN})))
     ev = db.production_pos.docs[0]["merchandiser_events"]
     assert ev[0]["alasan"] == ALASAN and ev[0]["langkah"] == "po_produksi" and ev[0]["oleh"]["id"] == "u1"
-    run(pp.create_po(_Req({"business_type": "maklon", "buyer_id": "b1", "items": [{"model_id": "M2", "qty": 100}]})))
+    # 22 Nov 2026: baris PO maklon wajib varian Katalog Buyer (core.maklon_varian)
+    db.dewi_maklon_buyer_catalog.docs = [{"id": "K1", "client_id": "b1", "artikel_code": "ART-1", "product_name": "Kaos",
+                                          "variants": [{"id": "kv1", "sku": "ART-1-HTM-M", "color": "Hitam",
+                                                        "size": "M"}]}]
+    run(pp.create_po(_Req({"business_type": "maklon", "buyer_id": "b1",
+                           "items": [{"catalog_item_id": "K1", "maklon_variant_id": "kv1", "qty": 100}]})))
     assert "merchandiser_events" not in db.production_pos.docs[1]                 # PO maklon bukan barang DA
     # ubah: hanya TAMBAHAN qty yang diperiksa
     db.production_pos.docs = [{"id": "poX", "business_type": "internal", "status": "Draft", "po_number": "PO-X"}]
