@@ -141,6 +141,8 @@ export function VariantsSection({ catalog, onTambah }) {
     try {
       const d = await apiPost(`/dewi/maklon/buyer-catalog/${catalog.id}/variants/generate`, {});
       toast.success(`Varian: total ${d?.total || 0}, baru ${d?.created || 0}`);
+      // 22 Nov 2026: kombinasi yang kode SKU-nya bentrok dilaporkan (dulu hilang diam-diam)
+      if ((d?.bentrok || []).length) toast.warning(d.message, { duration: 9000 });
       setVariants(d?.variants || []);
     } catch (e) { toast.error(e.message || 'Gagal membuat varian'); }
     finally { setBusy(false); }

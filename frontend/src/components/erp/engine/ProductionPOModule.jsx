@@ -403,10 +403,8 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       // reset variant-derived fields
       newItems[idx].maklon_variant_id = '';
       newItems[idx].color = ''; newItems[idx].color_code = ''; newItems[idx].size = '';
-      const vars = (cat?.variants || []).filter(v => v.active !== false);
-      // Bila artikel punya varian master data → SKU HARUS dipilih dari varian (kosongkan dulu).
-      // Bila tidak ada varian → fallback custom, sku default = artikel_code.
-      newItems[idx].sku = vars.length > 0 ? '' : (cat?.artikel_code || '');
+      // 22 Nov 2026 (owner: "varian wajib"): SKU/warna/ukuran SELALU dari varian katalog — tidak ada lagi isian ketik.
+      newItems[idx].sku = '';
     }
     if (field === 'maklon_variant_sku') {
       const cat = catalogItems.find(c => c.id === newItems[idx].catalog_item_id);
@@ -448,7 +446,14 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
       }
       const cat = isInternal ? null : catalogItems.find(c => c.id === it.catalog_item_id);
       const vars = (cat?.variants || []).filter(v => v.active !== false);
-      const variantMissing = isInternal ? !it.rahaza_variant_id : (vars.length > 0 && !vars.some(v => v.sku === it.sku));
+      // 22 Nov 2026 (owner: "varian wajib"): baris maklon baru wajib varian katalog; baris lama tanpa varian (dibuat
+      // sebelum aturan ini, ber-id & belum punya maklon_variant_id) tetap boleh disimpan apa adanya.
+      const barisLamaTanpaVarian = !isInternal && !!it.id && !it.maklon_variant_id;
+      if (!isInternal && !barisLamaTanpaVarian && vars.length === 0) {
+        fail(`Baris #${n}: artikel ${cat?.artikel_code || ''} belum punya varian warna/ukuran. Tambahkan varian di Klien & Katalog Buyer dulu.`, i); return;
+      }
+      const variantMissing = isInternal ? !it.rahaza_variant_id
+        : (!barisLamaTanpaVarian && !vars.some(v => v.sku === it.sku));
       if (variantMissing) { fail(`Baris #${n}: pilih varian (warna · ukuran · SKU) dari master data.`, i); return; }
       if (!it.qty || Number(it.qty) <= 0) { fail(`Baris #${n}: qty harus lebih dari 0.`, i); return; }
       if (!isBlank(it.cmt_price_snapshot) && !(Number(it.cmt_price_snapshot) >= 0)) {
@@ -992,9 +997,9 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                 const minQty = item.__min_qty || 0;
                 const maklonCat = !isInternal ? catalogItems.find(c => c.id === item.catalog_item_id) : null;
                 const maklonVariants = (maklonCat?.variants || []).filter(v => v.active !== false);
-                // Ukuran/warna/SKU diketik hanya untuk artikel maklon tanpa varian ber-SKU; selain itu ikut varian
-                // (dulu ditampilkan lagi sebagai kotak terkunci + "SKU terpilih" → SKU tampil 3 kali).
-                const manualVariant = !isInternal && !!item.catalog_item_id && maklonVariants.length === 0;
+                // 22 Nov 2026 (owner: "varian wajib"): ukuran/warna/SKU tidak lagi diketik — selalu dari varian katalog.
+                // Baris lama tanpa varian (sebelum aturan ini) hanya ditampilkan apa adanya.
+                const barisLama = !isInternal && !!item.id && !item.maklon_variant_id;
                 const qty = Number(item.qty) || 0;
                 const rate = Number(item.cmt_price_snapshot) || 0;
                 const sug = item.__sug;
@@ -1035,7 +1040,11 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                           hint={maklonCat && ((maklonCat.color_options || []).length || (maklonCat.size_options || []).length)
                             ? `Warna: ${(maklonCat.color_options || []).join(', ') || '-'} · Ukuran: ${(maklonCat.size_options || []).join(', ') || '-'}` : null}>
                           <SearchableSelect
-                            options={catalogItems.map(c => ({ value: c.id, label: c.product_name, sub: c.artikel_code }))}
+                            options={catalogItems.map(c => {
+                              const adaVarian = (c.variants || []).some(v => v.active !== false);
+                              return { value: c.id, label: c.product_name,
+                                sub: adaVarian ? c.artikel_code : `${c.artikel_code} · belum ada varian` };
+                            })}
                             value={item.catalog_item_id}
                             onChange={val => updateItem(idx, 'catalog_item_id', val)}
                             placeholder={form.buyer_id ? 'Pilih artikel katalog buyer' : 'Pilih buyer dulu'}
@@ -1064,8 +1073,13 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                           )}
                         </Field>
                       ) : (
-                        <Field label="Varian (warna · ukuran · SKU)" required={maklonVariants.length > 0}>
-                          {maklonVariants.length > 0 || !item.catalog_item_id ? (
+                        <Field label="Varian (warna · ukuran · SKU)" required>
+                          {barisLama ? (
+                            <p className="text-sm h-9 flex items-center tabular-nums" data-testid={`po-item-${idx}-variant-lama`}>
+                              {`${item.color || '-'} · ${item.size || '-'} · ${item.sku || '-'}`}
+                              <span className="ml-1 text-xs text-muted-foreground">(data lama tanpa varian)</span>
+                            </p>
+                          ) : maklonVariants.length > 0 || !item.catalog_item_id ? (
                             <SearchableSelect
                               options={maklonVariants.map(v => ({ value: v.sku, label: `${v.color || '-'} · ${v.size || '-'}`, sub: v.sku }))}
                               value={item.sku}
@@ -1076,7 +1090,10 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                               data-testid={`po-item-${idx}-variant`}
                             />
                           ) : (
-                            <p className="text-xs text-[hsl(var(--warning-text))] h-9 flex items-center">Artikel ini belum punya varian ber-SKU — isi ukuran, warna, dan SKU di bawah.</p>
+                            <p className="text-xs text-[hsl(var(--danger-text))] py-1.5 flex items-center" data-testid={`po-item-${idx}-tanpa-varian`}>
+                              Artikel ini belum punya varian warna/ukuran. Tambahkan varian di Klien &amp; Katalog Buyer dulu
+                              (warna dan ukuran dari master), lalu pilih variannya di sini.
+                            </p>
                           )}
                         </Field>
                       )}
@@ -1086,13 +1103,6 @@ export default function ProductionPOModule({ userRole, businessType, onNavigate,
                         <GlassInput className="tabular-nums" value={item.buyer_ref_code || ''} onChange={e => updateItem(idx, 'buyer_ref_code', e.target.value)}
                           placeholder="kode artikel buyer" disabled={hasShipments} data-testid={`po-item-${idx}-buyer-ref`} />
                       </Field>
-                    )}
-                    {manualVariant && (
-                      <div className="grid grid-cols-3 gap-2">
-                        <Field label="Ukuran"><GlassInput value={item.size} onChange={e => updateItem(idx, 'size', e.target.value)} placeholder="M" disabled={hasShipments} /></Field>
-                        <Field label="Warna"><GlassInput value={item.color} onChange={e => updateItem(idx, 'color', e.target.value)} placeholder="Hitam" disabled={hasShipments} /></Field>
-                        <Field label="SKU"><GlassInput className="tabular-nums" value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="ART-HTM-M" disabled={hasShipments} /></Field>
-                      </div>
                     )}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <Field label={hasShipments ? `Qty (min ${minQty})` : 'Qty'} required>
