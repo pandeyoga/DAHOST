@@ -1105,6 +1105,8 @@ export default function RnDTechPackModule({ token }) {
                       <option value="main">Utama</option>
                       <option value="combination">Kombinasi</option>
                     </SmartNativeSelect>
+                    {/* 23 Nov 2026: tombol hapus tetap di kolom ke-4 baris kain — status & form kain baru juga order-last
+                        dan datang SESUDAH tombol ini di DOM, jadi tidak lagi mendorong tombol ke baris sendiri. */}
                     <div className="flex justify-end sm:order-last">
                       <Button type="button" variant="ghost" size="icon" onClick={() => removeFab(i)} title="Hapus kain" aria-label="Hapus kain">
                         <X className="text-[hsl(var(--danger-text))]" />
@@ -1122,7 +1124,7 @@ export default function RnDTechPackModule({ token }) {
                           f('fabrics', items);
                         }} />
                     </div>
-                    <div className="col-span-2 text-xs sm:col-span-4" data-testid={`tp-fab-status-${i}`}>
+                    <div className="col-span-2 text-xs sm:order-last sm:col-span-4" data-testid={`tp-fab-status-${i}`}>
                       {fb.name && !kel && (
                         <span className="flex items-start gap-1 text-[hsl(var(--danger-text))]">
                           <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
@@ -1151,7 +1153,7 @@ export default function RnDTechPackModule({ token }) {
                       )}
                     </div>
                     {kainBaru && kainBaru.i === i && (
-                      <div className="col-span-2 space-y-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2.5 sm:col-span-4" data-testid="tp-kain-baru">
+                      <div className="col-span-2 space-y-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2.5 sm:order-last sm:col-span-4" data-testid="tp-kain-baru">
                         <p className="text-sm font-medium text-foreground">Daftarkan kain baru</p>
                         <p className="text-xs text-muted-foreground">
                           Hanya untuk kain yang belum ada di daftar. Satuan wajib benar: <b>kg</b> untuk kain yang dibeli/dipotong
