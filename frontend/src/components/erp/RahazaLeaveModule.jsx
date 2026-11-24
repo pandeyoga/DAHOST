@@ -439,7 +439,7 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
         {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan → kembali menunggu persetujuan. */}
         <TombolBatalSetuju jenis="hr-cuti" id={lv.id} onSelesai={() => { setSelectedLeave(null); load(); }} />
         <Button size="sm" variant="outline" onClick={() => bukaBatal(lv)} data-testid={`cancel-${lv.id}`}>
-          <X />Batalkan
+          <X />Batalkan cuti
         </Button>
       </>);
     }

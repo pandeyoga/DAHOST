@@ -29,8 +29,23 @@ async def _hari_terkunci(db, emp_id: str, hari) -> list:
     return []
 
 
+_BULAN = ("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
+
+
 def _tgl(v) -> str:
-    return str(v or "")[:10]
+    """'2026-11-21' / datetime → '21 Nov 2026' (untuk nama dokumen di layar; teks lain dikembalikan apa adanya)."""
+    s = (v.isoformat() if hasattr(v, "isoformat") else str(v or ""))[:10]
+    try:
+        th, bl, hr = int(s[:4]), int(s[5:7]), int(s[8:10])
+        return f"{hr} {_BULAN[bl - 1]} {th}"
+    except (ValueError, IndexError):
+        return s
+
+
+def _rentang(a, b) -> str:
+    """Satu hari → '21 Nov 2026'; beberapa hari → '20 Nov 2026–22 Nov 2026'."""
+    ta, tb = _tgl(a), _tgl(b)
+    return ta if not tb or tb == ta else f"{ta}–{tb}"
 
 
 # ── Cuti / izin / sakit — persetujuan AKHIR (saldo dipotong + absensi ditulis) ──
@@ -71,7 +86,7 @@ daftar(Jenis(
     hapus_field=("approved_at", "approved_by", "approved_by_name", "approval_note", "approved_via", "pay_decision",
                  "pay_decision_by", "pay_decision_by_name", "balance_deducted_days", "balance_deducted_by_year",
                  "attendance_written", "approval_step_2"),
-    nama=lambda d: f"{d.get('employee_name') or ''} {_tgl(d.get('from_date'))}–{_tgl(d.get('to_date'))}".strip(),
+    nama=lambda d: f"{d.get('employee_name') or ''} {_rentang(d.get('from_date'), d.get('to_date'))}".strip(),
     pemohon=lambda d: d.get("user_id") or d.get("created_by"), penyetuju=lambda d: d.get("approved_by"),
     hambatan=_hambatan_cuti, balikkan=_balik_cuti,
 ))

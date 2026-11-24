@@ -149,6 +149,23 @@ def test_cuti_tanggal_sudah_gaji_final_ditolak():
     assert db.rahaza_leave_balances.docs[0]["used"] == 3                     # tidak ada yang berubah
 
 
+def test_nama_cuti_tanpa_nama_karyawan_diambil_dari_data_karyawan():
+    # Data cuti di server hanya menyimpan employee_id → layar sempat menampilkan "2026-11-21–2026-11-21".
+    db = _db_cuti(employee_name=None, from_date="2026-11-21", to_date="2026-11-21",
+                  approved_at="2099-01-01T00:00:00")
+    db.rahaza_employees.docs = [{"id": "e1", "name": "Ani Lestari"}]
+    rows = run(bs.disetujui_terbaru(db, OWNER, hari=3650))
+    assert any(r["jenis"] == "hr-cuti" and r["nama"] == "Ani Lestari 21 Nov 2026" for r in rows), rows
+    j = bs.ambil_jenis("hr-cuti")
+    assert run(bs.nama_tampil(db, j, db.rahaza_leave_requests.docs[0])) == "Ani Lestari 21 Nov 2026"
+
+
+def test_nama_techpack_versi_tidak_dobel_v():
+    bs._muat()
+    assert bs.JENIS["rnd-techpack"].nama({"style_code": "DA-4205", "version": "v1"}) == "DA-4205 v1"
+    assert bs.JENIS["rnd-techpack"].nama({"style_code": "DA-4205", "version": 2}) == "DA-4205 v2"
+
+
 def test_kasbon_nominal_kembali_ke_permintaan():
     db = FakeDB()
     db.dewi_kasbon_requests.docs = [{"id": "k1", "status": "hr_approved", "amount": 500000, "requested_amount": 1000000,

@@ -55,7 +55,7 @@ daftar(Jenis(
     kode="rnd-techpack", label="Tech pack", portal="rnd", koleksi="dewi_rnd_tech_packs", modul="rnd-design-hub",
     status_setuju=("approved",), kembali_ke="draft", label_kembali="draf",
     izin=("rnd.approve",), peran_lama=RND_PERAN, hapus_field=("approved_by", "approved_at"),
-    nama=lambda d: f"{d.get('style_code') or d.get('name') or ''} v{d.get('version') or 1}".strip(),
+    nama=lambda d: f"{d.get('style_code') or d.get('name') or ''} v{str(d.get('version') or 1).lstrip('vV') or 1}".strip(),
     hambatan=_hambatan_techpack,
 ))
 
