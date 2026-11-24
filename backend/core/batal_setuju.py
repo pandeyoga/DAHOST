@@ -111,6 +111,29 @@ async def _dok(db, j: Jenis, doc_id: str) -> dict:
     return doc
 
 
+async def _nama_karyawan(db, docs: list) -> dict:
+    """{employee_id: nama} untuk dokumen yang hanya menyimpan employee_id (mis. pengajuan cuti lama)."""
+    ids = sorted({d.get("employee_id") for d in docs if d.get("employee_id") and not d.get("employee_name")})
+    if not ids:
+        return {}
+    try:
+        rows = await db.rahaza_employees.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(ids))
+    except Exception:  # noqa: BLE001 — nama hanya untuk tampilan
+        log.exception("nama karyawan untuk batal_setuju gagal dimuat")
+        return {}
+    return {r["id"]: r["name"] for r in rows if r.get("id") and r.get("name")}
+
+
+def _nama_dengan(j: Jenis, doc: dict, karyawan: dict) -> str:
+    nm = karyawan.get(doc.get("employee_id")) if not doc.get("employee_name") else None
+    return j.nama({**doc, "employee_name": nm} if nm else doc)
+
+
+async def nama_tampil(db, j: Jenis, doc: dict) -> str:
+    """Nama dokumen untuk layar, pesan, dan notifikasi (nama karyawan dilengkapi bila dokumen tidak menyimpannya)."""
+    return _nama_dengan(j, doc, await _nama_karyawan(db, [doc]))
+
+
 async def cek(db, j: Jenis, doc: dict) -> dict:
     """Bisa dibatalkan? → {boleh, hambatan[], status, kembali_ke}. Tidak mengubah apa pun."""
     status = doc.get(j.field_status)
@@ -157,7 +180,7 @@ async def batalkan(db, kode: str, doc_id: str, user: dict, alasan: str) -> dict:
     if not res.matched_count:
         raise HTTPException(409, f"{j.label} baru saja diubah orang lain. Muat ulang lalu coba lagi.")
 
-    nama = j.nama(doc)
+    nama = await nama_tampil(db, j, doc)
     try:
         from auth import log_activity
         await log_activity(user.get("id") or "", user.get("name") or "", "batal_setuju", f"{j.portal}.{j.kode}",
@@ -205,10 +228,11 @@ async def disetujui_terbaru(db, user: dict, hari: int = 30, batas: int = 300) ->
         except Exception:  # noqa: BLE001 — satu koleksi bermasalah tidak menjatuhkan daftar
             log.exception("disetujui_terbaru gagal untuk %s", j.kode)
             continue
+        karyawan = await _nama_karyawan(db, docs)
         for d in docs:
             w = d.get(j.waktu_setuju)
             hasil.append({"jenis": j.kode, "label": j.label, "portal": j.portal, "modul": j.modul,
-                          "id": d.get(j.field_id), "nama": j.nama(d), "status": d.get(j.field_status),
+                          "id": d.get(j.field_id), "nama": _nama_dengan(j, d, karyawan), "status": d.get(j.field_status),
                           "disetujui_at": w.isoformat() if hasattr(w, "isoformat") else w,
                           "disetujui_oleh": d.get("approved_by_name") or d.get("approved_by") or d.get("owner_reviewed_by") or ""})
     hasil.sort(key=lambda r: str(r.get("disetujui_at") or ""), reverse=True)

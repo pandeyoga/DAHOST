@@ -27,14 +27,15 @@ export function muatJenisBatal() {
   return _jenis;
 }
 
-const pesanGalat = (e, cadangan) => (e instanceof ApiError ? (e.userMessage || e.detail || cadangan) : cadangan);
+// ApiError hanya punya status/detail/body; detail bisa berupa daftar (galat isian 422) → pakai kalimat cadangan.
+const pesanGalat = (e, cadangan) => (e instanceof ApiError && typeof e.detail === 'string' && e.detail) || cadangan;
 
 export async function batalkanPersetujuan({ jenis, id }) {
   let cek;
   try {
     cek = await apiFetch(`/batal-setuju/${encodeURIComponent(jenis)}/${encodeURIComponent(id)}/cek`);
   } catch (e) {
-    if (!(e instanceof ApiError) || !e.isUnauthorized) toast.error(pesanGalat(e, 'Gagal memeriksa persetujuan'));
+    if (!(e instanceof ApiError) || e.status !== 401) toast.error(pesanGalat(e, 'Gagal memeriksa persetujuan'));
     return null;
   }
   const nama = [cek?.label, cek?.nama].filter(Boolean).join(' ');
@@ -64,7 +65,7 @@ export async function batalkanPersetujuan({ jenis, id }) {
     toast.success(r?.pesan || 'Persetujuan dibatalkan');
     return r;
   } catch (e) {
-    if (!(e instanceof ApiError) || !e.isUnauthorized) toast.error(pesanGalat(e, 'Gagal membatalkan persetujuan'));
+    if (!(e instanceof ApiError) || e.status !== 401) toast.error(pesanGalat(e, 'Gagal membatalkan persetujuan'));
     return null;
   }
 }

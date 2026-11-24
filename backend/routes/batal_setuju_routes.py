@@ -49,7 +49,7 @@ async def cek_batal(jenis: str, doc_id: str, user: dict = Depends(require_auth))
     db = get_db()
     doc = await bs._dok(db, j, doc_id)
     hasil = await bs.cek(db, j, doc)
-    return {**hasil, "jenis": j.kode, "label": j.label, "nama": j.nama(doc), "label_kembali": j.label_kembali}
+    return {**hasil, "jenis": j.kode, "label": j.label, "nama": await bs.nama_tampil(db, j, doc), "label_kembali": j.label_kembali}
 
 
 @router.post("/{jenis}/{doc_id}")
