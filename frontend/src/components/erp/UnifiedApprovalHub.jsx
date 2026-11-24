@@ -189,7 +189,7 @@ function SudahDisetujui({ onNavigate }) {
       const r = await apiFetch('/batal-setuju/disetujui?hari=30');
       setRows(Array.isArray(r?.data) ? r.data : []);
     } catch (e) {
-      if (!(e instanceof ApiError) || !e.isUnauthorized) toast.error('Gagal memuat daftar yang sudah disetujui');
+      if (!(e instanceof ApiError) || e.status !== 401) toast.error('Gagal memuat daftar yang sudah disetujui');
       setRows([]);
     } finally {
       setMemuat(false);
