@@ -21,9 +21,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Ruler, Plus, Trash2, Pencil, Search, CheckCircle2, MoreHorizontal, RefreshCw,
-  Calculator, FileImage, Upload, X as XIcon, Image as ImageIcon, Video as VideoIcon,
+  Calculator, FileImage, Upload, X as XIcon, Image as ImageIcon, Video as VideoIcon, Undo2,
 } from 'lucide-react';
 import { toast } from '../ui/sonner';
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { apiPost, apiPut, apiDelete } from '@/lib/api';
@@ -99,6 +101,7 @@ export default function RnDPatternModule({ token }) {
   const [detail,   setDetail]   = useState(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const fileInputRef = useRef(null);
+  const bolehBatal = useBolehBatal('rnd-pola');
 
   const f = (name, val) => setForm(prev => ({ ...prev, [name]: val }));
 
@@ -376,6 +379,13 @@ export default function RnDPatternModule({ token }) {
                 <CheckCircle2 className="mr-2 h-4 w-4" />Setujui
               </DropdownMenuItem>
             )}
+            {bolehBatal && p.status === 'approved' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'rnd-pola', id: p.id }).then((r) => { if (r) loadPatterns(); })}
+                data-testid={`batal-setuju-pola-${p.id}`}>
+                <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => handleDelete(p)} className="text-[hsl(var(--danger-text))]"
               data-testid={`rnd-pattern-delete-${p.id}`}>
               <Trash2 className="mr-2 h-4 w-4" />Hapus
@@ -444,6 +454,9 @@ export default function RnDPatternModule({ token }) {
           aksi={<>
             {detail.status !== 'approved' && (
               <Button size="sm" variant="success" onClick={() => handleApprove(detail.id)}><CheckCircle2 />Setujui</Button>
+            )}
+            {detail.status === 'approved' && (
+              <TombolBatalSetuju jenis="rnd-pola" id={detail.id} onSelesai={() => { setDetail(null); loadPatterns(); }} />
             )}
             <Button size="sm" variant="outline" onClick={() => openEdit(detail)}><Pencil />Ubah</Button>
             <Button size="sm" variant="destructive" onClick={() => handleDelete(detail)}><Trash2 />Hapus</Button>

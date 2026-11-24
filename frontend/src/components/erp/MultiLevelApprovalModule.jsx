@@ -22,6 +22,8 @@ import { formatDateID } from '@/lib/format';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
 import { checkPerm } from '@/lib/rbac';
+import { useBolehBatal } from '@/lib/batalSetuju';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const UKURAN_HALAMAN = 50;
@@ -86,9 +88,12 @@ const tahap = (it) => {
 };
 
 // ── Detail (popup) ────────────────────────────────────────────────────────────
-function DetailAjuan({ item, onClose, onApprove, onReject, bolehPutuskan, onModuleChange }) {
+function DetailAjuan({ item, onClose, onApprove, onReject, bolehPutuskan, onModuleChange, onBatal }) {
   const [note, setNote] = useState('');
   const [acting, setActing] = useState(false);
+  const bolehBatal = useBolehBatal('persetujuan-bertingkat');
+  const bisaBatal = bolehBatal && item.status === 'approved' && Array.isArray(item.levels);
+  const lihatAsli = Boolean(onModuleChange && DOMAIN_MODULE_MAP[item.type]);
 
   const handleAction = async (action) => {
     setActing(true);
@@ -103,11 +108,15 @@ function DetailAjuan({ item, onClose, onApprove, onReject, bolehPutuskan, onModu
       judul={item.subject || item.ref_code || 'Ajuan'}
       keterangan={[item.ref_code, item.chain_name].filter(Boolean).join(' · ')}
       status={<Status status={item.status} />}
-      aksi={onModuleChange && DOMAIN_MODULE_MAP[item.type] ? (
-        <Button size="sm" variant="outline" data-testid="approval-detail-openentity"
-          onClick={() => { onClose(); onModuleChange(DOMAIN_MODULE_MAP[item.type]); }}>
-          <ExternalLink />Lihat data asli
-        </Button>) : null}>
+      aksi={(bisaBatal || lihatAsli) ? (<>
+        {bisaBatal && <TombolBatalSetuju jenis="persetujuan-bertingkat" id={item.id} onSelesai={() => onBatal?.()} />}
+        {lihatAsli && (
+          <Button size="sm" variant="outline" data-testid="approval-detail-openentity"
+            onClick={() => { onClose(); onModuleChange(DOMAIN_MODULE_MAP[item.type]); }}>
+            <ExternalLink />Lihat data asli
+          </Button>
+        )}
+      </>) : null}>
       <dl className="divide-y divide-[var(--glass-border)]">
         <BarisDetail label="Jenis">{labelJenis(item.type)}</BarisDetail>
         <BarisDetail label="Pemohon">{item.requester_name || '—'}</BarisDetail>
@@ -289,7 +298,12 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
           {actingId === it.id ? <RefreshCw className="animate-spin" /> : <CheckCircle />}Setujui
         </Button>
       </div>) : (
-      <Button size="sm" variant="outline" onClick={() => setSelectedItem(it)} data-testid={`approval-view-${it.id}`}>Rincian</Button>)) },
+      <div className="flex justify-end gap-2">
+        {it.status === 'approved' && Array.isArray(it.levels) && (
+          <TombolBatalSetuju jenis="persetujuan-bertingkat" id={it.id} onSelesai={() => load()} />
+        )}
+        <Button size="sm" variant="outline" onClick={() => setSelectedItem(it)} data-testid={`approval-view-${it.id}`}>Rincian</Button>
+      </div>)) },
   ];
 
   const kolomAlur = [
@@ -396,6 +410,7 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
           item={selectedItem} onClose={() => setSelectedItem(null)}
           onApprove={handleApprove} onReject={handleReject}
           bolehPutuskan={bolehPutuskan(selectedItem)} onModuleChange={onModuleChange}
+          onBatal={() => { setSelectedItem(null); load(); }}
         />
       )}
     </div>

@@ -11,6 +11,7 @@ import TombolUnduh from '@/components/ui/tombol-unduh';
 import { MoneyInput } from '@/components/ui/money-input';
 import { EmptyState } from '../../moduleAtoms';
 import { DetailPanel } from '../../layout/PageLayout';
+import TombolBatalSetuju from '../../TombolBatalSetuju';
 import { SessionStatusBadge, fmtPeriod } from './SessionList';
 import { ReconSummary } from './ReconSummary';
 import { ImportPanel } from './ImportPanel';
@@ -108,6 +109,11 @@ export function SessionDetail({ sessionId, headers, onBack, onChanged }) {
       onClose={onBack}
       actions={<>
         <Button size="icon" variant="outline" data-testid="recon-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+        {/* 24 Nov 2026 (owner): sesi yang sudah disetujui bisa dibuka lagi bila salah setujui (server yang memeriksa). */}
+        {readOnly && (
+          <TombolBatalSetuju jenis="fin-rekon-bank" id={session.id || sessionId} size="default"
+            onSelesai={() => { load(); onChanged?.(); }} />
+        )}
         {!readOnly && <>
           <Button variant="outline" data-testid="recon-import-toggle" onClick={() => setShowImport(v => !v)} aria-expanded={showImport}><Upload className="w-4 h-4" /> Impor mutasi</Button>
           <Button variant="success" data-testid="recon-approve"

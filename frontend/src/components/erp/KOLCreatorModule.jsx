@@ -36,6 +36,7 @@ import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import PaginationBar from './PaginationBar';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { monthOptions } from './finance/PeriodPicker';
 import CreatorIncentivePanel from './marketing/CreatorIncentivePanel';
 import CreatorWeeklyReportPanel from './marketing/CreatorWeeklyReportPanel';
@@ -610,6 +611,11 @@ export default function KOLCreatorModule({ token }) {
       <div className="flex justify-end gap-1">
         <Button size="sm" variant="success" data-testid="approve-request-btn" onClick={() => handleApproveRequest(r.id)}><Check />Setujui</Button>
         <Button size="sm" variant="destructive" data-testid="reject-request-btn" onClick={() => handleRejectRequest(r.id)}><X />Tolak</Button>
+      </div>) : r.status === 'approved' ? (
+      // 24 Nov 2026 (owner): permintaan yang salah disetujui bisa dibatalkan (server memeriksa barang sudah keluar atau belum).
+      <div className="flex items-center justify-end gap-1">
+        <span className="text-xs text-muted-foreground">{r.reviewed_by ? `oleh ${r.reviewed_by}` : ''}</span>
+        <TombolBatalSetuju jenis="mkt-kol" id={r.id} onSelesai={load} />
       </div>) : <span className="text-xs text-muted-foreground">{r.reviewed_by ? `oleh ${r.reviewed_by}` : ''}</span>) },
   ];
   const kolomPeringkat = [

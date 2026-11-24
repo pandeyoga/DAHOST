@@ -29,6 +29,7 @@ import ViewToggle from '@/components/ui/view-toggle';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const HRKASBON_VIEW_KEY = 'hr_kasbon_view';
 const BATAS_MUAT = 500; // batas `limit` server untuk /api/dewi/kasbon/requests
@@ -266,6 +267,9 @@ export default function HRKasbonModule() {
     { kunci: 'diajukan', label: 'Diajukan', isi: (r) => <span className="whitespace-nowrap">{fmtDate(r.created_at)}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.status === 'submitted' ? (
       <Button size="sm" onClick={() => setReviewReq(r)} data-testid={`hr-review-btn-${r.id}`}>Tinjau</Button>
+    ) : r.status === 'hr_approved' ? (
+      // 24 Nov 2026 (owner): persetujuan HR yang salah tekan bisa dibatalkan selama belum dicairkan.
+      <TombolBatalSetuju jenis="hr-kasbon" id={r.id} onSelesai={() => load()} />
     ) : null) },
   ];
 
@@ -347,10 +351,12 @@ export default function HRKasbonModule() {
       {detail && (
         <DetailPopup open onClose={() => setDetail(null)} testId="hrkasbon-detail"
           judul={`${detail.request_number} · ${detail.employee_name}`} status={<KasbonStatus status={detail.status} />}
-          aksi={detail.status === 'submitted' && (
+          aksi={detail.status === 'submitted' ? (
             <Button size="sm" onClick={() => { setReviewReq(detail); setDetail(null); }}>
               <CheckCircle2 />Tinjau
             </Button>
+          ) : detail.status === 'hr_approved' && (
+            <TombolBatalSetuju jenis="hr-kasbon" id={detail.id} onSelesai={() => { setDetail(null); load(); }} />
           )}>
           <dl className="divide-y divide-[var(--glass-border)]">
             <BarisDetail label="Karyawan">{detail.employee_name}{detail.employee_code ? ` · ${detail.employee_code}` : ''}</BarisDetail>

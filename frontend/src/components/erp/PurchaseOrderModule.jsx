@@ -11,7 +11,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { materialOptionLabel } from '@/lib/materialFields';
 import {
   Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, TruckIcon, Upload, Download, Tag,
-  MoreHorizontal, RefreshCw, Package,
+  MoreHorizontal, RefreshCw, Package, Undo2,
 } from 'lucide-react';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
@@ -36,6 +36,8 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { denganAlasanMerchandiser, galatDariRespons } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const STATUS_META = {
   draft:               { label: 'Draf',                tone: 'muted' },
@@ -91,6 +93,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   const [bulkVendor, setBulkVendor] = useState('');
   const [bulkErrors, setBulkErrors] = useState([]);
   const csvRef = useRef(null);
+  const bolehBatalSetuju = useBolehBatal('pengadaan-po');
 
   const [poForm, setPOForm] = useState({
     supplier_id: '',
@@ -637,6 +640,13 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 <XCircle className="mr-2 h-4 w-4" />Tolak
               </DropdownMenuItem>
             )}
+            {bolehBatalSetuju && po.status === 'approved' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'pengadaan-po', id: po.id }).then((r) => { if (r) fetchList(); })}
+                data-testid={`batal-setuju-po-${po.id}`}>
+                <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
+              </DropdownMenuItem>
+            )}
             {(bisaBatal || bisaHapus) && <DropdownMenuSeparator />}
             {bisaBatal && (
               <DropdownMenuItem onSelect={() => openCancelModal(po)} data-testid={`po-cancel-${po.id}`}>
@@ -1007,6 +1017,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
               <Button size="sm" onClick={() => createGRFromPO(sp)} data-testid="po-detail-create-gr">
                 <TruckIcon />Buat penerimaan barang
               </Button>
+            )}
+            {sp.status === 'approved' && (
+              <TombolBatalSetuju jenis="pengadaan-po" id={sp.id} onSelesai={() => { fetchList(); openDetail(sp); }} />
             )}
           </>}>
           {sp.rejected_reason && <Notice tone="danger" title="Alasan ditolak">{sp.rejected_reason}</Notice>}

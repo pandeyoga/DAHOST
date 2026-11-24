@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, Search, Pencil, Trash2, X, Eye, Send, Clock, CheckCircle2, XCircle, AlertCircle, MessageSquare,
-  ImagePlus, Loader2, Rocket, RefreshCw, MoreHorizontal,
+  ImagePlus, Loader2, Rocket, RefreshCw, MoreHorizontal, Undo2,
 } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
@@ -27,6 +27,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
 import { hapusMaster } from '@/lib/hapusMaster';
+import { batalkanPersetujuan } from '@/lib/batalSetuju';
 import { formatDateID } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import PageLayout from './layout/PageLayout';
@@ -402,6 +403,16 @@ export default function RnDStylesTab({ token, user }) {
             <DropdownMenuItem onSelect={() => openEdit(s)} data-testid={`edit-style-${s.id}`}>
               <Pencil className="mr-2 h-4 w-4" />Ubah
             </DropdownMenuItem>
+            {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan selama belum dipromosikan. */}
+            {isOwner && s.status === 'approved_for_launch' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'rnd-style', id: s.id }).then((r) => {
+                  if (r) { fetchStyles(); fetchPendingCount(); }
+                })}
+                data-testid={`batal-setuju-style-${s.id}`}>
+                <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => handleDelete(s)} data-testid={`delete-style-${s.id}`}
               className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]">

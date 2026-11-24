@@ -24,9 +24,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   FileText, Plus, Trash2, Pencil, Search, CheckCircle2, ChevronUp, ChevronDown, MoreHorizontal, RefreshCw,
-  ExternalLink, X, Upload, AlertTriangle,
+  ExternalLink, X, Upload, AlertTriangle, Undo2,
 } from 'lucide-react';
 import { toast } from '../ui/sonner';
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { cn } from '@/lib/utils';
 import PageLayout from './layout/PageLayout';
@@ -176,6 +178,7 @@ export default function RnDTechPackModule({ token }) {
   const [form,      setForm]      = useState({ ...emptyForm });
   const [detail,    setDetail]    = useState(null);
   const [tab,       setTab]       = useState('info'); // info | konstruksi | bahan | bom | measurements
+  const bolehBatal = useBolehBatal('rnd-techpack');
 
   // Import Excel state
   const [showImport, setShowImport] = useState(false);
@@ -586,6 +589,13 @@ export default function RnDTechPackModule({ token }) {
                 <CheckCircle2 className="mr-2 h-4 w-4" />Setujui
               </DropdownMenuItem>
             )}
+            {bolehBatal && tp.status === 'approved' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'rnd-techpack', id: tp.id }).then((r) => { if (r) loadTechPacks(); })}
+                data-testid={`batal-setuju-techpack-${tp.id}`}>
+                <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
+              </DropdownMenuItem>
+            )}
             {tp.doc_url && (
               <DropdownMenuItem onSelect={() => window.open(tp.doc_url, '_blank', 'noopener,noreferrer')}>
                 <ExternalLink className="mr-2 h-4 w-4" />Buka dokumen
@@ -680,6 +690,9 @@ export default function RnDTechPackModule({ token }) {
           aksi={<>
             {detail.status !== 'approved' && (
               <Button size="sm" variant="success" onClick={() => handleApprove(detail.id)}><CheckCircle2 />Setujui</Button>
+            )}
+            {detail.status === 'approved' && (
+              <TombolBatalSetuju jenis="rnd-techpack" id={detail.id} onSelesai={() => { setDetail(null); loadTechPacks(); }} />
             )}
             {detail.doc_url && (
               <Button size="sm" variant="outline" asChild>

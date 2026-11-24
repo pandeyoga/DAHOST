@@ -20,7 +20,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   ArrowRight, CheckCircle, FileStack, Factory, FlaskConical, MoreHorizontal, Package, Plus, RefreshCw,
-  Search, Send, Trash2, XCircle,
+  Search, Send, Trash2, XCircle, Undo2,
 } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
@@ -41,6 +41,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
 import { formatDateID, formatDateTimeID } from '@/lib/format';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
@@ -112,6 +113,7 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   // 14 Nov 2026: varian/ukuran style terpilih (form request) + popup "Buat draf PO sampel"
   const [pilihanVarian, setPilihanVarian] = useState(null);   // { model_id, variants, catatan }
   const [poModal, setPoModal] = useState(null);               // { sample, variant_id, pilihan, saving }
+  const bolehBatal = useBolehBatal('rnd-sampel');
 
   // Session 27 — Accessory Request Modal (GAP-R3)
   const [accReqModal, setAccReqModal] = useState(null); // { sample: {...}, items: [...], urgent, needed_by_date, notes }
@@ -430,6 +432,15 @@ export default function RnDSamplesTab({ token, onNavigate }) {
             {s.status === 'approved' && !s.po_number && s.po_sampel_bisa_buat && (
               <DropdownMenuItem onSelect={() => bukaPoModal(s)} data-testid={`po-sampel-${s.id}`}>
                 <Factory className="mr-2 h-4 w-4" />Buat draf PO sampel
+              </DropdownMenuItem>
+            )}
+            {bolehBatal && s.status === 'approved' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'rnd-sampel', id: s.id }).then((r) => {
+                  if (r) { setDetail(null); fetchSamples(); }
+                })}
+                data-testid={`batal-setuju-sampel-${s.id}`}>
+                <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />

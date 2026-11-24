@@ -23,6 +23,7 @@ import { toast } from '../ui/sonner';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { MarketingAccountSelect, MarketingCreatorSelect, MasterChipsSelect, useMasterList } from './marketing/pickers/MarketingPickers';
 import { checkPerm } from '../../lib/rbac';
 
@@ -308,9 +309,10 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
         <Button size="sm" variant="success" onClick={() => { setGalatAksi(''); setActionModal({ id: r.id, type: 'approve', notes: '' }); }} data-testid={`kreator-req-approve-${r.id}`}><CheckCircle2 />Setujui</Button>
         <Button size="sm" variant="destructive" onClick={() => { setGalatAksi(''); setActionModal({ id: r.id, type: 'reject', notes: '' }); }} data-testid={`kreator-req-reject-${r.id}`}><XCircle />Tolak</Button>
       </>}
-      {r.status === 'approved_by_rnd' && (
+      {r.status === 'approved_by_rnd' && <>
         <Button size="sm" variant="outline" onClick={() => handleMarkSampleReady(r.id)} data-testid={`kreator-req-sample-ready-${r.id}`}><Sparkles />Sample siap</Button>
-      )}
+        <TombolBatalSetuju jenis="rnd-kreator" id={r.id} onSelesai={() => { setDetail(null); fetchRequests(); fetchStats(); }} />
+      </>}
       {r.status === 'sample_ready' && (
         <Button size="sm" variant="outline" onClick={() => { setGalatAksi(''); setActionModal({ id: r.id, type: 'deliver', notes: '', delivery_method: '', tracking_number: '' }); }}
           data-testid={`kreator-req-deliver-${r.id}`}><Truck />Kirim sample</Button>

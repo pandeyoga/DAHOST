@@ -37,6 +37,7 @@ import { useTaxProfile } from '../../../lib/taxProfile';
 import { todayWIB } from '../../../lib/waktu';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
 import PageLayout, { DetailPanel } from '../layout/PageLayout';
+import TombolBatalSetuju from '../TombolBatalSetuju';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 export const AP_STATUS_META = {
@@ -404,10 +405,15 @@ export function PayInvoiceModal({ token, inv, onClose, onPaid }) {
 }
 
 // 2026-11-04 (PANDUAN_UI G13): rincian faktur dibuka DI HALAMAN di atas daftar — dulu popup.
-export function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
+export function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay, onBatal }) {
   return (
     <DetailPanel title={`Faktur ${inv.invoice_number}`} description={inv.vendor_name} onClose={onClose} testId="ap-detail-panel"
       actions={<>
+        {/* 24 Nov 2026 (owner): persetujuan faktur bisa dibatalkan selama belum dibayar (server yang memeriksa). */}
+        {onBatal && inv.status === 'sent' && (
+          <TombolBatalSetuju jenis="fin-faktur-pemasok" id={inv.id} size="default" label="Batalkan persetujuan faktur"
+            onSelesai={onBatal} />
+        )}
         {onPay && canPay(inv) && (
           <Button variant="success" onClick={() => onPay(inv)} data-testid="ap-detail-pay">
             <HandCoins className="w-4 h-4" /> Bayar
@@ -679,7 +685,8 @@ export default function SupplierInvoiceModule({ token, hasPerm }) {
                             onCreated={() => { load(); setTab('invoices'); }} />
       ) : detail && (
         <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token}
-                       onPay={bolehBayar ? (inv) => { setDetail(null); setPaying(inv); } : null} />
+                       onPay={bolehBayar ? (inv) => { setDetail(null); setPaying(inv); } : null}
+                       onBatal={() => { setDetail(null); load(); }} />
       )}
     >
       {loading ? (

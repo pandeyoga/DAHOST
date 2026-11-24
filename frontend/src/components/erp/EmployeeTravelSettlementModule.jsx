@@ -44,6 +44,7 @@ import DatePicker from '@/components/ui/date-picker';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import { Table, TableHeader, TableBody, TableFooter, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { EmptyState, StatusBadge as AtomStatusBadge } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { toast } from 'sonner';
@@ -364,6 +365,11 @@ function SettlementDetail({ stl, token, onClose, onRefresh, user }) {
               <CheckCircle className="w-3.5 h-3.5" />Setujui
             </Button>
           </>
+        )}
+        {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan selama belum dicatat ke jurnal. */}
+        {stl.status === 'approved' && (
+          <TombolBatalSetuju jenis="hr-dinas-selesai" id={stl.id} size="default"
+            onSelesai={() => { onRefresh(); onClose(); }} />
         )}
         {isFinance && stl.status === 'approved' && (
           <Button variant="success"

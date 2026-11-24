@@ -39,6 +39,7 @@ import ProgressBreakdownBar from './ProgressBreakdownBar';
 import FileAttachmentPanel from './FileAttachmentPanel';
 import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
+import TombolBatalSetuju from '../TombolBatalSetuju';
 
 // ── Label tampilan (status PO disimpan dalam bahasa Inggris di server) ─────────────────────────────────
 export const PO_STATUS_LABEL = {
@@ -887,6 +888,7 @@ function SamplesTab({ po, detail, canEdit, onReload }) {
                 <div className="flex justify-end gap-1">
                   {s.can?.edit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => setForm(s)} title="Ubah sampel" aria-label="Ubah sampel" data-testid={`sample-edit-${s.sample_code}`}><Edit2 className="w-3.5 h-3.5" /></Button>}
                   {s.can?.submit && <Button type="button" size="icon-sm" variant="ghost" onClick={() => submit(s)} title="Kirim ke klien" aria-label="Kirim ke klien" data-testid={`sample-submit-${s.sample_code}`}><Send className="w-3.5 h-3.5" /></Button>}
+                  {s.status === 'approved' && <TombolBatalSetuju jenis="maklon-sampel" id={s.id} ikonSaja onSelesai={() => onReload()} />}
                   {(s.can?.approve || s.can?.revision || s.can?.reject || s.can?.delete) && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>

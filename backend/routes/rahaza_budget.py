@@ -200,7 +200,13 @@ async def lock_budget(bid: str, request: Request):
 
 @router.post("/budgets/{bid}/reopen")
 async def reopen_budget(bid: str, request: Request):
-    await require_auth(request)
+    # 24 Nov 2026 (Batalkan persetujuan): "Buka lagi" = membatalkan persetujuan anggaran → izin SAMA dengan
+    # tombol Setujui (dulu cukup login). Ini jalur batal setuju anggaran; tidak ada tombol kedua.
+    from routes.shared import require_perm
+    await require_perm(
+        request, 'finance.approve', 'budget.approve', 'finance.manage',
+        legacy_roles=('accounting', 'manager_keuangan', 'manager', 'owner', 'admin', 'superadmin'),
+        message='Akses ditolak: Anda tidak berhak membuka lagi anggaran yang sudah disetujui.')
     db = get_db()
     budget = await db.rahaza_budgets.find_one({"id": bid}, {"_id": 0})
     if not budget:

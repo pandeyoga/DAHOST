@@ -26,6 +26,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect } from './hr/hrPickers';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { checkPerm } from '@/lib/rbac';
 import { bolehSetujuiHR, labelTahap } from '@/lib/tahapPersetujuan';
 
@@ -140,7 +141,12 @@ export default function RahazaOvertimeModule({ token, user }) {
           <p className="mt-0.5 text-xs text-[hsl(var(--danger-text))]">{it.rejected_reason}</p>
         )}
       </div>) },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (it.status !== 'pending' ? null : (
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (it.status === 'approved' ? (
+      // 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan → kembali menunggu persetujuan.
+      <div className="flex items-center justify-end gap-1">
+        <TombolBatalSetuju jenis="hr-lembur" id={it.id} onSelesai={() => load()} />
+      </div>
+    ) : it.status !== 'pending' ? null : (
       <div className="flex items-center justify-end gap-1">
         {isApprover ? (<>
           {/* 2026-11-09 (Q6): selama menunggu atasan langsung, HR belum bisa menyetujui (boleh menolak). */}
