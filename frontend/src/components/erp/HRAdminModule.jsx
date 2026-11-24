@@ -33,6 +33,7 @@ import { formatRupiah } from '@/lib/format';
 import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtIDR = formatRupiah;
@@ -361,8 +362,12 @@ function ResignationProcessDialog({ emp, headers, onReload, onClose }) {
       judul={`Proses pengunduran diri — ${emp.name}`}
       keterangan={[emp.employee_code, emp.department].filter(Boolean).join(' · ')}
       status={<StatusBadge status={emp.employee_status} label={st.label} tone={st.tone} />}
-      aksi={emp.employee_status !== 'resigned' && (
+      aksi={emp.employee_status !== 'resigned' ? (
         <Button size="sm" variant="destructive" onClick={accept}>Terima pengunduran diri</Button>
+      ) : emp.resignation_accepted_at && (
+        // 24 Nov 2026 (owner): penerimaan resign yang salah tekan bisa dibatalkan.
+        <TombolBatalSetuju jenis="hr-resign" id={emp.id} label="Batalkan penerimaan resign"
+          onSelesai={() => { onReload(); onClose(); }} />
       )}>
       <dl className="divide-y divide-[var(--glass-border)]">
         <BarisDetail label="Tanggal keluar">{tgl(emp.resignation_date) || '—'}</BarisDetail>

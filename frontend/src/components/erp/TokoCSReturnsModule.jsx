@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { PageHeader } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { todayWIB } from '@/lib/waktu';
 
 // ── Constants (mapped to marketing_* SSOT shape) ────────────────────────────
@@ -577,6 +578,10 @@ export default function TokoCSReturnsModule({ token, defaultTab = 'cs' }) {
                         >
                           <CheckCircle className="w-3 h-3 mr-1" /> Selesaikan
                         </Button>
+                      )}
+                      {/* 24 Nov 2026 (owner): return yang salah disetujui bisa dibatalkan selama belum selesai. */}
+                      {ret.status === 'approved' && (
+                        <TombolBatalSetuju jenis="mkt-retur" id={ret.id} onSelesai={loadReturns} />
                       )}
                       <Button
                         size="sm"

@@ -29,6 +29,7 @@ import PageLayout, { RowDetail, RowToggle } from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
 import TombolUnduh from '@/components/ui/tombol-unduh';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { apiGet, apiPost } from '../../lib/api';
 import { formatDateID } from '@/lib/format';
 import { portalBusinessType, portalQuery } from '@/lib/portalScope';
@@ -173,10 +174,11 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
                             <Button size="sm" variant="destructive" disabled={busy === r.id} onClick={() => act(r, 'reject', 'Ditolak')}>
                               <XCircle className="w-3.5 h-3.5" />Tolak</Button>
                           </>)}
-                          {r.status === 'approved' && (
+                          {r.status === 'approved' && (<>
                             <Button size="sm" variant="outline" disabled={busy === r.id} onClick={() => setReceiving(r)} data-testid={`pmr-receive-${r.ref_no}`}>
                               <PackageCheck className="w-3.5 h-3.5" />Terima</Button>
-                          )}
+                            <TombolBatalSetuju jenis="retur-material" id={r.id} onSelesai={() => load()} />
+                          </>)}
                         </div>
                       </TableCell>
                     </TableRow>

@@ -93,7 +93,12 @@ async def apply_salary_adjustment_to_profile(db, adj: dict, user: dict) -> dict:
            "overtime_rate": float(prev.get("overtime_rate") or 0), "source": "penyesuaian_gaji",
            "adjustment_id": adj.get("id"), "created_at": _now(), "created_by": user.get("id"),
            "created_by_name": user.get("name", "")}
+    # 24 Nov 2026 (Batalkan persetujuan): versi lain bertanggal berlaku SAMA diganti oleh _put_version — simpan
+    # salinannya di dokumen penyesuaian supaya pembatalan persetujuan bisa memulihkannya persis.
+    tergantikan = next((dict(v) for v in versions if v.get("effective_from") == new["effective_from"]), None)
     versions = _put_version(versions, new)
+    if tergantikan and adj.get("id"):
+        await db.rahaza_salary_adjustments.update_one({"id": adj["id"]}, {"$set": {"versi_tergantikan": tergantikan}})
     await db.rahaza_payroll_profiles.update_one({"id": profile["id"]}, {"$set": {
         "rate_versions": versions, **_current_rates(profile, versions),
         "updated_at": _now(), "updated_by": user.get("id"), "updated_by_name": user.get("name", "")}})

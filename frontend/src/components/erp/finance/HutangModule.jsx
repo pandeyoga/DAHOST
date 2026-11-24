@@ -343,7 +343,8 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
   const detail = rincian && (
     rincian.src === 'ap' ? (
       <InvoiceDetail inv={rincian.raw} token={token} onClose={() => setRincian(null)} onSend={setujui} sending={menyetujui}
-        onPay={bolehBayar ? (inv) => { setRincian(null); setBayar(inv); } : null} />
+        onPay={bolehBayar ? (inv) => { setRincian(null); setBayar(inv); } : null}
+        onBatal={() => { setRincian(null); load(); }} />
     ) : rincian.src === 'cmt' ? (
       <RincianTagihanCmt row={rincian} bolehBayar={bolehBayar} bolehJurnal={bolehJurnal} onClose={() => setRincian(null)} onPost={jurnalCmt}
         onPay={(r) => { setRincian(null); setBayar(r.raw); }}

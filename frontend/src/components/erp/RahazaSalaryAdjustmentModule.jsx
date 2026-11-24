@@ -11,7 +11,7 @@
  * kosong dan "Buat dari KPI" tidak pernah bisa dipakai. Kini dibaca dari `periods` (hanya periode berstatus final).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { CheckCircle2, Eye, MoreHorizontal, Plus, RefreshCw, Search, Trash2, Wand2, XCircle } from 'lucide-react';
+import { CheckCircle2, Eye, MoreHorizontal, Plus, RefreshCw, Search, Trash2, Undo2, Wand2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PageLayout from './layout/PageLayout';
 import { checkPerm } from '@/lib/rbac';
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
 import { EmptyState, Notice, StatusBadge as Lencana } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -118,6 +119,7 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
   const isHR = useMemo(() => checkPerm({
     user, roles: ['superadmin', 'admin', 'owner', 'hr'], keys: ['hr.manage', 'salary.manage'],
   }), [user]);
+  const bolehBatal = useBolehBatal('hr-penyesuaian-gaji');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -245,6 +247,14 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
                   {AKSI_LABEL[t]}
                 </DropdownMenuItem>
               ))}
+              {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan → kembali menunggu persetujuan. */}
+              {bolehBatal && a.status === 'approved' && (
+                <DropdownMenuItem
+                  onSelect={() => batalkanPersetujuan({ jenis: 'hr-penyesuaian-gaji', id: a.id }).then((r) => { if (r) loadData(); })}
+                  data-testid={`batal-setuju-adj-${a.id}`}>
+                  <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

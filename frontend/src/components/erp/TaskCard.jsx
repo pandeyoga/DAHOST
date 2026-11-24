@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock, User, CheckCircle, AlertCircle, MoreVertical, ExternalLink, Zap } from 'lucide-react';
+import { Clock, User, CheckCircle, AlertCircle, MoreVertical, ExternalLink, Undo2, Zap } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
 
 /** Label bersama layar tugas (Standar UI/UX v2 — bahasa staf, bukan kode). */
 export const PRIORITAS = { high: ['Tinggi', 'danger'], medium: ['Sedang', 'warning'], low: ['Rendah', 'muted'] };
@@ -30,6 +31,7 @@ const taskTypeLabels = JENIS_TUGAS;
 
 export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], onViewDetail }) {
   const [loading, setLoading] = useState(false);
+  const bolehBatal = useBolehBatal('mkt-tugas');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   // Resolve akun dari ID
@@ -132,6 +134,15 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
                   Tolak
                 </DropdownMenuItem>
               </>
+            )}
+            {/* 24 Nov 2026 (owner): tugas yang salah disetujui bisa dibatalkan persetujuannya. */}
+            {bolehBatal && task.status === 'done' && task.approval_status === 'approved' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'mkt-tugas', id: task.id }).then((r) => { if (r) onRefresh?.(); })}
+                data-testid={`batal-setuju-tugas-${task.task_code}`}>
+                <Undo2 className="w-3 h-3 mr-2" />
+                Batalkan persetujuan
+              </DropdownMenuItem>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
