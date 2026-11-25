@@ -174,6 +174,15 @@ async def create_request(request: Request):
     return serialize_doc(doc)
 
 
+def _covered_by_notes(inv: dict) -> float:
+    """Bagian faktur yang sudah ditutup nota: nota kredit (piutang) + nota debit (hutang). Kosong = 0."""
+    return (_to_num(inv.get("credited_amount")) or 0) + (_to_num(inv.get("debit_note_amount")) or 0)
+
+
+def _rp(v) -> str:
+    return "Rp " + f"{float(v or 0):,.0f}".replace(",", ".")
+
+
 def _apply_after_snapshot_to_invoice(inv: dict, after: dict) -> dict:
     """Return a $set update dict applying only whitelisted, validated fields."""
     update = {}
@@ -199,8 +208,16 @@ def _apply_after_snapshot_to_invoice(inv: dict, after: dict) -> dict:
             raise HTTPException(400, "total_amount tidak valid.")
         total = round(t)
         paid = _to_num(inv.get("paid_amount")) or 0
+        # Paket 1 (25 Nov 2026): sisa = total − dibayar − nota kredit (AR) / nota debit (AP) — rumus yang sama dengan
+        # pembayaran (`rahaza_finance.ar_payment_guard_and_update` / `ap_payment_guard_and_update`).
+        covered = paid + _covered_by_notes(inv)
         update["total"] = total
-        update["balance"] = max(0, round(total - paid))
+        update["balance"] = max(0, round(total - covered))
+        if "amount_due" in inv or "total_amount" in inv:   # cermin kanonik piutang (H-01)
+            update["total_amount"] = total
+            update["amount_due"] = update["balance"]
+        if (inv.get("status") or "") in ("paid", "partial_paid") and paid > 0.009:
+            update["status"] = "paid" if covered >= total - 0.01 else "partial_paid"
         # FIN-11: jurnal disusun dari subtotal+tax vs total → bila hanya total berubah, skala subtotal & tax
         old_total = _to_num(inv.get("total")) or 0
         if "subtotal" not in update and old_total and total != old_total:
@@ -243,6 +260,101 @@ async def approve_request(req_id: str, request: Request):
         await doc_lock.release(db, "invoice_edit_requests", req_id, token, field="decide_lock")
 
 
+_GL_VALUE_FIELDS = ("total", "discount_amount")   # field yang mengubah angka jurnal faktur
+_GL_CLEAR = {"gl_je_id": None, "gl_je_number": None, "gl_posted_at": None}
+
+
+def _check_new_figures(target_collection: str, inv: dict, applied: dict) -> None:
+    """Paket 1 (audit 25 Nov 2026): tolak SEBELUM apa pun ditulis.
+    · total baru < yang sudah dibayar + ditutup nota → sisa negatif tanpa dokumen;
+    · faktur yang sudah dijurnal dan jurnal barunya tidak bisa disusun seimbang (FIN-11). Dulu pemeriksaan ini
+      berjalan SESUDAH faktur diubah, sehingga faktur berubah sementara jurnal lama tetap."""
+    num = inv.get("invoice_number") or ""
+    if "total" in applied:
+        covered = (_to_num(inv.get("paid_amount")) or 0) + _covered_by_notes(inv)
+        if applied["total"] < covered - 0.01:
+            raise HTTPException(409, f"Total baru faktur {num} ({_rp(applied['total'])}) lebih kecil dari yang sudah "
+                                     f"dibayar atau ditutup nota ({_rp(covered)}). Batalkan pembayaran atau notanya "
+                                     f"dulu, atau ajukan total yang tidak lebih kecil.")
+    if not (inv.get("gl_je_id") and any(k in applied for k in _GL_VALUE_FIELDS)):
+        return
+    fresh = {**inv, **applied}
+    sub = float(fresh.get("subtotal") or fresh.get("total") or 0)
+    tax = float(fresh.get("tax_amount") or fresh.get("tax") or 0)
+    tot = float(fresh.get("total") or 0)
+    if target_collection == "rahaza_ap_invoices":
+        # jurnal faktur pemasok disusun dari subtotal + PPN = total
+        if abs((sub + tax) - tot) > 1 and sub:
+            raise HTTPException(409, f"Subtotal {_rp(sub)} + PPN {_rp(tax)} tidak sama dengan total baru {_rp(tot)}, "
+                                     f"jadi jurnal faktur {num} tidak bisa disusun. Perbaiki isian permintaannya.")
+    elif tot < tax - 0.01:
+        # jurnal faktur penjualan disusun dari total, PPN, dan diskon (Iter 119 B-01) — total tidak boleh < PPN
+        raise HTTPException(409, f"Total baru {_rp(tot)} lebih kecil dari PPN {_rp(tax)}, jadi jurnal faktur {num} "
+                                 f"tidak bisa disusun. Perbaiki isian permintaannya.")
+
+
+async def _apply_edit_to_invoice(db, coll: str, inv: dict, applied: dict, req: dict, user: dict):
+    """Terapkan perubahan ke faktur + selaraskan buku besar. Return hasil posting ulang (None = jurnal tidak perlu
+    disentuh).
+
+    Paket 1 (audit 25 Nov 2026):
+      · faktur ditulis dengan nilai yang dibaca di FILTER (dibayar, nota, status) → pembayaran yang masuk di sela
+        pemeriksaan & penulisan tidak tertimpa (409);
+      · jurnal lama dibatalkan dulu; GAGAL (mis. periode tertutup dan jurnal pembalik juga gagal) → faktur dikembalikan
+        persis seperti semula dan 409 — dulu hasil void diabaikan, posting ulang menjawab "sudah ada" dan layar
+        menyatakan berhasil padahal buku besar masih memuat angka lama;
+      · sesudah void berhasil `gl_je_id` dikosongkan (dulu bisa tetap menunjuk jurnal yang sudah dibatalkan);
+      · posting ulang gagal → alasannya disimpan di `post_error` faktur dan dilaporkan; tidak diklaim berhasil."""
+    tid = inv["id"]
+    num = inv.get("invoice_number") or req.get("invoice_number") or ""
+    flt = {"id": tid}
+    for f in ("paid_amount", "credited_amount", "debit_note_amount", "status"):
+        flt[f] = inv.get(f)
+    res = await db[coll].update_one(flt, {"$set": {**applied, "updated_at": _now()}})
+    if not res.matched_count:
+        raise HTTPException(409, f"Faktur {num} baru saja berubah (mis. pembayaran tercatat). Muat ulang lalu setujui lagi.")
+    if not (inv.get("gl_je_id") and any(k in applied for k in _GL_VALUE_FIELDS)):
+        return None
+
+    from routes.rahaza_posting import (post_ar_invoice, post_ap_invoice, posting_error_message,
+                                       void_ar_invoice_posting, void_ap_invoice_posting)
+    is_ar = coll == "rahaza_ar_invoices"
+    why = f"Edit invoice disetujui ({num})"
+    try:
+        void = await (void_ar_invoice_posting if is_ar else void_ap_invoice_posting)(db, tid, user, reason=why)
+    except Exception as e:  # noqa: BLE001
+        log.exception("void jurnal lama saat edit invoice gagal")
+        void = {"ok": False, "error": str(e)}
+    if not (void or {}).get("ok"):
+        keys = list(applied) + ["updated_at"]
+        back = {k: inv[k] for k in keys if k in inv}
+        gone = {k: "" for k in keys if k not in inv}
+        restore = {}
+        if back:
+            restore["$set"] = back
+        if gone:
+            restore["$unset"] = gone
+        await db[coll].update_one({"id": tid}, restore)
+        raise HTTPException(409, f"Perubahan faktur {num} tidak diterapkan: jurnal lamanya tidak bisa dibatalkan "
+                                 f"({posting_error_message(void or {})}). Faktur dikembalikan seperti semula dan "
+                                 f"permintaan tetap menunggu.")
+    await db[coll].update_one({"id": tid}, {"$set": dict(_GL_CLEAR)})
+    fresh = await db[coll].find_one({"id": tid}, {"_id": 0})
+    try:
+        gl = await (post_ar_invoice if is_ar else post_ap_invoice)(db, fresh, user)
+    except Exception as e:  # noqa: BLE001
+        log.exception("posting ulang jurnal setelah edit invoice gagal")
+        gl = {"ok": False, "error": str(e)}
+    gl = dict(gl or {})
+    if not gl.get("ok"):
+        msg = posting_error_message(gl)
+        gl["error"] = msg
+        await db[coll].update_one({"id": tid}, {"$set": {"post_error": msg, "post_error_at": _now()}})
+        log.error("FIN-11: posting ulang faktur %s gagal setelah jurnal lama dibatalkan: %s", num, msg)
+    gl["void"] = void
+    return gl
+
+
 async def _approve_request_locked(db, req_id: str, approval_notes: str, user: dict):
     req = await db.invoice_edit_requests.find_one({"id": req_id}, {"_id": 0})
     if not req:
@@ -251,6 +363,7 @@ async def _approve_request_locked(db, req_id: str, approval_notes: str, user: di
         raise HTTPException(400, f"Request sudah {req.get('status')}, tidak bisa di-approve lagi.")
 
     applied = {}
+    gl_resync = None
     target_collection = req.get("target_collection")
     target_invoice_id = req.get("target_invoice_id")
     if target_collection in _ALLOWED_TARGET_COLLECTIONS and target_invoice_id:
@@ -259,35 +372,15 @@ async def _approve_request_locked(db, req_id: str, approval_notes: str, user: di
             raise HTTPException(404, "Invoice target sudah tidak ada, tidak bisa menerapkan perubahan.")
         applied = _apply_after_snapshot_to_invoice(inv, req.get("after_snapshot") or {})
         if applied:
-            applied["updated_at"] = _now()
-            await db[target_collection].update_one({"id": target_invoice_id}, {"$set": applied})
+            _check_new_figures(target_collection, inv, applied)
             # Iter 119: bila invoice sudah masuk GL dan nilainya berubah, jurnal lama di-void & diposting ulang
             # agar GL tidak lagi memuat angka sebelum edit.
-            if inv.get("gl_je_id") and any(k in applied for k in ("total", "discount_amount")):
-                try:
-                    from routes.rahaza_posting import (post_ar_invoice, post_ap_invoice,
-                                                       void_ar_invoice_posting, void_ap_invoice_posting)
-                    fresh = await db[target_collection].find_one({"id": target_invoice_id}, {"_id": 0})
-                    why = f"Edit invoice disetujui ({req.get('invoice_number')})"
-                    # FIN-11: cek keseimbangan jurnal baru DULU; bila tidak seimbang, jurnal lama JANGAN di-void
-                    _sub = float(fresh.get("subtotal") or fresh.get("total") or 0)
-                    _tax = float(fresh.get("tax_amount") or fresh.get("tax") or 0)
-                    _tot = float(fresh.get("total") or 0)
-                    if abs((_sub + _tax) - _tot) > 1 and _sub:
-                        raise ValueError(f"subtotal {_sub} + pajak {_tax} ≠ total {_tot}; jurnal lama dipertahankan")
-                    if target_collection == "rahaza_ar_invoices":
-                        await void_ar_invoice_posting(db, target_invoice_id, user, reason=why)
-                        gl_resync = await post_ar_invoice(db, fresh, user)
-                    else:
-                        await void_ap_invoice_posting(db, target_invoice_id, user, reason=why)
-                        gl_resync = await post_ap_invoice(db, fresh, user)
-                    if not (gl_resync or {}).get("ok"):
-                        log.error("FIN-11: posting ulang gagal setelah void: %s", gl_resync)
-                    applied["_gl_resync"] = gl_resync
-                except Exception as e:  # noqa: BLE001
-                    log.exception("GL re-post setelah edit invoice gagal")
-                    applied["_gl_resync"] = {"ok": False, "error": str(e)}
+            gl_resync = await _apply_edit_to_invoice(db, target_collection, inv, applied, req, user)
 
+    gl_failed = gl_resync is not None and not gl_resync.get("ok")
+    warning = (f"Perubahan faktur {req.get('invoice_number') or ''} disetujui, tetapi jurnal barunya gagal dicatat: "
+               f"{str(gl_resync.get('error') or '').rstrip('.')}. Perbaiki penyebabnya lalu posting ulang dari "
+               f"layar faktur.") if gl_failed else None
     now = _now()
     await db.invoice_edit_requests.update_one(
         {"id": req_id},
@@ -298,6 +391,8 @@ async def _approve_request_locked(db, req_id: str, approval_notes: str, user: di
             "approved_by_name": user.get("name", ""),
             "approved_at": now,
             "updated_at": now,
+            "gl_resync_ok": None if gl_resync is None else not gl_failed,
+            "gl_resync_error": gl_resync.get("error") if gl_failed else None,
         }},
     )
     # Audit trail
@@ -311,15 +406,18 @@ async def _approve_request_locked(db, req_id: str, approval_notes: str, user: di
         "before_snapshot": req.get("before_snapshot"),
         "after_snapshot": req.get("after_snapshot"),
         "applied_fields": list(applied.keys()),
+        "gl_resync": gl_resync,
         "approval_notes": approval_notes,
         "approved_by": user.get("id"),
         "approved_by_name": user.get("name", ""),
         "approved_at": now,
     })
     await log_activity(user.get("id"), user.get("name", ""), "approve",
-                       "invoice-edit-requests", f"Approve edit invoice {req.get('invoice_number')}")
+                       "invoice-edit-requests", f"Approve edit invoice {req.get('invoice_number')}"
+                       + (" (jurnal baru gagal)" if gl_failed else ""))
     updated = await db.invoice_edit_requests.find_one({"id": req_id}, {"_id": 0})
-    return serialize_doc({"message": "Request approved", "request": updated})
+    return serialize_doc({"message": warning or "Request approved", "request": updated,
+                          "gl_resync": gl_resync, "warning": warning})
 
 
 # ──────────────────────────────────────────────────────────────────────────────

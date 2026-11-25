@@ -144,6 +144,25 @@ async def cek(db, j: Jenis, doc: dict) -> dict:
     return {"boleh": not hambatan, "status": status, "kembali_ke": j.status_kembali(doc), "hambatan": hambatan}
 
 
+async def _pulihkan(db, j: Jenis, doc_id: str, doc: dict, status_baru: str, kunci: list) -> None:
+    """Kembalikan dokumen ke keadaan sebelum `batalkan` bila langkah sesudah kunci gagal."""
+    set_, unset_ = {"updated_at": _now()}, {}
+    for k in kunci:
+        if k == "updated_at":
+            continue
+        if k in doc:
+            set_[k] = doc[k]
+        else:
+            unset_[k] = ""
+    upd = {"$set": set_}
+    if unset_:
+        upd["$unset"] = unset_
+    try:
+        await db[j.koleksi].update_one({j.field_id: doc_id, j.field_status: status_baru, **j.filter_tambahan}, upd)
+    except Exception:  # noqa: BLE001 — galat asli tetap yang dilaporkan
+        log.exception("batal_setuju: gagal memulihkan %s %s", j.kode, doc_id)
+
+
 async def batalkan(db, kode: str, doc_id: str, user: dict, alasan: str) -> dict:
     j = ambil_jenis(kode)
     periksa_izin(j, user)
@@ -157,28 +176,43 @@ async def batalkan(db, kode: str, doc_id: str, user: dict, alasan: str) -> dict:
 
     status_lama = doc.get(j.field_status)
     status_baru = j.status_kembali(doc)
-    ringkas_balik = {}
-    if j.balikkan:
-        ringkas_balik = await j.balikkan(db, doc, user, alasan) or {}
-
     now = _now()
+    oleh = user.get("name") or user.get("email") or ""
     jejak_lama = {f: doc.get(f) for f in j.hapus_field if doc.get(f) not in (None, "", [])}
-    entri = {
-        "aksi": "batal_setuju", "oleh": user.get("name") or user.get("email") or "", "oleh_id": user.get("id") or "",
-        "waktu": now, "alasan": alasan, "status_lama": status_lama, "status_baru": status_baru,
-        "persetujuan_lama": jejak_lama, "dibalik": ringkas_balik,
-    }
     isi = j.isi_field(doc) if callable(j.isi_field) else dict(j.isi_field)
     set_ = {j.field_status: status_baru, "updated_at": now, "persetujuan_dibatalkan": True,
-            "persetujuan_dibatalkan_oleh": entri["oleh"], "persetujuan_dibatalkan_at": now,
+            "persetujuan_dibatalkan_oleh": oleh, "persetujuan_dibatalkan_at": now,
             "persetujuan_dibatalkan_alasan": alasan, **isi}
-    upd = {"$set": set_, "$push": {RIWAYAT: entri}}
-    if j.hapus_field:
-        upd["$unset"] = {f: "" for f in j.hapus_field if f not in set_}
+    unset_ = [f for f in j.hapus_field if f not in set_]
+    upd = {"$set": set_}
+    if unset_:
+        upd["$unset"] = {f: "" for f in unset_}
     q = {j.field_id: doc_id, j.field_status: status_lama, **j.filter_tambahan}
+    # 1) KUNCI DULU (Paket 1 audit 25 Nov): status pindah atomik SEBELUM efek dibalik — permintaan kedua, atau
+    #    pembayaran/langkah lanjutan yang datang belakangan, melihat status baru. Dulu jurnal di-void lebih dulu,
+    #    sehingga pembayaran yang masuk di antara cek dan update meninggalkan jurnal batal tanpa status berubah.
     res = await db[j.koleksi].update_one(q, upd)
     if not res.matched_count:
         raise HTTPException(409, f"{j.label} baru saja diubah orang lain. Muat ulang lalu coba lagi.")
+    try:
+        # 2) Cek ulang hambatan pada data terbaru (menutup celah "dipakai langkah berikutnya" di antara cek dan kunci).
+        if j.hambatan:
+            terbaru = await db[j.koleksi].find_one({j.field_id: doc_id, **j.filter_tambahan}, {"_id": 0}) or doc
+            hambatan = list(await j.hambatan(db, {**terbaru, j.field_status: status_lama}))
+            if hambatan:
+                raise HTTPException(409, "Persetujuan tidak bisa dibatalkan: " + " ".join(hambatan))
+        # 3) Balikkan efek persetujuan (jurnal, saldo, dll.).
+        ringkas_balik = (await j.balikkan(db, doc, user, alasan) or {}) if j.balikkan else {}
+    except BaseException:
+        await _pulihkan(db, j, doc_id, doc, status_baru, list(set_) + unset_)
+        raise
+
+    entri = {
+        "aksi": "batal_setuju", "oleh": oleh, "oleh_id": user.get("id") or "",
+        "waktu": now, "alasan": alasan, "status_lama": status_lama, "status_baru": status_baru,
+        "persetujuan_lama": jejak_lama, "dibalik": ringkas_balik,
+    }
+    await db[j.koleksi].update_one({j.field_id: doc_id, **j.filter_tambahan}, {"$push": {RIWAYAT: entri}})
 
     nama = await nama_tampil(db, j, doc)
     try:

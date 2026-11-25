@@ -519,7 +519,7 @@ export function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay, onB
               Riwayat pembayaran · dibayar {fmtRp(inv.paid_amount || 0)}
               {inv.gl_je_number && <span className="ml-2 font-normal text-muted-foreground">jurnal faktur: {inv.gl_je_number}</span>}
             </div>
-            <PaymentHistoryList token={token} kind="ap" invoiceId={inv.id} />
+            <PaymentHistoryList token={token} kind="ap" invoiceId={inv.id} onChanged={onBatal} />
           </div>
         )}
       </div>

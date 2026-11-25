@@ -346,20 +346,62 @@ async def get_undo_history(
     )
 
 
-@router.post("/stock-adjustments/{ledger_id}/undo")
-async def undo_stock_adjustment(
-    ledger_id: str,
-    request: Request,
-):
-    """
-    P1-16 (FASE F): batalkan (undo) satu penyesuaian stok kanonik.
-    Membalik efek NET via stock_service.adjust (new = current − delta) lalu menandai
-    entri ledger sebagai soft_deleted. Aman terhadap mutasi lain: reversal berbasis
-    delta absolut sehingga tidak menimpa perubahan yang terjadi setelahnya.
-    """
-    user = await require_auth(request)
-    db = get_db()
+async def _apply_with_journal(db, entry: dict, user: dict, *, arah: str, urutan: int) -> dict:
+    """Ubah stok satu entri penyesuaian (Batalkan: − delta, Pulihkan: + delta; tidak di bawah 0) BESERTA jurnal
+    persediaannya — Paket 1 (audit keuangan 25 Nov 2026). Dulu hanya stok yang dibalik; jurnal penyesuaiannya
+    tetap ⇒ stok ≠ buku besar. Tautan entri → jurnal sesi opname & dasar nilainya: `core.penyesuaian_stok_jurnal`.
 
+    JURNAL DULU, STOK KEMUDIAN (pola approve opname): jurnal gagal (periode tertutup, akun belum dipetakan)
+    ⇒ 400 dan stok TIDAK diubah. Stok gagal sesudah jurnal terbit ⇒ jurnalnya dibatalkan lagi."""
+    from core import penyesuaian_stok_jurnal as psj
+    delta = float(entry.get("delta") or 0)
+    material_id = entry.get("material_id")
+    location_id = entry.get("location_id")
+    if not material_id or delta == 0:
+        return {"applied_qty": 0.0, "je_number": None, "gl_note": "stok tidak berubah"}
+    actor = {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")}
+    undo = arah == psj.ARAH_UNDO
+    row = await db.rahaza_material_stock.find_one(
+        {"material_id": material_id, "location_id": location_id}, {"_id": 0}
+    )
+    current = _row_qty(row)
+    new_qty = round(current - delta if undo else current + delta, 4)
+    if new_qty < 0:
+        new_qty = 0.0
+    applied = round(new_qty - current, 4)
+    plan = await psj.rencana(db, entry, applied, arah=arah, urutan=urutan)
+    je = None
+    if plan["perlu"]:
+        je = await psj.posting(db, plan, user)
+        if not je.get("ok"):
+            raise HTTPException(status_code=400, detail=(
+                f"{'Pembatalan' if undo else 'Pemulihan'} ditolak: jurnal persediaan gagal — {je.get('error')}. "
+                "Stok belum diubah; bereskan penyebabnya lalu coba lagi."))
+    try:
+        await stock_service.adjust(
+            material_id, location_id, new_qty,
+            ref={"source": arah, ("undo_of" if undo else "restore_of"): entry["id"], "original_delta": delta,
+                 "applied_delta": applied, "gl_je_id": (je or {}).get("je_id"),
+                 "gl_je_number": (je or {}).get("je_number")},
+            actor=actor, db=db,
+        )
+    except BaseException:
+        if je:
+            res = await psj.batalkan(db, plan, user, "stok gagal diubah")
+            if not res.get("ok"):
+                logger.error("Jurnal %s %s tidak bisa dibatalkan sesudah stok gagal: %s",
+                             plan["source_module"], plan["source_ref"], res.get("error"))
+        raise
+    pfx = "undo" if undo else "restore"
+    await db.rahaza_stock_ledger.update_one({"id": entry["id"]}, {"$set": {
+        f"{pfx}_applied_qty": applied, f"{pfx}_je_id": (je or {}).get("je_id"),
+        f"{pfx}_je_number": (je or {}).get("je_number"), f"{pfx}_gl_note": plan.get("alasan")}})
+    return {"applied_qty": applied, "je_number": (je or {}).get("je_number"), "gl_note": plan.get("alasan")}
+
+
+async def undo_adjustment(db, ledger_id: str, user: dict) -> dict:
+    """Isi endpoint undo (bisa dipanggil langsung dengan `db`)."""
+    from core import penyesuaian_stok_jurnal as psj
     entry = await _load_adjust_entry(db, ledger_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Penyesuaian stok tidak ditemukan")
@@ -370,11 +412,6 @@ async def undo_stock_adjustment(
     if created_dt and (_now() - created_dt).days > 7:
         raise HTTPException(status_code=400, detail="Undo hanya bisa dilakukan dalam 7 hari")
 
-    delta = float(entry.get("delta") or 0)
-    material_id = entry.get("material_id")
-    location_id = entry.get("location_id")
-    actor = {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")}
-
     # 2026-11-06 (pola P9): entri ledger DITANDAI undo secara atomik SEBELUM stok dibalik. Dulu klik
     # ganda sama-sama lolos cek `soft_deleted` → stok dibalik dua kali (current − delta − delta).
     claim = await db.rahaza_stock_ledger.update_one(
@@ -383,29 +420,63 @@ async def undo_stock_adjustment(
             "soft_deleted": True,
             "deleted_at": _now().isoformat(),
             "deleted_by": user.get("email") or user.get("name") or "unknown",
-        }},
+        }, "$inc": {"undo_count": 1}},
     )
     if not claim.matched_count:
         raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-undo pengguna lain")
     try:
-        if material_id and delta != 0:
-            row = await db.rahaza_material_stock.find_one(
-                {"material_id": material_id, "location_id": location_id}, {"_id": 0}
-            )
-            current = _row_qty(row)
-            new_qty = round(current - delta, 4)
-            if new_qty < 0:
-                new_qty = 0.0
-            await stock_service.adjust(
-                material_id, location_id, new_qty,
-                ref={"source": "undo_adjustment", "undo_of": ledger_id, "original_delta": delta},
-                actor=actor, db=db,
-            )
+        cur = await db.rahaza_stock_ledger.find_one({"id": ledger_id}, {"_id": 0, "undo_count": 1}) or {}
+        res = await _apply_with_journal(db, entry, user, arah=psj.ARAH_UNDO, urutan=int(cur.get("undo_count") or 1))
     except BaseException:
         await db.rahaza_stock_ledger.update_one(
             {"id": ledger_id}, {"$set": {"soft_deleted": False, "deleted_at": None, "deleted_by": None}})
         raise
-    return ok(data={"id": ledger_id, "undone": True})
+    return {"id": ledger_id, "undone": True, **res}
+
+
+async def restore_adjustment(db, ledger_id: str, user: dict) -> dict:
+    """Isi endpoint restore (bisa dipanggil langsung dengan `db`)."""
+    from core import penyesuaian_stok_jurnal as psj
+    entry = await _load_adjust_entry(db, ledger_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Penyesuaian stok tidak ditemukan")
+    if not entry.get("soft_deleted"):
+        raise HTTPException(status_code=400, detail="Penyesuaian tidak dalam status soft-deleted")
+
+    # 2026-11-06 (pola P9): sama dengan undo — tanda dilepas atomik DULU supaya restore ganda tidak
+    # menerapkan delta dua kali.
+    claim = await db.rahaza_stock_ledger.update_one(
+        {"id": ledger_id, "soft_deleted": True},
+        {"$set": {
+            "soft_deleted": False,
+            "restored_at": _now().isoformat(),
+            "restored_by": user.get("email") or user.get("name") or "unknown",
+        }, "$inc": {"restore_count": 1}},
+    )
+    if not claim.matched_count:
+        raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-restore pengguna lain")
+    try:
+        cur = await db.rahaza_stock_ledger.find_one({"id": ledger_id}, {"_id": 0, "restore_count": 1}) or {}
+        res = await _apply_with_journal(db, entry, user, arah=psj.ARAH_RESTORE, urutan=int(cur.get("restore_count") or 1))
+    except BaseException:
+        await db.rahaza_stock_ledger.update_one(
+            {"id": ledger_id}, {"$set": {"soft_deleted": True, "restored_at": None, "restored_by": None}})
+        raise
+    return {"id": ledger_id, "restored": True, **res}
+
+
+@router.post("/stock-adjustments/{ledger_id}/undo")
+async def undo_stock_adjustment(
+    ledger_id: str,
+    request: Request,
+):
+    """
+    P1-16 (FASE F): batalkan (undo) satu penyesuaian stok kanonik.
+    Membalik efek NET via stock_service.adjust (new = current − delta) lalu menandai
+    entri ledger sebagai soft_deleted. Paket 1 (25 Nov 2026): jurnal persediaannya ikut dibalik.
+    """
+    user = await require_auth(request)
+    return ok(data=await undo_adjustment(get_db(), ledger_id, user))
 
 
 @router.post("/stock-adjustments/{ledger_id}/restore")
@@ -416,50 +487,7 @@ async def restore_stock_adjustment(
     """
     P1-16 (FASE F): kembalikan (restore) penyesuaian stok yang tadinya di-undo.
     Menerapkan ulang efek delta via stock_service.adjust (new = current + delta) lalu
-    melepas flag soft_deleted.
+    melepas flag soft_deleted. Paket 1 (25 Nov 2026): jurnal persediaannya ikut diterbitkan ulang.
     """
     user = await require_auth(request)
-    db = get_db()
-
-    entry = await _load_adjust_entry(db, ledger_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Penyesuaian stok tidak ditemukan")
-    if not entry.get("soft_deleted"):
-        raise HTTPException(status_code=400, detail="Penyesuaian tidak dalam status soft-deleted")
-
-    delta = float(entry.get("delta") or 0)
-    material_id = entry.get("material_id")
-    location_id = entry.get("location_id")
-    actor = {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")}
-
-    # 2026-11-06 (pola P9): sama dengan undo — tanda dilepas atomik DULU supaya restore ganda tidak
-    # menerapkan delta dua kali.
-    claim = await db.rahaza_stock_ledger.update_one(
-        {"id": ledger_id, "soft_deleted": True},
-        {"$set": {
-            "soft_deleted": False,
-            "restored_at": _now().isoformat(),
-            "restored_by": user.get("email") or user.get("name") or "unknown",
-        }},
-    )
-    if not claim.matched_count:
-        raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-restore pengguna lain")
-    try:
-        if material_id and delta != 0:
-            row = await db.rahaza_material_stock.find_one(
-                {"material_id": material_id, "location_id": location_id}, {"_id": 0}
-            )
-            current = _row_qty(row)
-            new_qty = round(current + delta, 4)
-            if new_qty < 0:
-                new_qty = 0.0
-            await stock_service.adjust(
-                material_id, location_id, new_qty,
-                ref={"source": "restore_adjustment", "restore_of": ledger_id, "original_delta": delta},
-                actor=actor, db=db,
-            )
-    except BaseException:
-        await db.rahaza_stock_ledger.update_one(
-            {"id": ledger_id}, {"$set": {"soft_deleted": True, "restored_at": None, "restored_by": None}})
-        raise
-    return ok(data={"id": ledger_id, "restored": True})
+    return ok(data=await restore_adjustment(get_db(), ledger_id, user))

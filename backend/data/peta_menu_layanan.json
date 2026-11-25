@@ -2119,6 +2119,10 @@
    "/api/rahaza/x/x/payments/x/receipt.pdf"
   ],
   [
+   "POST",
+   "/api/rahaza/x/x/payments/x/void"
+  ],
+  [
    "GET",
    "/api/tax-profile"
   ]
@@ -2213,6 +2217,10 @@
   [
    "GET",
    "/api/rahaza/x/x/payments/x/receipt.pdf"
+  ],
+  [
+   "POST",
+   "/api/rahaza/x/x/payments/x/void"
   ]
  ],
  "fin-bank-recon": [
@@ -2757,6 +2765,14 @@
   [
    "POST",
    "/api/rahaza/finance/journal-import/x"
+  ],
+  [
+   "GET",
+   "/api/rahaza/finance/jurnal-tertunda"
+  ],
+  [
+   "POST",
+   "/api/rahaza/finance/jurnal-tertunda/x/x/ulang"
   ],
   [
    "GET",
@@ -8055,6 +8071,10 @@
   [
    "GET",
    "/api/rahaza/x/x/payments/x/receipt.pdf"
+  ],
+  [
+   "POST",
+   "/api/rahaza/x/x/payments/x/void"
   ],
   [
    "GET",

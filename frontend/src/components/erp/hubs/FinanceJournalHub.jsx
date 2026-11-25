@@ -8,6 +8,8 @@ import HubTabs from './HubTabs';
 // dipertahankan untuk deep-link lama; 'entry' dialihkan ke 'list' di moduleRegistry.
 const RahazaJournalEntryModule  = lazyRetry(() => import('../RahazaJournalEntryModule'));
 const RahazaJournalImportModule = lazyRetry(() => import('../finance/RahazaJournalImportModule'));  // 2026-09-24 impor Excel
+// 25 Nov 2026 (audit keuangan, Paket 1): dokumen yang jurnalnya gagal + posting ulang (Beranda Keuangan menaut ke sini).
+const JurnalTertundaModule      = lazyRetry(() => import('../finance/JurnalTertundaModule'));
 
 export default function FinanceJournalHub(props) {
   return (
@@ -18,6 +20,7 @@ export default function FinanceJournalHub(props) {
       tabs={[
         { key: 'list', label: 'Daftar jurnal', Component: RahazaJournalEntryModule },
         { key: 'import', label: 'Impor dari Excel', Component: RahazaJournalImportModule },
+        { key: 'tertunda', label: 'Belum masuk jurnal', Component: JurnalTertundaModule },
       ]}
       {...props}
     />

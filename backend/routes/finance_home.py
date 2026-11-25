@@ -13,6 +13,7 @@ sudah dipakai laporan, tidak ada rumus baru:
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Request
@@ -22,6 +23,8 @@ from database import get_db
 from utils.waktu import today_wib
 from core.entities import DA, ALL, entity_from_request, entity_match, entity_short
 from core.platform_balance import SETTLEMENTS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/finance", tags=["finance-home"])
 
@@ -136,6 +139,13 @@ async def _todo(db, today: date, ar: dict, ap: dict, entity: str = DA) -> list[d
         "warning")
     add("cmt_unposted", ap["unposted_cmt_count"], "tagihan CMT belum dijurnal", "fin-ap-hub", "belum_dibayar",
         ap["unposted_cmt"], "warning")
+    # 25 Nov 2026 (Paket 1 audit keuangan): semua dokumen yang jurnalnya gagal, satu daftar + posting ulang.
+    try:
+        from core.jurnal_tertunda import hitung as _hitung_tertunda
+        add("jurnal_tertunda", await _hitung_tertunda(db), "dokumen belum masuk jurnal", "fin-journal-hub",
+            "tertunda", level="warning")
+    except Exception:  # noqa: BLE001 — Beranda tetap tampil
+        log.exception("hitung jurnal tertunda gagal")
     add("settle_unverified", await db[SETTLEMENTS].count_documents({"math_verified": False}) if entity in (DA, ALL) else 0,
         "laporan dana marketplace masih ada selisih hitungan", "fin-marketplace-settlement", "settlements",
         level="warning")

@@ -526,7 +526,9 @@ async def get_direct_sale(sid: str, request: Request):
     if note.get("ar_invoice_id"):
         note["invoice"] = await db.rahaza_ar_invoices.find_one({"id": note["ar_invoice_id"]}, {"_id": 0})
         note["payments"] = await db.rahaza_cash_movements.find({"ref_id": note["ar_invoice_id"], "category": "ar_payment"}, {"_id": 0}).sort("timestamp", 1).to_list(100)
-    note["returns"] = await db[RET].find({"direct_sale_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    # Paket 1: retur `cancelled` = gagal sebelum efek apa pun (tidak terjadi) → tidak ditampilkan / tidak dihitung
+    note["returns"] = await db[RET].find({"direct_sale_id": sid, "status": {"$ne": "cancelled"}},
+                                         {"_id": 0}).sort("created_at", -1).to_list(100)
     return serialize_doc(note)
 
 
@@ -720,24 +722,80 @@ def return_cogs_lines(return_number: str, items: list, ratio: dict, fg_code: str
     return lines
 
 
-@router.post("/direct-sales/{sid}/returns")
-async def create_return(sid: str, request: Request):
-    user = await _require_write(request)
-    db = get_db()
-    body = await request.json()
-    note = await db[COLL].find_one({"id": sid}, {"_id": 0})
-    if not note:
-        raise HTTPException(404, "Nota tidak ditemukan.")
-    if note.get("status") not in ("confirmed", "paid"):
-        raise HTTPException(400, "Retur hanya untuk nota yang sudah dikonfirmasi.")
-    raw = body.get("items") or []
-    if not raw:
-        raise HTTPException(400, "Minimal satu item retur.")
-    prev = await db[RET].find({"direct_sale_id": sid, "status": {"$ne": "cancelled"}}, {"_id": 0, "items": 1}).to_list(200)
-    returned = {}
-    for r in prev:
-        for it in r["items"]:
-            returned[it["material_id"]] = returned.get(it["material_id"], 0) + it["qty"]
+RETURN_LOCK = "return_lock"   # kunci retur per nota (core.doc_lock) — Paket 1, 25 Nov 2026
+
+
+def _return_date(body: dict, note: dict) -> date:
+    """Tanggal retur: format YYYY-MM-DD, tidak sebelum tanggal nota, tidak melewati hari ini (WIB)."""
+    raw = str(body.get("return_date") or "").strip()[:10]
+    today = today_wib()
+    try:
+        d = date.fromisoformat(raw) if raw else today
+    except ValueError:
+        raise HTTPException(400, "Tanggal retur harus berformat YYYY-MM-DD.")
+    if d > today:
+        raise HTTPException(400, f"Tanggal retur {d.isoformat()} belum terjadi — paling lambat hari ini ({today.isoformat()}).")
+    try:
+        sale_d = date.fromisoformat(str(note.get("sale_date") or "")[:10])
+    except ValueError:
+        sale_d = None
+    if sale_d and d < sale_d:
+        raise HTTPException(400, f"Tanggal retur {d.isoformat()} lebih awal dari tanggal nota {sale_d.isoformat()}.")
+    return d
+
+
+async def _return_period_guard(db, d: date, entity: str) -> None:
+    """Periode tanggal retur harus terbuka — dicek SEBELUM stok, nota kredit, dan piutang ditulis.
+    Dulu periode tertutup baru ketahuan saat jurnal (gagal diam-diam di `cn_post_error`/`cogs_post_error`)."""
+    from routes.rahaza_posting import _ensure_period_open, _period_is_closed
+    if await _period_is_closed(db, d, entity):
+        raise HTTPException(400, f"Periode {d.strftime('%Y-%m')} sudah ditutup Keuangan — retur bertanggal "
+                                 f"{d.isoformat()} tidak bisa dicatat. Pakai tanggal di periode yang masih terbuka, "
+                                 "atau minta Keuangan membuka periodenya dulu.")
+    err = await _ensure_period_open(db, d, {"source_module": "sales_return", "memo": "Retur penjualan langsung"},
+                                    entity=entity)
+    if err:
+        raise HTTPException(400, f"Retur ditolak: {err}")
+
+
+async def _refund_account(db, body: dict, entity: str) -> tuple:
+    """(rekening, kode akun buku besar) untuk refund tunai — dicek SEBELUM efek apa pun.
+    Dulu rekening salah baru ditolak (404) sesudah stok, nota kredit, dan piutang telanjur ditulis."""
+    if body.get("refund_method") != "cash":
+        return None, None
+    acc_id = body.get("cash_account_id")
+    if not acc_id:
+        raise HTTPException(400, "Rekening kas wajib untuk refund tunai.")
+    acc = await db.rahaza_cash_accounts.find_one({"id": acc_id}, {"_id": 0})
+    if not acc:
+        raise HTTPException(400, "Rekening kas refund tidak ditemukan — pilih lagi dari daftar.")
+    if acc.get("active") is False:
+        raise HTTPException(400, f"Rekening {acc.get('name') or ''} sudah tidak aktif — pilih rekening lain.")
+    from core.entities import validate_cash_account_owner
+    await validate_cash_account_owner(db, acc_id, entity, what="Refund retur")
+    from routes.rahaza_posting_profiles import get_mapping
+    # akun GL rekening; cadangan = akun kas bawaan profil `ar_payment` (aturan yang sama dengan post_ar_payment —
+    # dulu dibaca dari kunci `debit_cash` yang tidak ada, sehingga refund tanpa akun GL lolos TANPA jurnal)
+    m_pay = await get_mapping(db, "ar_payment")
+    cash_code = acc.get("gl_account_code") or m_pay.get("debit_cash_default") or m_pay.get("debit_cash")
+    if not cash_code:
+        raise HTTPException(400, f"Rekening {acc.get('name') or ''} belum punya akun buku besar — lengkapi dulu di "
+                                 "daftar rekening Keuangan.")
+    return acc, cash_code
+
+
+async def _returned_qty(db, sid: str) -> dict:
+    """Qty yang sudah/sedang diretur per barang. Retur berstatus `processing` (belum selesai) ikut dihitung,
+    supaya barang yang sama tidak bisa diretur dua kali."""
+    out: dict = {}
+    async for r in db[RET].find({"direct_sale_id": sid, "status": {"$ne": "cancelled"}}, {"_id": 0, "items": 1}):
+        for it in r.get("items") or []:
+            out[it["material_id"]] = out.get(it["material_id"], 0) + it["qty"]
+    return out
+
+
+def _return_items(note: dict, raw: list, returned: dict) -> list:
+    """Baris retur dari isian (fungsi murni): barang harus ada di nota, qty > 0, ≤ terjual − sudah diretur."""
     sold = {it["material_id"]: it for it in note["items"]}
     items = []
     for idx, ri in enumerate(raw):
@@ -754,32 +812,121 @@ async def create_return(sid: str, request: Request):
         items.append({"material_id": src["material_id"], "sku": src["sku"], "name": src.get("name"), "qty": qty, "price": src["price"],
                       "amount": round(qty * src["price"]), "unit_cost": unit_cost, "cogs": round(unit_cost * qty, 2),
                       "condition": ri.get("condition") or "good"})
+        returned = {**returned, src["material_id"]: returned.get(src["material_id"], 0) + qty}  # dua baris barang sama
+    return items
+
+
+@router.post("/direct-sales/{sid}/returns")
+async def create_return(sid: str, request: Request):
+    user = await _require_write(request)
+    db = get_db()
+    body = await request.json()
+    ret_doc = await process_direct_sale_return(db, sid, body, user)
+    await log_activity(user["id"], user.get("name", ""), "return", "sales.direct", ret_doc["return_number"])
+    return serialize_doc(ret_doc)
+
+
+async def process_direct_sale_return(db, sid: str, body: dict, user: dict) -> dict:
+    """Retur penjualan langsung: stok FG kembali + nota kredit + piutang berkurang (+ refund tunai) + balik HPP.
+
+    Paket 1 (audit keuangan 25 Nov 2026):
+      * SEMUA isian dicek dulu (barang/qty, tanggal retur ≥ tanggal nota & ≤ hari ini, periode terbuka, rekening
+        refund ada/aktif/milik CV nota & berakun buku besar) — tidak ada efek setengah jadi karena isian salah.
+      * Satu retur per nota pada satu waktu (`core.doc_lock`, kunci `return_lock`); qty yang sudah diretur dihitung
+        ULANG di dalam kunci ⇒ klik ganda tidak menggandakan stok, nota kredit, dan piutang.
+      * Dokumen retur ditulis PALING AWAL (`processing`), baru efeknya, lalu ditandai `posted`. Jurnal yang gagal
+        sesudah efek dicatat di `post_error` (daftar "Belum masuk jurnal")."""
+    note = await db[COLL].find_one({"id": sid}, {"_id": 0})
+    if not note:
+        raise HTTPException(404, "Nota tidak ditemukan.")
+    if note.get("status") not in ("confirmed", "paid"):
+        raise HTTPException(400, "Retur hanya untuk nota yang sudah dikonfirmasi.")
+    raw = body.get("items") or []
+    if not raw:
+        raise HTTPException(400, "Minimal satu item retur.")
+    from core.entities import entity_of_doc
+    entity = entity_of_doc(note)
+    ret_d = _return_date(body, note)
+    _return_items(note, raw, await _returned_qty(db, sid))   # cek awal; diulang di dalam kunci
+    refund_acc, refund_cash_code = await _refund_account(db, body, entity)
+    await _return_period_guard(db, ret_d, entity)
+    from core.production_qty_ledger import resolve_fg_location_id
+    loc = await resolve_fg_location_id(db)
+    if not loc:
+        raise HTTPException(400, "Lokasi gudang FG (ZNA-FG) tidak ditemukan.")
+    from core import doc_lock
+    token = await doc_lock.claim(db, COLL, sid, field=RETURN_LOCK, actor=user, not_found="Nota tidak ditemukan.",
+                                 busy="Retur nota ini sedang diproses pengguna lain — tunggu sebentar, muat ulang, "
+                                      "lalu periksa daftar returnya.")
+    try:
+        return await _process_return_locked(db, sid, body, user, ret_d, loc, refund_acc, refund_cash_code)
+    finally:
+        await doc_lock.release(db, COLL, sid, token, field=RETURN_LOCK)
+
+
+async def _process_return_locked(db, sid: str, body: dict, user: dict, ret_d: date, loc: str,
+                                 refund_acc: Optional[dict], refund_cash_code: Optional[str]) -> dict:
+    """Isi `process_direct_sale_return` — dijalankan sambil memegang kunci retur nota (nota & retur dibaca ulang)."""
+    note = await db[COLL].find_one({"id": sid}, {"_id": 0})
+    if not note or note.get("status") not in ("confirmed", "paid"):
+        raise HTTPException(409, "Nota baru saja diubah pengguna lain — muat ulang.")
+    items = _return_items(note, body.get("items") or [], await _returned_qty(db, sid))
+    sold = {it["material_id"]: it for it in note["items"]}
     factor = (note["subtotal"] - note.get("discount_amount", 0)) / note["subtotal"] if note.get("subtotal") else 1
     subtotal = round(sum(i["amount"] for i in items) * factor)
     from core.tax_status import tax_for_stored
     tax = tax_for_stored(note, subtotal)  # retur ikut cara PPN nota asal (DPP 11/12 bila dibuat lewat saklar PKP)
     total = subtotal + tax
-    ret_date = body.get("return_date") or today_wib().isoformat()
-    refund_account = body.get("cash_account_id") if body.get("refund_method") == "cash" else None
-    if body.get("refund_method") == "cash" and not refund_account:
-        raise HTTPException(400, "Rekening kas wajib untuk refund tunai.")
+    ret_date = ret_d.isoformat()
 
     ret_doc = {"id": _uid(), "return_number": await gen_prefixed_number(db, RET, "return_number", f"RT-{ret_date.replace('-', '')}-", 3),
                "direct_sale_id": sid, "note_number": note["note_number"], "ar_invoice_id": note.get("ar_invoice_id"), "invoice_number": note.get("invoice_number"),
                "customer_id": note["customer_id"], "customer_name": note.get("customer_name"), "return_date": ret_date,
                "items": items, "subtotal": subtotal, "tax_pct": note.get("tax_pct") or 0, "tax_amount": tax, "total": total,
-               "cogs_total": round(sum(i["cogs"] for i in items), 2), "reason": body.get("reason") or "", "status": "posted",
+               "cogs_total": round(sum(i["cogs"] for i in items), 2), "reason": body.get("reason") or "", "status": "processing",
                "created_at": _now(), "updated_at": _now(), "created_by": user["id"], "created_by_name": user.get("name", "")}
+    # Dokumen retur DULU (qty-nya langsung terhitung "sudah diretur"), efek sesudahnya.
+    await db[RET].insert_one(dict(ret_doc))
+    steps: list = []
+    try:
+        await _apply_return_effects(db, note, ret_doc, items, sold, loc, refund_acc, refund_cash_code, user, steps)
+    except Exception as e:  # noqa: BLE001 — dicatat di dokumen, lalu diteruskan ke pemanggil
+        # Belum ada efek yang tertulis → retur dibatalkan (qty-nya bebas lagi, boleh diulang). Sudah ada efek →
+        # tetap `processing` + catatan langkah, supaya tidak bisa diretur ulang dan Keuangan menemukannya di daftar
+        # "Belum masuk jurnal" (`post_error`).
+        msg = str(getattr(e, "detail", "") or e)
+        await db[RET].update_one({"id": ret_doc["id"]}, {"$set": {
+            "status": "processing" if steps else "cancelled", "process_error": msg, "process_steps": steps,
+            "post_error": (f"Retur terhenti di tengah proses (sudah: {', '.join(steps)}): {msg}" if steps else None),
+            "post_error_at": _now() if steps else None, "updated_at": _now()}})
+        raise
+    errs = []
+    if ret_doc.get("cn_post_error"):
+        errs.append(f"Nota kredit: {ret_doc['cn_post_error']}")
+    if ret_doc.get("refund_post_error"):
+        errs.append(f"Refund: {ret_doc['refund_post_error']}")
+    if ret_doc.get("cogs_post_error"):
+        errs.append(f"Balik HPP: {ret_doc['cogs_post_error']}")
+    ret_doc.update({"status": "posted", "post_error": "; ".join(errs) or None,
+                    "post_error_at": _now() if errs else None, "updated_at": _now()})
+    await db[RET].update_one({"id": ret_doc["id"]}, {"$set": {k: v for k, v in ret_doc.items() if k != "id"}})
+    await db[COLL].update_one({"id": sid}, {"$inc": {"returned_total": total, "returned_qty": sum(i["qty"] for i in items)}, "$set": {"updated_at": _now()}})
+    return ret_doc
 
+
+async def _apply_return_effects(db, note: dict, ret_doc: dict, items: list, sold: dict, loc: str,
+                                refund_acc: Optional[dict], refund_cash_code: Optional[str], user: dict,
+                                steps: list) -> None:
+    """Efek retur (stok, lapisan HPP, nota kredit, piutang, refund, balik HPP); hasilnya ditulis ke `ret_doc`.
+    `steps` = jejak efek yang SUDAH tertulis (dipakai bila proses gagal di tengah)."""
+    sid, ret_date = note["id"], ret_doc["return_date"]
+    subtotal, tax, total = ret_doc["subtotal"], ret_doc["tax_amount"], ret_doc["total"]
+    refund_account = refund_acc["id"] if refund_acc else None
     # 1) stok FG kembali + lapisan HPP baru (biaya = HPP saat keluar).
     # 2026-11-02 (owner No.26a): `push_layer` = penerimaan WAC; komponen biaya mengikuti
     # komponen WAC saat barang ini keluar (baris `fg_cogs_layers` ber-`components`).
     from core import fg_cost_layers as fcl
     from core import stock_service
-    from core.production_qty_ledger import resolve_fg_location_id
-    loc = await resolve_fg_location_id(db)
-    if not loc:
-        raise HTTPException(400, "Lokasi gudang FG (ZNA-FG) tidak ditemukan.")
     ref = {"type": "sales_return", "id": ret_doc["id"], "return_number": ret_doc["return_number"], "note_number": note["note_number"]}
     for it in items:
         if it["condition"] == "damaged":
@@ -788,6 +935,7 @@ async def create_return(sid: str, request: Request):
         comps = ({k: sum(float(ly["components"].get(k) or 0) for ly in src_layers) for k in fcl.COMP_KEYS}
                  if src_layers else None)
         await stock_service.add(it["material_id"], loc, it["qty"], meta={"inventory_category": "fg_internal", "ownership": "cv_da"}, ref=ref, actor=user, db=db)
+        steps.append(f"stok {it['sku']} +{it['qty']}")
         layer = await fcl.push_layer(db, material_id=it["material_id"], qty=it["qty"], po_item={"sku": it["sku"]}, ref=ref, actor=user,
                                      unit_cost=it["unit_cost"], components=comps,
                                      breakdown={"source": "sales_return", "unit_cost": it["unit_cost"]})
@@ -806,6 +954,7 @@ async def create_return(sid: str, request: Request):
           "created_by": user.get("email", "")}
     await db.rahaza_credit_notes.insert_one(cn)
     cn.pop("_id", None)
+    steps.append(f"nota kredit {cn['cn_number']}")
     inv = await db.rahaza_ar_invoices.find_one({"id": note.get("ar_invoice_id")}, {"_id": 0}) or {}
     m_cn, m_ar = await get_mapping(db, "credit_note"), await get_mapping(db, "ar_invoice")
     ar_code = await _ar_account_for_invoice(db, inv, m_cn.get("credit_ar") or m_ar.get("debit_ar"))
@@ -814,7 +963,9 @@ async def create_return(sid: str, request: Request):
     # di sini: bila PPN ada tetapi akun PPN keluaran belum dipetakan, SELURUH nilai (termasuk PPN)
     # dibukukan diam-diam ke Retur Penjualan — mesin bersama menolak dengan pesan yang jelas.
     from routes.rahaza_posting import post_credit_note
-    cn_post = {"ok": False, "error": "Nilai nota kredit 0."}
+    # nilai 0 = memang tanpa jurnal (bukan galat — dulu tercatat sebagai `cn_post_error` dan ikut daftar
+    # "Belum masuk jurnal")
+    cn_post = {"ok": True, "skipped": True, "reason": "Nilai nota kredit 0 — tanpa jurnal."}
     if total > 0:
         cn_post = await post_credit_note(db, cn, user)
         await db.rahaza_credit_notes.update_one({"id": cn["id"]}, {"$set": {"gl_je_id": cn_post.get("je_id"), "gl_je_number": cn_post.get("je_number"), "gl_posted_at": _now(), "post_error": cn_post.get("error")}})
@@ -829,24 +980,26 @@ async def create_return(sid: str, request: Request):
         applied = min(total, owed_before)
         excess = round(total - applied)
         new_bal = round(owed_before - applied)
-        upd = {"balance": new_bal, "amount_due": new_bal, "credited_amount": round(float(inv.get("credited_amount") or 0) + total), "updated_at": _now()}
+        upd = {"balance": new_bal, "amount_due": new_bal, "updated_at": _now()}
         if new_bal <= 0 and inv.get("status") not in ("paid", "cancelled"):
             upd["status"] = "paid"
-        await db.rahaza_ar_invoices.update_one({"id": inv["id"]}, {"$set": upd})
+        # Paket 1: nota kredit DITAMBAHKAN atomik ($inc), bukan ditimpa dari bacaan lama.
+        await db.rahaza_ar_invoices.update_one({"id": inv["id"]}, {"$set": upd, "$inc": {"credited_amount": round(total)}})
+        steps.append(f"piutang −{round(total)}")
         if excess > 0:
             if refund_account:
-                acc = await db.rahaza_cash_accounts.find_one({"id": refund_account}, {"_id": 0})
-                if not acc:
-                    raise HTTPException(404, "Rekening kas refund tidak ditemukan.")
+                # rekening & akun buku besarnya sudah dicek di depan (`_refund_account`)
                 refund_mv = _uid()
-                await db.rahaza_cash_movements.insert_one({"id": refund_mv, "account_id": refund_account, "account_name": acc.get("name"), "direction": "out",
+                await db.rahaza_cash_movements.insert_one({"id": refund_mv, "account_id": refund_account, "account_name": refund_acc.get("name"), "direction": "out",
                                                            "amount": excess, "category": "sales_refund", "ref_id": inv["id"], "ref_label": cn["cn_number"], "date": ret_date,
                                                            "notes": f"Refund retur {ret_doc['return_number']}", "timestamp": _now(), "created_by": user["id"], "created_by_name": user.get("name", "")})
-                cash_code = acc.get("gl_account_code") or (await get_mapping(db, "ar_payment")).get("debit_cash")
-                if cash_code and ar_code:
+                steps.append(f"kas keluar {excess}")
+                if ar_code:
                     refund_je = await _create_posted_je(db, date.fromisoformat(ret_date), f"Refund retur {ret_doc['return_number']} ke {note.get('customer_name')}", "sales_refund",
                                                         f"refund:{ret_doc['id']}", [{"account_code": ar_code, "debit": excess, "credit": 0, "description": f"Refund {cn['cn_number']}"},
-                                                                                     {"account_code": cash_code, "debit": 0, "credit": excess, "description": f"Refund {cn['cn_number']}"}], user)
+                                                                                     {"account_code": refund_cash_code, "debit": 0, "credit": excess, "description": f"Refund {cn['cn_number']}"}], user)
+                else:
+                    refund_je = {"ok": False, "error": "Akun piutang belum dipetakan (Profil Posting 'credit_note' / 'ar_invoice')."}
                 refund_amount = excess
             else:
                 ret_doc["customer_credit"] = excess  # saldo kredit pelanggan (belum dikembalikan)
@@ -872,12 +1025,8 @@ async def create_return(sid: str, request: Request):
     ret_doc.update({"cn_id": cn["id"], "cn_number": cn["cn_number"], "cn_je_id": cn_post.get("je_id"), "cn_je_number": cn_post.get("je_number"), "cn_post_error": cn_post.get("error"),
                     "applied_to_invoice": round(applied), "refund_amount": refund_amount, "refund_cash_account_id": refund_account if refund_amount else None,
                     "refund_movement_id": refund_mv, "refund_je_id": (refund_je or {}).get("je_id"),
+                    "refund_post_error": None if refund_je is None or refund_je.get("ok") else refund_je.get("error"),
                     "cogs_je_id": (cogs_post or {}).get("je_id"), "cogs_je_number": (cogs_post or {}).get("je_number"), "cogs_post_error": (cogs_post or {}).get("error")})
-    await db[RET].insert_one(ret_doc)
-    ret_doc.pop("_id", None)
-    await db[COLL].update_one({"id": sid}, {"$inc": {"returned_total": total, "returned_qty": sum(i["qty"] for i in items)}, "$set": {"updated_at": _now()}})
-    await log_activity(user["id"], user.get("name", ""), "return", "sales.direct", ret_doc["return_number"])
-    return serialize_doc(ret_doc)
 
 
 @router.get("/returns")
