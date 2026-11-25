@@ -360,14 +360,31 @@ async def _create_posted_je(
 
 
 async def _void_je_by_source(db, source_module: str, source_ref: str, user: dict, reason: str = "",
-                             entity: Optional[str] = None):
+                             entity: Optional[str] = None, boleh_balik: bool = True):
+    """Batalkan jurnal satu sumber.
+
+    Periode asal TERBUKA → jurnal di-void di tempat (barisnya dihapus) — perilaku lama.
+    Periode asal TERTUTUP/terkunci (Paket 1 audit 25 Nov 2026) → bila `boleh_balik`, dibuat JURNAL PEMBALIK bertanggal
+    hari ini di buku CV yang sama (`reverse_journal_entry`); jurnal asli tetap `posted` (laporan periode tertutup tidak
+    berubah) dan kunci sumbernya dipindah ke `<ref>#dibalik:<id>` supaya dokumen yang sama bisa dijurnal ulang nanti.
+    Hasil: {ok, voided} | {ok, reversed, reversal_je_id, reversal_je_number} | {ok: False, error}."""
     je = await _find_existing_je(db, source_module, source_ref, entity=entity)
     if not je:
         return {"ok": True, "voided": False, "reason": "JE not found"}
     je_date = date.fromisoformat(je["date"])
     err = await _ensure_period_open(db, je_date, entity=ent_mod.entity_of_value(je.get("entity")))
     if err:
-        return {"ok": False, "error": err}
+        if not boleh_balik or je.get("status") != "posted":
+            return {"ok": False, "error": err}
+        rev = await reverse_journal_entry(db, je, user, reason or "dibatalkan", source_module=source_module)
+        if not rev.get("ok"):
+            return {"ok": False, "error": f"{err} Jurnal pembalik juga gagal: {rev.get('error')}"}
+        ref_baru = f"{source_ref}#dibalik:{rev['je_id'][:8]}"
+        await db.rahaza_journal_entries.update_one({"id": je["id"]}, {"$set": {
+            "source_ref": ref_baru, "source_ref_asli": source_ref, "updated_at": _now()}})
+        await db.rahaza_journal_lines.update_many({"je_id": je["id"]}, {"$set": {"source_ref": ref_baru}})
+        return {"ok": True, "voided": False, "reversed": True, "je_id": je["id"], "je_number": je.get("je_number"),
+                "reversal_je_id": rev["je_id"], "reversal_je_number": rev.get("je_number"), "date": rev.get("date")}
     await db.rahaza_journal_entries.update_one(
         {"id": je["id"]},
         {"$set": {
@@ -1553,7 +1570,7 @@ async def void_ap_invoice_posting(db, invoice_id: str, user: dict, reason: str =
     res = await _void_je_by_source(db, "ap_invoice", f"ap:{invoice_id}", user, reason)
     # 2026-11-06 (Tahap 2): jurnal faktur dari GR yang di-void ikut menghapus selisih yang dulu masuk
     # persediaan ⇒ HPP stok dibalik (bagian yang barangnya sudah terpakai dijurnal ke 5-1900).
-    if res.get("ok") and res.get("voided"):
+    if res.get("ok") and (res.get("voided") or res.get("reversed")):
         inv = await db.rahaza_ap_invoices.find_one({"id": invoice_id}, {"_id": 0}) or {}
         if (inv.get("hpp_adjustment") or {}).get("status") == "applied":
             from core import purchase_costing as pc

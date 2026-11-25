@@ -147,9 +147,15 @@ async def _check_return_limit(db, gr: dict, lines: list, exclude_rid: str | None
                                  + "; ".join(errors[:5]) + ".")
 
 
+def _ap_invoice_id_for(gr: dict, line: dict) -> str | None:
+    """Faktur pemasok (`rahaza_ap_invoices.id`) yang menagih qty bersih baris GR: penanda per baris
+    `base_ap_invoice_id` (faktur dari GR baru), selain itu `ap_invoice_id` dokumen GR (GR lama)."""
+    return (line or {}).get("base_ap_invoice_id") or (gr or {}).get("ap_invoice_id") or None
+
+
 async def _ap_code_for_gr(db, gr: dict, line: dict) -> str | None:
     """Akun hutang faktur asal (sub-ledger pemasok) untuk nota debit setelah faktur."""
-    inv_id = line.get("base_ap_invoice_id") or gr.get("ap_invoice_id")
+    inv_id = _ap_invoice_id_for(gr, line)
     if not inv_id:
         return None
     inv = await db.rahaza_ap_invoices.find_one({"id": inv_id}, {"_id": 0})
@@ -196,6 +202,33 @@ async def _post_stage(db, rtp: dict, stage: str, lines: list, user: dict, *, je_
 
 def _history(action: str, user: dict, note: str = "") -> dict:
     return {"action": action, "at": _now(), "by": user.get("name", ""), "by_id": user.get("id", ""), "note": note}
+
+
+# ── Kunci proses per Retur Pembelian (Paket 1, audit keuangan 25 Nov 2026) ───────────────────────
+# Kirim, terima pengganti, dan Nota Debit dulu hanya MEMBACA status lalu menulis stok/jurnal; status ditulis
+# tanpa saringan. Klik ganda ⇒ stok keluar dua kali (jurnal sekali), dua Nota Debit + dua jurnal + dua potongan
+# tagihan GR. Sekarang dokumen DIKUNCI (`core.doc_lock`, field `proc_lock`) dengan syarat status yang diharapkan
+# SEBELUM efek apa pun: permintaan kedua mendapat 409 dan tidak memindahkan apa pun.
+RTP_LOCK = "proc_lock"
+RTP_BUSY = "Retur ini sedang/baru saja diproses pengguna lain — muat ulang halaman lalu periksa statusnya."
+
+
+async def _claim_rtp(db, rid: str, extra: dict, actor: dict) -> str:
+    from core import doc_lock
+    return await doc_lock.claim(db, pr.RTP_COLL, rid, field=RTP_LOCK, extra=extra, actor=actor, busy=RTP_BUSY,
+                                not_found="Retur Pembelian tidak ditemukan.")
+
+
+async def _release_rtp(db, rid: str, token: str) -> None:
+    from core import doc_lock
+    await doc_lock.release(db, pr.RTP_COLL, rid, token, field=RTP_LOCK)
+
+
+async def _set_rtp_status(db, rid: str, want: dict, update: dict) -> None:
+    """Tulis status akhir hanya bila status yang diharapkan belum diubah proses lain (tidak menimpa status lebih baru)."""
+    res = await db[pr.RTP_COLL].update_one({"id": rid, **want}, update)
+    if not res.matched_count:
+        log.error("Retur Pembelian %s: status akhir tidak tertulis — status berubah di tengah proses", rid)
 
 
 def _age_days(doc: dict) -> int:
@@ -377,13 +410,19 @@ async def send_purchase_return(rid: str, request: Request):
     # 2026-11-06 (Tahap 1): dua draf yang dibuat bersamaan tidak boleh lolos melebihi qty GR
     await _check_return_limit(db, await _gr_or_400(db, rtp["gr_id"]), rtp["lines"], exclude_rid=rid)
     actor = _actor(user)
-    # 2026-11-06 (Tahap 2): item karantina dikunci (kunci disposisi yang sama dengan Lepas/Scrap) selama stok,
-    # qty bernilai, dan jurnal ditulis — dulu dua proses bersamaan bisa mengeluarkan sisa yang sama dua kali.
-    tokens = await _claim_quarantine_lines(db, rtp["lines"], actor)
+    # Paket 1 (25 Nov 2026): retur dikunci berstatus draft SEBELUM stok keluar — kirim kedua 409, tidak memindahkan
+    # apa pun (dulu baris dari stok biasa tidak diklaim sama sekali → stok keluar dua kali, jurnal sekali).
+    lock = await _claim_rtp(db, rid, {"status": "draft"}, actor)
     try:
-        return await _send_purchase_return_locked(db, user, actor, rid, body, settlement, destroy_da)
+        # 2026-11-06 (Tahap 2): item karantina dikunci (kunci disposisi yang sama dengan Lepas/Scrap) selama stok,
+        # qty bernilai, dan jurnal ditulis — dulu dua proses bersamaan bisa mengeluarkan sisa yang sama dua kali.
+        tokens = await _claim_quarantine_lines(db, rtp["lines"], actor)
+        try:
+            return await _send_purchase_return_locked(db, user, actor, rid, body, settlement, destroy_da)
+        finally:
+            await _release_quarantine_lines(db, tokens)
     finally:
-        await _release_quarantine_lines(db, tokens)
+        await _release_rtp(db, rid, lock)
 
 
 async def _claim_quarantine_lines(db, lines: list, actor: dict) -> list:
@@ -466,7 +505,7 @@ async def _send_purchase_return_locked(db, user: dict, actor: dict, rid: str, bo
         out_lines.append({**ln, "valued_qty": vq, "unvalued_qty": uq, "wac_at_send": round(wac, 4),
                           "claim_amount": plan["claim_amount"], "unvalued_amount": round(uq * ln["gr_price"], 2)})
     new_status = "settled" if destroy_da else "awaiting_settlement"
-    await db[pr.RTP_COLL].update_one({"id": rid}, {
+    await _set_rtp_status(db, rid, {"status": "draft"}, {
         "$set": {"lines": out_lines, "status": new_status, "sent_at": _now(), "sent_by": user.get("name", ""),
                  "ship_date": body.get("ship_date") or rtp.get("ship_date") or wib_date_str(),
                  "total_claim_amount": round(sum(x["claim_amount"] for x in out_lines), 2),
@@ -504,8 +543,24 @@ async def receive_replacement(rid: str, request: Request):
     if not loc or not await location_resolver.location_exists(db, loc):
         raise HTTPException(400, "location_id wajib — pilih lokasi penerima barang pengganti.")
     await _check_roles(db, {"supplier_claim"}, {ln.get("kind") or "bahan" for ln in rtp["lines"]})
-    gr = await _gr_or_400(db, rtp["gr_id"])
+    await _gr_or_400(db, rtp["gr_id"])
     actor = _actor(user)
+    # Paket 1 (25 Nov 2026): dikunci berstatus "menunggu penyelesaian" SEBELUM stok pengganti masuk — permintaan
+    # kedua 409 (dulu stok pengganti & penerimaan susulan tercatat dua kali).
+    want = {"status": "awaiting_settlement", "settlement": "exchange"}
+    lock = await _claim_rtp(db, rid, want, actor)
+    try:
+        return await _receive_replacement_locked(db, user, actor, rid, body, loc, want)
+    finally:
+        await _release_rtp(db, rid, lock)
+
+
+async def _receive_replacement_locked(db, user: dict, actor: dict, rid: str, body: dict, loc: str, want: dict) -> dict:
+    """Isi `receive_replacement` — dijalankan sambil memegang kunci retur (dibaca ulang di sini)."""
+    rtp = await _rtp_or_404(db, rid)
+    if any(rtp.get(k) != v for k, v in want.items()):
+        raise HTTPException(409, f"Retur {rtp.get('rtp_number')} baru saja diproses pengguna lain — muat ulang.")
+    gr = await _gr_or_400(db, rtp["gr_id"])
     je_lines, lates = [], []
     for ln in rtp["lines"]:
         qty, price = _f(ln["qty"]), _f(ln["gr_price"])
@@ -539,7 +594,7 @@ async def receive_replacement(rid: str, request: Request):
             db, material_id=ln["material_id"], cost_result=wac_res, qty_in=qty, cost_in=price,
             source_ref=f"rtp:{rid}:{ln['material_id']}",
             memo=f"Nilai ulang stok lama {ln.get('material_code') or ''} oleh pengganti {rtp['rtp_number']}", user=user)
-    await db[pr.RTP_COLL].update_one({"id": rid}, {
+    await _set_rtp_status(db, rid, want, {
         "$set": {"status": "settled", "settled_at": _now(), "replacement_location_id": loc, "updated_at": _now()},
         "$push": {"history": _history("receive_replacement", user, body.get("notes") or "")}})
     posting = await _post_stage(db, rtp, "replacement", je_lines, user)
@@ -585,9 +640,12 @@ async def cancel_purchase_return(rid: str, request: Request):
     rtp = await _rtp_or_404(db, rid)
     if rtp.get("status") != "draft":
         raise HTTPException(400, "Hanya Retur berstatus Draft yang bisa dibatalkan (barang belum keluar).")
-    await db[pr.RTP_COLL].update_one({"id": rid}, {
+    # Paket 1: tidak boleh menyalip Kirim/Nota Debit yang sedang berjalan (status draft + kunci kosong)
+    from core import doc_lock
+    res = await db[pr.RTP_COLL].update_one({"id": rid, "status": "draft", **doc_lock.lock_free(RTP_LOCK)}, {
         "$set": {"status": "cancelled", "cancelled_at": _now(), "updated_at": _now()},
         "$push": {"history": _history("cancel", user, body.get("reason") or "")}})
+    doc_lock.require_matched(res, RTP_BUSY)
     return serialize_doc(await _rtp_or_404(db, rid))
 
 
@@ -630,7 +688,8 @@ async def list_debit_notes(request: Request, supplier_name: str | None = None,
 async def supplier_balances(request: Request):
     """Saldo hutang per pemasok = sisa faktur − nota debit yang mengurangi hutang (K11).
     Nota debit sebelum faktur mengurangi GRNI (tagihan dari GR otomatis lebih kecil) — tidak dihitung
-    di sini. Faktur yang dibayar penuh lalu terkena nota debit ⇒ saldo negatif = pemasok berutang ke DA."""
+    di sini. Faktur yang dibayar penuh lalu terkena nota debit ⇒ saldo negatif = pemasok berutang ke DA
+    (Paket 1: potongan ke faktur dibatasi sisanya; kelebihannya tetap terhitung di sini)."""
     await _require_view(request)
     db = get_db()
     out: dict = {}
@@ -639,10 +698,17 @@ async def supplier_balances(request: Request):
         key = (sid or (name or "").strip().lower())
         return out.setdefault(key, {"supplier_id": sid, "supplier_name": name, "invoice_balance": 0.0,
                                     "invoice_count": 0, "debit_note_ap": 0.0, "debit_note_count": 0})
+
+    def before_dn(inv: dict) -> float:
+        # Paket 1: faktur bernota debit menyimpan `balance` SESUDAH nota debit (pembayaran hutang) — kolom ini
+        # memakai sisa SEBELUM nota debit (total − dibayar), karena nota debit dikurangkan di kolomnya sendiri.
+        if _f(inv.get("debit_note_amount")) > 0.009:
+            return max(0.0, _f(inv.get("total")) - _f(inv.get("paid_amount")))
+        return _f(inv.get("balance"))
     async for inv in db.rahaza_ap_invoices.find(
             {"status": {"$nin": ["draft", "cancelled", "void", "written_off"]}}, {"_id": 0}):
         s = slot(inv.get("vendor_name"), inv.get("supplier_id"))
-        s["invoice_balance"] += _f(inv.get("balance"))
+        s["invoice_balance"] += before_dn(inv)
         s["invoice_count"] += 1
     async for dn in db[pr.DN_COLL].find({"status": "issued"}, {"_id": 0}):
         s = slot(dn.get("supplier_name"), dn.get("supplier_id"))
@@ -703,32 +769,163 @@ async def issue_debit_note(request: Request):
                 raise HTTPException(400, "to_location_id wajib — barang karantina yang diterima disimpan di mana?")
     await _check_roles(db, {"supplier_claim", "grni", "ap", "price_variance"}, kinds)
     actor = _actor(user)
-    # 2026-11-06 (Tahap 2): "diterima dengan diskon" melepas item karantina → kunci disposisi yang sama
-    tokens = await _claim_quarantine_lines(db, rtp["lines"], actor) if st == "accept_discount" else []
+    # Paket 1 (25 Nov 2026): SEMUA penyelesaian (bukan hanya "diterima dengan diskon") mengunci retur berstatus
+    # yang diharapkan SEBELUM efek apa pun — Nota Debit kedua 409 (dulu dua ND, dua jurnal, dua potongan tagihan).
+    lock = await _claim_rtp(db, rtp["id"], {"status": want}, actor)
     try:
-        return await _issue_debit_note_locked(db, user, actor, body, rtp["id"], want, dn_date, disc, to_loc)
+        # 2026-11-06 (Tahap 2): "diterima dengan diskon" melepas item karantina → kunci disposisi yang sama
+        tokens = await _claim_quarantine_lines(db, rtp["lines"], actor) if st == "accept_discount" else []
+        try:
+            return await _issue_debit_note_locked(db, user, actor, body, rtp["id"], want, dn_date, disc, to_loc)
+        finally:
+            await _release_quarantine_lines(db, tokens)
     finally:
-        await _release_quarantine_lines(db, tokens)
+        await _release_rtp(db, rtp["id"], lock)
+
+
+def dn_source_ref(rid: str) -> str:
+    """Kunci jurnal Nota Debit: SATU per Retur Pembelian (Paket 1). ND lama memakai `dn:<id ND>` — tetap terbaca
+    lewat `journals[].source_ref` di dokumen returnya (posting ulang memakai ref yang tersimpan)."""
+    return f"dn:{rid}"
+
+
+# ── Potongan hutang faktur pemasok oleh Nota Debit (Paket 1, 25 Nov 2026) ─────────────────────────
+# Nota Debit SESUDAH faktur mendebit Hutang di buku besar, tetapi dulu sisa faktur (`rahaza_ap_invoices`) tidak
+# berkurang ⇒ faktur tetap bisa dibayar penuh. Sekarang setiap ND menambah `debit_note_amount` faktur asalnya
+# ($inc atomik) sebesar paling banyak sisa faktur (total − dibayar − nota debit sebelumnya); kelebihannya =
+# piutang ke pemasok (saldo pemasok negatif, ditagih lewat Refund). Pembayaran hutang
+# (routes.rahaza_finance) membaca field yang sama. Faktur asal = `_ap_invoice_id_for(GR, baris GR)`.
+AP_CLOSED_STATUSES = ("cancelled", "void", "written_off")
+AP_OPEN_STATUSES = ("sent", "approved", "partial_paid", "overdue", "issued")
+
+
+def ap_open_amount(inv: dict) -> float:
+    """Sisa faktur pemasok yang masih bisa dipotong Nota Debit = total − dibayar − nota debit sebelumnya —
+    rumus yang SAMA dengan pembayaran hutang (`routes.rahaza_finance.ap_remaining`)."""
+    from routes.rahaza_finance import ap_remaining
+    return round(ap_remaining(inv), 2)
+
+
+async def _dn_ap_allocation(db, rtp: dict, gr: dict, st: str, disc) -> dict:
+    """{faktur asal: potongan HUTANG} yang akan dibuat Nota Debit ini — hanya baris yang SUDAH ditagih, rumus sama
+    dengan jurnalnya (`plan_debit_note` / `plan_discount_valued`). Dihitung SEBELUM efek apa pun (baca saja)."""
+    out: dict = {}
+    for ln in rtp["lines"]:
+        line = _gr_line(gr, ln.get("gr_item_id"), ln["material_id"])
+        inv_id = _ap_invoice_id_for(gr, line)
+        if not pr.base_billed(gr, line) or not inv_id:
+            continue
+        if st in ("debit_note", "destroy"):
+            amt = _f(ln.get("claim_amount"))
+        else:
+            qty, vq = _f(ln["qty"]), _f(ln["qty"])
+            if ln["source"] == "quarantine":
+                qi = await db[quarantine.QUARANTINE_COLL].find_one({"id": ln["quarantine_item_id"]}, {"_id": 0})
+                vq = quarantine.split_valued(qty, await quarantine.valued_remaining(db, qi))[0] if qi else 0.0
+            amt = round(vq * (_f(ln["gr_price"]) - _f(disc)), 2)
+        if amt > 0:
+            out[inv_id] = round(out.get(inv_id, 0.0) + amt, 2)
+    return out
+
+
+async def _reserve_one_invoice(db, inv_id: str, amount: float) -> dict:
+    for _ in range(5):
+        inv = await db.rahaza_ap_invoices.find_one({"id": inv_id}, {"_id": 0})
+        if not inv:
+            raise HTTPException(400, "Faktur pemasok asal retur ini tidak ditemukan — Nota Debit tidak bisa memotong "
+                                     "hutangnya. Periksa tautan faktur di GR asal.")
+        no = inv.get("invoice_number") or inv_id
+        if inv.get("status") in AP_CLOSED_STATUSES:
+            raise HTTPException(400, f"Faktur {no} sudah dibatalkan/dihapusbukukan — Nota Debit tidak bisa memotongnya.")
+        sisa = ap_open_amount(inv)
+        # Potongan ke faktur DIBATASI sisanya. Kelebihan (mis. barang diretur sesudah faktur lunas) tetap mendebit
+        # Hutang di jurnal = piutang ke pemasok (saldo pemasok negatif, ditagih lewat Refund) — perilaku lama.
+        pakai = round(min(amount, max(sisa, 0.0)), 2)
+        hasil = {"ap_invoice_id": inv_id, "invoice_number": inv.get("invoice_number"), "amount": pakai,
+                 "diminta": round(amount, 2), "kelebihan": round(amount - pakai, 2)}
+        if pakai <= 0.009:
+            return {**hasil, "amount": 0.0}
+        # tulis bersyarat: dibayar & nota debit masih sama dengan yang dibaca (pembayaran bersamaan → baca ulang)
+        sisa_baru = round(max(0.0, _f(inv.get("total")) - _f(inv.get("paid_amount"))
+                              - _f(inv.get("debit_note_amount")) - pakai), 2)
+        set_ = {"updated_at": _now(), "balance": sisa_baru}
+        if sisa_baru <= 0.01 and inv.get("status") in AP_OPEN_STATUSES:
+            set_["status"] = "paid"          # sisa faktur habis oleh nota debit (tidak ada lagi yang perlu dibayar)
+        res = await db.rahaza_ap_invoices.update_one(
+            {"id": inv_id, "paid_amount": inv.get("paid_amount"), "debit_note_amount": inv.get("debit_note_amount")},
+            {"$inc": {"debit_note_amount": pakai}, "$set": set_})
+        if res.matched_count:
+            return {**hasil, "status_lama": inv.get("status"), "balance_lama": inv.get("balance")}
+    raise HTTPException(409, "Faktur pemasok asal sedang dibayar/diubah pengguna lain — coba lagi sebentar.")
+
+
+async def _reserve_debit_note_amounts(db, alloc: dict) -> list:
+    """Tambah `debit_note_amount` tiap faktur asal (semua atau tidak sama sekali). Return daftar yang tertulis."""
+    done: list = []
+    try:
+        for inv_id, amount in sorted(alloc.items()):
+            done.append(await _reserve_one_invoice(db, inv_id, amount))
+    except BaseException:
+        await _release_debit_note_amounts(db, done)
+        raise
+    return done
+
+
+async def _release_debit_note_amounts(db, reserved: list) -> None:
+    """Balik `debit_note_amount` bila Nota Debit gagal sebelum tercatat; sisa & status dihitung ulang dari angka terbaru
+    (pembayaran yang masuk di antaranya tetap dihormati)."""
+    for r in reserved:
+        if not r.get("amount"):
+            continue
+        await db.rahaza_ap_invoices.update_one({"id": r["ap_invoice_id"]},
+                                               {"$inc": {"debit_note_amount": -r["amount"]}, "$set": {"updated_at": _now()}})
+        inv = await db.rahaza_ap_invoices.find_one({"id": r["ap_invoice_id"]}, {"_id": 0}) or {}
+        sisa = round(max(0.0, _f(inv.get("total")) - _f(inv.get("paid_amount")) - _f(inv.get("debit_note_amount"))), 2)
+        set_ = {"balance": sisa}
+        if inv.get("status") == "paid" and r.get("status_lama") not in (None, "paid") and sisa > 0.01:
+            set_["status"] = "partial_paid" if _f(inv.get("paid_amount")) > 0.009 else r["status_lama"]
+        await db.rahaza_ap_invoices.update_one({"id": r["ap_invoice_id"]}, {"$set": set_})
 
 
 async def _issue_debit_note_locked(db, user: dict, actor: dict, body: dict, rid: str, want: str, dn_date,
                                    disc, to_loc) -> dict:
-    """Isi `issue_debit_note` — dijalankan sambil memegang kunci item karantina (retur dibaca ulang)."""
-    from core import purchase_costing
+    """Isi `issue_debit_note` — dijalankan sambil memegang kunci retur (+ kunci item karantina; retur dibaca ulang)."""
     rtp = await _rtp_or_404(db, rid)
-    st = rtp.get("settlement")
     if rtp.get("status") != want:
         raise HTTPException(409, f"Retur {rtp.get('rtp_number')} baru saja diproses pengguna lain — muat ulang.")
+    dup = await db[pr.DN_COLL].find_one({"purchase_return_id": rid, "status": {"$ne": "cancelled"}},
+                                        {"_id": 0, "dn_number": 1})
+    if dup:
+        raise HTTPException(409, f"Nota Debit {dup.get('dn_number') or ''} sudah diterbitkan untuk retur "
+                                 f"{rtp.get('rtp_number')}.")
     gr = await _gr_or_400(db, rtp["gr_id"])
+    # potongan hutang per faktur dipesan DULU (dibatasi sisa faktur) sebelum stok/jurnal berubah
+    reserved = await _reserve_debit_note_amounts(db, await _dn_ap_allocation(db, rtp, gr, rtp.get("settlement"), disc))
+    state = {"dn_written": False}
+    try:
+        return await _issue_debit_note_apply(db, user, actor, body, rtp, gr, want, dn_date, disc, to_loc,
+                                             reserved, state)
+    except BaseException:
+        if not state["dn_written"]:
+            await _release_debit_note_amounts(db, reserved)
+        raise
+
+
+async def _issue_debit_note_apply(db, user: dict, actor: dict, body: dict, rtp: dict, gr: dict, want: str,
+                                  dn_date, disc, to_loc, reserved: list, state: dict) -> dict:
+    from core import purchase_costing
+    st = rtp.get("settlement")
     dn_id = pr._uid()
     dn_number = await gen_prefixed_number(db, pr.DN_COLL, "dn_number", f"ND-{_now():%Y%m}-", 4)
     je_lines, dn_lines, lates = [], [], []
     ap_amount = grni_amount = info_amount = 0.0
     ap_code = None
+    ap_by_inv: dict = {}
     out_lines = []
     for ln in rtp["lines"]:
         line = _gr_line(gr, ln.get("gr_item_id"), ln["material_id"])
         billed = pr.base_billed(gr, line)
+        inv_id = _ap_invoice_id_for(gr, line) if billed else None
         if billed and not ap_code:
             ap_code = await _ap_code_for_gr(db, gr, line)
         H, qty = _f(ln["gr_price"]), _f(ln["qty"])
@@ -743,6 +940,8 @@ async def _issue_debit_note_locked(db, user: dict, actor: dict, body: dict, rid:
                 gr = await _gr_or_400(db, rtp["gr_id"])
             ap_amount += claim if billed else 0.0
             grni_amount += 0.0 if billed else claim
+            if inv_id and claim > 0:
+                ap_by_inv[inv_id] = round(ap_by_inv.get(inv_id, 0.0) + claim, 2)
             info_amount += _f(ln.get("unvalued_amount"))
             dn_lines.append({"material_code": ln.get("material_code"), "material_name": ln.get("material_name"),
                              "qty": qty, "unit": ln.get("unit"), "price": H, "amount": round(qty * H, 2),
@@ -796,6 +995,8 @@ async def _issue_debit_note_locked(db, user: dict, actor: dict, body: dict, rid:
                 gr = await _gr_or_400(db, rtp["gr_id"])
             ap_amount += cut if billed else 0.0
             grni_amount += 0.0 if billed else cut
+            if inv_id:
+                ap_by_inv[inv_id] = round(ap_by_inv.get(inv_id, 0.0) + cut, 2)
         info_amount += round(uq * (H - disc), 2)
         dn_lines.append({"material_code": ln.get("material_code"), "material_name": ln.get("material_name"),
                          "qty": qty, "unit": ln.get("unit"), "price": H, "disc_price": disc,
@@ -816,12 +1017,33 @@ async def _issue_debit_note_locked(db, user: dict, actor: dict, body: dict, rid:
           "ap_amount": round(ap_amount, 2), "grni_amount": round(grni_amount, 2), "info_amount": round(info_amount, 2),
           "notes": body.get("notes") or "", "created_at": _now(), "created_by": user.get("id"),
           "created_by_name": user.get("name", "")}
+    # potongan per faktur yang benar-benar dijurnal = yang dipesan di depan (rumus sama); selisih (seharusnya tidak
+    # ada) disamakan supaya `debit_note_amount` faktur = debit Hutang jurnal ini.
+    alloc = {r["ap_invoice_id"]: r for r in reserved}
+    for inv_id in sorted(set(alloc) | set(ap_by_inv)):
+        r = alloc.get(inv_id) or {}
+        if r.get("kelebihan", 0) > 0.009:
+            continue          # faktur sudah terpotong habis; sisanya piutang ke pemasok (lihat _reserve_one_invoice)
+        diff = round(ap_by_inv.get(inv_id, 0.0) - r.get("diminta", r.get("amount", 0.0)), 2)
+        if abs(diff) >= 0.01:
+            log.warning("Nota Debit %s: potongan faktur %s berbeda %.2f dari pesanan awal", dn_number, inv_id, diff)
+            await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$inc": {"debit_note_amount": diff}})
+            alloc.setdefault(inv_id, {"ap_invoice_id": inv_id, "invoice_number": None, "amount": 0.0})
+            alloc[inv_id] = {**alloc[inv_id], "amount": round(alloc[inv_id]["amount"] + diff, 2)}
+    allocations = [{k: a.get(k) for k in ("ap_invoice_id", "invoice_number", "amount")}
+                   for a in alloc.values() if a["amount"] > 0]
+    kelebihan = round(sum(_f(a.get("kelebihan")) for a in alloc.values()), 2)
+    dn.update({"ap_invoice_allocations": allocations,
+               "ap_invoice_id": allocations[0]["ap_invoice_id"] if len(allocations) == 1 else None,
+               **({"kelebihan_piutang_pemasok": kelebihan} if kelebihan > 0.009 else {})})
     posting = await _post_stage(db, rtp, "debit_note", je_lines, user, je_date=dn_date, ap_code=ap_code,
-                                source_ref=f"dn:{dn_id}")
+                                source_ref=dn_source_ref(rtp["id"]))
     dn.update({"je_id": posting.get("je_id"), "je_number": posting.get("je_number"),
-               "gl_error": None if posting.get("ok") else posting.get("error")})
+               "gl_error": None if posting.get("ok") else posting.get("error"),
+               "post_error": None if posting.get("ok") else posting.get("error")})
     await db[pr.DN_COLL].insert_one(dict(dn))
-    await db[pr.RTP_COLL].update_one({"id": rtp["id"]}, {
+    state["dn_written"] = True
+    await _set_rtp_status(db, rtp["id"], {"status": want}, {
         "$set": {"status": "settled", "settled_at": _now(), "debit_note_id": dn_id, "debit_note_number": dn_number,
                  "lines": out_lines, "updated_at": _now()},
         "$push": {"history": _history("debit_note", user, f"{dn_number} Rp {total:,.0f}")}})

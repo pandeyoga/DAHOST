@@ -40,12 +40,22 @@ def _void_gagal(res: dict):
         raise HTTPException(409, f"Jurnal tidak bisa dibatalkan: {res.get('error')}")
 
 
+def _hasil_jurnal(res: dict) -> str:
+    """Hasil pembatalan jurnal untuk ringkasan: dibatalkan di tempat, atau dibalik (periode asal sudah tertutup)."""
+    if res.get("reversed"):
+        return f"dibalik dengan {res.get('reversal_je_number') or 'jurnal pembalik'}"
+    return "dibatalkan" if res.get("voided") else "tidak ada"
+
+
 # ── Faktur pemasok (Setujui & catat ke buku besar) ──
 async def _hambatan_ap(db, d: dict) -> list:
-    if float(d.get("paid_amount") or 0) > 0 or await db.rahaza_ap_payments.count_documents({"invoice_id": d.get("id")}):
+    if float(d.get("paid_amount") or 0) > 0 or await db.rahaza_ap_payments.count_documents(
+            {"invoice_id": d.get("id"), "status": {"$nin": ["voided"]}}):
         return ["Faktur ini sudah dibayar (sebagian/penuh). Persetujuannya tidak bisa ditarik."]
     if d.get("antar_cv") or d.get("intercompany") or d.get("is_intercompany"):
         return ["Faktur antar CV dibatalkan lewat Transaksi antar CV."]
+    if float(d.get("debit_note_amount") or 0) > 0.009:   # Paket 1: sisa faktur sudah dipotong nota debit retur
+        return ["Faktur ini sudah dipotong nota debit retur pembelian. Persetujuannya tidak bisa ditarik."]
     return await _periode_tertutup(db, "ap_invoice", f"ap:{d.get('id')}")
 
 
@@ -53,7 +63,7 @@ async def _balik_ap(db, d: dict, user: dict, alasan: str) -> dict:
     from routes.rahaza_posting import void_ap_invoice_posting
     res = await void_ap_invoice_posting(db, d["id"], user, reason=f"Batal setuju: {alasan}")
     _void_gagal(res)
-    return {"jurnal": "dibatalkan" if res.get("voided") else "tidak ada", "hpp": bool(res.get("hpp_reversal"))}
+    return {"jurnal": _hasil_jurnal(res), "hpp": bool(res.get("hpp_reversal"))}
 
 
 daftar(Jenis(
@@ -79,7 +89,7 @@ async def _balik_ar(db, d: dict, user: dict, alasan: str) -> dict:
     from routes.rahaza_posting import void_ar_invoice_posting
     res = await void_ar_invoice_posting(db, d["id"], user, reason=f"Batal setuju: {alasan}")
     _void_gagal(res)
-    return {"jurnal": "dibatalkan" if res.get("voided") else "tidak ada"}
+    return {"jurnal": _hasil_jurnal(res)}
 
 
 daftar(Jenis(

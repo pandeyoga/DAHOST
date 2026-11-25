@@ -284,7 +284,7 @@ function HapusBuku({ row, onClose, onDone }) {
   );
 }
 
-function RincianFaktur({ row, token, onClose, onPay }) {
+function RincianFaktur({ row, token, onClose, onPay, onChanged }) {
   const inv = row.raw;
   return (
     <DetailPanel testId="piutang-rincian-faktur" onClose={onClose} title={`Faktur ${inv.invoice_number}`}
@@ -303,7 +303,7 @@ function RincianFaktur({ row, token, onClose, onPay }) {
       {inv.status !== 'draft' && (
         <div className="space-y-2 pt-2 border-t border-[var(--glass-border)]">
           <p className="text-sm font-medium text-foreground">Riwayat pembayaran · dibayar {fmt(row.dibayar)}</p>
-          <PaymentHistoryList token={token} kind="ar" invoiceId={inv.id} />
+          <PaymentHistoryList token={token} kind="ar" invoiceId={inv.id} onChanged={onChanged} />
         </div>
       )}
     </DetailPanel>
@@ -469,7 +469,8 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
       </>}
       detail={rincian && (rincian.src === 'maklon'
         ? <ReceivableDetail key={rincian.raw.id} arId={rincian.raw.id} headers={headers} token={token} onClose={() => setRincian(null)} onChanged={load} />
-        : <RincianFaktur row={rincian} token={token} onClose={() => setRincian(null)} onPay={bisaBayar(rincian) ? bukaBayar : null} />)}
+        : <RincianFaktur row={rincian} token={token} onClose={() => setRincian(null)} onPay={bisaBayar(rincian) ? bukaBayar : null}
+            onChanged={() => { setRincian(null); load(); }} />)}
       footer={rows.length > pageSize && (
         <PaginationLite page={page} totalPages={totalPages} total={rows.length} pageSize={pageSize} onPageChange={setPage} />
       )}

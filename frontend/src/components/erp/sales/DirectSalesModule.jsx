@@ -409,6 +409,8 @@ function SaleDetailModal({ note, onClose, onChanged }) {
                       {r.refund_amount > 0 && <span className="block text-[hsl(var(--success-text))]">Refund Rp {fmt(r.refund_amount)}</span>}
                       {r.customer_credit > 0 && <span className="block text-[hsl(var(--warning-text))]">Kredit pelanggan Rp {fmt(r.customer_credit)}</span>}
                       {r.reason && <span className="block text-muted-foreground">“{r.reason}”</span>}
+                      {r.status === 'processing' && <span className="block text-[hsl(var(--warning-text))]">Belum selesai diproses — periksa Keuangan › Jurnal › Belum masuk jurnal</span>}
+                      {r.status !== 'processing' && (r.post_error || r.cn_post_error || r.cogs_post_error) && <span className="block text-[hsl(var(--warning-text))]">Jurnal belum terbentuk — posting ulang dari Keuangan</span>}
                     </TableCell>
                   </TableRow>))}</TableBody>
               </Table>

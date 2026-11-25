@@ -32,7 +32,8 @@ async def sum_invoices(coll, date_filter: dict, excluded: list):
 
 async def sum_payments(coll, date_filter: dict):
     agg = await coll.aggregate([
-        {"$match": payment_date_match(date_filter)},
+        # Paket 1: pembayaran yang dibatalkan tidak dihitung sebagai kas masuk/keluar
+        {"$match": {**payment_date_match(date_filter), "status": {"$nin": ["voided", "voiding"]}}},
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$amount", 0]}}}},
     ]).to_list(1)
     return agg[0]["total"] if agg else 0

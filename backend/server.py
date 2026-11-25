@@ -1075,6 +1075,10 @@ from routes.sync_audit import router as sync_audit_router
 # diperiksa di dalam (sama dengan tombol Setujui jenis itu).
 from routes.batal_setuju_routes import router as batal_setuju_router
 app.include_router(batal_setuju_router, dependencies=_DENY_EXTERNAL)
+# 25 Nov 2026 (audit keuangan, Paket 1): "Belum masuk jurnal" — satu daftar dokumen yang jurnalnya gagal + posting ulang
+# lewat fungsi posting resmi (core.jurnal_tertunda). Marketing & pihak luar tidak perlu.
+from routes.jurnal_tertunda_routes import router as jurnal_tertunda_router
+app.include_router(jurnal_tertunda_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(sku_bridge_router, dependencies=_DENY_EXTERNAL)
 app.include_router(sync_audit_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 # ── Sesi #28 — ONBOARDING PRODUK PLATFORM → MASTER (identitas varian 3 dimensi)
