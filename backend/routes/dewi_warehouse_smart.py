@@ -360,7 +360,7 @@ async def _apply_with_journal(db, entry: dict, user: dict, *, arah: str, urutan:
     if not material_id or delta == 0:
         return {"applied_qty": 0.0, "je_number": None, "gl_note": "stok tidak berubah"}
     actor = {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")}
-    undo = arah == psj.UNDO
+    undo = arah == psj.ARAH_UNDO
     row = await db.rahaza_material_stock.find_one(
         {"material_id": material_id, "location_id": location_id}, {"_id": 0}
     )
@@ -426,7 +426,7 @@ async def undo_adjustment(db, ledger_id: str, user: dict) -> dict:
         raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-undo pengguna lain")
     try:
         cur = await db.rahaza_stock_ledger.find_one({"id": ledger_id}, {"_id": 0, "undo_count": 1}) or {}
-        res = await _apply_with_journal(db, entry, user, arah=psj.UNDO, urutan=int(cur.get("undo_count") or 1))
+        res = await _apply_with_journal(db, entry, user, arah=psj.ARAH_UNDO, urutan=int(cur.get("undo_count") or 1))
     except BaseException:
         await db.rahaza_stock_ledger.update_one(
             {"id": ledger_id}, {"$set": {"soft_deleted": False, "deleted_at": None, "deleted_by": None}})
@@ -457,7 +457,7 @@ async def restore_adjustment(db, ledger_id: str, user: dict) -> dict:
         raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-restore pengguna lain")
     try:
         cur = await db.rahaza_stock_ledger.find_one({"id": ledger_id}, {"_id": 0, "restore_count": 1}) or {}
-        res = await _apply_with_journal(db, entry, user, arah=psj.RESTORE, urutan=int(cur.get("restore_count") or 1))
+        res = await _apply_with_journal(db, entry, user, arah=psj.ARAH_RESTORE, urutan=int(cur.get("restore_count") or 1))
     except BaseException:
         await db.rahaza_stock_ledger.update_one(
             {"id": ledger_id}, {"$set": {"soft_deleted": True, "restored_at": None, "restored_by": None}})

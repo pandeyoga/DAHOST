@@ -62,8 +62,13 @@ def _db_jurnal_bulan_lalu():
     return db, hari, lalu
 
 
-def test_batal_jurnal_periode_tertutup_jadi_jurnal_pembalik_hari_ini():
+def test_batal_jurnal_periode_tertutup_jadi_jurnal_pembalik_hari_ini(monkeypatch):
+    import routes.rahaza_posting as rp
     from routes.rahaza_posting import _find_existing_je, _void_je_by_source
+
+    async def _nomor(db, d, entity="DA"):
+        return "JE-DA-BALIK-1"
+    monkeypatch.setattr(rp, "_gen_je_number", _nomor)       # FakeDB tanpa find_one_and_update (penghitung nomor)
     db, hari, lalu = _db_jurnal_bulan_lalu()
     res = run(_void_je_by_source(db, "ar_invoice", "ar:inv1", OWNER, "faktur dibatalkan"))
     assert res["ok"] and res.get("reversed") and not res.get("voided"), res

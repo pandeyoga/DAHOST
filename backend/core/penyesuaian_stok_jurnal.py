@@ -30,9 +30,9 @@ from fastapi import HTTPException
 
 from utils.waktu import today_wib
 
-UNDO = "undo_adjustment"
-RESTORE = "restore_adjustment"
-_ARAH_LABEL = {UNDO: "Batalkan", RESTORE: "Pulihkan"}
+ARAH_UNDO = "undo_adjustment"
+ARAH_RESTORE = "restore_adjustment"
+_ARAH_LABEL = {ARAH_UNDO: "Batalkan", ARAH_RESTORE: "Pulihkan"}
 
 
 def tanpa_jurnal(alasan: str) -> dict:
