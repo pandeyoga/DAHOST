@@ -100,7 +100,8 @@ export default function JurnalTertundaModule({ onNavigate }) {
       )}
       footer={<PaginationLite page={page} totalPages={totalPages} total={total} pageSize={15} onPageChange={setPage} />}
     >
-      <Table>
+      {/* Penyebab bisa panjang: tabel tidak dipaksa selebar isinya (min-w-0) supaya teks membungkus dan tombol tetap terlihat */}
+      <Table className="min-w-0">
         <TableHeader>
           <TableRow>
             <TableHead>Dokumen</TableHead>
@@ -122,7 +123,7 @@ export default function JurnalTertundaModule({ onNavigate }) {
             const kunci = `${r.jenis}-${r.id}`;
             return (
               <TableRow key={kunci} data-testid={`tertunda-${kunci}`}>
-                <TableCell className="font-medium">
+                <TableCell className="min-w-[12rem] font-medium">
                   {r.nama}
                   <span className="block text-xs font-normal text-muted-foreground">
                     {r.label}{r.cv ? ` · ${r.cv}` : ''}<span className="sm:hidden"> · {tgl(r.tanggal)}</span>
@@ -130,8 +131,8 @@ export default function JurnalTertundaModule({ onNavigate }) {
                 </TableCell>
                 <TableCell className="hidden whitespace-nowrap sm:table-cell">{tgl(r.tanggal)}</TableCell>
                 <TableCell className="hidden whitespace-nowrap text-right tabular-nums md:table-cell">{rupiah(r.nilai)}</TableCell>
-                <TableCell className="text-sm text-muted-foreground" title={r.galat_asli || ''}>{r.galat || '—'}</TableCell>
-                <TableCell className="text-right">
+                <TableCell className="min-w-[14rem] text-sm text-muted-foreground" title={r.galat_asli || ''}>{r.galat || '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-right">
                   <div className="flex items-center justify-end gap-1">
                     {r.modul && onNavigate && (
                       <Button variant="link" size="sm" onClick={() => buka(onNavigate, r.modul, r.tab)}>Buka<ArrowRight /></Button>
