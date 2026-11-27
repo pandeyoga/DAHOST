@@ -8100,6 +8100,10 @@
   ],
   [
    "GET",
+   "/api/rahaza/cash-accounts"
+  ],
+  [
+   "GET",
    "/api/rahaza/materials"
   ],
   [
@@ -8153,6 +8157,14 @@
   [
    "POST",
    "/api/rahaza/purchase-orders/x/submit"
+  ],
+  [
+   "GET",
+   "/api/rahaza/purchase-orders/x/uang-muka"
+  ],
+  [
+   "POST",
+   "/api/rahaza/purchase-orders/x/uang-muka/x/batal"
   ]
  ],
  "proc-purchase-returns": [

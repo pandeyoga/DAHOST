@@ -469,6 +469,13 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         }
         // FASE H-5: umpan balik gulungan — nomor yang terbit & baris kain yang
         // masih menunggu gulungan (supaya Cutting tidak mandek tanpa peringatan).
+        // 27 Nov 2026: hutang pemasok otomatis saat barang PO diterima (+ potongan uang muka / peringatan CBD)
+        if (updated?.ap_auto_peringatan) toast.warning(updated.ap_auto_peringatan);
+        else if (updated?.ap_auto_invoice_number) {
+          const um = Number(updated.ap_auto_uang_muka) || 0;
+          toast.success(`Hutang ke pemasok tercatat otomatis: tagihan ${updated.ap_auto_invoice_number}`
+            + (um > 0 ? `, dipotong uang muka Rp ${Math.round(um).toLocaleString('id-ID')}.` : '.'));
+        }
         const created = updated?.rolls_created || [];
         const pending = updated?.rolls_pending || [];
         if (created.length || pending.length) {

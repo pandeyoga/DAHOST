@@ -718,6 +718,19 @@ ROLE_LABELS_BY_EVENT[("cmt_accessory_note", "credit_other_income")] = (
     "Penjualan aksesoris ke CMT — pendapatan lain-lain (Cr)")
 
 
+# ── 2026-11-27 (owner: "bagaimana jika pembayarannya CBD?"): UANG MUKA ke pemasok (`core.uang_muka_pemasok`).
+DEFAULT_PROFILES.append({
+    "event_type": "ap_advance",
+    "description": "Uang muka ke pemasok (CBD/DP di PO) → Dr Uang Muka Pembelian / Cr Bank; dipotong saat tagihan lahir",
+    "mapping": {
+        "debit_supplier_advance": "1-1630",
+    },
+})
+EVENT_LABELS["ap_advance"] = "Uang muka ke pemasok (bayar di muka / DP)"
+ROLE_LABELS_BY_EVENT[("ap_advance", "debit_supplier_advance")] = (
+    "Uang muka pembelian (Dr saat dibayar, Cr saat memotong tagihan atau dikembalikan)")
+
+
 def event_label(event_type: str) -> str:
     return EVENT_LABELS.get(event_type) or (event_type or "").replace("_", " ")
 
@@ -752,6 +765,7 @@ _FAMILY_ROLES = {
               "credit_inventory_accessory", "inventory_accessory", "inventory_fg", "credit_inventory_fg",
               "debit_inventory_fg", "debit_fg_inventory", "credit_fg_inventory", "debit_wip", "credit_wip",
               "debit_cmt_wip_internal", "debit_tax_input", "debit_fixed_asset", "credit_fixed_asset",
+              "debit_supplier_advance",   # 27 Nov 2026: uang muka ke pemasok (1-1630)
               "debit_accum_depr", "credit_accum_depr", "debit_employee_advance", "supplier_claim"),
     "liability": ("credit_ap", "debit_ap", "ap", "debit_grni", "credit_ap_clearing", "grni", "credit_tax_output",
                   "credit_salary_payable", "debit_salary_payable", "credit_tax_pph21", "credit_bpjs_payable",

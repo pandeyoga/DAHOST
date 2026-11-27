@@ -910,6 +910,8 @@ async def void_invoice_payment(db, kind: str, iid: str, pid: str, reason: str, u
         raise HTTPException(409, IC_PAYMENT_VOID_MSG)
     if p.get("source") == "maklon":
         raise HTTPException(409, MAKLON_PAYMENT_VOID_MSG)
+    if p.get("source") == "uang_muka":   # 27 Nov 2026: potongan uang muka PO, bukan uang keluar baru
+        raise HTTPException(409, "Ini potongan uang muka pemasok, bukan pembayaran baru — tidak dibatalkan dari sini.")
     inv = await db[cfg["inv"]].find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Faktur tidak ditemukan.")
@@ -1571,6 +1573,10 @@ async def send_ap_invoice(iid: str, request: Request):
     except Exception as e:
         log.exception("AP send auto-post failed")
         posting_result = {"ok": False, "error": str(e)}
+    # 27 Nov 2026: tagihan dari PO yang punya uang muka (CBD/DP) langsung dipotong uang mukanya
+    if out.get("po_ids"):
+        from core.uang_muka_pemasok import terapkan_ke_tagihan
+        await terapkan_ke_tagihan(db, iid, user)
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
     out["_posting_result"] = posting_result
     return serialize_doc(out)
