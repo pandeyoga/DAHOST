@@ -765,6 +765,7 @@ _FAMILY_ROLES = {
               "credit_inventory_accessory", "inventory_accessory", "inventory_fg", "credit_inventory_fg",
               "debit_inventory_fg", "debit_fg_inventory", "credit_fg_inventory", "debit_wip", "credit_wip",
               "debit_cmt_wip_internal", "debit_tax_input", "debit_fixed_asset", "credit_fixed_asset",
+              "debit_supplier_advance",   # 27 Nov 2026: uang muka ke pemasok (1-1630)
               "debit_accum_depr", "credit_accum_depr", "debit_employee_advance", "supplier_claim"),
     "liability": ("credit_ap", "debit_ap", "ap", "debit_grni", "credit_ap_clearing", "grni", "credit_tax_output",
                   "credit_salary_payable", "debit_salary_payable", "credit_tax_pph21", "credit_bpjs_payable",
