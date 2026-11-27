@@ -59,7 +59,7 @@ export const TAMPILAN_HUTANG = [
 export const STATUS_HUTANG = {
   terjadwal: { label: 'Terjadwal', tone: 'info' },
   belum_difakturkan: { label: 'Belum difakturkan', tone: 'muted' },
-  draf: { label: 'Faktur draf', tone: 'muted' },
+  draf: { label: 'Belum disetujui', tone: 'muted' },
   belum_dibayar: { label: 'Belum dibayar', tone: 'warning' },
   sebagian: { label: 'Dibayar sebagian', tone: 'warning' },
   lunas: { label: 'Lunas', tone: 'success' },
@@ -289,7 +289,7 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
 
   const pilStatus = [
     { key: 'terbuka', label: 'Belum lunas' }, { key: 'terjadwal', label: 'Terjadwal' },
-    { key: 'belum_difakturkan', label: 'Belum difakturkan' }, { key: 'draf', label: 'Faktur draf' },
+    { key: 'belum_difakturkan', label: 'Belum difakturkan' }, { key: 'draf', label: 'Belum disetujui' },
     { key: 'belum_dibayar', label: 'Belum dibayar' }, { key: 'sebagian', label: 'Dibayar sebagian' },
     { key: 'lewat', label: 'Lewat jatuh tempo' }, { key: 'lunas', label: 'Lunas' }, { key: 'semua', label: 'Semua' },
   ].map((o) => ({ ...o, count: hitung(o.key) }))
@@ -304,10 +304,10 @@ export default function HutangModule({ token, initialStatus, hasPerm }) {
       sub: <RincianUmurKirim kirim={ringkas.kirim} format={formatRupiahShort} testId="hutang-umur-kirim" />,
       hint: 'Upah jahit barang yang masih di CMT; belum bisa dibayar. Jadi hutang saat barang lolos QC.' },
     ringkas.belumDifakturkan > 0.5 && { key: 'belum_difakturkan', label: 'Belum difakturkan', value: fmt(ringkas.belumDifakturkan),
-      hint: 'Barang pemasok sudah diterima, fakturnya belum dibuat.' },
+      hint: 'Barang pemasok sudah diterima tetapi tagihannya belum dibuat (penerimaan lama, atau tagihan otomatis gagal — lihat Rekonsiliasi PO).' },
     { key: 'terbuka', label: 'Total belum lunas', value: fmt(ringkas.totalTerbuka), accent: 'primary', testId: 'hutang-total',
       sub: [gabungan && `CV Dewi Aditya ${formatRupiahShort(ringkas.perCv.DA)} · CV Sukma ${formatRupiahShort(ringkas.perCv.SMU)}`,
-        ringkas.draf > 0 && `termasuk faktur draf ${fmt(ringkas.draf)}`].filter(Boolean).join(' · ') || undefined,
+        ringkas.draf > 0 && `termasuk tagihan belum disetujui ${fmt(ringkas.draf)}`].filter(Boolean).join(' · ') || undefined,
       hint: 'Belum dibayar + terjadwal + belum difakturkan.' },
   ].filter(Boolean);
 
