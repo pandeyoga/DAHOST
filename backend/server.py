@@ -1075,6 +1075,9 @@ from routes.sync_audit import router as sync_audit_router
 # diperiksa di dalam (sama dengan tombol Setujui jenis itu).
 from routes.batal_setuju_routes import router as batal_setuju_router
 app.include_router(batal_setuju_router, dependencies=_DENY_EXTERNAL)
+# 27 Nov 2026 (owner: "bagaimana jika pembayarannya CBD?"): uang muka ke pemasok di PO (core.uang_muka_pemasok).
+from routes.uang_muka_pemasok_routes import router as uang_muka_pemasok_router
+app.include_router(uang_muka_pemasok_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 # 25 Nov 2026 (audit keuangan, Paket 1): "Belum masuk jurnal" — satu daftar dokumen yang jurnalnya gagal + posting ulang
 # lewat fungsi posting resmi (core.jurnal_tertunda). Marketing & pihak luar tidak perlu.
 from routes.jurnal_tertunda_routes import router as jurnal_tertunda_router

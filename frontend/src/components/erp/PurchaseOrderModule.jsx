@@ -39,6 +39,7 @@ import { denganAlasanMerchandiser, galatDariRespons } from '@/lib/alasanMerchand
 import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
 import TombolBatalSetuju from './TombolBatalSetuju';
 import { PAYMENT_TERM_LABEL } from './procurement/procApi';
+import UangMukaPO from './procurement/UangMukaPO';
 
 const STATUS_META = {
   draft:               { label: 'Draf',                tone: 'muted' },
@@ -1088,6 +1089,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             {sp.from_pr_number && <BarisDetail label="Dari permintaan">{sp.from_pr_number}</BarisDetail>}
             {sp.notes && <BarisDetail label="Catatan">{sp.notes}</BarisDetail>}
           </dl>
+
+          {/* 27 Nov 2026 (owner): bayar di muka (CBD) / DP — memotong tagihan otomatis saat barang diterima */}
+          <UangMukaPO po={sp} onChanged={() => fetchList()} />
 
           {/* ── Rantai persetujuan PO (2026-08-07) — tahap ke berapa dari berapa, siapa yang sudah
               memutuskan, dan siapa giliran berikutnya. */}

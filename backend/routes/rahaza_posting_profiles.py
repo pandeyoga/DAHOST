@@ -718,6 +718,19 @@ ROLE_LABELS_BY_EVENT[("cmt_accessory_note", "credit_other_income")] = (
     "Penjualan aksesoris ke CMT — pendapatan lain-lain (Cr)")
 
 
+# ── 2026-11-27 (owner: "bagaimana jika pembayarannya CBD?"): UANG MUKA ke pemasok (`core.uang_muka_pemasok`).
+DEFAULT_PROFILES.append({
+    "event_type": "ap_advance",
+    "description": "Uang muka ke pemasok (CBD/DP di PO) → Dr Uang Muka Pembelian / Cr Bank; dipotong saat tagihan lahir",
+    "mapping": {
+        "debit_supplier_advance": "1-1630",
+    },
+})
+EVENT_LABELS["ap_advance"] = "Uang muka ke pemasok (bayar di muka / DP)"
+ROLE_LABELS_BY_EVENT[("ap_advance", "debit_supplier_advance")] = (
+    "Uang muka pembelian (Dr saat dibayar, Cr saat memotong tagihan atau dikembalikan)")
+
+
 def event_label(event_type: str) -> str:
     return EVENT_LABELS.get(event_type) or (event_type or "").replace("_", " ")
 

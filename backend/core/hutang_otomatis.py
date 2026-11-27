@@ -99,8 +99,16 @@ async def _tagih(db, receipt_id: str, user: dict) -> dict:
         posting = {"ok": False, "error": str(e)}
         await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {
             "post_error": str(e)[:300], "post_error_at": _now()}})
+    # uang muka PO (CBD / DP) langsung memotong tagihan ini (core.uang_muka_pemasok)
+    from core.uang_muka_pemasok import terapkan_ke_tagihan
+    potong = await terapkan_ke_tagihan(db, inv_id, user)
+    peringatan = None
+    if (po.get("payment_terms") or "") == "cbd" and not float(potong.get("dipakai") or 0):
+        peringatan = (f"PO {po.get('po_number') or ''} bertermin Bayar di muka, tetapi belum ada uang muka yang "
+                      f"dicatat. Tagihan {inv.get('invoice_number')} tetap menunggu dibayar.")
     await db.warehouse_receiving.update_one({"id": receipt_id}, {
-        "$set": {"ap_auto_invoice_id": inv_id, "ap_auto_invoice_number": inv.get("invoice_number")},
+        "$set": {"ap_auto_invoice_id": inv_id, "ap_auto_invoice_number": inv.get("invoice_number"),
+                 "ap_auto_uang_muka": float(potong.get("dipakai") or 0), "ap_auto_peringatan": peringatan},
         "$unset": {"ap_auto_error": "", "ap_auto_error_at": ""}})
     try:
         from auth import log_activity
@@ -111,4 +119,4 @@ async def _tagih(db, receipt_id: str, user: dict) -> dict:
     except Exception:  # noqa: BLE001
         log.exception("log_activity hutang otomatis gagal")
     return {"ok": True, "invoice_id": inv_id, "invoice_number": inv.get("invoice_number"),
-            "total": inv.get("total"), "posting": posting}
+            "total": inv.get("total"), "posting": posting, "uang_muka": potong.get("dipakai"), "peringatan": peringatan}

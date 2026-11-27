@@ -759,6 +759,10 @@ _LOG += " marketing_sku_usulan "
 REGISTRY.update({"dewi_tagihan_klien": "maklon", "dewi_pembayaran_gabungan": "finance"})
 _TRANSAKSI += " dewi_tagihan_klien dewi_pembayaran_gabungan "
 # ── akhir tagihan & pembayaran gabungan ──
+# 2026-11-27 — Pengadaan: uang muka ke pemasok (CBD / DP di PO; `core.uang_muka_pemasok`).
+REGISTRY.update({"rahaza_ap_advances": "finance"})
+_TRANSAKSI += " rahaza_ap_advances "
+# ── akhir uang muka pemasok ──
 
 
 def _kind_table() -> dict[str, str]:

@@ -992,6 +992,12 @@ async def cancel_po(po_id: str, request: Request):
         raise HTTPException(400, "PO yang sudah fully received tidak bisa di-cancel.")
     if po.get("status") == "cancelled":
         raise HTTPException(400, "PO sudah dibatalkan.")
+    # 27 Nov 2026: uang muka yang masih tersisa harus dikembalikan/dibatalkan dulu (core.uang_muka_pemasok)
+    from core.uang_muka_pemasok import sisa_po
+    _sisa_um = await sisa_po(db, po_id)
+    if _sisa_um > 0.009:
+        raise HTTPException(409, f"PO ini masih punya uang muka Rp {_sisa_um:,.0f} di pemasok. Kembalikan atau batalkan "
+                                 "uang mukanya dulu di detail PO.")
     
     # 2026-11-06 (pola P9): status di filter — tidak menimpa PO yang baru saja diterima penuh / diubah.
     res = await db.rahaza_purchase_orders.update_one(
