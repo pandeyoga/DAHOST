@@ -348,6 +348,48 @@ async def _norm_po_items(db, raw_items):
     return cleaned
 
 
+# ── Termin bayar & PPN di PO (27 Nov 2026, owner: "saat pembelian tidak ada penentuan termin") ──────────────
+# Dulu termin diam-diam diambil dari master pemasok (bawaan NET 30) dan PPN baru muncul saat faktur dibuat (PO
+# Rp18 jt → tagihan Rp19,98 jt). Kini keduanya ditentukan DI PO: bawaan dari master pemasok, boleh diubah per PO,
+# lalu dipakai tagihan otomatis saat barang diterima (core.hutang_otomatis).
+PPN_STANDAR = 11.0
+
+
+def _termin_po(body: dict, cur: dict, sup: dict | None) -> dict:
+    """{payment_terms, payment_term_days}: isian PO → PO tersimpan → master pemasok → NET 30."""
+    from routes.procurement_suppliers import PAYMENT_TERM_DAYS
+    isian = str(body.get("payment_terms") or "").strip().lower()
+    if isian and isian not in PAYMENT_TERM_DAYS:
+        raise HTTPException(400, f"Termin pembayaran '{body.get('payment_terms')}' tidak dikenal.")
+    for kode in (isian, cur.get("payment_terms"), (sup or {}).get("payment_terms"), "net30"):
+        kode = str(kode or "").strip().lower()
+        if kode in PAYMENT_TERM_DAYS:
+            return {"payment_terms": kode, "payment_term_days": PAYMENT_TERM_DAYS[kode]}
+    return {"payment_terms": "net30", "payment_term_days": 30}
+
+
+def _ppn_po(body: dict, cur: dict, supplier_pkp) -> float:
+    """PPN % PO: isian PO → PO tersimpan → pemasok PKP (11%) / non-PKP (0%)."""
+    if body.get("tax_pct") not in (None, ""):
+        try:
+            v = float(body["tax_pct"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "PPN harus berupa angka persen.")
+        if not 0 <= v <= 100:
+            raise HTTPException(400, "PPN harus antara 0 dan 100 persen.")
+        return round(v, 2)
+    if cur.get("tax_pct") is not None:
+        return float(cur["tax_pct"])
+    return PPN_STANDAR if supplier_pkp else 0.0
+
+
+def _nilai_po(items: list, tax_pct: float) -> dict:
+    """Nilai PO: `total_value` = sebelum PPN (DPP, tetap dipakai rantai persetujuan & laporan lama)."""
+    sub = round(sum(float(i["qty_ordered"]) * float(i["unit_cost"]) for i in items), 2)
+    ppn = round(sub * float(tax_pct or 0) / 100, 2)
+    return {"total_value": sub, "tax_pct": float(tax_pct or 0), "tax_amount": ppn, "grand_total": round(sub + ppn, 2)}
+
+
 async def _resolve_supplier(db, body: dict, *, current: dict | None = None) -> dict:
     """Resolusi supplier PO dari master (SSOT).
 
@@ -389,8 +431,8 @@ async def _resolve_supplier(db, body: dict, *, current: dict | None = None) -> d
                                or sup.get("phone") or ""),
             "vendor_address": (body.get("vendor_address") or sup.get("address") or ""),
             "vendor_npwp": sup.get("npwp") or "",
-            "payment_terms": sup.get("payment_terms") or "net30",
-            "payment_term_days": int(sup.get("payment_term_days") or 30),
+            **_termin_po(body, cur, sup),
+            "supplier_pkp": (sup.get("tax_type") or "ppn") == "ppn",
             "currency": sup.get("currency") or "IDR",
             "supplier_bank": primary_bank or None,
         }
@@ -402,7 +444,7 @@ async def _resolve_supplier(db, body: dict, *, current: dict | None = None) -> d
         "vendor_name": str(nm).strip(),
         "vendor_contact": body.get("vendor_contact") or cur.get("vendor_contact") or "",
         "vendor_address": body.get("vendor_address") or cur.get("vendor_address") or "",
-        "payment_terms": body.get("payment_terms") or cur.get("payment_terms") or "net30",
+        **_termin_po(body, cur, None),
         "currency": body.get("currency") or cur.get("currency") or "IDR",
     }
 
@@ -455,7 +497,8 @@ async def list_pos(
     for po in rows:
         await _enrich_po(db, po)
         po["item_count"] = len(po.get("items") or [])
-        po["total_value"] = round(sum(float(i.get("qty_ordered") or 0) * float(i.get("unit_cost") or 0) for i in (po.get("items") or [])), 2)
+        po.update(_nilai_po([{"qty_ordered": i.get("qty_ordered") or 0, "unit_cost": i.get("unit_cost") or 0}
+                             for i in (po.get("items") or [])], po.get("tax_pct") or 0))
         po["total_received"] = round(sum(float(i.get("qty_received") or 0) for i in (po.get("items") or [])), 4)
         po["received_pct"] = round(
             (po["total_received"] / sum(float(i.get("qty_ordered") or 0)
@@ -511,7 +554,7 @@ async def create_po(request: Request):
     if not items:
         raise HTTPException(400, "Minimal 1 item (material master atau item bebas).")
 
-    total_value = round(sum(float(i["qty_ordered"]) * float(i["unit_cost"]) for i in items), 2)
+    nilai = _nilai_po(items, _ppn_po(body, {}, sup_fields.get("supplier_pkp")))
     # 12 Nov 2026 (K-M2): pengaman Merchandiser — bahan yang (menurut BOM) hanya dipakai model lambat/mati wajib
     # beralasan (HTTP 428 + `alasan_merchandiser`). PO dari PR (`/requests/{id}/create-po`) sudah diperiksa di PR.
     from core import merchandiser as mc
@@ -525,7 +568,7 @@ async def create_po(request: Request):
         "po_date": body.get("po_date") or today_wib().isoformat(),
         "expected_delivery_date": body.get("expected_delivery_date") or None,
         "items": items,
-        "total_value": total_value,
+        **nilai,
         "status": "draft",
         "notes": body.get("notes") or "",
         "approval_flow_key": body.get("approval_flow_key") or "single_step",  # configurable
@@ -569,14 +612,19 @@ async def update_po(po_id: str, request: Request):
         upd["expected_delivery_date"] = body["expected_delivery_date"]
     if "notes" in body:
         upd["notes"] = body["notes"]
+    if "payment_terms" in body and "supplier_id" not in body and "vendor_name" not in body:
+        upd.update(_termin_po(body, po, None))
     m_temuan, m_alasan = [], ""
+    if "items" in body or "tax_pct" in body or "supplier_id" in body:
+        pkp = upd.get("supplier_pkp", po.get("supplier_pkp"))
+        tax = _ppn_po(body, {} if "supplier_id" in body and "tax_pct" not in body else po, pkp)
+        upd.update(_nilai_po(po.get("items") or [], tax))
     if "items" in body:
         items = await _norm_po_items(db, body["items"])
         if not items:
             raise HTTPException(400, "Minimal 1 item (material master atau item bebas).")
         upd["items"] = items
-        upd["total_value"] = round(
-            sum(float(i["qty_ordered"]) * float(i["unit_cost"]) for i in items), 2)
+        upd.update(_nilai_po(items, upd.get("tax_pct", po.get("tax_pct") or 0)))
         # 12 Nov 2026 (K-M2): hanya bahan yang BARU ditambahkan ke draf yang diperiksa pengaman Merchandiser.
         from core import merchandiser as mc
         m_temuan, m_alasan = await mc.jaga(db, langkah="po_bahan", alasan=body.get("alasan_merchandiser"),
@@ -653,10 +701,11 @@ async def change_po_line_price(po_id: str, item_id: str, request: Request):
               "qty_received_at_change": round(float(it.get("qty_received") or 0), 4),
               "by_id": user.get("id"), "by_name": user.get("name", ""), "by_role": user.get("role", ""),
               "at": _now()}
-    total_value = round(sum(float(i.get("qty_ordered") or 0) * float(i.get("unit_cost") or 0) for i in items), 2)
+    nilai = _nilai_po([{"qty_ordered": i.get("qty_ordered") or 0, "unit_cost": i.get("unit_cost") or 0} for i in items],
+                      po.get("tax_pct") or 0)
     res = await db.rahaza_purchase_orders.update_one(
         {"id": po_id, "status": po.get("status")},
-        {"$set": {"items": items, "total_value": total_value, "updated_at": _now()},
+        {"$set": {"items": items, **nilai, "updated_at": _now()},
          "$push": {"price_changes": change}})
     if not res.matched_count:
         raise HTTPException(409, "PO sedang diubah pengguna lain — muat ulang lalu ulangi.")
@@ -1396,8 +1445,7 @@ async def bulk_import_po_csv(request: Request):
             "approvals": [],
             "approval_flow_key": "single_step",
             "notes": f"[Bulk Import] {body.get('notes') or ''}".strip(),
-            "total_value": round(sum(float(it["qty_ordered"]) * float(it["unit_cost"])
-                                     for it in items), 2),
+            **_nilai_po(items, _ppn_po(body, {}, sup_fields.get("supplier_pkp"))),
             "created_by": user["id"],
             "created_by_name": user.get("name", ""),
             "created_at": _now(),
