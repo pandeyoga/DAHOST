@@ -48,6 +48,8 @@ def ap_row(r: dict) -> dict:
     total = _num(r.get("total"))
     paid = _num(r.get("paid_amount"))
     bal = _num(r.get("balance")) if r.get("balance") is not None else max(total - paid, 0.0)
+    if _num(r.get("debit_note_amount")) > 0.009:   # Paket 1: nota debit langsung mengurangi sisa (sama dgn daftar hutang)
+        bal = max(total - _num(r.get("debit_note_amount")) - paid, 0.0)
     return {
         "kind": "ap", "id": r.get("id"), "number": r.get("invoice_number"),
         "vendor_name": r.get("vendor_name") or "(tanpa nama)", "issue_date": _iso(r.get("issue_date")),

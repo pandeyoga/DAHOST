@@ -23,6 +23,7 @@ import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { withFileAuth } from '@/lib/fileUrl';
 import { parseServerTime } from '@/lib/waktu';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const TZ = 'Asia/Jakarta';
@@ -209,13 +210,20 @@ export default function RahazaAttendanceApprovalModule({ token }) {
                     {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Setujui
                   </Button>
                 </div>
-              ) : (
+              ) : (<>
                 <p className="text-sm text-muted-foreground">
                   {APPROVAL[selected.approval_status]?.label || selected.approval_status}
                   {selected.approval_by_name ? ` oleh ${selected.approval_by_name}` : ''}
                   {selected.approval_notes ? ` — "${selected.approval_notes}"` : ''}
                 </p>
-              )}
+                {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan selama gaji tanggal itu belum final. */}
+                {selected.approval_status === 'approved' && (
+                  <div className="flex flex-wrap gap-2">
+                    <TombolBatalSetuju jenis="hr-absen-selfie" id={selected.id} size="default"
+                      onSelesai={() => { setSelected(null); loadRecords(); }} />
+                  </div>
+                )}
+              </>)}
             </div>
           </div>
         </DetailPanel>

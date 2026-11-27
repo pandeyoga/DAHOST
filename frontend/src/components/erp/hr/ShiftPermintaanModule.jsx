@@ -18,6 +18,7 @@ import { checkPerm } from '@/lib/rbac';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, StatusBadge } from '../moduleAtoms';
 import { TitikShift, pesanGalat, shiftApi } from './shiftShared';
+import TombolBatalSetuju from '../TombolBatalSetuju';
 
 const P = '/api/hr/shift-scheduler';
 export const NADA_STATUS = { menunggu_rekan: 'warning', menunggu_atasan: 'warning', menunggu_hr: 'warning', disetujui: 'success', ditolak: 'danger', dibatalkan: 'muted' };
@@ -82,7 +83,11 @@ export default function ShiftPermintaanModule({ user }) {
     { kunci: 'ubah', label: 'Perubahan', hp: 'keterangan', isi: (r) => <PerubahanShift r={r} /> },
     { kunci: 'alasan', label: 'Alasan', isi: (r) => <span className="line-clamp-2 max-w-[18rem]">{r.alasan}</span> },
     { kunci: 'status', label: 'Status', isi: (r) => <StatusBadge status={r.status} label={r.label_status} tone={NADA_STATUS[r.status]} /> },
-    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (bolehTulis && r.status === 'menunggu_hr' ? (
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.status === 'disetujui' ? (
+      // 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan → kembali menunggu persetujuan.
+      <div className="flex justify-end gap-1">
+        <TombolBatalSetuju jenis="hr-shift" id={r.id} onSelesai={() => muat()} />
+      </div>) : bolehTulis && r.status === 'menunggu_hr' ? (
       <div className="flex justify-end gap-1">
         <Button size="sm" variant="success" onClick={() => putuskan(r, true)} data-testid="permintaan-setujui"><Check />Setujui</Button>
         <Button size="sm" variant="destructive" onClick={() => putuskan(r, false)} data-testid="permintaan-tolak"><X />Tolak</Button>

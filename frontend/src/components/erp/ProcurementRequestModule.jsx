@@ -41,6 +41,8 @@ import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { DepartmentSelect } from './hr/hrPickers';
 import { denganAlasanMerchandiser } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
+import { useBolehBatal } from '@/lib/batalSetuju';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -558,6 +560,7 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
   const [timeline, setTimeline] = useState([]);
   const [loadTL, setLoadTL] = useState(true);
   const [showCreatePO, setShowCreatePO] = useState(false);
+  const bolehBatal = useBolehBatal('pengadaan-pr');
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
@@ -625,7 +628,10 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
   const canComplete = pr.status === 'in_procurement';
   const canCreatePO = pr.status === 'approved' && !pr.linked_po_number
     && (item.kind || 'pr') === 'pr';
-  const hasActions = canApprove || canReject || canSubmit || canComplete || canCreatePO;
+  // Batalkan persetujuan: hanya Permintaan Pengadaan biasa (bukan Request Pembelian Aksesoris / PO).
+  const canBatal = bolehBatal && base === '/api/procurement/requests' && (item.kind || 'pr') === 'pr'
+    && ['dept_approved', 'finance_approved', 'approved'].includes(pr.status);
+  const hasActions = canApprove || canReject || canSubmit || canComplete || canCreatePO || canBatal;
   const prItems = pr.items || [];
 
   return (
@@ -769,6 +775,10 @@ function DetailModal({ item, onClose, onAction, token, focusReject = false }) {
                   <CheckCircle2 />
                   {acting === 'approve' ? 'Menyetujui…' : `Setujui — ${pr.stage_label || 'tahap ini'}`}
                 </Button>
+              )}
+              {canBatal && (
+                <TombolBatalSetuju jenis="pengadaan-pr" id={pr.id} size="default"
+                  onSelesai={async () => { setOkMsg(''); await reload(); onAction({}); }} />
               )}
               {canCreatePO && (
                 <Button onClick={() => setShowCreatePO(true)} disabled={!!acting} data-testid="btn-create-po-from-pr">

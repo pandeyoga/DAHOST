@@ -869,6 +869,11 @@ async def update_receiving(receipt_id: str, request: Request):
         if not res.matched_count:
             raise HTTPException(409, f"Penerimaan {existing.get('receipt_number') or ''} sedang dikonfirmasi "
                                      "pengguna lain. Tunggu sebentar lalu muat ulang.")
+    # 27 Nov 2026 (owner): barang PO diterima → hutang pemasok LANGSUNG jadi (tagihan dibuat + disetujui otomatis,
+    # PPN & termin dari PO). Tidak pernah menggagalkan penerimaan — galat dicatat di penerimaan (core.hutang_otomatis).
+    if body.get("status") == "received" and existing.get("status") != "received" and existing.get("po_id"):
+        from core.hutang_otomatis import tagih_penerimaan
+        await tagih_penerimaan(db, receipt_id, user)
     await log_activity(user["id"], user["name"], "update", "warehouse_receiving",
                        f"{existing.get('receipt_number', '')} → {body.get('status', 'updated')}")
     

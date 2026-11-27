@@ -25,6 +25,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import { useToast } from '@/hooks/use-toast';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import TombolBatalSetuju from '../TombolBatalSetuju';
 import { CatalogSkuMultiSelect } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -195,6 +196,10 @@ function DynamicPricingTab({ authH }) {
           <Button size="sm" onClick={() => doAction(s.id, 'apply')} disabled={actionLoading[s.id + 'apply']}>
             {actionLoading[s.id + 'apply'] ? <Loader2 className="animate-spin" /> : null}Terapkan
           </Button>
+        )}
+        {/* 24 Nov 2026 (owner): usulan yang salah disetujui bisa dibatalkan selama belum diterapkan. */}
+        {s.status === 'approved' && (
+          <TombolBatalSetuju jenis="mkt-harga" id={s.id} onSelesai={() => fetchSuggestions()} />
         )}
       </div>) },
   ];

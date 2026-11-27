@@ -30,6 +30,7 @@ import { toWIBDate } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import TombolBatalSetuju from '../TombolBatalSetuju';
 import { getPlatformConfig } from './AccountBadge';
 import FormRefundPesanan, { REFUND_TYPE } from './FormRefundPesanan';
 
@@ -545,6 +546,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                   ? 'Selesaikan & terbitkan nota kredit'
                   : 'Selesaikan (tanpa nota kredit — refund Rp 0)'}
               </Button>
+            )}
+            {/* 24 Nov 2026 (owner): retur yang salah disetujui bisa dibatalkan selama belum selesai (server yang memeriksa). */}
+            {showDetail.status === 'approved' && (
+              <TombolBatalSetuju jenis="mkt-retur" id={showDetail.id} size="default"
+                onSelesai={() => { setShowDetail(null); fetchReturns(currentPage); fetchSummary(); }} />
             )}
             {/* 2026-11-02 — retur selesai tanpa nota kredit (data lama) bisa diterbitkan susulan. */}
             {showDetail.status === 'completed' && !showDetail.credit_note_id && (showDetail.refund_amount || 0) > 0 && (

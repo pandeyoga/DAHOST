@@ -11,7 +11,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { materialOptionLabel } from '@/lib/materialFields';
 import {
   Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, TruckIcon, Upload, Download, Tag,
-  MoreHorizontal, RefreshCw, Package,
+  MoreHorizontal, RefreshCw, Package, Undo2,
 } from 'lucide-react';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
@@ -36,6 +36,10 @@ import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { denganAlasanMerchandiser, galatDariRespons } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
+import TombolBatalSetuju from './TombolBatalSetuju';
+import { PAYMENT_TERM_LABEL } from './procurement/procApi';
+import UangMukaPO from './procurement/UangMukaPO';
 
 const STATUS_META = {
   draft:               { label: 'Draf',                tone: 'muted' },
@@ -91,6 +95,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   const [bulkVendor, setBulkVendor] = useState('');
   const [bulkErrors, setBulkErrors] = useState([]);
   const csvRef = useRef(null);
+  const bolehBatalSetuju = useBolehBatal('pengadaan-po');
 
   const [poForm, setPOForm] = useState({
     supplier_id: '',
@@ -100,6 +105,8 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     po_date: todayWIB(),
     expected_delivery_date: '',
     notes: '',
+    payment_terms: '',
+    tax_pct: '',
     items: [],
   });
 
@@ -176,6 +183,8 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
       po_date: todayWIB(),
       expected_delivery_date: '',
       notes: '',
+      payment_terms: '',
+      tax_pct: '',
       items: [],
     });
     setPriceHint({});
@@ -637,6 +646,13 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 <XCircle className="mr-2 h-4 w-4" />Tolak
               </DropdownMenuItem>
             )}
+            {bolehBatalSetuju && po.status === 'approved' && (
+              <DropdownMenuItem
+                onSelect={() => batalkanPersetujuan({ jenis: 'pengadaan-po', id: po.id }).then((r) => { if (r) fetchList(); })}
+                data-testid={`batal-setuju-po-${po.id}`}>
+                <Undo2 className="mr-2 h-4 w-4" />Batalkan persetujuan
+              </DropdownMenuItem>
+            )}
             {(bisaBatal || bisaHapus) && <DropdownMenuSeparator />}
             {bisaBatal && (
               <DropdownMenuItem onSelect={() => openCancelModal(po)} data-testid={`po-cancel-${po.id}`}>
@@ -673,7 +689,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
       </div>) },
     { kunci: 'item', label: 'Item', rata: 'kanan', isi: (po) => <span className="tabular-nums">{po.item_count}</span> },
     { kunci: 'nilai', label: 'Total nilai', rata: 'kanan', isi: (po) => (
-      <span className="whitespace-nowrap tabular-nums">{fmtRpNum(po.total_value)}</span>) },
+      <span className="whitespace-nowrap tabular-nums">{fmtRpNum(po.grand_total ?? po.total_value)}</span>) },
     { kunci: 'status', label: 'Status', isi: (po) => (
       <div className="space-y-1">
         <POStatusBadge status={po.status} />
@@ -706,7 +722,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     { label: 'Supplier', nilai: (po) => po.supplier_name || po.vendor_name || '' },
     { label: 'Kontak', nilai: (po) => po.vendor_contact || '' },
     { label: 'Jumlah item', nilai: (po) => Number(po.item_count || 0) },
-    { label: 'Total nilai (Rp)', nilai: (po) => Number(po.total_value || 0) },
+    { label: 'Total nilai (Rp)', nilai: (po) => Number(po.grand_total ?? po.total_value ?? 0) },
     { label: 'Diterima (%)', nilai: (po) => Number(po.received_pct || 0) },
     { label: 'Status', nilai: (po) => (STATUS_META[po.status] || STATUS_META.draft).label },
     { label: 'Tahap persetujuan', nilai: (po) => (po.status === 'pending_approval' ? po.stage_label || '' : '') },
@@ -784,6 +800,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                   vendor_name: s?.name || '',
                   vendor_contact: s?.phone || (fromPrev(prev.vendor_contact, 'phone') ? '' : prev.vendor_contact),
                   vendor_address: s?.address || (fromPrev(prev.vendor_address, 'address') ? '' : prev.vendor_address),
+                  // 27 Nov 2026 (owner): termin & PPN ditentukan di PO — bawaan dari master pemasok, boleh diubah.
+                  payment_terms: s?.payment_terms || 'net30',
+                  tax_pct: s ? ((s.tax_type || 'ppn') === 'ppn' ? 11 : 0) : '',
                 }));
                 // Harga bisa berbeda per supplier → segarkan saran harga
                 poForm.items.forEach(it => {
@@ -805,7 +824,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             )}
             {selectedSupplier && (
               <p className="text-xs text-muted-foreground" data-testid="po-form-supplier-info">
-                Termin {selectedSupplier.payment_terms || '-'} · {selectedSupplier.currency || 'IDR'}
+                {(selectedSupplier.tax_type || 'ppn') === 'ppn' ? 'Pemasok PKP' : 'Pemasok non-PKP'} · {selectedSupplier.currency || 'IDR'}
                 {selectedSupplier.lead_time_days ? ` · waktu kirim ${selectedSupplier.lead_time_days} hari` : ''}
               </p>
             )}
@@ -839,6 +858,23 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             <DatePicker value={poForm.expected_delivery_date} min={poForm.po_date || undefined}
               onChange={(v) => setPOForm({ ...poForm, expected_delivery_date: v })}
               placeholder="Pilih tanggal" testId="po-form-expected-delivery" />
+          </Isian>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Termin pembayaran" htmlFor="po-form-terms"
+            petunjuk="Jatuh tempo hutang = tanggal barang diterima + termin ini.">
+            <SmartNativeSelect id="po-form-terms" searchable={false} value={poForm.payment_terms || 'net30'}
+              onChange={(e) => setPOForm({ ...poForm, payment_terms: e.target.value })} data-testid="po-form-terms">
+              {Object.entries(PAYMENT_TERM_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="PPN" htmlFor="po-form-ppn" petunjuk="Bawaan dari status PKP pemasok di Master Supplier.">
+            <SmartNativeSelect id="po-form-ppn" searchable={false} value={String(poForm.tax_pct === '' ? 0 : poForm.tax_pct)}
+              onChange={(e) => setPOForm({ ...poForm, tax_pct: Number(e.target.value) })} data-testid="po-form-ppn">
+              <option value="0">Tanpa PPN</option>
+              <option value="11">PPN 11%</option>
+            </SmartNativeSelect>
           </Isian>
         </div>
 
@@ -971,11 +1007,21 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
           })}
 
           {poForm.items.length > 0 && (
-            <div className="flex items-baseline justify-end gap-3">
-              <span className="text-sm text-muted-foreground">Total nilai PO</span>
-              <span className="text-lg font-bold tabular-nums" data-testid="po-form-grand-total">
-                Rp {formTotal.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
-              </span>
+            <div className="space-y-1 text-right">
+              {Number(poForm.tax_pct) > 0 && (
+                <>
+                  <p className="text-sm text-muted-foreground">Subtotal <span className="tabular-nums">Rp {formTotal.toLocaleString('id-ID', { maximumFractionDigits: 0 })}</span></p>
+                  <p className="text-sm text-muted-foreground" data-testid="po-form-ppn-amount">
+                    PPN {Number(poForm.tax_pct)}% <span className="tabular-nums">Rp {Math.round(formTotal * Number(poForm.tax_pct) / 100).toLocaleString('id-ID')}</span>
+                  </p>
+                </>
+              )}
+              <div className="flex items-baseline justify-end gap-3">
+                <span className="text-sm text-muted-foreground">Total nilai PO</span>
+                <span className="text-lg font-bold tabular-nums" data-testid="po-form-grand-total">
+                  Rp {Math.round(formTotal * (1 + (Number(poForm.tax_pct) || 0) / 100)).toLocaleString('id-ID')}
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -1008,6 +1054,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 <TruckIcon />Buat penerimaan barang
               </Button>
             )}
+            {sp.status === 'approved' && (
+              <TombolBatalSetuju jenis="pengadaan-po" id={sp.id} onSelesai={() => { fetchList(); openDetail(sp); }} />
+            )}
           </>}>
           {sp.rejected_reason && <Notice tone="danger" title="Alasan ditolak">{sp.rejected_reason}</Notice>}
           {sp.cancelled_reason && <Notice tone="info" title="Alasan dibatalkan">{sp.cancelled_reason}</Notice>}
@@ -1019,7 +1068,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
               {sp.vendor_contact && <p className="text-xs text-muted-foreground">{sp.vendor_contact}</p>}
               {sp.vendor_address && <p className="text-xs text-muted-foreground">{sp.vendor_address}</p>}
               {sp.supplier?.npwp && <p className="text-xs text-muted-foreground">NPWP: {sp.supplier.npwp}</p>}
-              {sp.payment_terms && <p className="text-xs text-muted-foreground">Termin: {sp.payment_terms} · {sp.currency || 'IDR'}</p>}
+              {sp.currency && sp.currency !== 'IDR' && <p className="text-xs text-muted-foreground">Mata uang: {sp.currency}</p>}
               {sp.supplier?.bank_accounts?.[0] && (
                 <p className="text-xs text-muted-foreground">
                   {sp.supplier.bank_accounts[0].bank_name} {sp.supplier.bank_accounts[0].account_number}
@@ -1027,10 +1076,22 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
               )}
             </BarisDetail>
             <BarisDetail label="Tanggal PO">{fmtTgl(sp.po_date)}</BarisDetail>
+            <BarisDetail label="Termin pembayaran">{PAYMENT_TERM_LABEL[sp.payment_terms] || sp.payment_terms || 'NET 30'}</BarisDetail>
+            <BarisDetail label="Nilai PO">
+              {fmtRpNum(sp.grand_total ?? sp.total_value)}
+              {Number(sp.tax_pct) > 0 && (
+                <span className="block text-xs text-muted-foreground">
+                  termasuk PPN {Number(sp.tax_pct)}% {fmtRpNum(sp.tax_amount)}
+                </span>
+              )}
+            </BarisDetail>
             {sp.expected_delivery_date && <BarisDetail label="Estimasi terima">{fmtTgl(sp.expected_delivery_date)}</BarisDetail>}
             {sp.from_pr_number && <BarisDetail label="Dari permintaan">{sp.from_pr_number}</BarisDetail>}
             {sp.notes && <BarisDetail label="Catatan">{sp.notes}</BarisDetail>}
           </dl>
+
+          {/* 27 Nov 2026 (owner): bayar di muka (CBD) / DP — memotong tagihan otomatis saat barang diterima */}
+          <UangMukaPO po={sp} onChanged={() => fetchList()} />
 
           {/* ── Rantai persetujuan PO (2026-08-07) — tahap ke berapa dari berapa, siapa yang sudah
               memutuskan, dan siapa giliran berikutnya. */}

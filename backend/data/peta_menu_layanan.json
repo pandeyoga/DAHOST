@@ -2119,6 +2119,10 @@
    "/api/rahaza/x/x/payments/x/receipt.pdf"
   ],
   [
+   "POST",
+   "/api/rahaza/x/x/payments/x/void"
+  ],
+  [
    "GET",
    "/api/tax-profile"
   ]
@@ -2213,6 +2217,10 @@
   [
    "GET",
    "/api/rahaza/x/x/payments/x/receipt.pdf"
+  ],
+  [
+   "POST",
+   "/api/rahaza/x/x/payments/x/void"
   ]
  ],
  "fin-bank-recon": [
@@ -2757,6 +2765,14 @@
   [
    "POST",
    "/api/rahaza/finance/journal-import/x"
+  ],
+  [
+   "GET",
+   "/api/rahaza/finance/jurnal-tertunda"
+  ],
+  [
+   "POST",
+   "/api/rahaza/finance/jurnal-tertunda/x/x/ulang"
   ],
   [
    "GET",
@@ -8057,6 +8073,10 @@
    "/api/rahaza/x/x/payments/x/receipt.pdf"
   ],
   [
+   "POST",
+   "/api/rahaza/x/x/payments/x/void"
+  ],
+  [
    "GET",
    "/api/tax-profile"
   ]
@@ -8077,6 +8097,10 @@
   [
    "GET",
    "/api/procurement/suppliers/x/price-list"
+  ],
+  [
+   "GET",
+   "/api/rahaza/cash-accounts"
   ],
   [
    "GET",
@@ -8133,6 +8157,14 @@
   [
    "POST",
    "/api/rahaza/purchase-orders/x/submit"
+  ],
+  [
+   "GET",
+   "/api/rahaza/purchase-orders/x/uang-muka"
+  ],
+  [
+   "POST",
+   "/api/rahaza/purchase-orders/x/uang-muka/x/batal"
   ]
  ],
  "proc-purchase-returns": [
@@ -9997,6 +10029,10 @@
   [
    "GET",
    "/api/approvals/pending"
+  ],
+  [
+   "GET",
+   "/api/batal-setuju/disetujui"
   ],
   [
    "GET",

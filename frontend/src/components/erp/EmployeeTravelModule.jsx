@@ -43,6 +43,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
@@ -299,7 +300,7 @@ function AdvanceForm({ req, token, onClose, aksi }) {
 }
 
 // ─── Rincian perjalanan (popup detail) ───────────────────────────────────────
-function TravelDetail({ req, user, onClose, aksi, onApprove, onPay }) {
+function TravelDetail({ req, user, onClose, aksi, onApprove, onPay, muatUlang }) {
   const [busy, setBusy] = useState(false);
   const isApprover = bolehSetujuiDinas(user);
   const isFinance = bolehBayarUangMuka(user); // FIN-02
@@ -331,6 +332,10 @@ function TravelDetail({ req, user, onClose, aksi, onApprove, onPay }) {
             <CheckCircle />Setujui
           </Button>
         </>)}
+        {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan selama uang muka belum dibayar. */}
+        {req.status === 'approved' && (
+          <TombolBatalSetuju jenis="hr-dinas" id={req.id} onSelesai={() => { onClose(); muatUlang?.(); }} />
+        )}
         {isFinance && req.status === 'approved' && (
           <Button size="sm" variant="success" onClick={() => onPay(req)} disabled={busy} data-testid="travel-pay-advance">
             <Banknote />Bayar uang muka
@@ -659,7 +664,7 @@ export default function EmployeeTravelModule({ token, user }) {
           onSaved={(d) => { setShowCreate(false); fetchData(); setSelected(d); }} />
       )}
       {selected && (
-        <TravelDetail req={selected} user={user} onClose={() => setSelected(null)} aksi={aksi}
+        <TravelDetail req={selected} user={user} onClose={() => setSelected(null)} aksi={aksi} muatUlang={fetchData}
           onApprove={(r) => { setSelected(null); setAksiForm({ jenis: 'approve', req: r }); }}
           onPay={(r) => { setSelected(null); setAksiForm({ jenis: 'advance', req: r }); }} />
       )}

@@ -141,7 +141,9 @@ export default function ApprovalModule({ token, userRole }) {
       if (!res.ok) {
         toast.error(data.detail || data.error || data.message || 'Gagal menyetujui permintaan');
       } else {
-        toast.success('Perubahan disetujui; faktur sudah diperbarui.');
+        // Paket 1 (25 Nov 2026): faktur diperbarui tetapi jurnal barunya gagal → peringatan, bukan "berhasil" penuh
+        if (data.warning) toast.warning(typeof data.warning === 'string' ? data.warning : 'Faktur diperbarui, tetapi jurnalnya belum terbentuk. Posting ulang dari Keuangan › Jurnal › Belum masuk jurnal.');
+        else toast.success('Perubahan disetujui; faktur sudah diperbarui.');
         setShowDetail(false);
         fetchRequests();
       }

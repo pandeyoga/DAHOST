@@ -21,6 +21,9 @@ import { GlassCard } from '@/components/ui/glass';
 import { toast } from 'sonner';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { apiFetch, ApiError } from '@/lib/apiFetch';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -95,7 +98,7 @@ export default function UnifiedApprovalHub({ token, onNavigate }) {
     <PageLayout
       testId="unified-approval-hub"
       title="Pusat persetujuan"
-      subtitle="Persetujuan yang menunggu dari SDM, alur bertingkat, marketing, dan keuangan."
+      subtitle="Persetujuan yang menunggu dari SDM, alur bertingkat, marketing, dan keuangan — dan yang sudah disetujui, bila perlu dibatalkan."
       tools={(
         <Button variant="outline" size="icon" onClick={fetchCounts} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
           data-testid="refresh-hub">
@@ -167,6 +170,89 @@ export default function UnifiedApprovalHub({ token, onNavigate }) {
         <EmptyState icon={CheckCircle} title="Semua persetujuan sudah diproses"
           description="Tidak ada permintaan yang menunggu saat ini." />
       ) : null}
+      <SudahDisetujui onNavigate={onNavigate} />
     </PageLayout>
+  );
+}
+
+/**
+ * Sudah disetujui — 30 hari terakhir, SEMUA jenis yang boleh Anda putus (owner 24 Nov 2026: "buat saja fitur
+ * batalkan persetujuan. ini berlaku untuk semua hal yang ada di sistem"). Setiap baris punya tombol Batalkan
+ * persetujuan; server menolak bila persetujuan sudah dipakai langkah berikutnya dan menyebut alasannya.
+ */
+function SudahDisetujui({ onNavigate }) {
+  const [rows, setRows] = useState([]);
+  const [memuat, setMemuat] = useState(true);
+  const muat = useCallback(async () => {
+    setMemuat(true);
+    try {
+      const r = await apiFetch('/batal-setuju/disetujui?hari=30');
+      setRows(Array.isArray(r?.data) ? r.data : []);
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 401) toast.error('Gagal memuat daftar yang sudah disetujui');
+      setRows([]);
+    } finally {
+      setMemuat(false);
+    }
+  }, []);
+  useEffect(() => { muat(); }, [muat]);
+  const { page, setPage, totalPages, total, paged } = useClientPagination(rows, 10);
+  return (
+    <GlassCard className="space-y-3 p-4" data-testid="approval-hub-sudah-disetujui">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-base font-semibold text-foreground">Sudah disetujui — 30 hari terakhir</p>
+          <p className="text-sm text-muted-foreground">
+            Salah setuju? Batalkan persetujuannya di sini. Status kembali menunggu keputusan, alasan wajib diisi, dan
+            keputusan lama tetap tercatat. Persetujuan yang sudah dipakai langkah berikutnya tidak bisa dibatalkan.
+          </p>
+        </div>
+        <TombolUnduh namaBerkas="sudah-disetujui" namaLembar="Sudah disetujui" baris={rows} testId="approval-hub-disetujui-unduh"
+          kolom={[
+            { label: 'Jenis', nilai: (r) => r.label || '' },
+            { label: 'Dokumen', nilai: (r) => r.nama || '' },
+            { label: 'Disetujui oleh', nilai: (r) => r.disetujui_oleh || '' },
+            { label: 'Tanggal', nilai: (r) => tgl(r.disetujui_at) },
+          ]} />
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Dokumen</TableHead>
+            <TableHead className="hidden sm:table-cell">Jenis</TableHead>
+            <TableHead className="hidden md:table-cell">Disetujui oleh</TableHead>
+            <TableHead className="hidden sm:table-cell">Tanggal</TableHead>
+            <TableHead className="text-right"><span className="sr-only">Aksi</span></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {paged.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5}>
+                <EmptyState icon={CheckCircle} title={memuat ? 'Memuat…' : 'Belum ada yang disetujui 30 hari terakhir'}
+                  description={memuat ? '' : 'Dokumen yang Anda boleh putuskan dan sudah disetujui akan muncul di sini.'} />
+              </TableCell>
+            </TableRow>
+          ) : paged.map((r) => (
+            <TableRow key={`${r.jenis}-${r.id}`} data-testid={`disetujui-${r.jenis}-${r.id}`}>
+              <TableCell className="font-medium">{r.nama || '—'}
+                <span className="block text-xs text-muted-foreground sm:hidden">{r.label} · {tgl(r.disetujui_at)}</span></TableCell>
+              <TableCell className="hidden sm:table-cell">{r.label}</TableCell>
+              <TableCell className="hidden md:table-cell">{r.disetujui_oleh || '—'}</TableCell>
+              <TableCell className="hidden whitespace-nowrap sm:table-cell">{tgl(r.disetujui_at)}</TableCell>
+              <TableCell className="text-right">
+                <div className="flex items-center justify-end gap-1">
+                  {r.modul && onNavigate && (
+                    <Button variant="link" size="sm" onClick={() => onNavigate(r.modul)}>Buka<ArrowRight /></Button>
+                  )}
+                  <TombolBatalSetuju jenis={r.jenis} id={r.id} onSelesai={muat} />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={10} onPageChange={setPage} />
+    </GlassCard>
   );
 }

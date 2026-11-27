@@ -32,6 +32,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { EmployeeSelect } from './hr/hrPickers';
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -434,11 +435,13 @@ export default function RahazaLeaveModule({ token, user, onNavigate, bagian, dee
     }
     // Tahap 2: HR juga boleh membatalkan cuti yang sudah dimulai (absensi dikembalikan)
     if (lv.status === 'approved') {
-      return (
+      return (<>
+        {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan → kembali menunggu persetujuan. */}
+        <TombolBatalSetuju jenis="hr-cuti" id={lv.id} onSelesai={() => { setSelectedLeave(null); load(); }} />
         <Button size="sm" variant="outline" onClick={() => bukaBatal(lv)} data-testid={`cancel-${lv.id}`}>
-          <X />Batalkan
+          <X />Batalkan cuti
         </Button>
-      );
+      </>);
     }
     return null;
   };

@@ -549,6 +549,15 @@ ENDPOINT_RULES: list[tuple[str, str, str, str]] = [
     ("POST", r"/api/rahaza/payroll-runs/[^/]+/pay(-bpjs|-pph21)?", "hr_payroll", "approve"),
     # Batal jurnal = keputusan pembukuan; perbaikan massal kopling BOM = operasi perbaikan data.
     ("POST", r"/api/rahaza/journals/[^/]+/void", "fin_journal", "approve"),
+    # 25 Nov 2026 (Paket 1 audit keuangan): posting ulang dokumen yang belum masuk jurnal = pembukuan.
+    ("POST", r"/api/rahaza/finance/jurnal-tertunda/[^/]+/[^/]+/ulang", "fin_journal", "approve"),
+    # Batalkan pembayaran pelanggan / pemasok = keputusan pembukuan (Paket 1). Tanpa aturan ini jalur AP jatuh ke
+    # prefix `/api/rahaza/ap-invoices` milik modul pencocokan pengadaan.
+    ("POST", r"/api/rahaza/ar-invoices/[^/]+/payments/[^/]+/void", "fin_ar", "approve"),
+    ("POST", r"/api/rahaza/ap-invoices/[^/]+/payments/[^/]+/void", "fin_pencairan", "approve"),
+    # 27 Nov 2026: uang muka ke pemasok (CBD/DP) = uang keluar/masuk → keputusan pembayaran Keuangan.
+    ("POST", r"/api/rahaza/purchase-orders/[^/]+/uang-muka", "fin_pencairan", "approve"),
+    ("POST", r"/api/rahaza/purchase-orders/[^/]+/uang-muka/[^/]+/(kembalikan|batal)", "fin_pencairan", "approve"),
     ("POST", r"/api/rahaza/boms/relink-materials", "prod_master_product", "approve"),
     # 14 Nov 2026 (tahap 2): Kirim CMT — nota aksesoris yang berlaku dipakai kotak masuk permintaan aksesoris;
     # potong nota = mengurangi tagihan CMT; batal nota = keputusan; posting ulang jurnal = pembukuan.

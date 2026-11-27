@@ -17,7 +17,7 @@
  * (`./PosisiKlien`).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, Banknote, Building2, History, List, MoreHorizontal, RefreshCw, Search, ShieldAlert, Users } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Banknote, Building2, History, List, MoreHorizontal, RefreshCw, Search, ShieldAlert, Undo2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -43,6 +43,7 @@ import { apiGet, apiPost } from '../../../lib/api';
 import { CV_ALL, CV_DA, ownerLabel, useCvOr } from '@/lib/entitas';
 import { formatDateID, formatRupiah, formatRupiahShort } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
+import { batalkanPersetujuan, useBolehBatal } from '@/lib/batalSetuju';
 import { ambilPetunjukTab } from '../hubs/petunjukTab';
 import { RincianUmurKirim, UmurJatuhTempo, UmurKirim, hariTerlambat, jumlahPerKelompokKirim, teksJatuhTempo } from './umurTagihan';
 import PosisiKlien from './PosisiKlien';
@@ -283,7 +284,7 @@ function HapusBuku({ row, onClose, onDone }) {
   );
 }
 
-function RincianFaktur({ row, token, onClose, onPay }) {
+function RincianFaktur({ row, token, onClose, onPay, onChanged }) {
   const inv = row.raw;
   return (
     <DetailPanel testId="piutang-rincian-faktur" onClose={onClose} title={`Faktur ${inv.invoice_number}`}
@@ -302,7 +303,7 @@ function RincianFaktur({ row, token, onClose, onPay }) {
       {inv.status !== 'draft' && (
         <div className="space-y-2 pt-2 border-t border-[var(--glass-border)]">
           <p className="text-sm font-medium text-foreground">Riwayat pembayaran · dibayar {fmt(row.dibayar)}</p>
-          <PaymentHistoryList token={token} kind="ar" invoiceId={inv.id} />
+          <PaymentHistoryList token={token} kind="ar" invoiceId={inv.id} onChanged={onChanged} />
         </div>
       )}
     </DetailPanel>
@@ -326,6 +327,7 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
   const [hapusBuku, setHapusBuku] = useState(null);
   const [rekeningKoran, setRekeningKoran] = useState(null);
   const [tampilan, setTampilan] = useState('daftar');
+  const bolehBatalFaktur = useBolehBatal('fin-faktur-penjualan');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -399,6 +401,8 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
     : r.src === 'ar' && !['draf', 'batal', 'hapus_buku'].includes(r.status) && (r.status !== 'lunas' || r.raw.schedule_mode === 'v2') && arPayCap(r.raw) > 0);
   const bisaHapusBuku = (r) => r.src === 'ar' && r.jenis === 'reseller' && TAGIHAN_TERBUKA.has(r.status) && Number(r.terlambat) > 0 && r.sisa > 0;
   const bisaTandaiLewat = (r) => r.src === 'ar' && r.jenis === 'reseller' && ['sent', 'issued'].includes(r.raw.status) && Number(r.terlambat) > 0;
+  // 24 Nov 2026 (owner): faktur yang sudah terbit bisa dibatalkan persetujuannya; server menolak bila sudah dibayar/otomatis.
+  const bisaBatal = (r) => bolehBatalFaktur && r.src === 'ar' && ['issued', 'sent', 'overdue'].includes(r.raw.status);
   const bukaBayar = (r) => { setRincian(null); setBayar(r); };
   const kolom = 8;
   const pilihTampilan = (
@@ -465,7 +469,8 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
       </>}
       detail={rincian && (rincian.src === 'maklon'
         ? <ReceivableDetail key={rincian.raw.id} arId={rincian.raw.id} headers={headers} token={token} onClose={() => setRincian(null)} onChanged={load} />
-        : <RincianFaktur row={rincian} token={token} onClose={() => setRincian(null)} onPay={bisaBayar(rincian) ? bukaBayar : null} />)}
+        : <RincianFaktur row={rincian} token={token} onClose={() => setRincian(null)} onPay={bisaBayar(rincian) ? bukaBayar : null}
+            onChanged={() => { setRincian(null); load(); }} />)}
       footer={rows.length > pageSize && (
         <PaginationLite page={page} totalPages={totalPages} total={rows.length} pageSize={pageSize} onPageChange={setPage} />
       )}
@@ -553,7 +558,7 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
                       {r.src === 'marketplace' && onNavigate && (
                         <Button variant="outline" size="sm" onClick={() => onNavigate('fin-marketplace-settlement')}>Buka Marketplace</Button>
                       )}
-                      {r.src === 'ar' && (Number(r.dibayar) > 0 || bisaHapusBuku(r) || bisaTandaiLewat(r)) && (
+                      {r.src === 'ar' && (Number(r.dibayar) > 0 || bisaHapusBuku(r) || bisaTandaiLewat(r) || bisaBatal(r)) && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon-sm" title="Lainnya" aria-label="Lainnya" data-testid={`piutang-lainnya-${r.key}`}><MoreHorizontal className="w-4 h-4" /></Button>
@@ -568,6 +573,12 @@ export default function PiutangModule({ token, initialStatus, onNavigate, hasPer
                             {bisaHapusBuku(r) && (
                               <DropdownMenuItem onClick={() => setHapusBuku(r)} data-testid={`piutang-hapus-buku-${r.key}`}>
                                 <ShieldAlert className="w-4 h-4 mr-2" />Hapus buku piutang macet
+                              </DropdownMenuItem>
+                            )}
+                            {bisaBatal(r) && (
+                              <DropdownMenuItem onSelect={() => batalkanPersetujuan({ jenis: 'fin-faktur-penjualan', id: r.raw.id }).then((h) => { if (h) load(); })}
+                                data-testid={`piutang-batal-setuju-${r.key}`}>
+                                <Undo2 className="w-4 h-4 mr-2" />Batalkan persetujuan
                               </DropdownMenuItem>
                             )}
                           </DropdownMenuContent>

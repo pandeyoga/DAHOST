@@ -44,6 +44,7 @@ import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
 import DatePicker, { formatTanggalID } from '@/components/ui/date-picker';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import TombolBatalSetuju from './TombolBatalSetuju';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah, formatDateID } from '@/lib/format';
@@ -290,7 +291,7 @@ function PayForm({ claim, token, onClose, aksi }) {
 }
 
 // ─── Rincian klaim (popup detail) ────────────────────────────────────────────
-function ClaimDetail({ claim, user, onClose, aksi, onApprove, onPay }) {
+function ClaimDetail({ claim, user, onClose, aksi, onApprove, onPay, muatUlang }) {
   const [busy, setBusy] = useState(false);
   const isApprover = bolehSetujuiKlaim(user);
   const isFinance = bolehBayarKlaim(user); // FIN-02
@@ -325,6 +326,10 @@ function ClaimDetail({ claim, user, onClose, aksi, onApprove, onPay }) {
             <CheckCircle />Setujui
           </Button>
         </>)}
+        {/* 24 Nov 2026 (owner): persetujuan yang salah tekan bisa dibatalkan selama belum dicairkan. */}
+        {claim.status === 'approved' && (
+          <TombolBatalSetuju jenis="hr-klaim-biaya" id={claim.id} onSelesai={() => { onClose(); muatUlang?.(); }} />
+        )}
         {isFinance && claim.status === 'approved' && (
           <Button size="sm" variant="success" onClick={() => onPay(claim)} disabled={busy} data-testid="claim-pay">
             <Banknote />Bayar
@@ -678,7 +683,7 @@ export default function EmployeeExpenseModule({ token, user }) {
         <ClaimForm token={token} onClose={() => setShowCreate(false)} onSaved={handleClaimSaved} />
       )}
       {selected && (
-        <ClaimDetail claim={selected} user={user} onClose={() => setSelected(null)} aksi={aksi}
+        <ClaimDetail claim={selected} user={user} onClose={() => setSelected(null)} aksi={aksi} muatUlang={fetchData}
           onApprove={(c) => { setSelected(null); setAksiForm({ jenis: 'approve', claim: c }); }}
           onPay={(c) => { setSelected(null); setAksiForm({ jenis: 'pay', claim: c }); }} />
       )}

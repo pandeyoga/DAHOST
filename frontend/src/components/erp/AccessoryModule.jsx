@@ -57,6 +57,7 @@ import TambahQtyForm from './TambahQtyForm';
 import HubTabs from './hubs/HubTabs';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 import { denganAlasanMerchandiser } from '@/lib/alasanMerchandiser';   // 12 Nov 2026 (K-M2)
+import TombolBatalSetuju from './TombolBatalSetuju';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -1093,6 +1094,9 @@ function PurchaseRequestTab({ token, items, title, subtitle, ringkasan }) {
           <Button size="sm" variant="outline" onClick={()=>act(pr.id,'forward')} data-testid={`forward-pr-${pr.id}`}>
             Teruskan ke Pengadaan
           </Button>
+        )}
+        {pr.status === 'Approved' && (
+          <TombolBatalSetuju jenis="pengadaan-aksesoris" id={pr.id} onSelesai={() => load()} />
         )}
       </div>) },
   ];

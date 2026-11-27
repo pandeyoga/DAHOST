@@ -1089,6 +1089,13 @@ async def _gen_po_number_proc(db) -> str:
     return await gen_prefixed_number(db, "rahaza_purchase_orders", "po_number", prefix, 3)
 
 
+
+def _po_nilai_ppn(po_items: list, body: dict, sup_fields: dict) -> dict:
+    """Nilai + PPN PO dari PR — aturan yang SAMA dengan PO biasa (routes.rahaza_po._nilai_po/_ppn_po)."""
+    from routes.rahaza_po import _nilai_po, _ppn_po
+    return _nilai_po(po_items, _ppn_po(body, {}, sup_fields.get("supplier_pkp")))
+
+
 @router.post("/requests/{req_id}/create-po")
 async def create_po_from_pr(req_id: str, request: Request):
     """Buat Purchase Order (PO) dari PR yang sudah Approved.
@@ -1187,7 +1194,8 @@ async def _create_po_from_pr_locked(db, req_id: str, request: Request, user: dic
         "po_date": today_wib().isoformat(),
         "expected_delivery_date": body.get("expected_delivery_date") or pr.get("needed_by") or None,
         "items": po_items,
-        "total_value": po_total,
+        # 27 Nov 2026: termin (dari _resolve_supplier) & PPN ditentukan di PO — bawaan dari master pemasok
+        **_po_nilai_ppn(po_items, body, sup_fields),
         "status": "draft",
         "notes": (body.get("notes") or "").strip() or f"Dibuat dari PR {pr.get('request_number','')}",
         # Jejak perbandingan nilai: dipakai memaksa rantai persetujuan penuh

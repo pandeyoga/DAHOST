@@ -20,7 +20,7 @@ from utils.data_quality import SkipTracker
 from pymongo import ReturnDocument
 import uuid
 import logging
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import Optional
 from utils.waktu import today_wib
 
@@ -38,6 +38,8 @@ from routes.rahaza_posting import (
     post_expense,
     void_ar_invoice_posting,
     void_ap_invoice_posting,
+    _void_je_by_source,
+    posting_error_message,
     post_cash_opening_balance,
     cash_accounts_with_gl,
 )
@@ -48,6 +50,19 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-finance"],
 
 AR_STATUS = ["draft", "issued", "sent", "partial_paid", "paid", "overdue", "written_off", "cancelled"]
 AP_STATUS = ["draft", "sent", "partial_paid", "paid", "overdue", "cancelled"]
+# Paket 1 (audit 25 Nov 2026): status yang boleh dipilih lewat endpoint status. "Dibayar sebagian"/"Lunas" hanya lahir
+# dari pembayaran dan "Dihapusbukukan" hanya dari Hapus buku — keduanya menjurnal. Dulu status itu bisa ditulis
+# langsung tanpa jurnal, sehingga dokumen dan buku besar berbeda.
+AR_STATUS_MANUAL = ("draft", "issued", "sent", "overdue", "cancelled")
+AP_STATUS_MANUAL = ("draft", "sent", "overdue", "cancelled")
+STATUS_BY_PAYMENT_MSG = ("Status lunas, dibayar sebagian, dan dihapusbukukan tidak dipilih manual. Status itu "
+                         "berubah sendiri saat pembayaran dicatat atau faktur dihapusbukukan.")
+_STATUS_LABEL = {"draft": "draf", "issued": "terbit", "sent": "terbit", "partial_paid": "dibayar sebagian",
+                 "paid": "lunas", "overdue": "lewat jatuh tempo", "written_off": "dihapusbukukan",
+                 "cancelled": "dibatalkan", "void": "dibatalkan"}
+GL_CLEAR = {"gl_je_id": None, "gl_je_number": None, "gl_posted_at": None}
+PAYMENT_VOID_MIN_REASON = 10
+PAYMENT_VOID_STALE_MIN = 10
 AP_DEBIT_TYPES = ("EXPENSE", "COGS", "ASSET", "OTHER_EXPENSE")   # akun yang boleh didebit faktur supplier manual
 EXPENSE_DEBIT_TYPES = ("EXPENSE", "COGS", "OTHER_EXPENSE")       # akun beban yang boleh dipilih di Pengeluaran
 
@@ -153,6 +168,62 @@ def ar_remaining(inv: dict) -> float:
     """Sisa tagihan menurut rumus yang sama (untuk pesan galat)."""
     return max(0.0, float(inv.get("total") or 0) - float(inv.get("credited_amount") or 0)
                - float(inv.get("paid_amount") or 0))
+
+
+def ap_payment_guard_and_update(gross: float) -> tuple:
+    """Paket 1 (25 Nov 2026): SATU rumus sisa hutang untuk pembayaran AP: terutang = total − nota debit
+    (`debit_note_amount`, dijaga modul Retur Pembelian dengan `$inc`; kosong = 0); sisa = terutang − dibayar
+    (bruto, termasuk potongan); lunas bila dibayar + nota debit ≥ total; pembayaran melebihi sisa DITOLAK.
+    Dulu nota debit mengurangi hutang di buku besar, tetapi faktur tetap bisa dibayar penuh (lebih bayar).
+    Mengembalikan (ekspresi `$expr` penjaga, pipeline update) untuk find_one_and_update."""
+    new_paid = {"$add": [{"$ifNull": ["$paid_amount", 0]}, gross]}
+    owed = {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": ["$debit_note_amount", 0]}]}
+    guard = {"$lte": [new_paid, {"$add": [owed, 0.01]}]}
+    pipeline = [{"$set": {
+        "paid_amount": {"$round": [new_paid, 0]},
+        "balance": {"$max": [0, {"$round": [{"$subtract": [owed, new_paid]}, 0]}]},
+        "status": {"$cond": [{"$gte": [new_paid, {"$subtract": [owed, 0.01]}]}, "paid", "partial_paid"]},
+        "updated_at": _now(),
+    }}]
+    return guard, pipeline
+
+
+def ap_remaining(inv: dict) -> float:
+    """Sisa hutang faktur pemasok = total − nota debit − dibayar (tidak pernah negatif)."""
+    return max(0.0, float(inv.get("total") or 0) - float(inv.get("debit_note_amount") or 0)
+               - float(inv.get("paid_amount") or 0))
+
+
+def ap_open_balance(inv: dict) -> float:
+    """Sisa yang ditampilkan di daftar hutang. Faktur tanpa nota debit memakai `balance` tersimpan (perilaku lama);
+    faktur bernota debit dihitung ulang supaya nota debit langsung mengurangi sisa walau belum ada pembayaran baru."""
+    if float(inv.get("debit_note_amount") or 0) > 0.009:
+        return round(ap_remaining(inv))
+    return inv.get("balance")
+
+
+def _rp(v) -> str:
+    return "Rp " + f"{float(v or 0):,.0f}".replace(",", ".")
+
+
+def _ok(res) -> bool:
+    """Hasil void/posting: hanya `ok` yang menentukan (voided / reversed / JE tidak ada = berhasil)."""
+    return bool((res or {}).get("ok"))
+
+
+def _guard_manual_status(inv: dict, old_status: str, new_status: str) -> None:
+    """Perubahan status manual tidak boleh membuat dokumen berbeda dari buku besar (Paket 1, 25 Nov 2026)."""
+    if new_status == old_status or new_status == "cancelled":
+        return
+    num = inv.get("invoice_number") or ""
+    if old_status == "written_off":
+        raise HTTPException(409, f"Faktur {num} sudah dihapusbukukan. Statusnya tidak bisa diubah dari sini.")
+    if old_status in ("paid", "partial_paid") and float(inv.get("paid_amount") or 0) > 0.009:
+        raise HTTPException(409, f"Faktur {num} sudah menerima pembayaran, jadi statusnya mengikuti pembayaran. "
+                                 f"Batalkan pembayarannya dulu bila memang salah catat.")
+    if new_status == "draft" and inv.get("gl_je_id"):
+        raise HTTPException(409, f"Faktur {num} sudah dicatat di buku besar. Kembalikan ke draf lewat "
+                                 f"Batalkan persetujuan supaya jurnalnya ikut dibatalkan.")
 
 
 async def _record_payment_doc(db, coll: str, inv: dict, amount: float, account_id, movement_id, payment_date, notes, user):
@@ -483,7 +554,9 @@ async def change_ar_status(iid: str, request: Request):
     body = await request.json()
     new_status = (body.get("status") or "").lower()
     if new_status not in AR_STATUS:
-        raise HTTPException(400, f"status invalid: {AR_STATUS}")
+        raise HTTPException(400, "Status faktur tidak dikenal.")
+    if new_status not in AR_STATUS_MANUAL:
+        raise HTTPException(400, STATUS_BY_PAYMENT_MSG)   # Paket 1: lunas/hapus buku hanya lewat jalurnya (berjurnal)
     inv = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
@@ -495,6 +568,9 @@ async def change_ar_status(iid: str, request: Request):
     old_status = inv.get("status")
     if new_status == "sent":
         new_status = "issued"   # kanonik (H-01)
+    _guard_manual_status(inv, old_status, new_status)
+    if new_status == "cancelled":
+        return serialize_doc(await cancel_ar_invoice(db, inv, user))
     if new_status == "issued" and old_status not in ("issued", "sent"):
         await _reject_marketplace_ar(db, inv)  # 2026-11-02 (D2): draft lama ber-channel marketplace
     # 2026-11-06 (pola P9): status lama di filter — dulu "batal" bisa menimpa faktur yang baru saja
@@ -510,8 +586,6 @@ async def change_ar_status(iid: str, request: Request):
     try:
         if new_status == "issued" and old_status not in ("issued", "sent") and not out.get("gl_je_id"):
             posting_result = await post_ar_invoice(db, out, user)
-        elif new_status == "cancelled" and out.get("gl_je_id"):
-            posting_result = await void_ar_invoice_posting(db, iid, user, reason="AR cancelled")
     except Exception as e:
         log.exception("AR auto-post failed")
         posting_result = {"ok": False, "error": str(e)}
@@ -521,6 +595,53 @@ async def change_ar_status(iid: str, request: Request):
     if posting_result is not None:
         out["_posting_result"] = posting_result
     return serialize_doc(out)
+
+
+async def cancel_ar_invoice(db, inv: dict, user: dict) -> dict:
+    """Batal faktur penjualan (Paket 1, audit 25 Nov 2026): klaim status atomik → batalkan jurnal → bila jurnal
+    TIDAK bisa dibatalkan, status dikembalikan dan 409 (dulu status sudah "batal" sementara jurnal piutangnya tetap).
+
+    Faktur yang sudah dibayar atau punya nota kredit ditolak: jurnal pembayaran/nota kredit tetap mengkredit piutang
+    sehingga piutang pelanggan jadi minus tanpa dokumen. Berhasil → `gl_je_id` dikosongkan supaya terbit ulang
+    memposting jurnal baru."""
+    iid, old_status = inv["id"], inv.get("status")
+    num = inv.get("invoice_number") or ""
+    if old_status in ("cancelled", "void"):
+        raise HTTPException(400, f"Faktur {num} sudah dibatalkan.")
+    if old_status == "written_off":
+        raise HTTPException(409, f"Faktur {num} sudah dihapusbukukan, jadi tidak bisa dibatalkan.")
+    paid = float(inv.get("paid_amount") or 0)
+    credited = float(inv.get("credited_amount") or 0)
+    if paid > 0.009 or credited > 0.009:
+        bagian = []
+        if paid > 0.009:
+            bagian.append(f"pembayaran {_rp(paid)}")
+        if credited > 0.009:
+            bagian.append(f"nota kredit {_rp(credited)}")
+        raise HTTPException(409, f"Faktur {num} sudah punya {' dan '.join(bagian)}. Batalkan pembayaran atau nota "
+                                 f"kreditnya dulu, baru batalkan fakturnya.")
+    claim = await db.rahaza_ar_invoices.update_one(
+        {"id": iid, "status": old_status,
+         "paid_amount": {"$not": {"$gt": 0.009}}, "credited_amount": {"$not": {"$gt": 0.009}}},
+        {"$set": {"status": "cancelled", "updated_at": _now()}})
+    if not claim.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
+    try:
+        res = await void_ar_invoice_posting(db, iid, user, reason="AR cancelled")
+    except Exception as e:  # noqa: BLE001
+        log.exception("void jurnal faktur penjualan gagal")
+        res = {"ok": False, "error": str(e)}
+    if not _ok(res):
+        await db.rahaza_ar_invoices.update_one({"id": iid, "status": "cancelled"},
+                                               {"$set": {"status": old_status, "updated_at": _now()}})
+        raise HTTPException(409, f"Faktur {num} tidak dibatalkan: jurnalnya tidak bisa dibatalkan "
+                                 f"({posting_error_message(res)}). Status faktur dikembalikan.")
+    await db.rahaza_ar_invoices.update_one({"id": iid}, {"$set": {
+        **GL_CLEAR, "cancelled_at": _now(), "cancelled_by": user.get("id"), "cancelled_by_name": user.get("name", ""),
+        "updated_at": _now()}})
+    out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
+    out["_posting_result"] = res
+    return out
 
 
 @router.post("/ar-invoices/{iid}/send")
@@ -706,6 +827,207 @@ async def list_ar_payments(iid: str, request: Request):
     return serialize_doc(await _enrich_payments(db, rows))
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# BATALKAN PEMBAYARAN FAKTUR (Paket 1, audit 25 Nov 2026)
+# Dulu pembayaran piutang/hutang yang salah catat tidak bisa dibatalkan sama sekali: staf membuat jurnal manual,
+# sehingga sisa faktur, mutasi kas, dan buku besar berbeda. Polanya mengikuti batal pembayaran tagihan CMT
+# (`dewi_maklon_finance.void_cmt_disbursement_locked`): jurnal pembayaran dibatalkan lewat kunci sumber yang SAMA dengan
+# saat diposting, mutasi kasnya dihapus, `paid_amount` faktur dikurangi atomik, dan pembayaran ditandai `voided`.
+# ══════════════════════════════════════════════════════════════════════════════
+_PAY_KIND = {
+    "ar": {"inv": "rahaza_ar_invoices", "pay": "rahaza_ar_payments", "src": "ar_payment", "prefix": "arpay",
+           "unpaid": "issued", "note": "$credited_amount", "activity": "rahaza.ar_payment"},
+    "ap": {"inv": "rahaza_ap_invoices", "pay": "rahaza_ap_payments", "src": "ap_payment", "prefix": "appay",
+           "unpaid": "sent", "note": "$debit_note_amount", "activity": "rahaza.ap_payment"},
+}
+_KEEP_STATUS_ON_VOID = ["cancelled", "void", "written_off"]
+IC_PAYMENT_VOID_MSG = ("Pembayaran antar CV tidak dibatalkan dari sini karena pasangannya tercatat di buku CV lain. "
+                       "Pembayaran tagihan jahit dibatalkan dari Tagihan CMT.")
+MAKLON_PAYMENT_VOID_MSG = "Pembayaran klien maklon dibatalkan dari layar Piutang klien maklon."
+
+
+def payment_void_source_ref(kind: str, payment: dict) -> str:
+    """Kunci jurnal pembayaran — SAMA dengan yang dipakai `record_ar_payment`/`record_ap_payment` saat memposting:
+    `post_ar_payment(..., amount, movement_id=movement_id or payment_id)` → `arpay:<ref>:<nilai>`;
+    `post_ap_payment(..., gross, movement_id=movement_id or payment_id)` → `appay:<ref>:<bruto>`."""
+    ref = payment.get("movement_id") or payment.get("id")
+    return f"{_PAY_KIND[kind]['prefix']}:{ref}:{int(round(payment_gross(kind, payment)))}"
+
+
+def payment_gross(kind: str, payment: dict) -> float:
+    """Nilai yang dulu menambah `paid_amount` faktur: AR = jumlah diterima; AP = kas + potongan (bruto)."""
+    amount = float(payment.get("amount") or 0)
+    if kind == "ap" and payment.get("gross_amount") is not None:
+        return float(payment.get("gross_amount") or 0)
+    return amount
+
+
+def payment_void_update(kind: str, gross: float, unpaid_status: str) -> list:
+    """Pipeline pengurang faktur saat satu pembayaran dibatalkan — kebalikan rumus bayar
+    (`ar_payment_guard_and_update` / `ap_payment_guard_and_update`). Status baru: lunas bila sisa pembayaran + nota
+    masih menutup total; dibayar sebagian bila masih ada pembayaran lain; selain itu kembali ke status sebelum
+    dibayar (`unpaid_status`: terbit/terkirim atau lewat jatuh tempo). Faktur batal/hapus buku tidak berubah status."""
+    new_paid = {"$max": [0, {"$subtract": [{"$ifNull": ["$paid_amount", 0]}, gross]}]}
+    owed = {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": [_PAY_KIND[kind]["note"], 0]}]}
+    status = {"$cond": [{"$in": [{"$ifNull": ["$status", ""]}, _KEEP_STATUS_ON_VOID]}, "$status",
+                        {"$cond": [{"$gte": [new_paid, {"$subtract": [owed, 0.01]}]}, "paid",
+                                   {"$cond": [{"$gt": [new_paid, 0.009]}, "partial_paid", unpaid_status]}]}]}
+    pipeline = [{"$set": {
+        "paid_amount": {"$round": [new_paid, 0]},
+        "balance": {"$max": [0, {"$round": [{"$subtract": [owed, new_paid]}, 0]}]},
+        "status": status,
+        "updated_at": _now(),
+    }}]
+    if kind == "ar":   # cermin kanonik (H-01)
+        pipeline.append({"$set": {"total_amount": {"$ifNull": ["$total", 0]}, "amount_paid": "$paid_amount",
+                                  "amount_due": "$balance"}})
+    return pipeline
+
+
+def _unpaid_status(kind: str, inv: dict) -> str:
+    due = str(inv.get("due_date") or "")[:10]
+    if due and due < _today_iso():
+        return "overdue"
+    return _PAY_KIND[kind]["unpaid"]
+
+
+async def void_invoice_payment(db, kind: str, iid: str, pid: str, reason: str, user: dict) -> dict:
+    """Batalkan SATU pembayaran faktur piutang (`kind='ar'`) atau hutang (`kind='ap'`).
+
+    Urutan: klaim pembayaran atomik (`status='voiding'`, klik ganda → 409) → batalkan jurnalnya (gagal → klaim dilepas,
+    409, pembayaran tetap berlaku) → kurangi `paid_amount` faktur atomik + hitung ulang sisa & status → hapus mutasi
+    kasnya → tandai `voided` (+ siapa, kapan, alasan). Pembayaran antar CV & klien maklon punya jalur batal sendiri."""
+    cfg = _PAY_KIND[kind]
+    reason = (reason or "").strip()
+    if len(reason) < PAYMENT_VOID_MIN_REASON:
+        raise HTTPException(400, f"Alasan pembatalan wajib diisi, minimal {PAYMENT_VOID_MIN_REASON} huruf.")
+    p = await db[cfg["pay"]].find_one({"id": pid, "invoice_id": iid}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Pembayaran tidak ditemukan.")
+    if p.get("status") == "voided":
+        raise HTTPException(409, "Pembayaran ini sudah dibatalkan.")
+    if p.get("intercompany") or p.get("ic_pair_payment_id"):
+        raise HTTPException(409, IC_PAYMENT_VOID_MSG)
+    if p.get("source") == "maklon":
+        raise HTTPException(409, MAKLON_PAYMENT_VOID_MSG)
+    if p.get("source") == "uang_muka":   # 27 Nov 2026: potongan uang muka PO, bukan uang keluar baru
+        raise HTTPException(409, "Ini potongan uang muka pemasok, bukan pembayaran baru — tidak dibatalkan dari sini.")
+    inv = await db[cfg["inv"]].find_one({"id": iid}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Faktur tidak ditemukan.")
+    num = inv.get("invoice_number") or ""
+    if inv.get("intercompany"):
+        raise HTTPException(409, IC_PAYMENT_VOID_MSG)
+    if _is_maklon_schedule(inv):
+        raise HTTPException(409, MAKLON_PAYMENT_VOID_MSG)
+    st = (inv.get("status") or "").lower()
+    if st in _KEEP_STATUS_ON_VOID:
+        raise HTTPException(409, f"Faktur {num} sudah {_STATUS_LABEL.get(st, st)}, jadi pembayarannya tidak bisa "
+                                 f"dibatalkan dari sini.")
+    gross = payment_gross(kind, p)
+    if gross <= 0:
+        raise HTTPException(409, "Nilai pembayaran ini nol, tidak ada yang perlu dibatalkan.")
+    reduced = bool(p.get("void_invoice_reduced_at"))   # proses sebelumnya mati SESUDAH faktur dikurangi
+    if not reduced and float(inv.get("paid_amount") or 0) + 0.01 < gross:
+        raise HTTPException(409, f"Data faktur {num} tidak cocok: tercatat dibayar {_rp(inv.get('paid_amount'))}, "
+                                 f"lebih kecil dari pembayaran ini ({_rp(gross)}). Hubungi admin keuangan.")
+
+    # ── klaim atomik: klik ganda / dua pengguna → hanya satu yang lolos; klaim basi (proses mati) boleh diambil ulang
+    now = _now()
+    prev_status = p.get("void_prev_status") if p.get("status") == "voiding" else p.get("status")
+    claim = await db[cfg["pay"]].update_one(
+        {"id": pid, "invoice_id": iid, "$or": [
+            {"status": {"$nin": ["voided", "voiding"]}},
+            {"status": "voiding", "void_claim_at": {"$lt": now - timedelta(minutes=PAYMENT_VOID_STALE_MIN)}}]},
+        {"$set": {"status": "voiding", "void_claim_at": now, "void_claim_by": user.get("id"),
+                  "void_prev_status": prev_status}})
+    if not claim.matched_count:
+        cur = await db[cfg["pay"]].find_one({"id": pid}, {"_id": 0, "status": 1}) or {}
+        if cur.get("status") == "voided":
+            raise HTTPException(409, "Pembayaran ini sudah dibatalkan.")
+        raise HTTPException(409, "Pembayaran ini sedang dibatalkan pengguna lain. Muat ulang lalu periksa hasilnya.")
+
+    async def _release():
+        upd = {"$unset": {"void_claim_at": "", "void_claim_by": "", "void_prev_status": ""}}
+        if prev_status is None:
+            upd["$unset"]["status"] = ""
+        else:
+            upd["$set"] = {"status": prev_status}
+        await db[cfg["pay"]].update_one({"id": pid, "status": "voiding"}, upd)
+
+    # ── jurnal pembayaran: kunci sumber yang sama dengan saat diposting
+    try:
+        res = await _void_je_by_source(db, cfg["src"], payment_void_source_ref(kind, p), user,
+                                       f"Pembayaran {num} dibatalkan: {reason}")
+    except Exception as e:  # noqa: BLE001
+        log.exception("void jurnal pembayaran %s gagal", pid)
+        res = {"ok": False, "error": str(e)}
+    if _ok(res) and not res.get("voided") and not res.get("reversed") and p.get("gl_je_id"):
+        # jurnal tercatat di pembayaran tetapi tidak ketemu lewat kuncinya (data lama) → jangan diam-diam lolos
+        je = await db.rahaza_journal_entries.find_one({"id": p["gl_je_id"]}, {"_id": 0})
+        if je and je.get("status") != "voided" and not je.get("source_ref_asli"):
+            res = {"ok": False, "error": f"jurnal {je.get('je_number') or ''} tidak ditemukan lewat kunci pembayarannya. "
+                                         f"Batalkan jurnal itu dari Buku Jurnal dulu"}
+    if not _ok(res):
+        await _release()
+        raise HTTPException(409, f"Pembayaran tidak dibatalkan: jurnalnya tidak bisa dibatalkan "
+                                 f"({posting_error_message(res)}). Pembayaran tetap tercatat.")
+
+    # ── faktur: kurangi yang sudah dibayar (atomik), hitung ulang sisa & status
+    if not reduced:
+        updated = await db[cfg["inv"]].find_one_and_update(
+            {"id": iid, "$expr": {"$gte": [{"$ifNull": ["$paid_amount", 0]}, gross - 0.01]}},
+            payment_void_update(kind, gross, _unpaid_status(kind, inv)),
+            return_document=ReturnDocument.AFTER)
+        if not updated:
+            msg = "jurnal sudah dibatalkan, tetapi nilai dibayar faktur lebih kecil dari pembayaran ini"
+            await db[cfg["pay"]].update_one({"id": pid}, {"$set": {"void_error": msg, "void_error_at": _now()}})
+            log.error("void pembayaran %s: faktur %s tidak bisa dikurangi (%s)", pid, iid, msg)
+            raise HTTPException(409, f"Jurnal pembayaran sudah dibatalkan, tetapi sisa faktur {num} tidak bisa "
+                                     f"dikembalikan karena data dibayar faktur tidak cocok. Hubungi admin keuangan.")
+        await db[cfg["pay"]].update_one({"id": pid}, {"$set": {"void_invoice_reduced_at": _now()}})
+
+    # ── mutasi kas pembayaran dihapus (sama dengan batal pembayaran tagihan CMT)
+    if p.get("movement_id"):
+        await db.rahaza_cash_movements.delete_one({"id": p["movement_id"]})
+    # ── nota penjualan langsung ikut (layar Penjualan membaca dibayar/status notanya sendiri)
+    if kind == "ar" and inv.get("direct_sale_id"):
+        fresh = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0}) or {}
+        await db.sales_direct_notes.update_one(
+            {"id": inv["direct_sale_id"], "status": {"$in": ["confirmed", "paid"]}},
+            {"$set": {"paid_amount": fresh.get("paid_amount"),
+                      "status": "paid" if fresh.get("status") == "paid" else "confirmed", "updated_at": _now()}})
+
+    await db[cfg["pay"]].update_one({"id": pid}, {
+        "$set": {"status": "voided", "voided_at": _now(), "voided_by": user.get("id"),
+                 "voided_by_name": user.get("name", ""), "void_reason": reason,
+                 "void_je_number": res.get("je_number"), "void_reversal_je_number": res.get("reversal_je_number")},
+        "$unset": {"void_claim_at": "", "void_claim_by": "", "void_prev_status": "", "void_error": ""}})
+    await log_activity(user.get("id") or "", user.get("name") or "", "void_payment", cfg["activity"],
+                       f"Batalkan pembayaran {num} {_rp(gross)}: {reason}")
+    out = await db[cfg["inv"]].find_one({"id": iid}, {"_id": 0})
+    out["_void_result"] = res
+    out["_payment_id"] = pid
+    return out
+
+
+async def _void_reason(request: Request) -> str:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — badan kosong = alasan kosong (ditolak 400 di bawah)
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    return str(body.get("alasan") or body.get("reason") or "")
+
+
+@router.post("/ar-invoices/{iid}/payments/{pid}/void")
+async def void_ar_payment(iid: str, pid: str, request: Request):
+    """Batalkan satu pembayaran piutang. Izin sama dengan Terima pembayaran (`record_ar_payment`)."""
+    user = await _require_fin(request)
+    db = get_db()
+    return serialize_doc(await void_invoice_payment(db, "ar", iid, pid, await _void_reason(request), user))
+
+
 # 2026-08-07 — DI SINI DULU ADA DEKORATOR MENGGANTUNG: `@router.get("/ar-aging")`
 # berdiri sendiri tanpa fungsi di bawahnya. Python MENUMPUK dekorator yang
 # terpisah baris kosong/komentar, jadi dekorator itu menempel ke
@@ -745,28 +1067,37 @@ async def write_off_bad_debt(iid: str, request: Request):
     user = await _require_fin(request)
     db = get_db()
     body = await request.json()
-    
+    out = await write_off_ar_invoice(db, iid, (body.get("reason") or "").strip(),
+                                     body.get("write_off_date") or _today_iso(), user)
+    return serialize_doc(out)
+
+
+_WRITE_OFF_FIELDS = ("write_off_date", "write_off_reason", "write_off_amount", "write_off_by", "write_off_by_name",
+                     "write_off_at")
+
+
+async def write_off_ar_invoice(db, iid: str, reason: str, write_off_date: str, user: dict) -> dict:
+    """Hapus buku piutang macet. Paket 1 (audit 25 Nov 2026): klaim status atomik (status + sisa lama di filter),
+    lalu jurnal Dr Beban piutang macet / Cr Piutang. Jurnal gagal → status & sisa dikembalikan, alasannya disimpan
+    di `post_error`, dan 409 — dulu faktur tetap "dihapusbukukan" bersisa 0 tanpa jurnal dan tidak bisa diulang."""
     inv = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan")
-    
+
     current_status = inv.get("status")
     if current_status in ("written_off", "cancelled", "paid", "draft", "void"):  # FIN-20c: draft belum pernah mendebit piutang
-        raise HTTPException(400, f"Invoice dengan status '{current_status}' tidak bisa di-write off")
-    
+        raise HTTPException(400, f"Faktur berstatus {_STATUS_LABEL.get(current_status, current_status)} "
+                                 f"tidak bisa dihapusbukukan.")
+
     balance = float(inv.get("balance") or 0)
     if balance <= 0:
         raise HTTPException(400, "Invoice sudah lunas, tidak bisa di-write off")
-    
-    write_off_date = body.get("write_off_date") or _today_iso()
-    reason = body.get("reason", "").strip()
-    
     if not reason:
         raise HTTPException(400, "Reason wajib diisi untuk audit trail")
-    
-    # Update invoice status
-    await db.rahaza_ar_invoices.update_one(
-        {"id": iid},
+
+    now = _now()
+    claim = await db.rahaza_ar_invoices.update_one(
+        {"id": iid, "status": current_status, "balance": inv.get("balance")},
         {"$set": {
             "status": "written_off",
             "write_off_date": write_off_date,
@@ -775,25 +1106,43 @@ async def write_off_bad_debt(iid: str, request: Request):
             "amount_due": 0, "balance": 0,
             "write_off_by": user.get("id"),
             "write_off_by_name": user.get("name", ""),
-            "write_off_at": _now(),
-            "updated_at": _now(),
+            "write_off_at": now,
+            "updated_at": now,
         }}
     )
-    
+    if not claim.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
+
     # Auto-post bad debt expense
-    posting_result = None
     try:
         from routes.rahaza_posting import post_bad_debt_writeoff
         inv_refresh = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
         posting_result = await post_bad_debt_writeoff(db, inv_refresh, user)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.exception("Bad debt write-off GL posting failed")
         posting_result = {"ok": False, "error": str(e)}
-    
-    # Get final state
+
+    if not _ok(posting_result):
+        msg = posting_error_message(posting_result)
+        restore = {"status": current_status, "balance": inv.get("balance"), "updated_at": _now(),
+                   "post_error": f"Hapus buku gagal dijurnal: {msg}", "post_error_at": _now(),
+                   "post_error_kind": "write_off"}
+        upd = {"$set": restore}
+        for f in ("amount_due",) + _WRITE_OFF_FIELDS:
+            if f in inv:
+                restore[f] = inv[f]
+            else:
+                upd.setdefault("$unset", {})[f] = ""
+        await db.rahaza_ar_invoices.update_one({"id": iid, "status": "written_off"}, upd)
+        raise HTTPException(409, f"Faktur {inv.get('invoice_number') or ''} tidak dihapusbukukan: jurnalnya gagal "
+                                 f"dicatat ({msg}). Status dan sisa faktur dikembalikan. Perbaiki penyebabnya lalu ulangi.")
+    # hapus buku berhasil → galat hapus buku sebelumnya (bila ada) dibersihkan
+    await db.rahaza_ar_invoices.update_one({"id": iid, "post_error_kind": "write_off"},
+                                           {"$set": {"post_error": None, "post_error_at": None, "post_error_kind": None}})
+
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     out["_posting_result"] = posting_result
-    
+
     from auth import log_activity
     await log_activity(
         user.get("id", "system"),
@@ -802,8 +1151,7 @@ async def write_off_bad_debt(iid: str, request: Request):
         "ar_invoices",
         f"Write-off bad debt: {inv.get('invoice_number')} - Rp {balance:,.0f} - Reason: {reason}"
     )
-    
-    return serialize_doc(out)
+    return out
 
 
 @router.get("/ar-invoices/overdue-report")
@@ -922,6 +1270,8 @@ async def list_ap(request: Request, status: Optional[str] = None, limit: int = Q
     rows = await db.rahaza_ap_invoices.find(q, {"_id": 0}).sort("issue_date", -1).limit(limit).to_list(limit)
     for r in rows:
         r["entity"] = entity_of_doc(r)
+        if (r.get("status") or "") not in ("cancelled", "void"):
+            r["balance"] = ap_open_balance(r)   # Paket 1: nota debit langsung mengurangi sisa
     return serialize_doc(rows)
 
 
@@ -1010,26 +1360,11 @@ async def record_ap_payment(iid: str, request: Request):
     if ic_out is not None:
         return ic_out
     # ── R10 concurrency hardening (TOCTOU-safe): atomic conditional payment (CC3).
+    # Paket 1 (25 Nov 2026): nota debit (`debit_note_amount`) mengurangi yang masih boleh dibayar.
+    _guard, _pipeline = ap_payment_guard_and_update(gross)
     updated = await db.rahaza_ap_invoices.find_one_and_update(
-        {
-            "id": iid,
-            "status": {"$nin": ["cancelled", "void", "written_off"]},
-            "$expr": {"$lte": [
-                {"$add": [{"$ifNull": ["$paid_amount", 0]}, gross]},
-                {"$add": [{"$ifNull": ["$total", 0]}, 0.01]},
-            ]},
-        },
-        [{"$set": {
-            "paid_amount": {"$round": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, gross]}, 0]},
-            "balance": {"$max": [0, {"$round": [
-                {"$subtract": [{"$ifNull": ["$total", 0]},
-                               {"$add": [{"$ifNull": ["$paid_amount", 0]}, gross]}]}, 0]}]},
-            "status": {"$cond": [
-                {"$gte": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, gross]},
-                          {"$subtract": [{"$ifNull": ["$total", 0]}, 0.01]}]},
-                "paid", "partial_paid"]},
-            "updated_at": _now(),
-        }}],
+        {"id": iid, "status": {"$nin": ["cancelled", "void", "written_off"]}, "$expr": _guard},
+        _pipeline,
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
@@ -1039,7 +1374,9 @@ async def record_ap_payment(iid: str, request: Request):
         _st = (inv2.get("status") or "").lower()
         if _st in ("cancelled", "void", "written_off"):
             raise HTTPException(400, f"Tidak bisa mencatat pembayaran untuk invoice berstatus '{_st}'.")
-        raise HTTPException(400, "Pembayaran + diskon melebihi sisa hutang invoice.")
+        _dn = float(inv2.get("debit_note_amount") or 0)
+        raise HTTPException(400, f"Pembayaran + diskon melebihi sisa hutang invoice (sisa "
+                                 f"{'setelah nota debit ' if _dn > 0.009 else ''}{_rp(ap_remaining(inv2))}).")
     inv = updated
     payment_date = body.get("date") or _today_iso()
     movement_id = None
@@ -1092,6 +1429,14 @@ async def list_ap_payments(iid: str, request: Request):
     return serialize_doc(await _enrich_payments(db, rows))
 
 
+@router.post("/ap-invoices/{iid}/payments/{pid}/void")
+async def void_ap_payment(iid: str, pid: str, request: Request):
+    """Batalkan satu pembayaran hutang pemasok (Paket 1). Izin sama dengan Bayar (`record_ap_payment`)."""
+    user = await _require_fin(request)
+    db = get_db()
+    return serialize_doc(await void_invoice_payment(db, "ap", iid, pid, await _void_reason(request), user))
+
+
 @router.post("/ap-invoices/{iid}/status")
 async def change_ap_status(iid: str, request: Request):
     """F2: AP status change (draft → sent → cancelled). Auto-post JE on sent."""
@@ -1100,21 +1445,31 @@ async def change_ap_status(iid: str, request: Request):
     body = await request.json()
     new_status = (body.get("status") or "").lower()
     if new_status not in AP_STATUS:
-        raise HTTPException(400, f"status invalid: {AP_STATUS}")
+        raise HTTPException(400, "Status faktur tidak dikenal.")
+    if new_status not in AP_STATUS_MANUAL:
+        raise HTTPException(400, STATUS_BY_PAYMENT_MSG)   # Paket 1: lunas hanya lewat pembayaran (berjurnal)
     inv = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if inv.get("intercompany"):
         raise HTTPException(400, IC_DOC_MSG)   # Tahap 8 fase 2
     old_status = inv.get("status")
+    _guard_manual_status(inv, old_status, new_status)
     # 2026-11-02 (audit No.44a): batal faktur yang sudah dibayar mem-void jurnal faktur tetapi jurnal
     # pembayaran tetap → hutang 2-1100 bersaldo debit tanpa dokumen. Aturan sama dengan faktur maklon.
     if new_status == "cancelled" and float(inv.get("paid_amount") or 0) > 0.009:
         _paid = f"{float(inv.get('paid_amount') or 0):,.0f}".replace(",", ".")
         raise HTTPException(400, f"Faktur {inv.get('invoice_number')} sudah dibayar Rp {_paid} — tidak bisa "
                                  f"dibatalkan. Batalkan/void pembayarannya dulu atau buat nota debit/retur pemasok.")
+    # Paket 1 (25 Nov 2026): nota debit mendebit hutang faktur ini di buku besar — batal faktur akan membuat hutang
+    # pemasok bersaldo debit tanpa dokumen. Nota debitnya dibatalkan dulu.
+    if new_status == "cancelled" and float(inv.get("debit_note_amount") or 0) > 0.009:
+        raise HTTPException(409, f"Faktur {inv.get('invoice_number')} sudah dikurangi nota debit "
+                                 f"{_rp(inv.get('debit_note_amount'))}. Batalkan nota debitnya dulu, baru batalkan fakturnya.")
     if new_status == "cancelled" and (inv.get("source") == "gr" or inv.get("gr_ids")):
         return await _cancel_ap_from_gr(db, inv, user)
+    if new_status == "cancelled":
+        return serialize_doc(await _cancel_ap_manual(db, inv, user))
     # 2026-11-06 (pola P9): status lama di filter — pemeriksaan "sudah dibayar" di atas tidak lagi bisa
     # disalip pembayaran yang masuk di sela baca & tulis.
     _res = await db.rahaza_ap_invoices.update_one({"id": iid, "status": old_status},
@@ -1127,8 +1482,6 @@ async def change_ap_status(iid: str, request: Request):
     try:
         if new_status == "sent" and old_status != "sent" and not out.get("gl_je_id"):
             posting_result = await post_ap_invoice(db, out, user)
-        elif new_status == "cancelled" and out.get("gl_je_id"):
-            posting_result = await void_ap_invoice_posting(db, iid, user, reason="AP cancelled")
     except Exception as e:
         log.exception("AP auto-post failed")
         posting_result = {"ok": False, "error": str(e)}
@@ -1137,6 +1490,36 @@ async def change_ap_status(iid: str, request: Request):
     if posting_result is not None:
         out["_posting_result"] = posting_result
     return serialize_doc(out)
+
+
+async def _cancel_ap_manual(db, inv: dict, user: dict) -> dict:
+    """Batal faktur pemasok yang BUKAN dari penerimaan barang (Paket 1, audit 25 Nov 2026) — pola sama dengan
+    `_cancel_ap_from_gr`: klaim status atomik → void jurnal → gagal = status dikembalikan + 409. Dulu status sudah
+    "batal" walau jurnal hutangnya tidak bisa dibatalkan (mis. periode tertutup)."""
+    iid, old_status = inv["id"], inv.get("status")
+    num = inv.get("invoice_number") or ""
+    if old_status in ("cancelled", "void"):
+        raise HTTPException(400, f"Faktur {num} sudah dibatalkan.")
+    claim = await db.rahaza_ap_invoices.update_one(
+        {"id": iid, "status": old_status,
+         "paid_amount": {"$not": {"$gt": 0.009}}, "debit_note_amount": {"$not": {"$gt": 0.009}}},
+        {"$set": {"status": "cancelled", "updated_at": _now()}})
+    if not claim.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
+    try:
+        res = await void_ap_invoice_posting(db, iid, user, reason="AP cancelled")
+    except Exception as e:  # noqa: BLE001
+        log.exception("void jurnal faktur pemasok gagal")
+        res = {"ok": False, "error": str(e)}
+    if not _ok(res):
+        await db.rahaza_ap_invoices.update_one({"id": iid, "status": "cancelled"},
+                                               {"$set": {"status": old_status, "updated_at": _now()}})
+        raise HTTPException(409, f"Faktur {num} tidak dibatalkan: jurnalnya tidak bisa dibatalkan "
+                                 f"({posting_error_message(res)}). Status faktur dikembalikan.")
+    await db.rahaza_ap_invoices.update_one({"id": iid}, {"$set": {**GL_CLEAR, "updated_at": _now()}})
+    out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
+    out["_posting_result"] = res
+    return out
 
 
 async def _cancel_ap_from_gr(db, inv: dict, user: dict) -> dict:
@@ -1190,6 +1573,10 @@ async def send_ap_invoice(iid: str, request: Request):
     except Exception as e:
         log.exception("AP send auto-post failed")
         posting_result = {"ok": False, "error": str(e)}
+    # 27 Nov 2026: tagihan dari PO yang punya uang muka (CBD/DP) langsung dipotong uang mukanya
+    if out.get("po_ids"):
+        from core.uang_muka_pemasok import terapkan_ke_tagihan
+        await terapkan_ke_tagihan(db, iid, user)
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
     out["_posting_result"] = posting_result
     return serialize_doc(out)
@@ -1562,9 +1949,15 @@ async def finance_summary(request: Request):
     # 2026-11-06 (pola P4): status hutang terbuka = core.payables.AP_OPEN (cron menandai `overdue`;
     # dulu tagihan jatuh tempo hilang dari angka hutang di ringkasan ini)
     from core.payables import AP_OPEN
+    # Paket 1 (25 Nov 2026): faktur bernota debit → sisa = total − nota debit − dibayar (rumus `ap_open_balance`)
+    _dn = {"$ifNull": ["$debit_note_amount", 0]}
+    _ap_open = {"$cond": [
+        {"$gt": [_dn, 0.009]},
+        {"$max": [0, {"$subtract": [{"$subtract": [{"$ifNull": ["$total", 0]}, _dn]}, {"$ifNull": ["$paid_amount", 0]}]}]},
+        {"$ifNull": ["$balance", 0]}]}
     ap = await db.rahaza_ap_invoices.aggregate([
         {"$match": {"status": {"$in": list(AP_OPEN)}}},
-        {"$group": {"_id": None, "outstanding": {"$sum": "$balance"}, "count": {"$sum": 1}}},
+        {"$group": {"_id": None, "outstanding": {"$sum": _ap_open}, "count": {"$sum": 1}}},
     ]).to_list(500)
     cash_rows = await _cash_accounts_with_gl(db, {"active": True})
     return {
