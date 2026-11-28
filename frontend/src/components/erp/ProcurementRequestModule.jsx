@@ -327,7 +327,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
           return (
             <div key={i} className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
               <div className="flex gap-2">
-                <div className="min-w-0 flex-1 sm:max-w-sm">
+                <div className="min-w-0 flex-1">
                   {/* 28 Nov 2026 (owner): Kategori → Jenis → Barang; baris baru memakai kategori baris sebelumnya */}
                   <PilihBarangPembelian materials={materials} value={it.material_id}
                     onChange={id => pickMaterial(i, id)} labelBebas="Item bebas / non-master"

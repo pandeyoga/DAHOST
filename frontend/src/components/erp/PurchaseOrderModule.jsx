@@ -919,8 +919,10 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             return (
               <div key={item.id} className="border-b border-[var(--glass-border)] pb-3 last:border-0">
                 <div className="grid grid-cols-12 items-end gap-2">
-                  <div className="col-span-12 md:col-span-4">
-                    <span className={lbl}>Material / keterangan</span>
+                  {/* 28 Nov 2026: pemilih barang satu baris penuh (Kategori · Jenis · Barang) — dulu 1/3 lebar sehingga
+                      kategori, jenis, dan warna kain terpotong. */}
+                  <div className="col-span-12">
+                    <span className="mb-1 block text-xs font-medium">Barang</span>
                     <PilihBarangPembelian materials={materials} value={item.material_id}
                       onChange={id => pickMaterial(item.id, id)} kategoriAwal={kategoriAwalBaris(idx)}
                       labelBebas="Item bebas (jasa / non-master)" diutamakan={adaDaftarHarga ? supplierPrices : null}
@@ -932,7 +934,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                         placeholder="Keterangan item, mis. jasa kirim ekspedisi" data-testid={`po-form-item-desc-${idx}`} />
                     )}
                   </div>
-                  <div className="col-span-4 md:col-span-2">
+                  <div className="col-span-4 md:col-span-3">
                     <span className={lbl}>Satuan beli</span>
                     {item.material_id && opt ? (
                       <SmartNativeSelect value={item.uom} onChange={e => updateItem(item.id, 'uom', e.target.value)}
@@ -946,19 +948,19 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                         placeholder="pcs" data-testid={`po-form-item-uom-${idx}`} />
                     )}
                   </div>
-                  <div className="col-span-4 md:col-span-2">
+                  <div className="col-span-4 md:col-span-3">
                     <span className={lbl}>Qty</span>
                     <Input type="number" step="0.01" value={item.qty_input} aria-label="Qty"
                       onChange={e => updateItem(item.id, 'qty_input', parseFloat(e.target.value) || 0)}
                       placeholder="0" className="text-right" data-testid={`po-form-item-qty-${idx}`} />
                   </div>
-                  <div className="col-span-4 md:col-span-2">
+                  <div className="col-span-4 md:col-span-3">
                     <span className={lbl}>Harga / satuan</span>
                     <MoneyInput decimals={2} value={item.unit_cost_input} aria-label="Harga per satuan"
                       onChange={e => updateItem(item.id, 'unit_cost_input', parseFloat(e.target.value) || 0)}
                       placeholder="0" className="text-right" data-testid={`po-form-item-cost-${idx}`} />
                   </div>
-                  <div className="col-span-8 md:col-span-1">
+                  <div className="col-span-8 md:col-span-2">
                     <span className={lbl}>Total</span>
                     <div className="flex h-9 items-center justify-end px-1 text-sm tabular-nums text-muted-foreground"
                       data-testid={`po-form-item-total-${idx}`}>
