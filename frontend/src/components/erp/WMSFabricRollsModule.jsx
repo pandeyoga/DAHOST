@@ -94,6 +94,9 @@ const TAB = [
   { key: 'all', label: 'Semua' }, { key: 'in_stock', label: 'Tersedia' },
   { key: 'partly_issued', label: 'Sebagian terpakai' }, { key: 'fully_issued', label: 'Habis' },
   { key: 'pending_opening', label: 'Menunggu stok awal' },
+  // 28 Nov 2026: roll yang ditutup (cutoff kain / impor stok awal dibatalkan) tidak ikut "Semua" — 473 roll
+  // tertutup cutoff 27 Nov memenuhi daftar dengan sisa 0. Tetap bisa dilihat lewat pilihan ini.
+  { key: 'cancelled', label: 'Dibatalkan' },
 ];
 
 export default function WMSFabricRollsModule({ token }) {
@@ -272,7 +275,7 @@ export default function WMSFabricRollsModule({ token }) {
   };
 
   const filteredRolls = useMemo(() => {
-    if (tab === 'all') return rolls;
+    if (tab === 'all') return rolls.filter(r => r.status !== 'cancelled');
     return rolls.filter(r => r.status === tab);
   }, [rolls, tab]);
 

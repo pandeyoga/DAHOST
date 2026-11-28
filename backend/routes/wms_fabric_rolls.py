@@ -189,7 +189,11 @@ async def list_rolls(
         ]
     total = await db.wh_fabric_rolls.count_documents(q)
     skip = (page - 1) * limit
-    rolls = await db.wh_fabric_rolls.find(q, {"_id": 0}).sort("received_date", -1).skip(skip).limit(limit).to_list(limit)
+    # 28 Nov 2026: urutan WAJIB unik. Dulu hanya `received_date` — ratusan roll bertanggal sama (cutoff kain 27 Nov)
+    # membuat urutan antarhalaman acak, sehingga layar yang memuat semua halaman mendapat roll dobel/terlewat dan
+    # ringkasan "sisa kain" salah. `roll_no` unik → tiap halaman tetap.
+    rolls = await (db.wh_fabric_rolls.find(q, {"_id": 0}).sort([("received_date", -1), ("roll_no", -1)])
+                   .skip(skip).limit(limit).to_list(limit))
     return {
         # Setiap roll dikirim BESERTA satuan aslinya (`uom`, `qty_total`,
         # `qty_remaining`) + info konversi `qty_*_m`. Layar tidak boleh lagi
