@@ -14,6 +14,7 @@
  *  - labelBebas: label pilihan "tanpa master" (kosong = tidak ada pilihan itu)
  *  - diutamakan: { [materialId]: true } barang yang tampil paling atas (mis. punya daftar harga supplier)
  *  - labelBarang(m): label opsi barang (bawaan `materialOptionLabel` + warna kain)
+ *  - sebaris: true = Kategori, Jenis, Barang satu baris di layar lebar (form lebar); false = bertumpuk (popup sempit)
  *  - testId: awalan data-testid
  */
 import { useEffect, useMemo, useState } from 'react';
@@ -43,12 +44,14 @@ export function jenisBarang(m) {
   return kalimat(m?.sub_category) || String(m?.name || '').trim() || 'Lainnya';
 }
 
-/** Label barang + warna kain (nama kain sama untuk semua warnanya, jadi warna wajib terlihat). */
+/** Label barang; kain: WARNA tepat sesudah kode (nama kain sama untuk semua warnanya, dan label panjang terpotong
+ *  di tombol pilihan — warna harus tetap terlihat). */
 export function labelBarangBeli(m) {
-  const dasar = materialOptionLabel(m);
   const warna = String(m?.color || '').trim();
-  if (!warna || String(m?.name || '').toLowerCase().includes(warna.toLowerCase())) return dasar;
-  return dasar.replace(` · ${m.name}`, ` · ${m.name} · ${warna}`);
+  if (!warna || String(m?.name || '').toLowerCase().includes(warna.toLowerCase())) return materialOptionLabel(m);
+  const unit = m.unit || m.base_uom || '';
+  const head = [m.code, warna, m.name].filter(Boolean).join(' · ');
+  return unit ? `${head} (${unit})` : head;
 }
 
 const urutkan = (arr, urutan) => [...arr].sort((a, b) => {
@@ -60,7 +63,7 @@ const urutkan = (arr, urutan) => [...arr].sort((a, b) => {
 
 export default function PilihBarangPembelian({
   materials = [], value = '', onChange, kategoriAwal = '', labelBebas = '', diutamakan = null,
-  labelBarang = labelBarangBeli, testId = 'pilih-barang',
+  labelBarang = labelBarangBeli, sebaris = true, testId = 'pilih-barang',
 }) {
   const terpilih = useMemo(() => materials.find((m) => m.id === value) || null, [materials, value]);
   const [kategori, setKategori] = useState(() => (terpilih ? kategoriBarang(terpilih) : kategoriAwal));
@@ -108,28 +111,29 @@ export default function PilihBarangPembelian({
   };
 
   return (
-    <div className="space-y-1.5" data-testid={testId}>
-      <div className="grid grid-cols-2 gap-1.5">
-        <SmartNativeSelect value={kategori} onChange={(e) => gantiKategori(e.target.value)} searchable={false}
-          aria-label="Kategori barang" data-testid={`${testId}-kategori`}>
-          <option value="">Semua kategori</option>
-          {daftarKategori.map(({ k, n }) => <option key={k} value={k}>{`${k} (${n})`}</option>)}
-        </SmartNativeSelect>
-        <SmartNativeSelect value={jenis} onChange={(e) => gantiJenis(e.target.value)} disabled={!kategori}
-          aria-label="Jenis barang" data-testid={`${testId}-jenis`}>
-          <option value="">{kategori ? 'Semua jenis' : 'Pilih kategori dulu'}</option>
-          {daftarJenis.map(({ j, n }) => <option key={j} value={j}>{`${j} (${n})`}</option>)}
+    <div data-testid={testId}
+      className={`grid grid-cols-2 gap-1.5 ${sebaris ? 'sm:grid-cols-[minmax(0,11rem)_minmax(0,15rem)_minmax(0,1fr)]' : ''}`}>
+      <SmartNativeSelect value={kategori} onChange={(e) => gantiKategori(e.target.value)} searchable={false}
+        aria-label="Kategori barang" data-testid={`${testId}-kategori`}>
+        <option value="">Semua kategori</option>
+        {daftarKategori.map(({ k, n }) => <option key={k} value={k}>{`${k} (${n})`}</option>)}
+      </SmartNativeSelect>
+      <SmartNativeSelect value={jenis} onChange={(e) => gantiJenis(e.target.value)} disabled={!kategori}
+        aria-label="Jenis barang" data-testid={`${testId}-jenis`}>
+        <option value="">{kategori ? 'Semua jenis' : 'Pilih kategori dulu'}</option>
+        {daftarJenis.map(({ j, n }) => <option key={j} value={j}>{`${j} (${n})`}</option>)}
+      </SmartNativeSelect>
+      <div className={sebaris ? 'col-span-2 sm:col-span-1' : 'col-span-2'}>
+        <SmartNativeSelect value={value} onChange={(e) => onChange?.(e.target.value)} searchable
+          searchPlaceholder="Cari kode, nama, atau warna…" aria-label="Barang" data-testid={`${testId}-barang`}>
+          <option value="">{labelBebas || 'Pilih barang'}</option>
+          {barang.atas.map((m) => <option key={m.id} value={m.id}>{labelBarang(m)}</option>)}
+          {barang.atas.length > 0 && barang.lain.length > 0 && (
+            <option value="__lain" disabled>Barang lain (tanpa daftar harga supplier ini)</option>
+          )}
+          {barang.lain.map((m) => <option key={m.id} value={m.id}>{labelBarang(m)}</option>)}
         </SmartNativeSelect>
       </div>
-      <SmartNativeSelect value={value} onChange={(e) => onChange?.(e.target.value)} searchable
-        searchPlaceholder="Cari kode, nama, atau warna…" aria-label="Barang" data-testid={`${testId}-barang`}>
-        <option value="">{labelBebas || 'Pilih barang'}</option>
-        {barang.atas.map((m) => <option key={m.id} value={m.id}>{labelBarang(m)}</option>)}
-        {barang.atas.length > 0 && barang.lain.length > 0 && (
-          <option value="__lain" disabled>Barang lain (tanpa daftar harga supplier ini)</option>
-        )}
-        {barang.lain.map((m) => <option key={m.id} value={m.id}>{labelBarang(m)}</option>)}
-      </SmartNativeSelect>
     </div>
   );
 }

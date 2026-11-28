@@ -354,7 +354,8 @@ function PriceForm({ token, supplierId, materials, onClose, onSaved }) {
       <Isian label="Material" wajib>
         {/* 28 Nov 2026 (owner): Kategori → Jenis → Barang, sama dengan form PO & Permintaan Pembelian */}
         <PilihBarangPembelian materials={materials} value={priceForm.material_id}
-          onChange={(id) => setPriceForm((p) => ({ ...p, material_id: id, uom: '' }))} testId="price-form-material" />
+          onChange={(id) => setPriceForm((p) => ({ ...p, material_id: id, uom: '' }))} sebaris={false}
+          testId="price-form-material" />
       </Isian>
       <div className="grid grid-cols-2 gap-4">
         <Isian label="Satuan beli">
