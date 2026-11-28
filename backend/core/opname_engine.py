@@ -891,19 +891,162 @@ async def resolve_item(db, *, material_id: str = "", code: str = "") -> Optional
     return res["_doc"] if res else None
 
 
-async def record_count(db, user: dict, sess: dict, *, mat: dict, bin_id: str, bin_label: str,
-                       qty: float, input_uom: str = "", mode: str = "add") -> dict:
-    """Catat hitungan. mode 'add' = tambah per scan (negatif = koreksi), 'set' = ketik jumlah."""
-    _require_status(sess, "counting")
-    level = sess.get("level") or LEVEL_LOKASI
-    if level == LEVEL_RAK and not bin_id:
-        raise HTTPException(400, "Hitung level rak: bin wajib")
+def hitung_per_roll(sess: dict, mat: Optional[dict]) -> bool:
+    """28 Nov 2026 (owner: "Ya, perbaiki"): KAIN dihitung PER ROLL di opname level lokasi — stok kain wajib sama
+    dengan isi gulungannya, jadi hasil hitung harus menyebut roll mana. Tidak berlaku untuk hitung rak (penempatan
+    saja) dan sesi stok awal hasil impor roll (rollnya sudah dibuat impor; `core.fabric_roll_import`)."""
+    from core import fabric_roll_engine as fre
+    return ((sess.get("level") or LEVEL_LOKASI) == LEVEL_LOKASI and not sess.get("roll_import_id")
+            and fre.per_roll(mat))
+
+
+def _cek_filter(sess: dict, mat: dict) -> None:
     kinds, mids = sess.get("kinds") or [], sess.get("material_ids") or []
     if kinds and kind_of(mat) not in kinds:
         raise HTTPException(400, f"{mat.get('code')} berjenis {KIND_LABELS.get(kind_of(mat))} — di luar filter "
                                  "sesi ini")
     if mids and mat["id"] not in mids:
         raise HTTPException(400, f"{mat.get('code')} tidak ada di daftar cycle count sesi ini")
+
+
+async def _pastikan_baris(db, sess: dict, mat: dict, bin_id: str, bin_label: str) -> str:
+    level = sess.get("level") or LEVEL_LOKASI
+    key = line_key(mat["id"], bin_id, level)
+    if not any(ln.get("key") == key for ln in sess.get("lines") or []):
+        ln = await _new_line(db, mat, level=level, bin_id=bin_id, bin_label=bin_label,
+                             snapshot_qty=0.0, in_snapshot=False, opening=is_opening(sess))
+        await db[SESS].update_one({"id": sess["id"], "lines.key": {"$ne": key}}, {"$push": {"lines": ln}})
+    return key
+
+
+async def _tulis_hitung_roll(db, user: dict, sess: dict, mat: dict, bin_id: str, bin_label: str,
+                             rolls: list, baru: list) -> float:
+    """Simpan daftar roll satu (sesi, kain, bin): counted_qty = Σ isi roll berlabel + roll tanpa label."""
+    ek = {"session_id": sess["id"], "material_id": mat["id"], "bin_id": bin_id or ""}
+    total = _r(sum(float(x.get("qty") or 0) for x in rolls) + sum(float(x.get("qty") or 0) for x in baru))
+    if not rolls and not baru:
+        await db[CNT].delete_one(ek)
+        return 0.0
+    now = _now()
+    await db[CNT].update_one(ek, {
+        "$set": {"counted_qty": total, "rolls": rolls, "rolls_baru": baru, "per_roll": True,
+                 "updated_at": now, "counted_at": now, "counted_by": user.get("id", ""),
+                 "counted_by_name": user.get("name", ""), "bin_label": bin_label, "material_code": mat.get("code"),
+                 "material_name": mat.get("name"), "unit": _uom.base_uom_of(mat) or mat.get("unit")},
+        "$setOnInsert": {"id": _uid(), "engine": ENGINE}}, upsert=True)
+    key = line_key(mat["id"], bin_id, sess.get("level") or LEVEL_LOKASI)
+    if any(ln.get("key") == key and ln.get("status") == ST_NOL for ln in sess.get("lines") or []):
+        await db[SESS].update_one({"id": sess["id"]}, {"$set": {"lines.$[l].status": ST_BELUM}},
+                                  array_filters=[{"l.key": key, "l.status": ST_NOL}])
+    return total
+
+
+async def _isi_hitung_roll(db, sess: dict, mat: dict, bin_id: str) -> tuple:
+    doc = await db[CNT].find_one({"session_id": sess["id"], "material_id": mat["id"], "bin_id": bin_id or ""},
+                                 {"_id": 0}) or {}
+    return list(doc.get("rolls") or []), list(doc.get("rolls_baru") or [])
+
+
+def _hasil_roll(mat: dict, bin_id: str, bin_label: str, total: float, **extra) -> dict:
+    return {"ok": True, "material_id": mat["id"], "material_code": mat.get("code"), "material_name": mat.get("name"),
+            "bin_id": bin_id, "bin_label": bin_label, "counted_qty": total, "base_uom": _uom.base_uom_of(mat),
+            "per_roll": True, **extra}
+
+
+async def record_roll_count(db, user: dict, sess: dict, *, roll: dict, bin_id: str, bin_label: str,
+                            qty: Optional[float]) -> dict:
+    """Scan LABEL ROLL. `qty` = hasil timbang/ukur; kosong = sisa tercatat (`pakai_catatan`, belum ditimbang).
+    Scan ulang roll yang sama (di bin mana pun dalam sesi) = mengganti hitungan roll itu."""
+    from core import fabric_roll_engine as fre
+    _require_status(sess, "counting")
+    if (sess.get("level") or LEVEL_LOKASI) == LEVEL_RAK:
+        raise HTTPException(400, "Hitung level rak (penempatan saja): scan kode barangnya, bukan label roll.")
+    if sess.get("roll_import_id"):
+        raise HTTPException(400, "Sesi stok awal dari impor roll tidak dihitung lewat scan roll.")
+    if roll.get("status") in ("pending_opening", "rejected"):
+        raise HTTPException(400, f"Roll {roll.get('roll_no')} berstatus "
+                                 f"{'menunggu stok awal' if roll.get('status') == 'pending_opening' else 'ditolak QC'} "
+                                 "— tidak dihitung di opname.")
+    mat = await db.rahaza_materials.find_one({"id": roll.get("material_id")}, {"_id": 0})
+    if not mat:
+        raise HTTPException(404, f"Kain roll {roll.get('roll_no')} tidak ada di master bahan.")
+    _cek_filter(sess, mat)
+    pakai_catatan = qty in (None, "")
+    isi = _r(fre.remaining_of(roll)) if pakai_catatan else _r(float(qty))
+    if isi <= 0:
+        raise HTTPException(400, (f"Roll {roll.get('roll_no')} tercatat habis — isi berat/panjang hasil timbang "
+                                  "bila rollnya memang ada.") if pakai_catatan else "Isi roll harus lebih dari 0.")
+    # roll ini mungkin sudah dihitung di bin lain sesi yang sama → pindahkan (satu roll = satu hitungan)
+    async for d in db[CNT].find({"session_id": sess["id"], "material_id": mat["id"]}, {"_id": 0}):
+        if (d.get("bin_id") or "") != (bin_id or "") and any(x.get("roll_id") == roll["id"] for x in d.get("rolls") or []):
+            await _tulis_hitung_roll(db, user, sess, mat, d.get("bin_id") or "", d.get("bin_label") or "",
+                                     [x for x in d["rolls"] if x.get("roll_id") != roll["id"]], d.get("rolls_baru") or [])
+    await _pastikan_baris(db, sess, mat, bin_id, bin_label)
+    rolls, baru = await _isi_hitung_roll(db, sess, mat, bin_id)
+    rolls = [x for x in rolls if x.get("roll_id") != roll["id"]] + [{
+        "roll_id": roll["id"], "roll_no": roll.get("roll_no"), "qty": isi,
+        "remaining_at_count": _r(fre.remaining_of(roll)), "status_at_count": roll.get("status"),
+        "pakai_catatan": pakai_catatan, "at": _now(), "by": user.get("name") or user.get("id", "")}]
+    total = await _tulis_hitung_roll(db, user, sess, mat, bin_id, bin_label, rolls, baru)
+    return _hasil_roll(mat, bin_id, bin_label, total, roll_no=roll.get("roll_no"), roll_qty=isi,
+                       pakai_catatan=pakai_catatan)
+
+
+async def remove_roll_entry(db, user: dict, sess: dict, *, mat: dict, bin_id: str, roll_id: str = "",
+                            baru_index: Optional[int] = None) -> dict:
+    """Koreksi: hapus satu roll berlabel (`roll_id`) atau satu roll tanpa label (`baru_index`) dari hitungan."""
+    _require_status(sess, "counting")
+    rolls, baru = await _isi_hitung_roll(db, sess, mat, bin_id)
+    if roll_id:
+        if not any(x.get("roll_id") == roll_id for x in rolls):
+            raise HTTPException(404, "Roll itu tidak ada di hitungan lokasi ini.")
+        rolls = [x for x in rolls if x.get("roll_id") != roll_id]
+    elif baru_index is not None:
+        if not 0 <= int(baru_index) < len(baru):
+            raise HTTPException(404, "Roll tanpa label itu tidak ada di hitungan lokasi ini.")
+        baru = [x for i, x in enumerate(baru) if i != int(baru_index)]
+    else:
+        raise HTTPException(400, "Pilih roll yang dihapus dari hitungan.")
+    doc = await db[CNT].find_one({"session_id": sess["id"], "material_id": mat["id"], "bin_id": bin_id or ""},
+                                 {"_id": 0, "bin_label": 1}) or {}
+    total = await _tulis_hitung_roll(db, user, sess, mat, bin_id, doc.get("bin_label") or "", rolls, baru)
+    return _hasil_roll(mat, bin_id, doc.get("bin_label") or "", total)
+
+
+async def _record_roll_baru(db, user: dict, sess: dict, *, mat: dict, bin_id: str, bin_label: str,
+                            qty: float, input_uom: str, roll_qty: Optional[float]) -> dict:
+    """Scan KODE KAIN (bukan label roll) = satu roll TANPA LABEL seisi `roll_qty` (wajib; tidak ada catatan untuk
+    dipakai). Kurangi (qty negatif / tombol kurangi) = hapus roll tanpa label terakhir."""
+    if float(qty) < 0:
+        rolls, baru = await _isi_hitung_roll(db, sess, mat, bin_id)
+        if not baru:
+            raise HTTPException(400, f"{mat.get('code')} dihitung per roll — hapus roll berlabel lewat tanda × di "
+                                     "daftar rollnya.")
+        total = await _tulis_hitung_roll(db, user, sess, mat, bin_id, bin_label, rolls, baru[:-1])
+        return _hasil_roll(mat, bin_id, bin_label, total)
+    if roll_qty in (None, "") or float(roll_qty) <= 0:
+        raise HTTPException(400, f"{mat.get('code')} adalah kain — dihitung per roll. Scan label rollnya; untuk roll "
+                                 "tanpa label, isi berat/panjang roll di kolom \"Isi roll\" lalu scan kode kainnya.")
+    base, _trace = scan_to_base(mat, float(roll_qty), input_uom)
+    await _pastikan_baris(db, sess, mat, bin_id, bin_label)
+    rolls, baru = await _isi_hitung_roll(db, sess, mat, bin_id)
+    baru = baru + [{"qty": _r(base), "at": _now(), "by": user.get("name") or user.get("id", "")}]
+    total = await _tulis_hitung_roll(db, user, sess, mat, bin_id, bin_label, rolls, baru)
+    return _hasil_roll(mat, bin_id, bin_label, total, roll_no="", roll_qty=_r(base), tanpa_label=True)
+
+
+async def record_count(db, user: dict, sess: dict, *, mat: dict, bin_id: str, bin_label: str,
+                       qty: float, input_uom: str = "", mode: str = "add", roll_qty: Optional[float] = None) -> dict:
+    """Catat hitungan. mode 'add' = tambah per scan (negatif = koreksi), 'set' = ketik jumlah.
+    Kain di opname level lokasi (`hitung_per_roll`) = satu roll tanpa label per scan (`roll_qty`)."""
+    _require_status(sess, "counting")
+    level = sess.get("level") or LEVEL_LOKASI
+    if level == LEVEL_RAK and not bin_id:
+        raise HTTPException(400, "Hitung level rak: bin wajib")
+    _cek_filter(sess, mat)
+    if hitung_per_roll(sess, mat):
+        return await _record_roll_baru(db, user, sess, mat=mat, bin_id=bin_id, bin_label=bin_label, qty=qty,
+                                       input_uom=input_uom, roll_qty=roll_qty)
     base, trace = scan_to_base(mat, abs(float(qty)), input_uom)
     base = base if float(qty) >= 0 else -base
     key = line_key(mat["id"], bin_id, level)
@@ -992,7 +1135,11 @@ async def evaluate(db, sess: dict) -> dict:
         ev = {**ln, "status": st, "counted_qty": counted if st != ST_BELUM else None,
               "counted_at": counted_at, "entries": [{"bin_id": e.get("bin_id") or "", "bin_label": e.get("bin_label"),
                                                      "counted_qty": e.get("counted_qty"),
-                                                     "counted_at": e.get("counted_at")} for e in ents]}
+                                                     "counted_at": e.get("counted_at"),
+                                                     # 28 Nov 2026: kain dihitung per roll
+                                                     **({"per_roll": True, "rolls": e.get("rolls") or [],
+                                                         "rolls_baru": e.get("rolls_baru") or []}
+                                                        if e.get("per_roll") else {})} for e in ents]}
         if level == LEVEL_LOKASI:
             at = counted_at or _now()
             system, mut = system_qty_at(ln.get("snapshot_qty"), ledger.get(ln["material_id"], []),
@@ -1046,6 +1193,11 @@ async def session_view(db, sess: dict) -> dict:
     blind = sess.get("status") == "counting"
     if blind:
         lines = [{k: v for k, v in ln.items() if k not in _BLIND_FIELDS} for ln in lines]
+        # sisa roll tercatat saat di-scan = angka sistem → ikut disembunyikan selama hitung buta
+        for ln in lines:
+            ln["entries"] = [{**e, "rolls": [{k: v for k, v in r.items() if k != "remaining_at_count"}
+                                             for r in e.get("rolls") or []]} if e.get("per_roll") else e
+                             for e in ln.get("entries") or []]
         totals = {k: totals[k] for k in ("lines", "counted", "belum")}
     s = {k: v for k, v in sess.items() if k not in ("lines", "result")}
     return {"session": serialize_doc(s), "blind": blind, "lines": serialize_doc(lines),
@@ -1424,6 +1576,8 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
             "created_by": user.get("id", ""), "created_by_name": user.get("name", ""),
             "created_at": _now(), "timestamp": _now()})
         await db[SESS].update_one({"id": sess["id"]}, {"$addToSet": {"applied_keys": x["key"]}})
+    roll_sync = await _sinkron_roll(db, user, sess, ev, meta, default_home=default_home, pos_zone=pos_zone,
+                                    loc_docs=loc_docs) if level == LEVEL_LOKASI else {}
     n_pos = await _write_positions(db, user, sess, place_changes, meta)
     if je.get("je_id"):
         await db.rahaza_material_movements.update_many(
@@ -1435,7 +1589,7 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
     summary = {**ev["totals"], "stock_writes": len(writes), "positions_updated": n_pos,
                "je_posted": 1 if je.get("je_id") else 0, "je_number": je.get("je_number"),
                "je_error": None if je.get("ok") else je.get("error"), "uncosted_items": uncosted[:50],
-               "findings": findings[:200]}
+               "findings": findings[:200], **({"roll": roll_sync} if roll_sync else {})}
     await db[SESS].update_one({"id": sess["id"]}, {"$set": {
         "status": "approved", "approved_at": _now(), "approved_by": user.get("id", ""),
         "approved_by_name": user.get("name", ""), "count_date": count_date, "summary": summary,
@@ -1444,6 +1598,73 @@ async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows
                    "positions": {k: list(v) for k, v in place_changes.items()}, "je": je, "findings": findings}}})
     await _roll_import_hook(db, sess, "approved")
     return await get_session(db, sess["id"])
+
+
+async def _sinkron_roll(db, user: dict, sess: dict, ev: dict, meta: dict, *, default_home: str, pos_zone: dict,
+                       loc_docs: dict) -> dict:
+    """28 Nov 2026: roll kain ikut hasil opname (stok kain = isi gulungan).
+
+    Per baris kain (`hitung_per_roll`):
+      * roll berlabel yang dihitung → sisa = sisa kini + (hitung − sisa saat di-scan) — pemakaian sesudah di-scan
+        (cutting) tetap mengurangi; roll pindah ke lokasi baris ini bila tercatat di tempat lain;
+      * roll terbuka kain itu di lokasi sesi yang TIDAK dihitung (termasuk baris "anggap 0") → ditutup
+        (sisa 0, "Tidak ditemukan saat opname …");
+      * roll tanpa label → roll baru (nomor otomatis).
+    Baris kain yang dihitung cara lama (tanpa rincian roll, sesi dibuat sebelum aturan ini) tidak diubah rollnya
+    dan disebut di ringkasan. Aman diulang (`roll_synced_keys`)."""
+    from core import fabric_roll_engine as fre
+    if sess.get("roll_import_id"):
+        return {}
+    done = set(sess.get("roll_synced_keys") or [])
+    loc_ids = sess.get("location_ids") or [sess["location_id"]]
+    no = sess.get("session_no") or ""
+    ref = {"type": "opname", "id": sess["id"], "number": no}
+    hasil = {"disesuaikan": 0, "ditutup": 0, "baru": 0, "tanpa_rincian_roll": []}
+    for x in ev["lines"]:
+        mat = meta.get(x["material_id"])
+        if not fre.per_roll(mat) or x["key"] in done:
+            continue
+        ents = x.get("entries") or []
+        if any(not e.get("per_roll") and float(e.get("counted_qty") or 0) > 0 for e in ents):
+            hasil["tanpa_rincian_roll"].append(x.get("material_code"))
+            continue
+        dihitung = [r for e in ents for r in (e.get("rolls") or [])]
+        baru = [r for e in ents for r in (e.get("rolls_baru") or [])]
+        home = home_location_for(x, default=default_home, zone_home=sess.get("zone_home") or {}, pos_zone=pos_zone,
+                                 loc_ids=loc_ids, loc_docs=loc_docs)
+        home_doc = loc_docs.get(home) or {}
+        home_name = home_doc.get("name") or home_doc.get("code") or ""
+        for c in dihitung:
+            roll = await db[fre.ROLLS].find_one({"id": c.get("roll_id")}, {"_id": 0})
+            if not roll:
+                continue
+            new_rem = fre.remaining_of(roll) + float(c.get("qty") or 0) - float(c.get("remaining_at_count") or 0)
+            extra = ({"location_id": home, "location_name": home_name, "position_id": "", "position_barcode": ""}
+                     if (roll.get("location_id") or "") != home else {})
+            note = (f"Opname {no}: dihitung {float(c.get('qty') or 0):g} {roll.get('uom') or ''}"
+                    + (" (tidak ditimbang, sesuai catatan)" if c.get("pakai_catatan") else "")).strip()
+            await fre.set_remaining(db, roll, new_rem, ref=ref, user=user, notes=note, extra=extra)
+            hasil["disesuaikan"] += 1
+        ids = {c.get("roll_id") for c in dihitung}
+        sisa_lain = await db[fre.ROLLS].find({"material_id": x["material_id"], "status": {"$in": fre.OPEN_STATUSES},
+                                              "location_id": {"$in": loc_ids}}, {"_id": 0}).to_list(2000)
+        for roll in sisa_lain:
+            if roll["id"] in ids:
+                continue
+            await fre.close_roll(db, roll, ref=ref, user=user, notes=f"Tidak ditemukan saat opname {no}")
+            hasil["ditutup"] += 1
+        if baru:
+            made = await fre.create_rolls_from_receipt(
+                db, {"id": sess["id"], "receipt_number": "", "location_id": home, "location_name": home_name,
+                     "created_at": _now()},
+                {"id": sess["id"], "unit_price": float(x.get("unit_cost") or 0), "inspection_status": "passed",
+                 "rejected_qty": 0},
+                mat, [{"qty": float(b.get("qty") or 0), "notes": f"Roll tanpa label — ditemukan saat opname {no}"}
+                      for b in baru if float(b.get("qty") or 0) > 0],
+                user, reference_type="opname", note=f"Ditemukan saat opname {no}")
+            hasil["baru"] += len(made)
+        await db[SESS].update_one({"id": sess["id"]}, {"$addToSet": {"roll_synced_keys": x["key"]}})
+    return hasil if any(v for v in hasil.values()) else {}
 
 
 async def _roll_import_hook(db, sess: dict, status: str) -> None:

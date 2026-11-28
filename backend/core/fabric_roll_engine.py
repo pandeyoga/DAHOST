@@ -378,3 +378,174 @@ async def receipts_missing_rolls(db, limit: int = 50) -> list[dict]:
             if len(out) >= limit:
                 return out
     return out
+
+
+# ═════════════════ STOK = ISI GULUNGAN (28 Nov 2026, owner: "Ya, perbaiki") ═════════════════
+# Untuk KAIN (bahan bersatuan gulungan), `rahaza_material_stock` WAJIB = Σ sisa roll terbuka (`OPEN_STATUSES`).
+# Dulu opname, penyesuaian (rusak/hilang/ditemukan/koreksi), tombol ± di daftar stok, dan pindah lokasi hanya
+# mengubah kg/yard — rollnya tidak ikut, sehingga Cutting memilih gulungan yang angkanya sudah tidak benar.
+# Fungsi di bawah = satu pintu perubahan roll dari jalur-jalur itu (semua mencatat gerak roll).
+EPS = 0.005
+
+
+def per_roll(mat: Optional[dict]) -> bool:
+    """Bahan yang stoknya dilacak PER ROLL: kain (type `fabric`) bersatuan gulungan. Benang kiloan / aksesoris
+    tidak ikut (belum punya roll; aturannya keputusan terpisah)."""
+    m = mat or {}
+    return is_roll_material(m) and str(m.get("type") or m.get("material_type") or "").lower() == "fabric"
+
+
+def status_after(roll: dict, remaining: float) -> str:
+    """Status stok roll dari sisanya (roll ditolak QC tetap ditolak)."""
+    if roll.get("status") == "rejected":
+        return "rejected"
+    if remaining <= 0.0001:
+        return "fully_issued"
+    total = total_of(roll)
+    return "in_stock" if total <= 0 or remaining >= total - 0.0001 else "partly_issued"
+
+
+async def _log_move(db, roll: dict, movement_type: str, qty: float, ref: dict, user: dict, notes: str = "",
+                    from_location: str = "", to_location: str = "") -> None:
+    await db[ROLL_MOVES].insert_one({
+        "id": _uid(), "roll_id": roll["id"], "roll_no": roll.get("roll_no", ""),
+        "movement_type": movement_type, "qty": round(_f(qty), 3), "unit": roll.get("uom", ""),
+        "reference_type": ref.get("type", ""), "reference_id": ref.get("id"), "reference_no": ref.get("number", ""),
+        "from_location": from_location, "to_location": to_location, "notes": notes or ref.get("notes", ""),
+        "created_at": _now(), "created_by": user.get("name") or user.get("id"),
+    })
+
+
+async def set_remaining(db, roll: dict, new_remaining: float, *, ref: dict, user: dict, notes: str = "",
+                        status: Optional[str] = None, extra: Optional[dict] = None) -> dict:
+    """Tetapkan sisa satu roll (≥ 0) + gerak `adjust` sebesar selisihnya. Bila sisa baru melebihi isi awal roll,
+    isi awalnya ikut dinaikkan (roll ditimbang lebih berat dari catatan). Klaim atomik: gagal (409) bila roll
+    berubah sejak dibaca."""
+    field = remaining_field(roll)
+    new_remaining = round(max(_f(new_remaining), 0.0), 3)
+    old = round(remaining_of(roll), 3)
+    st = status or status_after(roll, new_remaining)
+    upd = {field: new_remaining, "status": st, "updated_at": _now(),
+           "updated_by": user.get("name") or user.get("id"), **(extra or {})}
+    if new_remaining > total_of(roll) + 0.0001:
+        upd["weight_kg" if is_weight_uom(roll.get("uom")) else "length_m"] = new_remaining
+    res = await db[ROLLS].update_one({"id": roll["id"], "status": roll.get("status"), field: roll.get(field)},
+                                     {"$set": upd})
+    if not res.matched_count:
+        raise HTTPException(409, f"Roll {roll.get('roll_no')} baru saja berubah oleh transaksi lain — muat ulang "
+                                 "lalu ulangi.")
+    if abs(new_remaining - old) > 0.0001 or st != roll.get("status"):
+        await _log_move(db, roll, "adjust", new_remaining - old, ref, user, notes)
+    return {**roll, **upd}
+
+
+async def close_roll(db, roll: dict, *, ref: dict, user: dict, notes: str) -> dict:
+    """Roll tidak ada lagi secara fisik (tidak ditemukan saat opname): sisa 0, status `cancelled`."""
+    return await set_remaining(db, roll, 0.0, ref=ref, user=user, notes=notes, status="cancelled",
+                               extra={"closed_reason": notes})
+
+
+async def _rolls_of(db, mat: dict, roll_ids: list) -> list:
+    ids = [str(i) for i in roll_ids if i]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(400, "Roll yang sama dipilih lebih dari sekali.")
+    rows = await db[ROLLS].find({"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids) or 1)
+    by_id = {r["id"]: r for r in rows}
+    out = []
+    for i in ids:
+        r = by_id.get(i)
+        if not r:
+            raise HTTPException(404, "Roll yang dipilih tidak ditemukan — muat ulang daftar roll.")
+        if r.get("material_id") != mat.get("id"):
+            raise HTTPException(400, f"Roll {r.get('roll_no')} bukan milik {mat.get('code') or 'kain ini'}.")
+        if r.get("status") not in OPEN_STATUSES:
+            raise HTTPException(400, f"Roll {r.get('roll_no')} sudah tidak tersedia (habis, dibatalkan, atau ditolak).")
+        out.append(r)
+    return out
+
+
+def _sama(a: float, b: float) -> bool:
+    return abs(round(_f(a), 3) - round(_f(b), 3)) <= max(EPS, abs(_f(b)) * 0.0005)
+
+
+async def check_reductions(db, mat: dict, reductions: list, total: float, *, location_id: str = "") -> list:
+    """Validasi (TANPA menulis) pengurangan stok kain (rusak/hilang/koreksi): WAJIB menunjuk roll —
+    `reductions=[{roll_id, qty}]`, Σ qty = `total`, tiap qty ≤ sisa roll, roll di lokasi yang dikurangi.
+    Hasil = [(roll, qty)] untuk `apply_reductions`."""
+    if not reductions:
+        raise HTTPException(400, f"{mat.get('code') or 'Kain'} dilacak per roll: pilih roll yang dikurangi dan "
+                                 "jumlahnya per roll (Gudang › Penyesuaian).")
+    qty_by = {}
+    for r in reductions:
+        q = round(_f((r or {}).get("qty")), 3)
+        if q <= 0:
+            raise HTTPException(400, "Jumlah yang dikurangi per roll harus lebih dari 0.")
+        qty_by[str((r or {}).get("roll_id") or "")] = q
+    rolls = await _rolls_of(db, mat, [str((r or {}).get("roll_id") or "") for r in reductions])
+    s = round(sum(qty_by.values()), 3)
+    if not _sama(s, total):
+        raise HTTPException(400, f"Jumlah per roll ({s:g}) harus sama dengan jumlah yang dikurangi ({_f(total):g}).")
+    for r in rolls:
+        if location_id and (r.get("location_id") or "") not in ("", location_id):
+            raise HTTPException(400, f"Roll {r.get('roll_no')} tidak berada di lokasi yang dikurangi.")
+        if qty_by[r["id"]] > remaining_of(r) + 0.0001:
+            raise HTTPException(400, f"Roll {r.get('roll_no')} hanya bersisa {remaining_of(r):g} {r.get('uom')} — "
+                                     f"tidak bisa dikurangi {qty_by[r['id']]:g}.")
+    return [(r, qty_by[r["id"]]) for r in rolls]
+
+
+async def apply_reductions(db, plan: list, *, ref: dict, user: dict, notes: str = "") -> list:
+    """Tulis hasil `check_reductions`: sisa tiap roll dikurangi + gerak `adjust`."""
+    done = []
+    for r, q in plan:
+        new = await set_remaining(db, r, remaining_of(r) - q, ref=ref, user=user, notes=notes)
+        done.append({"roll_id": r["id"], "roll_no": r.get("roll_no"), "qty": q,
+                     "remaining_after": remaining_of(new), "status": new.get("status")})
+    return done
+
+
+def roll_lines_for_add(mat: dict, rolls, delta: float) -> list:
+    """Isi roll untuk penambahan stok kain: `rolls` = isi tiap roll (kosong = satu roll seisi `delta`),
+    Σ isi = delta."""
+    try:
+        isi = [round(_f(x), 3) for x in (rolls or [delta])]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Isi tiap roll harus berupa angka.")
+    if not isi or any(x <= 0 for x in isi):
+        raise HTTPException(400, "Isi tiap roll harus lebih dari 0.")
+    if not _sama(sum(isi), delta):
+        raise HTTPException(400, f"Jumlah isi roll ({sum(isi):g}) harus sama dengan qty tambah ({_f(delta):g}).")
+    return [{"qty": x} for x in isi]
+
+
+async def check_move(db, mat: dict, roll_ids: list, qty: float, *, from_location_id: str) -> list:
+    """Validasi pindah lokasi kain (TANPA menulis): roll utuh milik kain ini, di lokasi asal, Σ sisa = qty."""
+    if not roll_ids:
+        raise HTTPException(400, f"{mat.get('code') or 'Kain'} dilacak per roll: pilih roll yang dipindah "
+                                 "(roll utuh; jumlahnya mengikuti sisa roll).")
+    rolls = await _rolls_of(db, mat, roll_ids)
+    wrong = [r.get("roll_no") for r in rolls if (r.get("location_id") or "") not in ("", from_location_id)]
+    if wrong:
+        raise HTTPException(400, f"Roll {', '.join(wrong[:5])} tidak berada di lokasi asal.")
+    s = round(sum(remaining_of(r) for r in rolls), 3)
+    if not _sama(s, qty):
+        raise HTTPException(400, f"Sisa {len(rolls)} roll terpilih = {s:g}, tidak sama dengan jumlah yang dipindah "
+                                 f"({_f(qty):g}). Kain dipindah per roll utuh.")
+    return rolls
+
+
+async def move_rolls(db, rolls: list, *, to_location_id: str, to_location_name: str, ref: dict, user: dict) -> list:
+    """Pindah roll (hasil `check_move`) ke lokasi lain: posisi raknya dikosongkan (simpan ulang di lokasi
+    tujuan) + gerak `transfer`."""
+    done = []
+    for r in rolls:
+        res = await db[ROLLS].update_one({"id": r["id"], "status": r.get("status")}, {"$set": {
+            "location_id": to_location_id, "location_name": to_location_name,
+            "position_id": "", "position_barcode": "",
+            "updated_at": _now(), "updated_by": user.get("name") or user.get("id")}})
+        if not res.matched_count:
+            raise HTTPException(409, f"Roll {r.get('roll_no')} baru saja berubah — muat ulang lalu ulangi.")
+        await _log_move(db, r, "transfer", remaining_of(r), ref, user, from_location=r.get("location_name") or "",
+                        to_location=to_location_name)
+        done.append({"roll_id": r["id"], "roll_no": r.get("roll_no"), "qty": remaining_of(r)})
+    return done

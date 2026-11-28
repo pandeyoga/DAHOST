@@ -228,6 +228,13 @@ async def _internal_payload(db, *, from_location_id: str, to_location_id: str, l
         qty = float(ln.get("qty") or 0)
         if qty <= 0:
             raise HTTPException(400, f"Baris {i}: qty harus lebih dari 0.")
+        # 28 Nov 2026: kain dilacak per roll (stok = isi gulungan). SJ internal memindah stok tanpa memilih roll,
+        # jadi kain dipindah lewat Pindah lokasi yang memilih roll utuh.
+        from core import fabric_roll_engine as _fre
+        if _fre.per_roll(mat):
+            raise HTTPException(400, f"Baris {i}: {mat.get('code') or 'kain ini'} adalah kain yang dilacak per roll — "
+                                     "pindahkan lewat Stok & pergerakan › Pindah lokasi (pilih rollnya), bukan "
+                                     "Surat Jalan internal.")
         base = _uom.base_uom_of(mat)
         unit = (ln.get("unit") or "").strip().lower() or base
         factor = 1.0

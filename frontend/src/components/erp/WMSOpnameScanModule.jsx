@@ -153,6 +153,8 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const [scanQty, setScanQty] = useState(1);
   const [scanUom, setScanUom] = useState('');
   const [lastScan, setLastScan] = useState(null);
+  // 28 Nov 2026: kain dihitung per roll — isi satu roll hasil timbang (kosong = sesuai catatan roll)
+  const [rollQty, setRollQty] = useState('');
   // 2026-11-06 (audit layar scan Gudang): hasil scan tampil TEPAT di bawah kotak scan (prop `result`
   // UniversalScanner), bukan di pesan atas halaman yang di HP berada di luar layar.
   const [itemResult, setItemResult] = useState(null);
@@ -277,6 +279,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const sess = view?.session;
   const sessLoc = locations.find((l) => l.id === sess?.location_id);
   const isRak = sess?.level === 'rak';
+  const adaKain = !!sess && !isRak && !sess.roll_import_id && (!(sess.kinds || []).length || (sess.kinds || []).includes('bahan'));
   const lantaiKode = sess?.floor_code || sess?.location_code;
   const ctxBins = useMemo(() => {
     if (!sessLoc) return [];
@@ -356,13 +359,19 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     const q = Number(scanQty) > 0 ? Number(scanQty) : (mode === 'set' ? 0 : 1);
     const payload = { session_id: sess.id, bin_id: ctxBin.id, qty: q };
     if (scanUom && scanUom !== scanBaseUnit) payload.input_uom = scanUom;
+    if (adaKain && String(rollQty).trim() !== '') payload.roll_qty = Number(rollQty);
     try {
       const [r, d] = mode === 'set'
         ? await post('count', { ...payload, item_barcode: code })
         : await post('scan', { ...payload, item_barcode: code });
       if (r.ok) {
         scanFeedback('ok'); setLastScan(d);
-        setItemResult({
+        if (d.per_roll) setRollQty('');
+        setItemResult(d.per_roll ? {
+          tone: 'ok', testId: 'opname-last-scan',
+          title: `Roll ${d.roll_no || 'tanpa label'} · ${fmtNum(d.roll_qty)} ${d.base_uom || ''}${d.pakai_catatan ? ' (tidak ditimbang)' : ''}`.trim(),
+          detail: `${d.material_code} ${d.material_name || ''} · total dihitung ${fmtNum(d.counted_qty)} ${d.base_uom || ''} · ${d.bin_label || 'lantai / belum dirak'}`,
+        } : {
           tone: 'ok', testId: 'opname-last-scan',
           title: `Tercatat: ${d.material_code} · ${fmtNum(d.counted_qty)} ${d.base_uom || ''}`.trim(),
           detail: `${d.material_name || ''} · ${d.bin_label || 'lantai / belum dirak'}`,
@@ -376,6 +385,11 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const undoEntry = async (ln, ent) => {
     const [r, d] = await post('scan-undo', { session_id: sess.id, bin_id: ent.bin_id, item_material_id: ln.material_id, qty: 1 });
     if (r.ok) await loadDetail(sess.id); else flash('error', errText(d, 'Gagal mengurangi'));
+  };
+
+  const hapusRoll = async (ln, ent, patch) => {
+    const [r, d] = await post('roll-undo', { session_id: sess.id, material_id: ln.material_id, bin_id: ent.bin_id, ...patch });
+    if (r.ok) await loadDetail(sess.id); else flash('error', errText(d, 'Gagal menghapus roll dari hitungan'));
   };
 
   const setLine = async (ln, patch) => {
@@ -665,6 +679,19 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               <UomConversionHint opt={scanUomOpt} qty={scanQty} unit={scanUom || scanBaseUnit} fallbackUnit={lastScan?.base_uom || ''} testId="opname-scan-uom-hint" />
             </div>
 
+            {/* 28 Nov 2026: kain dihitung per roll (stok kain = isi gulungannya) */}
+            {adaKain && (
+              <div className="space-y-2 border-t border-[var(--glass-border)] pt-4" data-testid="opname-kain-panel">
+                <p className="text-sm font-medium text-muted-foreground">Kain dihitung per roll</p>
+                <Isian label="Isi roll hasil timbang (kg/yard)" htmlFor="opname-roll-qty"
+                  petunjuk="Isi dulu, lalu scan label rollnya. Kosongkan bila roll tidak ditimbang (pakai catatan roll). Roll tanpa label: isi beratnya lalu scan kode kainnya.">
+                  <GlassInput id="opname-roll-qty" type="number" min={0} step="0.01" value={rollQty} placeholder="Sesuai catatan roll"
+                    onChange={(e) => setRollQty(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') focusItem(); }}
+                    data-testid="opname-roll-qty" />
+                </Isian>
+              </div>
+            )}
+
             {/* 3 · Lokasi hitung: satu blok (pilih, atau scan label) */}
             <div className="space-y-2 border-t border-[var(--glass-border)] pt-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -704,7 +731,25 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                     </div>
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    {(ln.entries || []).map((e) => (
+                    {(ln.entries || []).filter((e) => e.per_roll).map((e) => [
+                      ...(e.rolls || []).map((rl) => (
+                        <span key={`${e.bin_id}-${rl.roll_id}`} className="flex items-center gap-1 rounded border border-[var(--glass-border)] py-0.5 pl-1.5 text-xs text-muted-foreground"
+                          data-testid={`opname-roll-${rl.roll_no}`}>
+                          {rl.roll_no}: {fmtNum(rl.qty)}{rl.pakai_catatan ? ' (tidak ditimbang)' : ''}{e.bin_label ? ` · ${e.bin_label}` : ''}
+                          <Button type="button" variant="ghost" size="icon-sm" className="h-6 w-6" onClick={() => hapusRoll(ln, e, { roll_id: rl.roll_id })}
+                            title="Hapus roll dari hitungan" aria-label={`Hapus roll ${rl.roll_no} dari hitungan`}><X className="w-3 h-3" /></Button>
+                        </span>
+                      )),
+                      ...(e.rolls_baru || []).map((rb, i) => (
+                        <span key={`${e.bin_id}-baru-${i}`} className="flex items-center gap-1 rounded border border-[var(--glass-border)] py-0.5 pl-1.5 text-xs text-muted-foreground"
+                          data-testid={`opname-roll-baru-${ln.material_code}-${i}`}>
+                          Tanpa label: {fmtNum(rb.qty)}{e.bin_label ? ` · ${e.bin_label}` : ''}
+                          <Button type="button" variant="ghost" size="icon-sm" className="h-6 w-6" onClick={() => hapusRoll(ln, e, { baru_index: i })}
+                            title="Hapus roll dari hitungan" aria-label="Hapus roll tanpa label dari hitungan"><X className="w-3 h-3" /></Button>
+                        </span>
+                      )),
+                    ])}
+                    {(ln.entries || []).filter((e) => !e.per_roll).map((e) => (
                       <span key={e.bin_id || 'lantai'} className="flex items-center gap-1 rounded border border-[var(--glass-border)] py-0.5 pl-1.5 text-xs text-muted-foreground">
                         {e.bin_label || 'lantai'}: {fmtNum(e.counted_qty)}
                         <Button type="button" variant="ghost" size="icon-sm" className="h-6 w-6" onClick={() => undoEntry(ln, e)}
@@ -780,6 +825,8 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               title={`Disetujui ${sess.approved_by_name || ''}`.trim()}>
               {sess.summary?.stock_writes || 0} baris stok ditimpa · {sess.summary?.positions_updated || 0} bin diperbarui
               {sess.je_number ? ` · jurnal ${sess.je_number}` : ''}{sess.summary?.je_error ? ` · jurnal GAGAL: ${sess.summary.je_error}` : ''}
+              {sess.summary?.roll ? ` · roll kain: ${sess.summary.roll.disesuaikan || 0} disesuaikan, ${sess.summary.roll.ditutup || 0} ditutup (tidak ditemukan), ${sess.summary.roll.baru || 0} roll baru` : ''}
+              {(sess.summary?.roll?.tanpa_rincian_roll || []).length ? ` · roll tidak disesuaikan (dihitung tanpa rincian roll): ${sess.summary.roll.tanpa_rincian_roll.join(', ')}` : ''}
             </Notice>
           )}
 
@@ -825,7 +872,8 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                       <TableCell className={`text-right font-semibold tabular-nums ${l.variance_qty < 0 ? 'text-[hsl(var(--danger-text))]' : l.variance_qty > 0 ? 'text-[hsl(var(--success-text))]' : 'text-muted-foreground'}`}>{l.variance_qty > 0 ? '+' : ''}{fmtNum(l.variance_qty)}</TableCell>
                       {!isRak && <TableCell className="text-right tabular-nums text-muted-foreground">{fmtRp(l.variance_value)}</TableCell>}
                       <TableCell className="text-sm text-muted-foreground">
-                        {lineStatus(l.status)[0]}{l.reason === 'rusak' ? ' · rusak (6-4300)' : ''}{isRak && !l.in_snapshot ? ` · ${l.resolution === 'lebih' ? 'barang lebih' : 'pindah penempatan'}` : ''}
+                        {lineStatus(l.status)[0]}{l.reason === 'rusak' ? ' · rusak (6-4300)' : ''}
+                        {(l.entries || []).some((e) => e.per_roll) ? ` · ${(l.entries || []).reduce((n, e) => n + (e.rolls || []).length + (e.rolls_baru || []).length, 0)} roll` : ''}{isRak && !l.in_snapshot ? ` · ${l.resolution === 'lebih' ? 'barang lebih' : 'pindah penempatan'}` : ''}
                         {status === 'submitted' && !isRak && l.variance_qty < 0 && (
                           <label className="ml-2 inline-flex items-center gap-1.5">
                             <Checkbox checked={l.reason === 'rusak'} onCheckedChange={(c) => setLine(l, { reason: c === true ? 'rusak' : '' })} aria-label="Rusak" /> Rusak
