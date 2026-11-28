@@ -36,7 +36,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { materialOptionLabel } from '@/lib/materialFields';
+import PilihBarangPembelian from './PilihBarangPembelian';
 import { hapusMaster } from '@/lib/hapusMaster';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
@@ -352,12 +352,9 @@ function PriceForm({ token, supplierId, materials, onClose, onSaved }) {
       judul="Tambah harga" keterangan="Harga per satuan beli; sistem menghitung harga per satuan dasar."
       labelSimpan="Simpan harga" testId="price-form">
       <Isian label="Material" wajib>
-        <SmartNativeSelect value={priceForm.material_id}
-          onChange={(e) => setPriceForm((p) => ({ ...p, material_id: e.target.value, uom: '' }))}
-          className="w-full" data-testid="price-form-material">
-          <option value="">Pilih material</option>
-          {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
-        </SmartNativeSelect>
+        {/* 28 Nov 2026 (owner): Kategori → Jenis → Barang, sama dengan form PO & Permintaan Pembelian */}
+        <PilihBarangPembelian materials={materials} value={priceForm.material_id}
+          onChange={(id) => setPriceForm((p) => ({ ...p, material_id: id, uom: '' }))} testId="price-form-material" />
       </Isian>
       <div className="grid grid-cols-2 gap-4">
         <Isian label="Satuan beli">
@@ -777,7 +774,8 @@ export default function SupplierMasterModule({ token }) {
 
   useEffect(() => {
     apiGet(token, EP.supplierMeta).then(setMeta).catch(() => {});
-    apiGet(token, `${EP.materials}?include_inactive=false`)
+    // 28 Nov 2026: hanya barang yang bisa dibeli (tanpa barang jadi, potongan hasil cutting, penanda kain belum ditentukan)
+    apiGet(token, `${EP.materials}?exclude_type=fg&untuk_beli=true`)
       .then((m) => setMaterials((Array.isArray(m) ? m : m?.items || []).filter((x) => x.active !== false)))
       .catch(() => {});
     apiGet(token, EP.scorecard(365))

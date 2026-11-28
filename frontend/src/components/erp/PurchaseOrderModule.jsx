@@ -8,7 +8,7 @@
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { materialOptionLabel } from '@/lib/materialFields';
+import PilihBarangPembelian, { kategoriBarang, labelBarangBeli } from './procurement/PilihBarangPembelian';
 import {
   Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, TruckIcon, Upload, Download, Tag,
   MoreHorizontal, RefreshCw, Package, Undo2,
@@ -130,7 +130,8 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   useEffect(() => {
     const h = { Authorization: `Bearer ${token}` };
     // 2026-11-07 (Tahap 6 PG1): barang jadi tidak dibeli → disaring di sumbernya (daftar menyusut, bukan disembunyikan)
-    fetch('/api/rahaza/materials?exclude_type=fg', { headers: h })
+    // 28 Nov 2026: hanya barang yang bisa dibeli (tanpa potongan hasil cutting & penanda kain belum ditentukan)
+    fetch('/api/rahaza/materials?exclude_type=fg&untuk_beli=true', { headers: h })
       .then(r => r.ok ? r.json() : [])
       .then(m => setMaterials((Array.isArray(m) ? m : m?.items || []).filter(x => x.active)));
     // Master Supplier (SSOT) — pengganti input nama vendor teks bebas
@@ -277,14 +278,20 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
       .catch(() => { if (!off) setSupplierPrices({}); });
     return () => { off = true; };
   }, [token, createModal, poForm.supplier_id]);
-  const materialChoices = useMemo(() => {
-    const priced = materials.filter(m => supplierPrices[m.id]);
-    return { priced, others: priced.length ? materials.filter(m => !supplierPrices[m.id]) : materials };
-  }, [materials, supplierPrices]);
+  // 28 Nov 2026 (owner): pilih barang lewat Kategori → Jenis → Barang. Baris baru memakai kategori baris sebelumnya;
+  // baris pertama memakai kategori terbanyak di daftar harga supplier terpilih.
+  const kategoriAwalBaris = (idx) => {
+    const prev = idx > 0 ? materials.find(m => m.id === poForm.items[idx - 1]?.material_id) : null;
+    if (prev) return kategoriBarang(prev);
+    const hitung = {};
+    materials.filter(m => supplierPrices[m.id]).forEach(m => { const k = kategoriBarang(m); hitung[k] = (hitung[k] || 0) + 1; });
+    return Object.entries(hitung).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+  };
+  const adaDaftarHarga = Object.keys(supplierPrices).length > 0;
   // Tanda harga di DEPAN label: kolom material sempit, akhiran terpotong "…" sehingga tandanya tak terlihat.
   const pricedLabel = (m) => {
     const p = supplierPrices[m.id];
-    return `Rp ${Number(p.price || 0).toLocaleString('id-ID')}/${p.uom || m.unit || ''} (daftar harga) · ${materialOptionLabel(m)}`;
+    return `Rp ${Number(p.price || 0).toLocaleString('id-ID')}/${p.uom || m.unit || ''} (daftar harga) · ${labelBarangBeli(m)}`;
   };
 
   const createPO = async () => {
@@ -828,9 +835,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 {selectedSupplier.lead_time_days ? ` · waktu kirim ${selectedSupplier.lead_time_days} hari` : ''}
               </p>
             )}
-            {selectedSupplier && materialChoices.priced.length > 0 && (
+            {selectedSupplier && adaDaftarHarga && (
               <p className="text-xs text-primary" data-testid="po-form-supplier-pricelist-info">
-                {materialChoices.priced.length} barang ada di daftar harga supplier ini — tampil paling atas di pilihan material.
+                {Object.keys(supplierPrices).length} barang ada di daftar harga supplier ini — tampil paling atas di pilihan barang.
               </p>
             )}
           </Isian>
@@ -914,22 +921,11 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 <div className="grid grid-cols-12 items-end gap-2">
                   <div className="col-span-12 md:col-span-4">
                     <span className={lbl}>Material / keterangan</span>
-                    <SmartNativeSelect
-                      value={item.material_id}
-                      onChange={e => pickMaterial(item.id, e.target.value)}
-                      data-testid={`po-form-item-material-${idx}`}
-                    >
-                      <option value="">Item bebas (jasa / non-master)</option>
-                      {materialChoices.priced.map(m => (
-                        <option key={m.id} value={m.id}>{pricedLabel(m)}</option>
-                      ))}
-                      {materialChoices.priced.length > 0 && (
-                        <option value="__lain" disabled>Material lain (tanpa daftar harga supplier ini)</option>
-                      )}
-                      {materialChoices.others.map(m => (
-                        <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
-                      ))}
-                    </SmartNativeSelect>
+                    <PilihBarangPembelian materials={materials} value={item.material_id}
+                      onChange={id => pickMaterial(item.id, id)} kategoriAwal={kategoriAwalBaris(idx)}
+                      labelBebas="Item bebas (jasa / non-master)" diutamakan={adaDaftarHarga ? supplierPrices : null}
+                      labelBarang={m => (supplierPrices[m.id] ? pricedLabel(m) : labelBarangBeli(m))}
+                      testId={`po-form-item-material-${idx}`} />
                     {!item.material_id && (
                       <Input className="mt-1" value={item.description} aria-label="Keterangan item"
                         onChange={e => updateItem(item.id, 'description', e.target.value)}

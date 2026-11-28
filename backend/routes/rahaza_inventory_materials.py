@@ -21,10 +21,18 @@ from typing import Optional
 @router.get("/materials")
 async def list_materials(request: Request, type: Optional[str] = None, search: Optional[str] = None,
                          low_stock: Optional[str] = None, include_inactive: Optional[str] = None,
-                         exclude_type: Optional[str] = None):
+                         exclude_type: Optional[str] = None, untuk_beli: Optional[str] = None):
     await require_auth(request)
     db = get_db()
     q = {}
+    # 28 Nov 2026 (owner: form Pengadaan "langsung ke semua master data"): `untuk_beli=true` = barang yang bisa DIBELI —
+    # potongan / kain pola hasil cutting (±1.485 master) dan penanda "kain belum ditentukan" tidak pernah dibeli.
+    if untuk_beli and untuk_beli.lower() == "true":
+        import re as _re
+        from core.kain_master import KODE_DIKECUALIKAN
+        q["is_cut_panel"] = {"$ne": True}
+        q["category_code"] = {"$ne": "CUT_PANEL"}
+        q["code"] = {"$regex": "^(?!" + "|".join(_re.escape(k) for k in sorted(KODE_DIKECUALIKAN)) + ")"}
     if not (include_inactive and include_inactive.lower() == "true"):
         q["active"] = True
     if type:
