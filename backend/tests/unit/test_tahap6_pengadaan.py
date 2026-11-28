@@ -156,9 +156,12 @@ def test_daftar_harga_current_hanya_yang_berlaku_hari_ini(monkeypatch):
 def test_form_po_barang_berdaftar_harga_di_atas():
     s = src("PurchaseOrderModule.jsx")
     assert "/price-list?current=true" in s
-    i_priced = s.index("materialChoices.priced.map(")
-    i_sep = s.index('value="__lain" disabled')
-    i_other = s.index("materialChoices.others.map(")
+    # 28 Nov 2026: urutan "berdaftar harga di atas" kini di pemilih bertingkat (prop `diutamakan`).
+    assert "diutamakan={adaDaftarHarga ? supplierPrices : null}" in s
+    p = src("procurement/PilihBarangPembelian.jsx")
+    i_priced = p.index("barang.atas.map(")
+    i_sep = p.index('value="__lain" disabled')
+    i_other = p.index("barang.lain.map(")
     assert i_priced < i_sep < i_other
     assert "daftar harga" in s and "pricedLabel(m)" in s
     assert 'data-testid="po-form-supplier-pricelist-info"' in s
