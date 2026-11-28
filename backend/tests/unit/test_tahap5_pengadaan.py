@@ -109,8 +109,11 @@ def test_label_material_bersatuan():
     if not lib.exists():
         pytest.skip("frontend tidak ada di lingkungan ini")
     assert "export function materialOptionLabel" in lib.read_text(encoding="utf-8")
+    # 28 Nov 2026: ketiga form memakai pemilih bertingkat `procurement/PilihBarangPembelian` (Kategori → Jenis →
+    # Barang); labelnya tetap `materialOptionLabel` (+ warna kain).
+    assert "materialOptionLabel(m)" in src("procurement/PilihBarangPembelian.jsx")
     for rel in ("PurchaseOrderModule.jsx", "ProcurementRequestModule.jsx", "procurement/SupplierMasterModule.jsx"):
-        assert "materialOptionLabel(m)" in src(rel), rel
+        assert "<PilihBarangPembelian" in src(rel), rel
 
 
 def test_item_aksesoris_membawa_supplier_dan_catatan():

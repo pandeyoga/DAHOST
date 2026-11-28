@@ -19,7 +19,7 @@ import {
   Check, Circle, Layers, Loader2, Package, ArrowUpDown, X,
 } from 'lucide-react';
 import { formatDateID, formatRupiah } from '@/lib/format';
-import { materialOptionLabel } from '@/lib/materialFields';
+import PilihBarangPembelian, { kategoriBarang } from './procurement/PilihBarangPembelian';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -162,7 +162,8 @@ function CreatePRModal({ onClose, onCreated, token }) {
   useEffect(() => {
     const h = { Authorization: `Bearer ${token}` };
     // 2026-11-07 (Tahap 6 PG1): barang jadi tidak dibeli → tidak dimuat ke pilihan material PR
-    fetch(`${API}/api/rahaza/materials?exclude_type=fg`, { headers: h })
+    // 28 Nov 2026: hanya barang yang bisa dibeli (tanpa potongan hasil cutting & penanda kain belum ditentukan)
+    fetch(`${API}/api/rahaza/materials?exclude_type=fg&untuk_beli=true`, { headers: h })
       .then((r) => (r.ok ? r.json() : []))
       .then((m) => setMaterials((Array.isArray(m) ? m : m?.items || []).filter((x) => x.active !== false)))
       .catch(() => {});
@@ -180,6 +181,11 @@ function CreatePRModal({ onClose, onCreated, token }) {
       if (o) setUomMap((p) => ({ ...p, [materialId]: o }));
       return o;
     } catch { return null; }
+  };
+
+  const kategoriAwalItem = (i) => {
+    const prev = i > 0 ? materials.find((m) => m.id === items[i - 1]?.material_id) : null;
+    return prev ? kategoriBarang(prev) : '';
   };
 
   const pickMaterial = async (i, materialId) => {
@@ -322,16 +328,11 @@ function CreatePRModal({ onClose, onCreated, token }) {
             <div key={i} className="space-y-2 rounded-lg border border-[var(--glass-border)] p-3">
               <div className="flex gap-2">
                 <div className="min-w-0 flex-1 sm:max-w-sm">
-                  <SmartNativeSelect
-                    value={it.material_id}
-                    onChange={e => pickMaterial(i, e.target.value)}
-                    data-testid={`pr-item-material-${i}`}
-                  >
-                    <option value="">Item bebas / non-master</option>
-                    {materials.map(m => (
-                      <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
-                    ))}
-                  </SmartNativeSelect>
+                  {/* 28 Nov 2026 (owner): Kategori → Jenis → Barang; baris baru memakai kategori baris sebelumnya */}
+                  <PilihBarangPembelian materials={materials} value={it.material_id}
+                    onChange={id => pickMaterial(i, id)} labelBebas="Item bebas / non-master"
+                    kategoriAwal={kategoriAwalItem(i)}
+                    testId={`pr-item-material-${i}`} />
                 </div>
                 {items.length > 1 && (
                   <Button type="button" variant="ghost" size="icon" className="ml-auto" onClick={() => rmItem(i)}
