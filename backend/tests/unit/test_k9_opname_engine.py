@@ -135,6 +135,12 @@ def env(monkeypatch):
         return f"{prefix}{len(db_[coll].docs) + 1:0{width}d}"
     import utils.counters as uc
     monkeypatch.setattr(uc, "gen_prefixed_number", gen)
+    # 28 Nov 2026: kain dihitung per roll → roll tanpa label terbit saat approve (nomor roll otomatis)
+    from core import fabric_roll_engine as fre
+
+    async def nomor_roll(db_):
+        return f"RL-UJI-{len(db_[fre.ROLLS].docs) + 1:03d}"
+    monkeypatch.setattr(fre, "next_roll_no", nomor_roll)
 
     jes = []
     defaults = {p["event_type"]: dict(p["mapping"]) for p in pp.DEFAULT_PROFILES}
@@ -204,7 +210,10 @@ def seed(db):
 async def _count(db, sess_id, mid, qty, bin_id="", mode="set"):
     sess = await eng.get_session(db, sess_id, for_write=True)
     mat = await eng.resolve_item(db, material_id=mid)
-    return await eng.record_count(db, USER, sess, mat=mat, bin_id=bin_id, bin_label=bin_id, qty=qty, mode=mode)
+    # 28 Nov 2026: kain di opname lokasi dihitung per roll — uji ini menghitungnya sebagai satu roll tanpa label
+    rq = qty if eng.hitung_per_roll(sess, mat) else None
+    return await eng.record_count(db, USER, sess, mat=mat, bin_id=bin_id, bin_label=bin_id, qty=qty, mode=mode,
+                                  roll_qty=rq)
 
 
 async def _flow(db, sess_id, confirm_zero=False):

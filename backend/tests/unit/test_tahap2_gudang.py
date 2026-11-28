@@ -230,8 +230,14 @@ def _sj_in(dn, qty1=5.0, qty2=30.0, **kw):
                           dn.SJLine(description="kancing", qty=qty2, unit="pcs", material_code="A-KCG")])
 
 
+def _bukan_kain(db):
+    """28 Nov 2026: SJ internal menolak KAIN (dilacak per roll → Pindah lokasi). Alur SJ diuji dengan bahan non-kain."""
+    db.rahaza_materials.docs[0]["type"] = "material"
+
+
 def test_sj_internal_terbit_keluar_ke_perjalanan_lalu_diterima_masuk_tujuan(monkeypatch):
     db = _base_db()
+    _bukan_kain(db)
     dn = _dn_env(monkeypatch, db)
     sj = run(dn.create_sj(_sj_in(dn), Req()))["sj"]
     assert sj["stock_mode"] == "transfer" and [ln["material_id"] for ln in sj["lines"]] == ["M1", "M2"]
@@ -257,6 +263,7 @@ def test_sj_internal_terbit_keluar_ke_perjalanan_lalu_diterima_masuk_tujuan(monk
 
 def test_sj_internal_stok_kurang_ditolak_tanpa_stok_bergerak_dan_batal_kembali(monkeypatch):
     db = _base_db()
+    _bukan_kain(db)
     dn = _dn_env(monkeypatch, db)
     # 10 Nov 2026: qty melebihi stok asal sudah ditolak saat BUAT (draf tidak tercipta)
     with pytest.raises(HTTPException) as e:
@@ -325,8 +332,16 @@ def test_transfer_stok_karantina_dan_tereserve_ditolak(monkeypatch):
     with pytest.raises(HTTPException) as e:
         run(ris.material_transfer(Req({"material_id": "M1", "from_location_id": "L1", "to_location_id": "L2", "qty": 5})))
     assert "tersedia 2" in e.value.detail
-    run(ris.material_transfer(Req({"material_id": "M1", "from_location_id": "L1", "to_location_id": "L2", "qty": 2})))
+    # 28 Nov 2026: kain dipindah per ROLL UTUH (stok = isi gulungan) — tanpa roll ditolak, roll ikut pindah lokasi
+    db.wh_fabric_rolls.docs.append({"id": "RX", "roll_no": "RL-X", "material_id": "M1", "uom": "kg", "weight_kg": 2.0,
+                                    "remaining_kg": 2.0, "status": "in_stock", "location_id": "L1"})
+    with pytest.raises(HTTPException) as e:
+        run(ris.material_transfer(Req({"material_id": "M1", "from_location_id": "L1", "to_location_id": "L2", "qty": 2})))
+    assert "per roll" in e.value.detail and _row(db, "M1", "L1")["qty"] == 20.0
+    run(ris.material_transfer(Req({"material_id": "M1", "from_location_id": "L1", "to_location_id": "L2", "qty": 2,
+                                   "roll_ids": ["RX"]})))
     assert _row(db, "M1", "L1")["qty"] == 18.0 and _row(db, "M1", "L2")["qty"] == 2.0
+    assert db.wh_fabric_rolls.docs[-1]["location_id"] == "L2"
 
 
 # ═════════════════════ GUDANG 2 · put-away per zona, tanpa karantina & minus ═════════════════════

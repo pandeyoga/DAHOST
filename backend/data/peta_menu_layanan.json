@@ -234,6 +234,10 @@
   ],
   [
    "POST",
+   "/api/wms/opname3/roll-undo"
+  ],
+  [
+   "POST",
    "/api/wms/opname3/scan"
   ],
   [
@@ -444,6 +448,10 @@
   ],
   [
    "POST",
+   "/api/wms/opname3/roll-undo"
+  ],
+  [
+   "POST",
    "/api/wms/opname3/scan"
   ],
   [
@@ -651,6 +659,10 @@
   [
    "GET",
    "/api/wms/opname3/resolve-bin"
+  ],
+  [
+   "POST",
+   "/api/wms/opname3/roll-undo"
   ],
   [
    "POST",
@@ -8020,6 +8032,10 @@
   ],
   [
    "POST",
+   "/api/wms/opname3/roll-undo"
+  ],
+  [
+   "POST",
    "/api/wms/opname3/scan"
   ],
   [
@@ -11209,6 +11225,10 @@
    "/api/rahaza/material-stock/summary"
   ],
   [
+   "GET",
+   "/api/rahaza/material-stock/x/rolls"
+  ],
+  [
    "POST",
    "/api/rahaza/material-transfer"
   ],
@@ -11267,6 +11287,10 @@
   [
    "GET",
    "/api/wms/opname3/resolve-bin"
+  ],
+  [
+   "POST",
+   "/api/wms/opname3/roll-undo"
   ],
   [
    "POST",

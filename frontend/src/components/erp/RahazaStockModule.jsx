@@ -33,6 +33,9 @@ import { formatDateTimeID } from '@/lib/format';
 import { DataTable } from './DataTableV2';
 import PageLayout from './layout/PageLayout';
 import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
+import PilihRollKain, { useRollKain, totalPilihan, bodyPilihan } from './warehouse/PilihRollKain';
+import RollLinesEditor from './warehouse/RollLinesEditor';
+import { rollLinesState, num as angkaRoll } from './warehouse/rollLines';
 
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk jadi).
 const CAT_LABEL = { bahan: 'Bahan', aksesoris: 'Aksesoris', fg: 'Produk jadi' };
@@ -76,12 +79,29 @@ function QuickAdjustPopover({ row, token, onClose, onDone }) {
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [galat, setGalat] = useState('');
+  // 28 Nov 2026: kain dilacak per roll — kurang = pilih roll, tambah = rincian gulungan baru
+  const [rollKurang, setRollKurang] = useState({});
+  const [rollBaru, setRollBaru] = useState([]);
+  const rollInfo = useRollKain(token, row?.material_id, row?.location_id);
+  const kain = !!rollInfo?.per_roll;
 
-  useEffect(() => { setDelta(''); setNotes(''); setGalat(''); }, [row]);
+  useEffect(() => { setDelta(''); setNotes(''); setGalat(''); setRollKurang({}); setRollBaru([]); }, [row]);
 
   const submit = async () => {
     const qty = Number(delta);
     if (!qty || qty === 0) { setGalat('Perubahan qty tidak boleh 0.'); return; }
+    let rollBody = {};
+    if (kain && qty < 0) {
+      const t = totalPilihan(rollInfo, 'kurang', rollKurang);
+      if (Math.abs(t - Math.abs(qty)) > 0.005) {
+        setGalat(`Jumlah yang dikurangi per roll (${t.toLocaleString('id-ID')}) harus sama dengan perubahan qty (${Math.abs(qty).toLocaleString('id-ID')}).`);
+        return;
+      }
+      rollBody = bodyPilihan(rollInfo, 'kurang', rollKurang);
+    } else if (kain && qty > 0 && rollBaru.length) {
+      if (rollLinesState(rollBaru, qty).state !== 'match') { setGalat('Total isi gulungan harus sama dengan perubahan qty.'); return; }
+      rollBody = { rolls: rollBaru.map((l) => angkaRoll(l.qty)) };
+    }
     setSaving(true); setGalat('');
     try {
       const r = await fetch('/api/rahaza/material-adjust', {
@@ -94,6 +114,7 @@ function QuickAdjustPopover({ row, token, onClose, onDone }) {
           location_id: row.location_id,
           qty,
           reason: notes || (qty > 0 ? 'Penyesuaian cepat +' : 'Penyesuaian cepat -'),
+          ...rollBody,
         }),
       });
       if (r.ok) {
@@ -108,7 +129,7 @@ function QuickAdjustPopover({ row, token, onClose, onDone }) {
   };
 
   return (
-    <FormPopup open={!!row} onClose={onClose} ukuran="pendek" judul="Sesuaikan stok" onSimpan={submit}
+    <FormPopup open={!!row} onClose={onClose} ukuran={kain ? 'panjang' : 'pendek'} judul="Sesuaikan stok" onSimpan={submit}
       menyimpan={saving} galat={galat} bisaSimpan={!!delta} testId="stock-adjust-form"
       keterangan={row ? `${row.material_code} · ${row.location_code || ''} · stok sekarang ${fmtNum(row.qty, 3)} ${row.unit || ''}` : ''}>
       {row && <>
@@ -117,6 +138,14 @@ function QuickAdjustPopover({ row, token, onClose, onDone }) {
             onChange={e => setDelta(e.target.value)} className="tabular-nums" autoFocus
             data-testid={`stock-adjust-delta-${row.material_code}`} />
         </Isian>
+        {kain && Number(delta) < 0 && (
+          <PilihRollKain info={rollInfo} mode="kurang" nilai={rollKurang} onUbah={setRollKurang} testId="stock-adjust-roll" />
+        )}
+        {kain && Number(delta) > 0 && (
+          <RollLinesEditor lines={rollBaru} accepted={Number(delta)} unit={rollInfo?.unit || ''} onChange={setRollBaru}
+            testPrefix="stock-adjust-roll-baru" title="Rincian gulungan yang ditambahkan"
+            subtitle="Kain dilacak per roll. Kosongkan bila semuanya satu roll." />
+        )}
         <Isian label="Alasan" htmlFor="stock-adjust-notes">
           <Input id="stock-adjust-notes" placeholder="Opsional" value={notes} onChange={e => setNotes(e.target.value)}
             data-testid={`stock-adjust-notes-${row.material_code}`} />
@@ -216,7 +245,12 @@ export default function RahazaStockModule({ token }) {
     ? stockAt(transferForm.material_id, transferForm.from_location_id) : null;
 
   const openReceive = () => { setReceiveForm({ material_id: '', location_id: '', qty: '', notes: '' }); setFormError(''); setReceiveOpen(true); };
-  const openTransfer = () => { setTransferForm({ material_id: '', from_location_id: '', to_location_id: '', qty: '', notes: '' }); setFormError(''); setTransferOpen(true); };
+  // 28 Nov 2026: kain dipindah per roll utuh — qty = Σ sisa roll yang dicentang
+  const [rollPindah, setRollPindah] = useState({});
+  const rollTransfer = useRollKain(token, transferForm.material_id, transferForm.from_location_id);
+  const transferKain = !!rollTransfer?.per_roll;
+  const transferQty = transferKain ? totalPilihan(rollTransfer, 'pindah', rollPindah) : Number(transferForm.qty);
+  const openTransfer = () => { setTransferForm({ material_id: '', from_location_id: '', to_location_id: '', qty: '', notes: '' }); setRollPindah({}); setFormError(''); setTransferOpen(true); };
 
   const doReceive = async () => {
     setSaving(true); setFormError('');
@@ -237,13 +271,15 @@ export default function RahazaStockModule({ token }) {
   const doTransfer = async () => {
     setSaving(true); setFormError('');
     try {
+      if (transferKain && !totalPilihan(rollTransfer, 'pindah', rollPindah)) throw new Error('Centang roll yang dipindah.');
       if (!transferForm.material_id || !transferForm.from_location_id || !transferForm.to_location_id) throw new Error('Lengkapi material & kedua lokasi.');
       if (transferForm.from_location_id === transferForm.to_location_id) throw new Error('Lokasi asal dan tujuan tidak boleh sama.');
-      if (!(Number(transferForm.qty) > 0)) throw new Error('Qty harus > 0.');
-      if (transferAvail != null && Number(transferForm.qty) > transferAvail + 1e-9) {
+      if (!(transferQty > 0)) throw new Error('Qty harus > 0.');
+      if (transferAvail != null && transferQty > transferAvail + 1e-9) {
         throw new Error(`Stok di lokasi asal hanya ${transferAvail.toLocaleString('id-ID')} — qty transfer melebihi stok.`);
       }
-      const r = await fetch('/api/rahaza/material-transfer', { method: 'POST', headers, body: JSON.stringify({ ...transferForm, qty: Number(transferForm.qty) }) });
+      const r = await fetch('/api/rahaza/material-transfer', { method: 'POST', headers, body: JSON.stringify({
+        ...transferForm, qty: transferQty, ...(transferKain ? bodyPilihan(rollTransfer, 'pindah', rollPindah) : {}) }) });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         const STATUS_MSG = { 400: 'Data tidak valid / stok kurang.', 403: 'Tidak ada akses.' };
@@ -467,7 +503,7 @@ export default function RahazaStockModule({ token }) {
       </FormPopup>
 
       {/* Pindah lokasi (FormPopup pendek) */}
-      <FormPopup open={transferOpen} onClose={() => setTransferOpen(false)} ukuran="pendek" judul="Pindah lokasi"
+      <FormPopup open={transferOpen} onClose={() => setTransferOpen(false)} ukuran={transferKain ? 'panjang' : 'pendek'} judul="Pindah lokasi"
         keterangan="Memindahkan stok dari satu lokasi gudang ke lokasi lain." onSimpan={doTransfer} menyimpan={saving}
         galat={formError} labelSimpan="Pindahkan" testId="transfer-form">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -504,10 +540,14 @@ export default function RahazaStockModule({ token }) {
             </p>
           )}
         </Isian>
-        <Isian label="Qty" wajib htmlFor="transfer-qty">
-          <Input id="transfer-qty" type="number" step="0.001" inputMode="decimal" value={transferForm.qty}
-            onChange={e => setTransferForm({ ...transferForm, qty: e.target.value })} placeholder="0" data-testid="transfer-qty" />
-        </Isian>
+        {transferKain ? (
+          <PilihRollKain info={rollTransfer} mode="pindah" nilai={rollPindah} onUbah={setRollPindah} testId="transfer-roll" />
+        ) : (
+          <Isian label="Qty" wajib htmlFor="transfer-qty">
+            <Input id="transfer-qty" type="number" step="0.001" inputMode="decimal" value={transferForm.qty}
+              onChange={e => setTransferForm({ ...transferForm, qty: e.target.value })} placeholder="0" data-testid="transfer-qty" />
+          </Isian>
+        )}
         <Isian label="Catatan" htmlFor="transfer-notes">
           <Input id="transfer-notes" value={transferForm.notes} onChange={e => setTransferForm({ ...transferForm, notes: e.target.value })} placeholder="Opsional" />
         </Isian>

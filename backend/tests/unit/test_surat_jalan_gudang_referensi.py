@@ -210,8 +210,20 @@ def test_internal_tanpa_barang_master_ditolak(env):
     assert db.wh_delivery_notes.docs == [] and nomor == []
 
 
+def _bukan_kain(db):
+    """28 Nov 2026: SJ internal menolak KAIN (dilacak per roll → Pindah lokasi). Alur SJ diuji dengan bahan non-kain."""
+    next(m for m in db.rahaza_materials.docs if m["id"] == "M1")["type"] = "material"
+
+
+def test_internal_menolak_kain_per_roll(env):
+    dn, db, nomor = env
+    e = _gagal(dn.create_sj(_int(dn), fm.FakeRequest()))
+    assert e.status_code == 400 and "Pindah lokasi" in e.detail and db.wh_delivery_notes.docs == [] and nomor == []
+
+
 def test_internal_qty_melebihi_stok_asal_ditolak_saat_buat(env):
     dn, db, nomor = env
+    _bukan_kain(db)
     e = _gagal(dn.create_sj(_int(dn, [dn.SJLine(description="k", qty=25, unit="kg", material_id="M1")]),
                             fm.FakeRequest()))
     assert e.status_code == 400 and "tidak cukup" in e.detail and db.wh_delivery_notes.docs == [] and nomor == []
@@ -219,6 +231,7 @@ def test_internal_qty_melebihi_stok_asal_ditolak_saat_buat(env):
 
 def test_internal_penerima_lokasi_tujuan_dan_uraian_dari_master(env):
     dn, db, _ = env
+    _bukan_kain(db)
     body = _int(dn)
     body.recipient_name, body.reference_no = "Penerima Ketikan", "ACUAN-KETIKAN"
     sj = run(dn.create_sj(body, fm.FakeRequest()))["sj"]

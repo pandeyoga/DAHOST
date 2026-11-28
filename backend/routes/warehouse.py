@@ -574,6 +574,12 @@ async def update_receiving(receipt_id: str, request: Request):
             accepted_probe = float(item.get("accepted_qty") if item.get("accepted_qty") is not None
                                    else max(0.0, float(item.get("received_qty", 0) or 0)
                                             - float(item.get("rejected_qty", 0) or 0)))
+            if not lines and accepted_probe > 0 and fabric_roll_engine.per_roll(mat_r):
+                # 28 Nov 2026 (owner: "Ya, perbaiki"): KAIN wajib dirinci per roll saat diterima — stok kain =
+                # isi gulungan; kain tanpa roll tidak bisa dipotong dan angkanya tidak bisa dicocokkan.
+                raise HTTPException(400, (
+                    f"{mat_r.get('code')} — {mat_r.get('name')}: kain dilacak per roll. Isi rincian gulungan "
+                    "(jumlah roll dan berat/panjang tiap roll hasil timbang) sebelum konfirmasi diterima."))
             if not lines:
                 # Kain yang masuk stok TANPA rincian roll bukan kesalahan fatal (GR bisa
                 # datang dari jalur otomatis/PO tanpa timbangan per gulungan), tetapi

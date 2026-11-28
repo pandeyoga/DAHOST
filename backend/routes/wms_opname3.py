@@ -111,6 +111,9 @@ class ScanIn(BaseModel):
     # qty=0 berarti 1 (perilaku lama); negatif ditolak 422
     qty: float = Field(1, ge=0)
     input_uom: str = ""
+    # 28 Nov 2026: isi SATU roll kain (hasil timbang/ukur). Scan label roll: kosong = sesuai catatan roll.
+    # Scan kode kain = satu roll tanpa label (wajib diisi).
+    roll_qty: Optional[float] = Field(None, ge=0)
 
 
 class CountIn(BaseModel):
@@ -121,6 +124,15 @@ class CountIn(BaseModel):
     bin_barcode: str = ""
     qty: float = Field(..., ge=0)
     input_uom: str = ""
+    roll_qty: Optional[float] = Field(None, ge=0)
+
+
+class RollUndoIn(BaseModel):
+    session_id: str
+    material_id: str
+    bin_id: str = ""
+    roll_id: str = ""
+    baru_index: Optional[int] = None
 
 
 class LineIn(BaseModel):
@@ -208,26 +220,66 @@ async def resolve_item(request: Request, barcode: str):
     return serialize_doc(mat)
 
 
+async def _scan_roll(db, user, session_id, bin_id, bin_barcode, code, roll_qty):
+    """28 Nov 2026: kode yang di-scan = LABEL ROLL kain → hitungan roll itu (None bila bukan label roll)."""
+    from core import scan_resolver
+    if not code or (await eng.resolve_item(db, code=code)):
+        return None
+    res = await scan_resolver.resolve(db, code, expect=("roll",))
+    if not res:
+        return None
+    sess = await eng.get_session(db, session_id, for_write=True)
+    eng._require_status(sess, "counting")
+    b_id, b_label = await eng.resolve_count_bin(db, sess, bin_id=bin_id, code=bin_barcode)
+    return await eng.record_roll_count(db, user, sess, roll=res["_doc"], bin_id=b_id, bin_label=b_label, qty=roll_qty)
+
+
 @router.post("/scan")
 async def scan(data: ScanIn, request: Request):
-    """1 scan = +qty (bawaan 1) ke (sesi, bin/lantai, barang). Tanpa konfirmasi per scan."""
+    """1 scan = +qty (bawaan 1) ke (sesi, bin/lantai, barang). Tanpa konfirmasi per scan.
+    Label roll kain = hitungan roll itu (`roll_qty`, kosong = sesuai catatan); kode kain = satu roll tanpa label."""
     user = await require_auth(request)
     db = get_db()
+    if not data.item_material_id:
+        hasil = await _scan_roll(db, user, data.session_id, data.bin_id, data.bin_barcode, data.item_barcode,
+                                 data.roll_qty)
+        if hasil:
+            return serialize_doc(hasil)
     sess, b_id, b_label, mat = await _ctx(db, data.session_id, data.bin_id, data.bin_barcode,
                                           data.item_material_id, data.item_barcode)
     return serialize_doc(await eng.record_count(db, user, sess, mat=mat, bin_id=b_id, bin_label=b_label,
-                                                qty=float(data.qty or 1), input_uom=data.input_uom, mode="add"))
+                                                qty=float(data.qty or 1), input_uom=data.input_uom, mode="add",
+                                                roll_qty=data.roll_qty))
 
 
 @router.post("/count")
 async def count(data: CountIn, request: Request):
-    """Ketik jumlah (set absolut) untuk (sesi, bin/lantai, barang)."""
+    """Ketik jumlah (set absolut) untuk (sesi, bin/lantai, barang). Kain: lihat `/scan`."""
     user = await require_auth(request)
     db = get_db()
+    if not data.material_id:
+        hasil = await _scan_roll(db, user, data.session_id, data.bin_id, data.bin_barcode, data.item_barcode,
+                                 data.roll_qty)
+        if hasil:
+            return serialize_doc(hasil)
     sess, b_id, b_label, mat = await _ctx(db, data.session_id, data.bin_id, data.bin_barcode,
                                           data.material_id, data.item_barcode)
     return serialize_doc(await eng.record_count(db, user, sess, mat=mat, bin_id=b_id, bin_label=b_label,
-                                                qty=data.qty, input_uom=data.input_uom, mode="set"))
+                                                qty=data.qty, input_uom=data.input_uom, mode="set",
+                                                roll_qty=data.roll_qty))
+
+
+@router.post("/roll-undo")
+async def roll_undo(data: RollUndoIn, request: Request):
+    """28 Nov 2026: hapus satu roll (berlabel `roll_id` / tanpa label `baru_index`) dari hitungan kain."""
+    user = await require_auth(request)
+    db = get_db()
+    sess = await eng.get_session(db, data.session_id, for_write=True)
+    mat = await eng.resolve_item(db, material_id=data.material_id)
+    if not mat:
+        raise HTTPException(404, "Kain tidak ditemukan di master.")
+    return serialize_doc(await eng.remove_roll_entry(db, user, sess, mat=mat, bin_id=data.bin_id,
+                                                     roll_id=data.roll_id, baru_index=data.baru_index))
 
 
 @router.post("/scan-undo")

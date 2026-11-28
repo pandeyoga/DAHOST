@@ -1146,8 +1146,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     onChange={(lines) => updateDetailItem(idx, { rolls: lines })}
                     testPrefix={`gr-detail-roll-lines-${idx}`}
                     nextNumberHint={rollPolicy?.next_number || ''}
-                    title="Rincian gulungan (isi sebelum konfirmasi)"
-                    subtitle={`Timbang/ukur tiap gulungan sekarang. Nomor roll otomatis. Total harus ${fmtQty(acceptedOf(item))} ${item.unit} — kalau dilewati, kain masuk daftar "Penerimaan tanpa roll" dan Cutting akan menolak memotongnya.`}
+                    title="Rincian gulungan (wajib untuk kain)"
+                    subtitle={`Timbang/ukur tiap gulungan sekarang. Nomor roll otomatis. Total harus ${fmtQty(acceptedOf(item))} ${item.unit}. Kain tidak bisa dikonfirmasi diterima tanpa rincian gulungan.`}
                   />
                 )}
                 {(item.roll_numbers || []).length > 0 && (

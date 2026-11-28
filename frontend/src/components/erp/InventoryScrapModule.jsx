@@ -31,6 +31,9 @@ import { materialOptionLabel } from '@/lib/materialFields';
 import PageLayout from './layout/PageLayout';
 import TambahQtyForm from './TambahQtyForm';
 import { EmptyState, Notice, StatTile } from './moduleAtoms';
+import PilihRollKain, { useRollKain, totalPilihan, bodyPilihan } from './warehouse/PilihRollKain';
+import RollLinesEditor from './warehouse/RollLinesEditor';
+import { rollLinesState, num as angkaRoll } from './warehouse/rollLines';
 
 // 2026-11-07 (Tahap 5): tanda qty mengikuti tipe — dulu tipe hanya hiasan (tidak dikirim, tidak diperiksa),
 // sehingga "Scrap" dengan qty +50 menambah stok.
@@ -52,7 +55,12 @@ export default function InventoryScrapModule({ token }) {
   const [stockInfo, setStockInfo] = useState(null);
   const [galat, setGalat] = useState('');
   const [menyimpan, setMenyimpan] = useState(false);
+  // 28 Nov 2026: kain dilacak per roll — kurang = pilih roll + jumlah per roll, tambah = rincian gulungan baru
+  const [rollKurang, setRollKurang] = useState({});
+  const [rollBaru, setRollBaru] = useState([]);
   const { toast } = useToast();
+  const rollInfo = useRollKain(token, adjustForm?.material_id, adjustForm?.location_id);
+  const kain = !!rollInfo?.per_roll;
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
     [token]
@@ -104,7 +112,7 @@ export default function InventoryScrapModule({ token }) {
     }
   };
 
-  const tutupForm = () => { setAdjustForm(null); setStockInfo(null); setGalat(''); };
+  const tutupForm = () => { setAdjustForm(null); setStockInfo(null); setGalat(''); setRollKurang({}); setRollBaru([]); };
 
   const adjust = async () => {
     if (!adjustForm) return;
@@ -136,6 +144,21 @@ export default function InventoryScrapModule({ token }) {
       setGalat(`Stok tidak cukup. Tersedia: ${stockInfo.qty}`);
       return;
     }
+    let rollBody = {};
+    if (kain && delta < 0) {
+      const t = totalPilihan(rollInfo, 'kurang', rollKurang);
+      if (Math.abs(t - Math.abs(delta)) > 0.005) {
+        setGalat(`Jumlah yang dikurangi per roll (${t.toLocaleString('id-ID')}) harus sama dengan qty penyesuaian (${Math.abs(delta).toLocaleString('id-ID')}).`);
+        return;
+      }
+      rollBody = bodyPilihan(rollInfo, 'kurang', rollKurang);
+    } else if (kain && delta > 0) {
+      if (rollBaru.length && rollLinesState(rollBaru, delta).state !== 'match') {
+        setGalat('Total isi gulungan harus sama dengan qty penyesuaian.');
+        return;
+      }
+      if (rollBaru.length) rollBody = { rolls: rollBaru.map((l) => angkaRoll(l.qty)) };
+    }
     setMenyimpan(true);
     try {
       const r = await fetch('/api/rahaza/material-adjust', {
@@ -145,7 +168,8 @@ export default function InventoryScrapModule({ token }) {
           material_id: adjustForm.material_id,
           location_id: adjustForm.location_id,
           qty: delta,
-          reason: adjustForm.reason
+          reason: adjustForm.reason,
+          ...rollBody,
         })
       });
       if (r.ok) {
@@ -236,7 +260,7 @@ export default function InventoryScrapModule({ token }) {
             description="Penyesuaian stok yang dicatat dari sini atau dari baris stok tampil di daftar ini." />} />
       )}
 
-      <FormPopup open={!!adjustForm} onClose={tutupForm} ukuran="pendek" judul="Buat penyesuaian stok"
+      <FormPopup open={!!adjustForm} onClose={tutupForm} ukuran={kain ? 'panjang' : 'pendek'} judul="Buat penyesuaian stok"
         keterangan="Stok berubah di lokasi terpilih dan jurnalnya dibuat otomatis." onSimpan={adjust}
         menyimpan={menyimpan} galat={galat} labelSimpan="Simpan penyesuaian" testId="adj-form">
         {adjustForm && <>
@@ -299,6 +323,14 @@ export default function InventoryScrapModule({ token }) {
               data-testid="adj-qty"
             />
           </Isian>
+          {kain && Number(adjustForm.qty) < 0 && (
+            <PilihRollKain info={rollInfo} mode="kurang" nilai={rollKurang} onUbah={setRollKurang} testId="adj-roll-kurang" />
+          )}
+          {kain && Number(adjustForm.qty) > 0 && (
+            <RollLinesEditor lines={rollBaru} accepted={Number(adjustForm.qty)} unit={rollInfo?.unit || ''} onChange={setRollBaru}
+              testPrefix="adj-roll-baru" title="Rincian gulungan yang ditambahkan"
+              subtitle="Kain dilacak per roll. Kosongkan bila semuanya satu roll." />
+          )}
           <Isian label="Alasan" wajib htmlFor="adj-reason-in" petunjuk="Minimal 5 karakter untuk jejak audit.">
             <Textarea
               id="adj-reason-in"

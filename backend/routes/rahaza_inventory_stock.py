@@ -372,6 +372,11 @@ async def material_transfer(request: Request):
         await stock_transfer.assert_movable(db, material_id, from_loc, qty, blocked=_blk)
     except stock_transfer.TransferError as e:
         raise HTTPException(400, str(e))
+    # 28 Nov 2026: KAIN dipindah per ROLL UTUH (stok = isi gulungan) — roll ikut pindah lokasi.
+    from core import fabric_roll_engine as _fre
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+    rolls = await _fre.check_move(db, mat, body.get("roll_ids") or [], qty, from_location_id=from_loc) \
+        if _fre.per_roll(mat) else []
     try:
         await stock_service.move(
             material_id, from_loc, to_loc, qty,
@@ -386,7 +391,36 @@ async def material_transfer(request: Request):
         from_location_id=from_loc, to_location_id=to_loc,
         ref_type="transfer", ref_id=None, notes=body.get("notes") or "",
     )
+    if rolls:
+        to = await db.rahaza_locations.find_one({"id": to_loc}, {"_id": 0, "name": 1, "code": 1}) or {}
+        done = await _fre.move_rolls(db, rolls, to_location_id=to_loc, to_location_name=to.get("name") or to.get("code") or "",
+                                     ref={"type": "material_transfer", "id": mv["id"], "number": ""}, user=user)
+        await db.rahaza_material_movements.update_one({"id": mv["id"]}, {"$set": {
+            "roll_nos": [d["roll_no"] for d in done]}})
+        mv["roll_nos"] = [d["roll_no"] for d in done]
     return serialize_doc(mv)
+
+
+@router.get("/material-stock/{material_id}/rolls")
+async def material_stock_rolls(material_id: str, request: Request, location_id: str = ""):
+    """28 Nov 2026: roll terbuka satu kain (untuk Penyesuaian & Pindah lokasi yang wajib menunjuk roll).
+    `per_roll=false` = barang ini tidak dilacak per roll (form tidak perlu pemilih roll)."""
+    await require_auth(request)
+    db = get_db()
+    from core import fabric_roll_engine as _fre
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+    if not mat:
+        raise HTTPException(404, "Barang tidak ditemukan di master.")
+    if not _fre.per_roll(mat):
+        return {"material_id": material_id, "per_roll": False, "rolls": []}
+    q = {"material_id": material_id, "status": {"$in": _fre.OPEN_STATUSES}}
+    rows = await db[_fre.ROLLS].find(q, {"_id": 0}).sort("roll_no", 1).to_list(1000)
+    if location_id:
+        rows = [r for r in rows if (r.get("location_id") or "") in ("", location_id)]
+    keep = ("id", "roll_no", "uom", "color_lot", "location_id", "location_name", "position_barcode", "status")
+    return {"material_id": material_id, "per_roll": True, "unit": _fre.roll_uom(mat.get("unit")),
+            "rolls": [{**{k: r.get(k) for k in keep}, "remaining": round(_fre.remaining_of(r), 3),
+                       "total": round(_fre.total_of(r), 3)} for r in rows if _fre.remaining_of(r) > 0]}
 
 
 @router.get("/material-adjust/hpp")
@@ -419,7 +453,8 @@ async def material_adjust(request: Request):
     return serialize_doc(await apply_material_adjust(
         db, user, material_id=body.get("material_id"), location_id=body.get("location_id"),
         delta=float(body.get("qty") or 0), reason=body.get("reason") or "",
-        source=body.get("source"), unit_cost=body.get("unit_cost"), rolls=body.get("rolls")))
+        source=body.get("source"), unit_cost=body.get("unit_cost"), rolls=body.get("rolls"),
+        roll_reductions=body.get("roll_reductions")))
 
 
 # 18 Nov 2026 (owner: "tambahan fitur input qty di portal gudang jadi bisa menambahkan qty tanpa dari produksi"):
@@ -453,7 +488,7 @@ async def _tambah_unit_cost(db, mat: dict, kind: str, unit_cost, actor: dict) ->
 
 async def apply_material_adjust(db, user: dict, *, material_id, location_id, delta: float, reason: str,
                                 extra: dict | None = None, source: str | None = None, unit_cost=None,
-                                rolls=None) -> dict:
+                                rolls=None, roll_reductions=None) -> dict:
     """SATU mesin penyesuaian stok manual: stok + kartu stok (`stock_service`) + mutasi + jurnal.
 
     2026-11-06 (pola P8): dipakai juga oleh `POST /api/wms/stock/unified/adjust` (Viewer Stok). Dulu jalur itu
@@ -506,6 +541,19 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
     cur = await db.rahaza_material_stock.find_one({"material_id": material_id, "location_id": location_id}) or {"qty": 0}
     if float(cur.get("qty") or 0) + delta < 0:
         raise HTTPException(400, "Penyesuaian akan membuat stok negatif.")
+    # ── 28 Nov 2026 (owner: "Ya, perbaiki"): KAIN dilacak per roll — stok = isi gulungan ──
+    # Kurang (rusak/hilang/koreksi) WAJIB menunjuk roll + jumlah per roll; tambah tanpa sumber menerbitkan roll
+    # (isi per roll; kosong = satu roll). Divalidasi SEBELUM stok berubah.
+    from core import fabric_roll_engine as _fre
+    roll_plan, roll_baru, kain = None, [], None
+    if not tambah:
+        kain = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+        if _fre.per_roll(kain):
+            if delta < 0:
+                roll_plan = await _fre.check_reductions(db, kain, roll_reductions or [], abs(delta),
+                                                        location_id=location_id)
+            else:
+                roll_baru = _fre.roll_lines_for_add(kain, rolls, delta)
     _actor = {"id": str(user.get("id") or ""), "email": user.get("email", "")}
     _ref = {"source": "material_adjust", "reason": reason, **({"adjust_source": src} if src else {})}
     if delta > 0:
@@ -552,6 +600,21 @@ async def apply_material_adjust(db, user: dict, *, material_id, location_id, del
                 note=f"Tambah qty ({TAMBAH_SUMBER[src]})")
             await db.rahaza_material_movements.update_one({"id": mv["id"]}, {"$set": {
                 "roll_nos": [r.get("roll_no") for r in dibuat]}})
+    if roll_plan:
+        done = await _fre.apply_reductions(db, roll_plan, ref={"type": "stock_adjust", "id": mv["id"], "number": ""},
+                                           user=user, notes=reason)
+        await db.rahaza_material_movements.update_one({"id": mv["id"]}, {"$set": {
+            "roll_nos": [d["roll_no"] for d in done], "roll_reductions": done}})
+    elif roll_baru:
+        loc = await db.rahaza_locations.find_one({"id": location_id}, {"_id": 0, "name": 1, "code": 1}) or {}
+        dibuat = await _fre.create_rolls_from_receipt(
+            db, {"id": mv["id"], "receipt_number": "", "location_id": location_id,
+                 "location_name": loc.get("name") or loc.get("code") or "", "created_at": mv.get("created_at")},
+            {"id": mv["id"], "unit_price": float(kain.get("unit_cost") or 0), "inspection_status": "passed",
+             "rejected_qty": 0},
+            kain, roll_baru, user, reference_type="stock_adjust", note=f"Penyesuaian: {reason}")
+        await db.rahaza_material_movements.update_one({"id": mv["id"]}, {"$set": {
+            "roll_nos": [r.get("roll_no") for r in dibuat]}})
     posting_result = None
     try:
         posting_result = await post_inventory_adjust(db, mv, user)
